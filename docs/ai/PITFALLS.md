@@ -2,6 +2,37 @@
 
 Known traps and how phasor reports them.
 
+## A wrong edit changes nothing, and says why
+
+`Engine.apply` is all-or-nothing. Always check `result.ok`; on failure read
+`result.errors[i].code` and `fix_hint`. Common codes: `unknown_id`, `unknown_param`,
+`bad_param`, `bad_role` (you passed a raw color or size instead of a role), `bad_expr`,
+`unknown_ref`, `cycle`, `track_on_expr`, `bad_segment` (overlapping or backwards),
+`unknown_marker`, `scripted_scene`.
+
+## `visible_fraction` is `null`
+
+Either there is no OpenGL on this machine (`"occlusion": "analytic"`), or the object is
+thinner than one inspector pixel (`note` says so; hairlines at 480x270 are). Do not treat
+`null` as visible or hidden. Geometry (`bbox`, `center`, `region`) is always exact.
+
+## Translucent objects do not hide things
+
+An object with `opacity` below 0.5 does not count as an occluder, so objects behind it
+report `visible_fraction` 1.0. Its own visibility is still measured.
+
+## Tweaks to a scripted scene
+
+`set_param` and `set_style` on a scene built by a `.py` script go to `name.overrides.json`.
+If the script later drops that object, lint reports `orphan_override` (an error). Fix the
+script or delete the entry; phasor never discards a tweak silently.
+
+## GL contexts
+
+GL calls go to whichever context is current. Never call `moderngl.create_context`; use
+`phasor.render.passes.default_renderer()` (or `Engine`), which shares one context and makes
+it current for every render.
+
 ## Codec lists lie
 
 PyAV wheels list `h264_nvenc` and `hevc_nvenc` even on machines with no NVIDIA GPU.

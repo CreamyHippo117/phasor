@@ -1,0 +1,59 @@
+"""Static guards for the core contracts. They are crude on purpose: each one names the single
+place a thing may happen, so a second place shows up as a failing test, not as drift."""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import pytest
+
+PKG = Path(__file__).resolve().parents[1] / "phasor"
+SOURCES = sorted(PKG.rglob("*.py"))
+
+
+def _offenders(pattern: str, allowed: set[str]) -> list[str]:
+    rx = re.compile(pattern)
+    hits = []
+    for path in SOURCES:
+        rel = path.relative_to(PKG).as_posix()
+        if rel in allowed:
+            continue
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if rx.search(line) and not line.lstrip().startswith(("#", '"', "``")):
+                hits.append(f"{rel}:{n}: {line.strip()}")
+    return hits
+
+
+@pytest.mark.parametrize(
+    ("why", "pattern", "allowed"),
+    [
+        (
+            "contract 1: documents are only rebuilt by patches, and only Engine switches them",
+            r"\.model_copy\(|\b_snap\s*=",
+            {"core/patch.py", "engine.py"},
+        ),
+        (
+            "one GL context, created in one place",
+            r"\bcreate_context\(|\bcreate_standalone_context\(",
+            {"render/glcontext.py", "render/doctor.py"},
+        ),
+        (
+            "contract 3: state depends on (document, t), never on the clock or global randomness",
+            r"\btime\.time\(|\bperf_counter\(|datetime\.now\(|\brandom\.\w+\(|np\.random\.",
+            {"core/rng.py"},
+        ),
+        (
+            "contract 4: sRGB encoding happens once, in render/output.py",
+            r"\blinear_to_srgb\(",
+            {"core/color.py", "render/output.py"},
+        ),
+        (
+            "expressions are compiled from a whitelist, never evaluated as Python",
+            r"(?<![\w.])(eval|exec)\(",
+            set(),
+        ),
+    ],
+)
+def test_single_place_rules(why, pattern, allowed):
+    assert _offenders(pattern, allowed) == [], why

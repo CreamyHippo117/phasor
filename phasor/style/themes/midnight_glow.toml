@@ -1,0 +1,22 @@
+# midnight_glow: dark blue-black stage, cool primaries, one warm highlight.
+# Colors are sRGB hex; sizes are fractions of the frame height, so a theme looks the same
+# at every resolution. Milestone 1 holds only what the 2D primitives need.
+
+[palette]
+background = "#0b0e14"
+primary = "#d8dee9"
+secondary = "#7aa2f7"
+muted = "#565f89"
+highlight = "#ffb454"
+danger = "#f7768e"
+
+[stroke]
+hairline = 0.002
+regular = 0.004
+bold = 0.008
+
+[text]
+title = 0.075
+label = 0.042
+annotation = 0.032
+math = 0.048

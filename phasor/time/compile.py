@@ -1,0 +1,277 @@
+"""Document -> parameter graph -> SceneState (SPEC contract 3).
+
+``compile_document`` checks everything that has meaning: object types, parameter names and
+types, style roles, expressions, tracks, markers and cycles. It reports every problem it
+finds. ``evaluate`` is then a pure function of (compiled document, t).
+"""
+
+from __future__ import annotations
+
+import functools
+from dataclasses import dataclass
+from types import MappingProxyType
+from typing import Annotated, Any
+
+from pydantic import BaseModel, TypeAdapter, ValidationError
+
+from phasor.core.issues import DocumentError, Issue
+from phasor.core.objects import SceneObject, get_type, registered_types
+from phasor.core.schema import Document, ExprSpec
+from phasor.core.spatial import OrthoCameraParams, ortho_camera, overlay_camera
+from phasor.core.state import ObjectState, SceneState
+from phasor.core.values import normalize, same_shape
+from phasor.style.theme import Theme, ThemeError, load_theme
+from phasor.time.easing import EASINGS
+from phasor.time.expr import CompiledExpr, ExprError, compile_expr
+from phasor.time.tracks import ResolvedSegment, ResolvedTrack, TimeMap
+
+CAMERA_PARAMS = {"ortho": OrthoCameraParams}
+
+
+@dataclass(frozen=True)
+class Const:
+    value: Any
+
+
+Node = Const | ResolvedTrack | CompiledExpr
+
+
+@dataclass(frozen=True)
+class CompiledObject:
+    id: str
+    type: str
+    index: int
+    impl: SceneObject
+    params_model: type[BaseModel]
+    style: MappingProxyType
+    roles: MappingProxyType
+    tags: tuple[str, ...]
+    layer: str
+
+
+@dataclass(frozen=True)
+class Compiled:
+    doc: Document
+    theme: Theme
+    time_map: TimeMap
+    nodes: MappingProxyType  # path -> Node
+    order: tuple[str, ...]  # topological evaluation order
+    objects: tuple[CompiledObject, ...]
+    duration: float
+
+
+@functools.cache
+def _adapter(model: type[BaseModel], name: str) -> TypeAdapter:
+    f = model.model_fields[name]
+    return TypeAdapter(Annotated[f.annotation, *f.metadata] if f.metadata else f.annotation)
+
+
+def _coerce(model: type[BaseModel], name: str, value: Any) -> Any:
+    """Validate one value against its field and return it in canonical form (tuples, floats)."""
+    return normalize(_adapter(model, name).validate_python(value))
+
+
+def _first_error(e: ValidationError) -> str:
+    return e.errors()[0]["msg"]
+
+
+def _toposort(nodes: dict[str, Node]) -> tuple[tuple[str, ...], list[str]]:
+    """Kahn's algorithm over sorted keys, so the order is deterministic. Returns (order, cycle)."""
+    deps = {p: (sorted(n.deps) if isinstance(n, CompiledExpr) else []) for p, n in nodes.items()}
+    pending = {p: len(d) for p, d in deps.items()}
+    users: dict[str, list[str]] = {p: [] for p in nodes}
+    for p, ds in deps.items():
+        for d in ds:
+            users[d].append(p)
+    ready = sorted(p for p, n in pending.items() if n == 0)
+    order: list[str] = []
+    while ready:
+        p = ready.pop(0)
+        order.append(p)
+        for u in sorted(users[p]):
+            pending[u] -= 1
+            if pending[u] == 0:
+                ready.append(u)
+    return tuple(order), sorted(p for p, n in pending.items() if n > 0)
+
+
+def compile_document(doc: Document) -> Compiled:
+    issues: list[Issue] = []
+    add = issues.append
+
+    try:
+        theme = load_theme(doc.meta.theme)
+    except ThemeError as e:
+        raise DocumentError(Issue("unknown_theme", str(e), path="meta.theme")) from e
+    time_map = TimeMap(doc.timeline.markers)
+    nodes: dict[str, Node] = {}
+    owner: dict[str, type[BaseModel]] = {}  # path -> params model, for coercing track values
+    objects: list[CompiledObject] = []
+
+    def add_params(target: str, model: type[BaseModel], given: dict[str, Any]) -> None:
+        for name in given:
+            if name not in model.model_fields:
+                add(Issue("unknown_param", f"{target!r} has no parameter {name!r}; "
+                          f"it has {sorted(model.model_fields)}", ids=(target,),
+                          path=f"{target}.{name}"))  # fmt: skip
+        for name, field in model.model_fields.items():
+            path = f"{target}.{name}"
+            owner[path] = model
+            if name not in given:
+                if field.is_required():
+                    add(Issue("missing_param", f"{target!r} needs parameter {name!r}",
+                              ids=(target,), path=path))  # fmt: skip
+                    continue
+                raw = field.get_default(call_default_factory=True)
+            else:
+                raw = given[name]
+            if isinstance(raw, ExprSpec):
+                try:
+                    nodes[path] = compile_expr(raw.expr)
+                except ExprError as e:
+                    add(Issue("bad_expr", str(e), ids=(target,), path=path))
+                continue
+            try:
+                nodes[path] = Const(_coerce(model, name, raw))
+            except (ValidationError, ValueError) as e:
+                msg = _first_error(e) if isinstance(e, ValidationError) else str(e)
+                add(Issue("bad_param", f"{path}: {msg}", ids=(target,), path=path))
+
+    for index, spec in enumerate(doc.objects, start=1):
+        cls = get_type(spec.type)
+        if cls is None:
+            add(Issue("unknown_type", f"unknown object type {spec.type!r}; "
+                      f"registered: {sorted(registered_types())}", ids=(spec.id,)))  # fmt: skip
+            continue
+        add_params(spec.id, cls.Params, spec.params)
+        style, roles = {}, {}
+        for key in spec.style:
+            if key not in cls.Style:
+                add(Issue("unknown_style", f"{spec.type!r} has no style key {key!r}; "
+                          f"it has {sorted(cls.Style)}", ids=(spec.id,)))  # fmt: skip
+        for key, (group, default) in cls.Style.items():
+            role = spec.style.get(key, default)
+            try:
+                style[key], roles[key] = theme.resolve(group, role), role
+            except ThemeError as e:
+                add(Issue("bad_role", f"{spec.id}.{key}: {e}", ids=(spec.id,)))
+        objects.append(
+            CompiledObject(spec.id, spec.type, index, cls(spec.id), cls.Params,
+                           MappingProxyType(style), MappingProxyType(roles), spec.tags, spec.layer)
+        )  # fmt: skip
+    for cam in doc.cameras:
+        add_params(cam.id, CAMERA_PARAMS[cam.kind], cam.params)
+
+    duration = max(doc.timeline.markers.values(), default=0.0)
+    for path, segs in sorted(doc.timeline.tracks.items()):
+        node = nodes.get(path)
+        if path not in owner:
+            add(Issue("unknown_param", f"track on unknown parameter {path!r}", path=path))
+            continue
+        if not isinstance(node, Const):
+            if isinstance(node, CompiledExpr):
+                add(Issue("track_on_expr", f"{path!r} is an expression; it cannot have a track",
+                          path=path, fix_hint="animate the parameters it reads"))  # fmt: skip
+            continue
+        target, name = path.rsplit(".", 1)
+        resolved: list[ResolvedSegment] = []
+        prev_end = float("-inf")
+        for i, seg in enumerate(segs):
+            where = f"{path}[{i}]"
+            try:
+                t0, t1 = time_map.resolve(seg.t0), time_map.resolve(seg.t1)
+            except KeyError as e:
+                add(Issue("unknown_marker", f"{where}: no marker {e.args[0]!r}", path=path))
+                continue
+            if seg.ease not in EASINGS:
+                add(Issue("unknown_ease", f"{where}: no easing {seg.ease!r}; "
+                          f"available: {sorted(EASINGS)}", path=path))  # fmt: skip
+                continue
+            if t1 < t0 or t0 < prev_end:
+                add(Issue("bad_segment", f"{where}: spans {t0:g}-{t1:g} s but must not run "
+                          f"backwards or start before the previous segment ends ({prev_end:g} s)",
+                          path=path))  # fmt: skip
+                continue
+            try:
+                to = _coerce(owner[path], name, seg.to)
+            except (ValidationError, ValueError) as e:
+                msg = _first_error(e) if isinstance(e, ValidationError) else str(e)
+                add(Issue("bad_param", f"{where}: {msg}", ids=(target,), path=path))
+                continue
+            if not same_shape(node.value, to):
+                add(Issue("bad_param", f"{where}: target {to!r} does not match the shape of "
+                          f"{node.value!r}", ids=(target,), path=path))  # fmt: skip
+                continue
+            resolved.append(ResolvedSegment(t0, t1, to, EASINGS[seg.ease]))
+            prev_end = t1
+            duration = max(duration, t1)
+        nodes[path] = ResolvedTrack(node.value, tuple(resolved))
+
+    for path, node in nodes.items():
+        if isinstance(node, CompiledExpr):
+            for dep in sorted(node.deps - nodes.keys()):
+                if dep not in owner:  # a known but failed parameter was already reported
+                    add(Issue("unknown_ref", f"{path}: expression reads unknown parameter "
+                              f"{dep!r}", path=path))  # fmt: skip
+    if issues:
+        raise DocumentError(issues)
+
+    order, cycle = _toposort(nodes)
+    if cycle:
+        raise DocumentError(
+            Issue("cycle", f"parameters depend on each other in a cycle: {', '.join(cycle)}",
+                  ids=tuple(sorted({p.rsplit('.', 1)[0] for p in cycle})))
+        )  # fmt: skip
+    if doc.meta.duration is not None:
+        duration = doc.meta.duration
+    compiled = Compiled(doc, theme, time_map, MappingProxyType(nodes), order, tuple(objects),
+                        duration)  # fmt: skip
+    evaluate(compiled, 0.0)  # surfaces type errors from expressions before anything is saved
+    return compiled
+
+
+def evaluate(c: Compiled, t: float) -> SceneState:
+    """Pure: depends only on (compiled document, t)."""
+    t = float(t)
+    env: dict[str, Any] = {}
+    for path in c.order:
+        node = c.nodes[path]
+        try:
+            if isinstance(node, Const):
+                env[path] = node.value
+            elif isinstance(node, ResolvedTrack):
+                env[path] = node.value_at(t)
+            else:
+                env[path] = normalize(node(env, t))
+        except (ExprError, ValueError) as e:
+            raise DocumentError(Issue("bad_expr", f"{path} at t={t:g}: {e}", path=path)) from e
+
+    def build(target: str, model: type[BaseModel]) -> BaseModel:
+        try:
+            return model.model_validate({n: env[f"{target}.{n}"] for n in model.model_fields})
+        except ValidationError as e:
+            err = e.errors()[0]
+            path = f"{target}.{'.'.join(str(p) for p in err['loc'])}"
+            raise DocumentError(
+                Issue("bad_param", f"{path} at t={t:g}: {err['msg']}", ids=(target,), path=path)
+            ) from e
+
+    meta = c.doc.meta
+    aspect = meta.width / meta.height
+    cam_spec = c.doc.camera(c.doc.timeline.camera)
+    camera = ortho_camera(build(cam_spec.id, CAMERA_PARAMS[cam_spec.kind]), aspect)
+    objects = tuple(
+        ObjectState(o.id, o.type, o.index, build(o.id, o.params_model), o.style, o.roles,
+                    o.tags, o.layer, o.impl)
+        for o in c.objects
+    )  # fmt: skip
+    return SceneState(
+        t=t,
+        width=meta.width,
+        height=meta.height,
+        background=c.theme.background,
+        objects=objects,
+        camera=camera,
+        overlay=overlay_camera(aspect),
+        values=MappingProxyType(env),
+    )

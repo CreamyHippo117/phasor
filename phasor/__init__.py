@@ -6,6 +6,27 @@ hide layer violations from import-linter and create import cycles). Public names
 are added here lazily as milestones land.
 """
 
+from typing import Any
+
 __version__ = "0.0.1"
 
-__all__ = ["__version__"]
+# name -> module that defines it; resolved on first access.
+_LAZY = {
+    "Scene": "phasor.scene",
+    "expr": "phasor.scene",
+    "load": "phasor.scene",
+    "Engine": "phasor.engine",
+    "Dot": "phasor.domains.basic",
+    "Line": "phasor.domains.basic",
+    "Text": "phasor.domains.basic",
+}
+
+__all__ = ["__version__", *_LAZY]
+
+
+def __getattr__(name: str) -> Any:
+    if name in _LAZY:
+        import importlib
+
+        return getattr(importlib.import_module(_LAZY[name]), name)
+    raise AttributeError(f"module 'phasor' has no attribute {name!r}")

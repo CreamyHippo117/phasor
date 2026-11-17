@@ -4,10 +4,14 @@ Windows and desktop Linux use the platform default (WGL / GLX). Headless Linux
 (CI, cloud containers) has no X display, so we fall back to EGL, which works with
 Mesa's llvmpipe software renderer. Nothing else in phasor may call
 ``moderngl.create_context`` directly.
+
+GL calls go to whichever context is *current*, and creating a context makes it current.
+So every piece of GL work must run inside ``with ctx:``; the renderer does this for you.
 """
 
 from __future__ import annotations
 
+import functools
 import os
 import sys
 from typing import TYPE_CHECKING
@@ -50,3 +54,10 @@ def create_standalone_context(require: int = REQUIRED_GL) -> moderngl.Context:
         except Exception as e:
             errors.append(f"{backend or 'default'}: {e}")
     raise GLUnavailableError("; ".join(errors))
+
+
+@functools.cache
+def shared_context() -> moderngl.Context:
+    """The process-wide offscreen context. Renderers share it, so GL objects are compiled
+    once and there is never a question of which context owns them."""
+    return create_standalone_context()

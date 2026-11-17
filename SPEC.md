@@ -111,7 +111,7 @@ A scene is one document that Python, the AI and the GUI all edit. Python scripts
 **Scene document contents**
 
 - `meta`: title, resolution, fps, theme, color space.
-- `objects`: each with `id`, `type`, parameters, style, parent (for grouping), tags.
+- `objects`: each with `id`, `type`, parameters, style, tags, layer. The parent is the id's dotted prefix (`res.pole_i` belongs to `res`), so it cannot disagree with the id.
 - `constraints`: layout rules (see Layout section).
 - `timeline`: state tracks, transitions and narration markers.
 - `cameras`: 2D/3D cameras and their tracks.
@@ -230,9 +230,11 @@ The AI never guesses where things are from pixels: the renderer reports ground t
 **What is computed per object, per sampled time**
 
 - Screen bbox and center (pixels and 0–1), depth, distance to camera.
-- `visible_fraction` = pixels in `id` pass ÷ pixels in `solo` pass.
+- `visible_fraction` = pixels in `id` pass ÷ pixels in `solo` pass, both counted inside the frame. Objects that do not occlude are measured with an `id` pass in which they are forced to write.
 - `hidden_by` = IDs found in the `id` pass where the solo mask is set, with the share each one covers.
-- `on_screen_fraction` = solo pixels inside the frame ÷ analytic projected area.
+- `on_screen_fraction` = share of the full silhouette that lies inside the frame. When the bounding box crosses the frame edge it is measured on a zoomed-out `solo` pass (inside pixels ÷ all pixels); this works for any shape, where an analytic area does not exist for text or surfaces.
+- An object too small or thin to cover a pixel at 480×270 reports `visible_fraction: null` with a `note`; it is never guessed.
+- Coplanar objects (every 2D scene) are ordered by `z_index`, then document order, through a tiny per-object depth bias, so "nearest surface" is always well defined.
 - Region name from a 3×3 grid (`upper-left` … `lower-right`), plus `facing` for labels.
 - Pairwise relations for tagged objects only: `left_of`, `above`, `in_front_of`, `overlaps`. All are camera-relative.
 
@@ -347,7 +349,7 @@ CUDA does the math, OpenGL draws the picture, and one narrow bridge connects the
 | --- | --- | --- |
 | A | NVIDIA with CUDA 12 | Everything |
 | B | Any GPU with OpenGL 4.3, no CUDA | Kernels run on NumPy references at preview resolution; final renders allowed but warned as slow |
-| C | No usable GPU | Inspector, lint and timeline still work; no rendering |
+| C | No usable GPU | Timeline and lint work; the inspector runs in analytic mode (exact geometry, no occlusion, marked `"occlusion": "analytic"`); no rendering |
 
 **Testing and benchmarks**
 

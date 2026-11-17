@@ -175,11 +175,20 @@ void main() { obj_id = u_id; }
 
 
 def check_opengl() -> Check:
-    import numpy as np
 
     from phasor.render.glcontext import create_standalone_context
 
-    ctx = create_standalone_context()
+    ctx = create_standalone_context()  # its own context: the doctor must not disturb renderers
+    try:
+        with ctx:
+            return _exercise_opengl(ctx)
+    finally:
+        ctx.release()
+
+
+def _exercise_opengl(ctx) -> Check:
+    import numpy as np
+
     info = ctx.info
     data = {
         "renderer": info.get("GL_RENDERER"),
@@ -218,7 +227,6 @@ def check_opengl() -> Check:
     counts = np.bincount(ids, minlength=8)
     id_ok = counts[7] > 0 and counts[0] > 0 and counts[7] + counts[0] == ids.size
 
-    ctx.release()
     ok = bool(center_ok and corner_ok and id_ok)
     data["triangle_ok"] = bool(center_ok and corner_ok)
     data["id_pass_ok"] = bool(id_ok)

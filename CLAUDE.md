@@ -5,7 +5,7 @@ compounding. If this file and SPEC.md disagree, stop and ask.
 
 ## Where we are
 
-- Current milestone: **0 done, 1 next**. See `MILESTONE_*.md` for what is built and deferred.
+- Current milestone: **1 built (awaiting boundary review and Windows check), 2 next**. See `MILESTONE_*.md` for what is built and deferred.
 - One milestone per branch. No work on milestone N+1 until N's exit demo and tests pass.
 - Before declaring a milestone done, run the `phasor-milestone-gate` skill.
 
@@ -51,6 +51,12 @@ compounding. If this file and SPEC.md disagree, stop and ask.
   except for the seven contracts above, which need owner approval.
 - Record any deviation from SPEC in the current `MILESTONE_N.md` under "Deviations", with why.
 - Don't claim something works on Windows/CUDA unless it ran there. Say "untested on X".
+- All GL work goes through `render/passes.py` (`default_renderer()`), which shares one context
+  and makes it current per render. Creating GL objects outside `with ctx:` corrupts state.
+- Golden stills live in `tests/golden/<software|gpu>/`; regenerate with
+  `PHASOR_UPDATE_GOLDEN=1 uv run pytest -k golden` and look at them before committing.
+- When a test and the code disagree, work out which one is wrong before changing either.
+  In Milestone 1 it was the test about as often as the code.
 
 ## Commands
 

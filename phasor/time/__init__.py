@@ -1,1 +1,1 @@
-"""phasor.time — see SPEC.md and CLAUDE.md for this layer's responsibilities."""
+"""phasor.time: easing, the TimeMap, tracks, expressions, and document -> SceneState."""

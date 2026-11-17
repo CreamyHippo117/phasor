@@ -1,7 +1,8 @@
 # ADR 0001: layer order details and dependency inversion for GPU feedback
 
 Status: **Proposed, needs owner approval** (touches SPEC contract 6)
-Date: 2026-11-17, Milestone 0
+Date: 2026-11-17, Milestone 0. Milestone 1 was built on it: `inspect` defines `PassRunner`,
+`render` implements it, `Engine` injects it, and tier C falls back to analytic mode.
 
 ## Context
 
@@ -25,6 +26,7 @@ Layer order enforced by import-linter (`pyproject.toml`):
 
 ```
 cli | gui | mcp | sketch      (independent of each other)
+scene                         (the Python authoring API; added in Milestone 1)
 engine
 domains
 render

@@ -1,1 +1,6 @@
-"""phasor.domains — see SPEC.md and CLAUDE.md for this layer's responsibilities."""
+"""phasor.domains: object types, grouped by field. Importing this package registers the
+built-in types; Engine does that once at startup."""
+
+from phasor.domains import basic
+
+__all__ = ["basic"]

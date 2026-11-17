@@ -1,0 +1,277 @@
+"""Patches: the vocabulary of ``Engine.apply`` (SPEC contract 1).
+
+A patch is a list of small ops. Applying one is a pure function from document to document;
+the Engine then validates the result as a whole, so a patch either applies fully or not at all.
+"""
+
+from __future__ import annotations
+
+from typing import Annotated, Any, Literal
+
+from pydantic import Field, TypeAdapter, ValidationError
+
+from phasor.core.ids import split_path
+from phasor.core.issues import DocumentError, Issue
+from phasor.core.schema import (
+    ConstValue,
+    Document,
+    ExprSpec,
+    Meta,
+    Model,
+    ObjectSpec,
+    Overrides,
+    ParamSpec,
+    Segment,
+)
+
+
+class AddObject(Model):
+    op: Literal["add_object"] = "add_object"
+    object: ObjectSpec
+
+
+class RemoveObject(Model):
+    """Remove an object and the tracks that animate it."""
+
+    op: Literal["remove_object"] = "remove_object"
+    id: str
+
+
+class SetParam(Model):
+    """Set an object or camera parameter to a constant or ``{"expr": ...}``."""
+
+    op: Literal["set_param"] = "set_param"
+    path: str
+    value: ParamSpec
+
+
+class SetStyle(Model):
+    op: Literal["set_style"] = "set_style"
+    id: str
+    key: str
+    role: str
+
+
+class SetTags(Model):
+    op: Literal["set_tags"] = "set_tags"
+    id: str
+    tags: tuple[str, ...]
+
+
+class AddSegment(Model):
+    """Append a transition to a parameter's track."""
+
+    op: Literal["add_segment"] = "add_segment"
+    path: str
+    segment: Segment
+
+
+class ClearTrack(Model):
+    op: Literal["clear_track"] = "clear_track"
+    path: str
+
+
+class SetMarker(Model):
+    op: Literal["set_marker"] = "set_marker"
+    name: str
+    t: float
+
+
+class RemoveMarker(Model):
+    op: Literal["remove_marker"] = "remove_marker"
+    name: str
+
+
+class SetMeta(Model):
+    op: Literal["set_meta"] = "set_meta"
+    field: str
+    value: ConstValue | None
+
+
+Op = Annotated[
+    AddObject
+    | RemoveObject
+    | SetParam
+    | SetStyle
+    | SetTags
+    | AddSegment
+    | ClearTrack
+    | SetMarker
+    | RemoveMarker
+    | SetMeta,
+    Field(discriminator="op"),
+]
+
+
+class Patch(Model):
+    ops: tuple[Op, ...]
+
+
+_PATCH = TypeAdapter(Patch)
+TWEAK_OPS = (SetParam, SetStyle)  # the ops an overrides file can hold
+
+
+def parse_patch(patch: Any) -> Patch:
+    """Accept a Patch, ``{"ops": [...]}``, a list of ops, or a single op."""
+    if isinstance(patch, Patch):
+        return patch
+    if isinstance(patch, Model):
+        patch = [patch]
+    if isinstance(patch, dict) and "ops" not in patch:
+        patch = [patch]
+    if isinstance(patch, list | tuple):
+        patch = {"ops": list(patch)}
+    try:
+        return _PATCH.validate_python(patch)
+    except ValidationError as e:
+        raise DocumentError(
+            [
+                Issue("patch_schema", err["msg"], path=".".join(str(p) for p in err["loc"]))
+                for err in e.errors()
+            ]
+        ) from e
+
+
+def _fail(code: str, message: str, **kw: Any) -> DocumentError:
+    return DocumentError(Issue(code, message, **kw))
+
+
+def _set_param(doc: Document, path: str, value: Any) -> Document:
+    try:
+        target, param = split_path(path)
+    except ValueError as e:
+        raise _fail("bad_path", str(e), path=path) from e
+    for field in ("objects", "cameras"):
+        items = getattr(doc, field)
+        for i, item in enumerate(items):
+            if item.id == target:
+                new = item.model_copy(update={"params": {**item.params, param: value}})
+                return doc.model_copy(update={field: (*items[:i], new, *items[i + 1 :])})
+    raise _fail("unknown_id", f"no object or camera {target!r}", ids=(target,), path=path)
+
+
+def _replace_object(doc: Document, object_id: str, **update: Any) -> Document:
+    for i, o in enumerate(doc.objects):
+        if o.id == object_id:
+            new = o.model_copy(update=update)
+            return doc.model_copy(
+                update={"objects": (*doc.objects[:i], new, *doc.objects[i + 1 :])}
+            )
+    raise _fail("unknown_id", f"no object {object_id!r}", ids=(object_id,))
+
+
+def _apply_op(doc: Document, op: Any) -> Document:
+    tl = doc.timeline
+    match op:
+        case AddObject():
+            return doc.model_copy(update={"objects": (*doc.objects, op.object)})
+        case RemoveObject():
+            if doc.object(op.id) is None:
+                raise _fail("unknown_id", f"no object {op.id!r}", ids=(op.id,))
+            tracks = {p: s for p, s in tl.tracks.items() if split_path(p)[0] != op.id}
+            return doc.model_copy(
+                update={
+                    "objects": tuple(o for o in doc.objects if o.id != op.id),
+                    "timeline": tl.model_copy(update={"tracks": tracks}),
+                }
+            )
+        case SetParam():
+            return _set_param(doc, op.path, op.value)
+        case SetStyle():
+            obj = doc.object(op.id)
+            if obj is None:
+                raise _fail("unknown_id", f"no object {op.id!r}", ids=(op.id,))
+            return _replace_object(doc, op.id, style={**obj.style, op.key: op.role})
+        case SetTags():
+            return _replace_object(doc, op.id, tags=op.tags)
+        case AddSegment():
+            segs = (*tl.tracks.get(op.path, ()), op.segment)
+            return doc.model_copy(
+                update={"timeline": tl.model_copy(update={"tracks": {**tl.tracks, op.path: segs}})}
+            )
+        case ClearTrack():
+            if op.path not in tl.tracks:
+                raise _fail("unknown_track", f"no track on {op.path!r}", path=op.path)
+            tracks = {p: s for p, s in tl.tracks.items() if p != op.path}
+            return doc.model_copy(update={"timeline": tl.model_copy(update={"tracks": tracks})})
+        case SetMarker():
+            markers = {**tl.markers, op.name: op.t}
+            return doc.model_copy(update={"timeline": tl.model_copy(update={"markers": markers})})
+        case RemoveMarker():
+            if op.name not in tl.markers:
+                raise _fail("unknown_marker", f"no marker {op.name!r}")
+            markers = {k: v for k, v in tl.markers.items() if k != op.name}
+            return doc.model_copy(update={"timeline": tl.model_copy(update={"markers": markers})})
+        case SetMeta():
+            if op.field not in Meta.model_fields:
+                raise _fail("unknown_meta", f"no meta field {op.field!r}")
+            return doc.model_copy(update={"meta": doc.meta.model_copy(update={op.field: op.value})})
+    raise _fail("unknown_op", f"unsupported op {op!r}")  # pragma: no cover
+
+
+def apply_ops(doc: Document, patch: Patch) -> Document:
+    """Pure: returns a new, shape-validated document. Raises DocumentError and changes nothing
+    on failure. ``model_copy`` skips validation, so the result is re-validated as a whole."""
+    for op in patch.ops:
+        doc = _apply_op(doc, op)
+    try:
+        return Document.model_validate(doc.model_dump(warnings=False))
+    except ValidationError as e:
+        raise DocumentError(
+            [
+                Issue("schema", err["msg"], path=".".join(str(p) for p in err["loc"]) or None)
+                for err in e.errors()
+            ]
+        ) from e
+
+
+def apply_overrides(base: Document, overrides: Overrides) -> tuple[Document, list[Issue]]:
+    """Lay tweaks over a base document. Tweaks whose target id is gone are reported as
+    ``orphan_override`` lint errors and skipped; they are never dropped silently."""
+    doc, orphans = base, []
+    known = {o.id for o in base.objects} | {c.id for c in base.cameras}
+    hint = "restore the object in the script, or delete this entry from the overrides file"
+    for path, value in sorted(overrides.params.items()):
+        target = path.rpartition(".")[0]
+        if target not in known:
+            orphans.append(
+                Issue("orphan_override", f"override {path!r} targets a missing object",
+                      ids=(target,), path=path, fix_hint=hint)
+            )  # fmt: skip
+            continue
+        doc = _set_param(doc, path, value)
+    for path, role in sorted(overrides.styles.items()):
+        target, _, key = path.rpartition(".")
+        if base.object(target) is None:
+            orphans.append(
+                Issue("orphan_override", f"style override {path!r} targets a missing object",
+                      ids=(target,), path=path, fix_hint=hint)
+            )  # fmt: skip
+            continue
+        doc = _apply_op(doc, SetStyle(id=target, key=key, role=role))
+    return doc, orphans
+
+
+def record_tweaks(overrides: Overrides, patch: Patch) -> Overrides:
+    """Fold tweak ops into an overrides file. Raises if the patch holds anything else."""
+    params, styles = dict(overrides.params), dict(overrides.styles)
+    for op in patch.ops:
+        if isinstance(op, SetParam):
+            params[op.path] = op.value
+        elif isinstance(op, SetStyle):
+            styles[f"{op.id}.{op.key}"] = op.role
+        else:
+            raise _fail(
+                "scripted_scene",
+                f"'{op.op}' cannot be applied to a scene built by a script",
+                fix_hint="change the script for structure and timing; "
+                "tweaks may only use set_param and set_style",
+            )
+    return Overrides(params=params, styles=styles)
+
+
+__all__ = [
+    "AddObject", "AddSegment", "ClearTrack", "ExprSpec", "Op", "Patch", "RemoveMarker",
+    "RemoveObject", "SetMarker", "SetMeta", "SetParam", "SetStyle", "SetTags",
+    "apply_ops", "apply_overrides", "parse_patch", "record_tweaks",
+]  # fmt: skip

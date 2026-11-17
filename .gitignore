@@ -9,3 +9,4 @@ build/
 .phasor_cache/
 *.overrides.json.bak
 .claude/settings.local.json
+examples/out/

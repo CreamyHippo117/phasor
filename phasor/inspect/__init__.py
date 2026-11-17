@@ -1,1 +1,1 @@
-"""phasor.inspect — see SPEC.md and CLAUDE.md for this layer's responsibilities."""
+"""phasor.inspect: what is on screen, where, and how visible, as JSON for every editor."""

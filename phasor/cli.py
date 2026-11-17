@@ -13,7 +13,6 @@ import sys
 
 # command -> (milestone, help)
 PLANNED = {
-    "inspect": (1, "JSON snapshot of a scene at time t"),
     "lint": (2, "run the linter at sampled times and every marker"),
     "storyboard": (2, "keyframe stills + contact sheet + inspector JSON"),
     "render": (3, "final render with a preset"),
@@ -43,6 +42,23 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_inspect(args: argparse.Namespace) -> int:
+    from phasor.core.issues import DocumentError
+    from phasor.scene import load
+
+    try:
+        engine = load(args.scene)
+        out = engine.inspect(args.t, id=args.id, detail=args.detail)
+    except (DocumentError, KeyError, OSError, ValueError) as e:
+        print(f"phasor inspect: {e}", file=sys.stderr)
+        return 1
+    if args.detail == "brief":
+        print(f"t={out['t']} occlusion={out['occlusion']}", *out["objects"], sep="\n")
+    else:
+        print(json.dumps(out, indent=2))
+    return 0
+
+
 def _planned(name: str, milestone: int):
     def run(_: argparse.Namespace) -> int:
         print(f"phasor {name}: not implemented yet (Milestone {milestone})", file=sys.stderr)
@@ -66,6 +82,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="exit 1 if the machine's tier is below this one",
     )
     d.set_defaults(func=_cmd_doctor)
+
+    i = sub.add_parser("inspect", help="what is on screen at time t, as JSON")
+    i.add_argument("scene", help="a .phasor.json document or a .py script that builds a Scene")
+    i.add_argument("--t", type=float, default=0.0, help="time in seconds (default 0)")
+    i.add_argument("--id", help="only this object")
+    i.add_argument("--detail", choices=["brief", "standard", "full"], default="standard")
+    i.set_defaults(func=_cmd_inspect)
 
     for name, (milestone, help_) in PLANNED.items():
         sp = sub.add_parser(name, help=f"{help_} (Milestone {milestone})")
