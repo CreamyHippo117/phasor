@@ -128,6 +128,14 @@ class GLRenderer:
 
     # ------------------------------------------------------------ resources
 
+    def renderer_class(self) -> str:
+        """``"software"`` (Mesa llvmpipe and friends) or ``"gpu"``. Golden images are kept
+        per class because the two do not antialias identically. The query must run with
+        the context current, like every other GL call."""
+        with self.ctx:
+            name = str(self.ctx.info["GL_RENDERER"]).lower()
+        return "software" if any(k in name for k in ("llvmpipe", "softpipe", "swrast")) else "gpu"
+
     def _program(self, pass_: str, textured: bool):
         key = (pass_, textured)
         if key not in self._programs:

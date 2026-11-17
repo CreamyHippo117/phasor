@@ -1,22 +1,36 @@
 # phasor patterns
 
 Idioms for common tasks, one canonical way each. More arrive with their milestones:
-label placement by constraint (M2), contour integrals (M3), narration sync (M4), 3D orbits (M6).
+contour integrals (M3), narration sync (M4), 3D orbits (M6).
 
-## Label something so the label can never be left behind
+## Label something
 
-Bind the label's position to the object with an expression, then animate only the object.
+Name the label `<owner>.label` and add a `near` constraint. Never type label coordinates.
 
 ```python
 from phasor import Dot, Scene, Text, expr
 
 s = Scene("label_follows")
 s.add(Dot(id="pole", pos=(-2, 0), style={"color": "highlight"}, tags=["key"]))
-s.add(Text(id="pole_label", text="pole", pos=expr("pole.pos + vec(0, 0.5, 0)")))
+s.add(Text(id="pole.label", text="pole"))
+s.constrain("label(pole) near pole")
 s.at(0).to("pole.pos", (2, 0), duration=2)
 
 mid = s.engine.state_at(1.0)
-assert mid["pole_label"].params.pos == (0.0, 0.5, 0.0)
+assert mid["pole.label"].params.pos[0] == 0.0  # it follows the pole
+assert s.engine.lint() == []
+```
+
+Use `above`/`below`/`left_of`/`right_of` only when the side matters; `near` lets the placer
+dodge neighbors.
+
+## Tie any parameter to another
+
+An expression makes one parameter follow others. (For labels, prefer the constraint above.)
+
+```python
+s.add(Dot(id="shadow", pos=expr("pole.pos + vec(0, -1, 0)"), r=0.05, style={"color": "muted"}))
+assert s.engine.state_at(1.0)["shadow"].params.pos == (0.0, -1.0, 0.0)
 ```
 
 ## The self-review loop
@@ -32,12 +46,13 @@ for name, t in sorted(engine.document.timeline.markers.items()) or [("start", 0.
     for line in engine.inspect(t, detail="brief")["objects"]:
         print(name, line)
 
-for obj in engine.inspect(1.0)["objects"]:
-    hidden = obj["visible_fraction"] is not None and obj["visible_fraction"] < 0.5
-    off = obj["on_screen_fraction"] < 1.0
-    if hidden or off:
-        print("fix:", obj["id"], obj["hidden_by"], obj["on_screen_fraction"])
+for issue in engine.lint():  # then let the linter look at every marker and sample
+    print(issue.severity, issue, "->", issue.fix_hint)
+report = engine.autofix()  # applies the fixes the linter is sure about
+assert report["remaining"] == []
 ```
+
+Errors must be fixed. Warnings need a reason to stay. Look at a storyboard before rendering.
 
 ## Screen-space titles
 

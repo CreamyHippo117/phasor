@@ -1,0 +1,202 @@
+"""The constraint language: one rule string -> clauses (SPEC "Layout constraints").
+
+    label(pole) near pole
+    title above plot gap 0.3
+    a align_x b
+    on_screen(title, 0.2) and no_overlap(a, b, c)
+
+This module only parses. ``phasor.layout`` gives the clauses meaning and solves them.
+Numbers are in the units of the object's layer (world units, or frame heights on the overlay).
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+
+from phasor.core.ids import ID_RE
+
+# relation -> takes an optional "gap <number>"
+RELATIONS = {
+    "above": True,
+    "below": True,
+    "left_of": True,
+    "right_of": True,
+    "near": True,
+    "align_x": False,
+    "align_y": False,
+    "inside": False,
+}
+# guard -> (min ids, max ids or None for any number, takes an optional trailing number)
+GUARDS = {
+    "no_overlap": (2, None, False),
+    "on_screen": (1, 1, True),
+    "min_size_px": (1, 1, True),
+    "readable": (1, 1, False),
+}
+NOT_YET = {
+    "outside": 6,
+    "tangent_to": 6,
+    "attach_to": 6,
+    "visible_in_3d": 6,
+}
+PRIORITIES = ("required", "strong", "medium", "weak")
+LABEL_SUFFIX = "label"
+
+_TOKEN = re.compile(rf"\s*(?:(?P<num>-?\d+(?:\.\d+)?)|(?P<id>{ID_RE.pattern})|(?P<sym>[(),]))")
+
+
+class RuleError(ValueError):
+    pass
+
+
+@dataclass(frozen=True)
+class Relation:
+    kind: str
+    subject: str  # the object that moves
+    target: str  # the object it is placed against
+    gap: float | None = None
+
+    @property
+    def ids(self) -> tuple[str, ...]:
+        return (self.subject, self.target)
+
+
+@dataclass(frozen=True)
+class Guard:
+    kind: str
+    ids: tuple[str, ...]
+    value: float | None = None
+
+
+Clause = Relation | Guard
+
+
+def label_id(owner: str) -> str:
+    """The label of ``pole`` is the child object ``pole.label``; the id says who it labels."""
+    return f"{owner}.{LABEL_SUFFIX}"
+
+
+def normalize_rule(rule: str) -> str:
+    return " ".join(rule.split())
+
+
+def _tokens(rule: str) -> list[tuple[str, str]]:
+    out, pos = [], 0
+    while pos < len(rule):
+        if rule[pos:].strip() == "":
+            break
+        m = _TOKEN.match(rule, pos)
+        if not m:
+            raise RuleError(f"cannot read {rule[pos:].strip()[:12]!r} in constraint {rule!r}")
+        out.append((m.lastgroup, m.group(m.lastgroup)))
+        pos = m.end()
+    return out
+
+
+class _Parser:
+    def __init__(self, rule: str) -> None:
+        self.rule, self.toks, self.i = rule, _tokens(rule), 0
+
+    def fail(self, msg: str) -> RuleError:
+        return RuleError(f"{msg} in constraint {self.rule!r}")
+
+    def peek(self) -> tuple[str, str] | None:
+        return self.toks[self.i] if self.i < len(self.toks) else None
+
+    def take(self, kind: str | None = None, value: str | None = None) -> str:
+        tok = self.peek()
+        if tok is None or (kind and tok[0] != kind) or (value and tok[1] != value):
+            want = value or {"num": "a number", "id": "an object id", "sym": "a symbol"}[kind]
+            got = "the end" if tok is None else repr(tok[1])
+            raise self.fail(f"expected {want}, got {got}")
+        self.i += 1
+        return tok[1]
+
+    def at(self, value: str) -> bool:
+        return self.peek() is not None and self.peek()[1] == value
+
+    def ref(self) -> str:
+        name = self.take("id")
+        if name == LABEL_SUFFIX and self.at("("):
+            self.take("sym", "(")
+            owner = self.take("id")
+            self.take("sym", ")")
+            return label_id(owner)
+        return name
+
+    def clause(self) -> Clause:
+        tok = self.peek()
+        if tok and tok[0] == "id" and tok[1] in NOT_YET and self._call_follows():
+            raise self.fail(f"{tok[1]!r} arrives in Milestone {NOT_YET[tok[1]]}; not supported yet")
+        if tok and tok[0] == "id" and tok[1] in GUARDS and self._call_follows():
+            return self.guard()
+        subject = self.ref()
+        kind = self.take("id")
+        if kind in NOT_YET:
+            raise self.fail(f"{kind!r} arrives in Milestone {NOT_YET[kind]}; not supported yet")
+        if kind not in RELATIONS:
+            raise self.fail(f"unknown relation {kind!r} (use one of {sorted(RELATIONS)})")
+        target = self.ref()
+        gap = None
+        if self.at("gap"):
+            if not RELATIONS[kind]:
+                raise self.fail(f"{kind!r} takes no gap")
+            self.take("id", "gap")
+            gap = float(self.take("num"))
+            if gap < 0:
+                raise self.fail("gap must not be negative")
+        if subject == target:
+            raise self.fail(f"{subject!r} cannot be constrained against itself")
+        return Relation(kind, subject, target, gap)
+
+    def _call_follows(self) -> bool:
+        return self.i + 1 < len(self.toks) and self.toks[self.i + 1][1] == "("
+
+    def guard(self) -> Guard:
+        kind = self.take("id")
+        lo, hi, numbered = GUARDS[kind]
+        self.take("sym", "(")
+        ids: list[str] = []
+        value = None
+        while True:
+            tok = self.peek()
+            if tok and tok[0] == "num":
+                if not numbered:
+                    raise self.fail(f"{kind} takes no number")
+                value = float(self.take("num"))
+                self.take("sym", ")")
+                break
+            ids.append(self.ref())
+            if self.at(")"):
+                self.take("sym", ")")
+                break
+            self.take("sym", ",")
+        if len(ids) < lo or (hi is not None and len(ids) > hi) or len(set(ids)) != len(ids):
+            n = f"{lo}" if hi == lo else f"at least {lo}"
+            raise self.fail(f"{kind} needs {n} different object ids")
+        if kind == "min_size_px" and value is None:
+            raise self.fail("min_size_px needs a size, e.g. min_size_px(dot, 12)")
+        if value is not None and value < 0:
+            raise self.fail("the number must not be negative")
+        return Guard(kind, tuple(ids), value)
+
+
+def parse_rule(rule: str) -> tuple[Clause, ...]:
+    """Parse one rule into its clauses. Raises RuleError with the reason."""
+    p = _Parser(rule)
+    if not p.toks:
+        raise RuleError("empty constraint")
+    clauses = [p.clause()]
+    while p.peek() is not None:
+        p.take("id", "and")
+        clauses.append(p.clause())
+    return tuple(clauses)
+
+
+def rule_ids(rule: str) -> tuple[str, ...]:
+    """Every object id a rule mentions, in order of first appearance."""
+    seen: dict[str, None] = {}
+    for c in parse_rule(rule):
+        seen.update(dict.fromkeys(c.ids))
+    return tuple(seen)

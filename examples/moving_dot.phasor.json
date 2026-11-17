@@ -8,6 +8,7 @@
       }
     }
   ],
+  "constraints": [],
   "meta": {
     "color_space": "srgb",
     "duration": null,
@@ -94,7 +95,7 @@
       "type": "dot"
     }
   ],
-  "schema_version": 1,
+  "schema_version": 2,
   "timeline": {
     "camera": "camera",
     "markers": {

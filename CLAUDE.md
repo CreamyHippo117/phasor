@@ -5,7 +5,7 @@ compounding. If this file and SPEC.md disagree, stop and ask.
 
 ## Where we are
 
-- Current milestone: **1 built (awaiting boundary review and Windows check), 2 next**. See `MILESTONE_*.md` for what is built and deferred.
+- Current milestone: **2 built (awaiting boundary review, Windows check and owner decisions in ADR 0001/0002), 3 next**. See `MILESTONE_*.md` for what is built and deferred.
 - One milestone per branch. No work on milestone N+1 until N's exit demo and tests pass.
 - Before declaring a milestone done, run the `phasor-milestone-gate` skill.
 
@@ -55,6 +55,13 @@ compounding. If this file and SPEC.md disagree, stop and ask.
   and makes it current per render. Creating GL objects outside `with ctx:` corrupts state.
 - Golden stills live in `tests/golden/<software|gpu>/`; regenerate with
   `PHASOR_UPDATE_GOLDEN=1 uv run pytest -k golden` and look at them before committing.
+- Layout runs only inside `layout/bake.py`, and only `Engine` runs or applies the bake.
+  Anything that draws or inspects takes `Engine.state_at(t)`, never `time.compile.evaluate`.
+- A lint rule lives in `inspect/lint.py`, takes its threshold from the theme's `[lint]` table,
+  reports `times`, and offers a `fix` only when the fix is certain to be right.
+- New lint rules and layout features are tested with `passes=None` and with OpenGL (see
+  `MODES` in `tests/test_lint.py`); CI on Windows has no OpenGL.
+- GL queries (even `ctx.info`) must run inside `with ctx:`.
 - When a test and the code disagree, work out which one is wrong before changing either.
   In Milestone 1 it was the test about as often as the code.
 

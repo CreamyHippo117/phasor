@@ -49,6 +49,16 @@ def _offenders(pattern: str, allowed: set[str]) -> list[str]:
             {"core/color.py", "render/output.py"},
         ),
         (
+            "contract 7: one linear solver, and layout is solved only inside the bake",
+            r"\bkiwisolver\b|\bsolver\.solve\(|\blabels\.place\(",
+            {"layout/solver.py", "layout/bake.py"},
+        ),
+        (
+            "contract 7: renderers and inspector read the bake; only Engine runs or applies it",
+            r"(?<![\w.])bake\(|\bbaked_state\(",
+            {"layout/bake.py", "engine.py"},
+        ),
+        (
             "expressions are compiled from a whitelist, never evaluated as Python",
             r"(?<![\w.])(eval|exec)\(",
             set(),

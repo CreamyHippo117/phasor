@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import functools
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +27,12 @@ ROLE_GROUPS: dict[str, tuple[str, ...]] = {
 _SECTION = {"emphasis": "palette", "stroke": "stroke", "text": "text"}
 
 
+_TABLES = {
+    "layout": ("gap", "margin", "leader"),
+    "lint": ("overlap", "contrast", "tiny", "text_min", "clutter", "crowded"),
+}
+
+
 class ThemeError(ValueError):
     pass
 
@@ -36,6 +42,8 @@ class Theme:
     name: str
     background: tuple[float, float, float, float]
     values: dict[str, dict[str, Any]]  # group -> role -> resolved value
+    layout: dict[str, float] = field(default_factory=dict)  # fractions of the frame height
+    lint: dict[str, float] = field(default_factory=dict)  # linter thresholds
 
     def resolve(self, group: str, role: str) -> Any:
         if role not in ROLE_GROUPS.get(group, ()):
@@ -64,4 +72,11 @@ def load_theme(name: str) -> Theme:
             raise ThemeError(f"theme {name!r} is missing [{section}] roles {missing}")
         convert = hex_to_linear if group == "emphasis" else float
         values[group] = {r: convert(data[r]) for r in ROLE_GROUPS[group]}
-    return Theme(name, hex_to_linear(raw["palette"]["background"]), values)
+    extra = {}
+    for section, required in _TABLES.items():
+        data = raw.get(section, {})
+        missing = [k for k in required if k not in data]
+        if missing:
+            raise ThemeError(f"theme {name!r} is missing [{section}] keys {missing}")
+        extra[section] = {k: float(v) for k, v in data.items()}
+    return Theme(name, hex_to_linear(raw["palette"]["background"]), values, **extra)

@@ -120,12 +120,20 @@ class Text(ObjectBase):
     """One line of text facing the camera, sized by a text role."""
 
     type: ClassVar[str] = "text"
-    Style: ClassVar = {"color": ("emphasis", "primary"), "size": ("text", "label")}
+    Style: ClassVar = {
+        "color": ("emphasis", "primary"),
+        "size": ("text", "label"),
+        "leader": ("stroke", "hairline"),
+    }
 
     class Params(ParamsBase):
         text: str = Field(min_length=1)
         pos: Vec3 = (0.0, 0.0, 0.0)
         anchor: Literal["center", "left", "right"] = "center"
+        # Leader line from the text box to ``leader``, drawn with strength ``leader_on``.
+        # The label placer sets both when it has to move a label away from what it names.
+        leader: Vec3 = (0.0, 0.0, 0.0)
+        leader_on: float = Field(0.0, ge=0, le=1)
 
     def _box(self, state: SceneState):
         """(lower-left corner, width vector, height vector, line height) in world space."""
@@ -149,5 +157,24 @@ class Text(ObjectBase):
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
         me = self.me(state)
         p = me.params
-        ctx.text(p.text, np.asarray(p.pos), self._box(state)[3],
-                 color=_rgba(me.style["color"], p.opacity), anchor=p.anchor)  # fmt: skip
+        corner, wv, hv, h = self._box(state)
+        color = _rgba(me.style["color"], p.opacity)
+        ctx.text(p.text, np.asarray(p.pos), h, color=color, anchor=p.anchor)
+        if p.leader_on > 0:
+            cam = state.camera_for(me)
+            target = np.asarray(p.leader)
+            # Start at the point of the text box nearest the target, a little outside it.
+            rel = target - corner
+            u = np.clip(rel @ wv / (wv @ wv), 0, 1)
+            v = np.clip(rel @ hv / (hv @ hv), 0, 1)
+            start = corner + u * wv + v * hv
+            along = target - start
+            length = float(np.linalg.norm(along))
+            if length > 1e-9:
+                along /= length
+                start = start + along * min(0.15 * h, length / 2)
+                side = np.cross(cam.forward, along)
+                half = side * (me.style["leader"] * cam.units_per_height() / 2)
+                quad = np.array([start - half, start + half, target + half, target - half])
+                ctx.triangles(quad, np.array([[0, 1, 2], [0, 2, 3]]),
+                              color=_rgba(color, p.leader_on))  # fmt: skip

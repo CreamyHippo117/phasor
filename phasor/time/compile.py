@@ -8,6 +8,7 @@ finds. ``evaluate`` is then a pure function of (compiled document, t).
 from __future__ import annotations
 
 import functools
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Annotated, Any
@@ -230,14 +231,22 @@ def compile_document(doc: Document) -> Compiled:
     return compiled
 
 
-def evaluate(c: Compiled, t: float) -> SceneState:
-    """Pure: depends only on (compiled document, t)."""
+def evaluate(c: Compiled, t: float, replace: Mapping[str, Any] | None = None) -> SceneState:
+    """Pure: depends only on (compiled document, t).
+
+    ``replace`` maps parameter paths to values that stand in for the document's own; the
+    layout bake uses it to put solved positions in, and expressions that read those
+    parameters see the solved values.
+    """
     t = float(t)
     env: dict[str, Any] = {}
+    replace = replace or {}
     for path in c.order:
         node = c.nodes[path]
         try:
-            if isinstance(node, Const):
+            if path in replace:
+                env[path] = replace[path]
+            elif isinstance(node, Const):
                 env[path] = node.value
             elif isinstance(node, ResolvedTrack):
                 env[path] = node.value_at(t)

@@ -13,8 +13,6 @@ import sys
 
 # command -> (milestone, help)
 PLANNED = {
-    "lint": (2, "run the linter at sampled times and every marker"),
-    "storyboard": (2, "keyframe stills + contact sheet + inspector JSON"),
     "render": (3, "final render with a preset"),
     "bench": (3, "ms per frame per kernel and peak VRAM"),
     "mcp": (5, "MCP server for AI clients"),
@@ -23,6 +21,7 @@ PLANNED = {
 
 EXIT_NOT_IMPLEMENTED = 2
 EXIT_TIER_TOO_LOW = 1
+EXIT_LINT_FAILED = 1
 
 
 def _cmd_doctor(args: argparse.Namespace) -> int:
@@ -59,6 +58,71 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_lint(args: argparse.Namespace) -> int:
+    from phasor.core.issues import DocumentError
+    from phasor.scene import load
+
+    try:
+        engine = load(args.scene)
+        fixed = engine.autofix()["applied"] if args.fix else []
+        issues = engine.lint(step=args.step)
+        if fixed:
+            # A script keeps its fixes in name.overrides.json; a document is rewritten.
+            engine.save(_save_target(args.scene))
+    except (DocumentError, OSError, ValueError) as e:
+        print(f"phasor lint: {e}", file=sys.stderr)
+        return EXIT_LINT_FAILED
+    errors = [i for i in issues if i.severity == "error"]
+    if args.json:
+        print(json.dumps({"fixed": fixed, "issues": [i.to_dict() for i in issues]}, indent=2))
+    else:
+        for op in fixed:
+            print(f"fixed: {op['op']} {op.get('rule', '')}".rstrip())
+        for i in issues:
+            print(f"{i.severity}: {i}")
+            if i.fix_hint:
+                print(f"    hint: {i.fix_hint}")
+        print(f"{len(errors)} error(s), {len(issues) - len(errors)} warning(s)")
+    return EXIT_LINT_FAILED if errors or (args.strict and issues) else 0
+
+
+def _save_target(scene: str):
+    """Where ``lint --fix`` saves: the document itself, or a script's document beside it
+    (which writes only the overrides file's sibling; the script is never edited)."""
+    from pathlib import Path
+
+    from phasor.core import io
+
+    p = Path(scene)
+    return p if p.suffix != ".py" else p.with_name(p.stem + io.DOC_SUFFIX)
+
+
+def _cmd_storyboard(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from phasor.core.issues import DocumentError
+    from phasor.scene import load
+
+    try:
+        engine = load(args.scene)
+        board = engine.storyboard(args.t or None, marks=args.marks, columns=args.columns)
+        from phasor.render.output import save_png
+
+        out = Path(args.out or Path(args.scene).name.split(".")[0] + ".storyboard.png")
+        save_png(out, board["image"])
+    except (DocumentError, OSError, ValueError, RuntimeError) as e:
+        print(f"phasor storyboard: {e}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps({"image": str(out), "frames": board["frames"]}, indent=2))
+    else:
+        print(f"wrote {out}")
+        for fr in board["frames"]:
+            name = f" [{fr['marker']}]" if fr["marker"] else ""
+            print(f"t={fr['t']:g}{name}", *fr["objects"], sep="\n  ")
+    return 0
+
+
 def _planned(name: str, milestone: int):
     def run(_: argparse.Namespace) -> int:
         print(f"phasor {name}: not implemented yet (Milestone {milestone})", file=sys.stderr)
@@ -89,6 +153,23 @@ def build_parser() -> argparse.ArgumentParser:
     i.add_argument("--id", help="only this object")
     i.add_argument("--detail", choices=["brief", "standard", "full"], default="standard")
     i.set_defaults(func=_cmd_inspect)
+
+    li = sub.add_parser("lint", help="find visual problems at every marker and sampled times")
+    li.add_argument("scene", help="a .phasor.json document or a .py script that builds a Scene")
+    li.add_argument("--fix", action="store_true", help="apply the fixes the linter suggests")
+    li.add_argument("--strict", action="store_true", help="exit 1 on warnings too")
+    li.add_argument("--json", action="store_true", help="machine-readable output")
+    li.add_argument("--step", type=float, default=0.5, help="seconds between samples")
+    li.set_defaults(func=_cmd_lint)
+
+    sb = sub.add_parser("storyboard", help="keyframe stills on one contact sheet + inspector")
+    sb.add_argument("scene", help="a .phasor.json document or a .py script that builds a Scene")
+    sb.add_argument("-o", "--out", help="output PNG (default: <scene>.storyboard.png)")
+    sb.add_argument("--t", type=float, action="append", help="a time to show (repeatable)")
+    sb.add_argument("--marks", action="store_true", help="draw each object's box and id")
+    sb.add_argument("--columns", type=int, default=3)
+    sb.add_argument("--json", action="store_true", help="machine-readable output")
+    sb.set_defaults(func=_cmd_storyboard)
 
     for name, (milestone, help_) in PLANNED.items():
         sp = sub.add_parser(name, help=f"{help_} (Milestone {milestone})")

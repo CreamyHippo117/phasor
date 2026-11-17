@@ -317,8 +317,7 @@ def test_golden_stills(demo, t):
     from phasor.render.output import save_png
     from tests.ssim import ssim
 
-    renderer = str(demo.pass_runner().ctx.info["GL_RENDERER"]).lower()
-    klass = "software" if "llvmpipe" in renderer else "gpu"
+    klass = demo.pass_runner().renderer_class()
     path = GOLDEN / klass / f"moving_dot_{t:.1f}.png"
     still = demo.still(t, (480, 270))
     if os.environ.get("PHASOR_UPDATE_GOLDEN"):

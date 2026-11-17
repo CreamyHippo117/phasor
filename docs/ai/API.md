@@ -32,7 +32,7 @@ s.set("camera.height", 6)  # world units visible top to bottom
 | --- | --- | --- |
 | `Dot` | `pos`, `r` (world radius, default 0.1) | `color` (emphasis, primary) |
 | `Line` | `points` (2 or more) | `color` (emphasis, primary), `stroke` (stroke, regular) |
-| `Text` | `text`, `pos`, `anchor` (`center`/`left`/`right`) | `color` (emphasis, primary), `size` (text, label) |
+| `Text` | `text`, `pos`, `anchor` (`center`/`left`/`right`), `leader`, `leader_on` (set by layout) | `color` (emphasis, primary), `size` (text, label), `leader` (stroke, hairline) |
 
 Every type also has `opacity` (0-1; below 0.5 it stops hiding things behind it) and
 `z_index` (higher draws on top among objects at the same depth). Every object takes
@@ -95,10 +95,94 @@ lint_added, lint_resolved)`. Each error has `code`, `message`, `ids`, `path`, `f
 | `clear_track` | `path` |
 | `set_marker` / `remove_marker` | `name`, `t` |
 | `set_meta` | `field`, `value` |
+| `add_constraint` | `rule`, `priority` (`required`/`strong`/`medium`/`weak`, default `strong`) |
+| `remove_constraint` | `rule` |
 
-On a scene built by a script, `set_param` and `set_style` are stored as tweaks in
-`name.overrides.json` and survive re-running the script; other ops are refused with
-`scripted_scene` (change the script instead).
+On a scene built by a script, `set_param`, `set_style` and `add_constraint` are stored as
+tweaks in `name.overrides.json` and survive re-running the script; other ops are refused
+with `scripted_scene` (change the script instead).
+
+`lint_added` and `lint_resolved` are worked out when you first read them (or call
+`to_dict()`), so building a scene stays fast.
+
+## Layout constraints: say where things go, not coordinates
+
+```python
+from phasor import Dot, Scene, Text
+
+s2 = Scene("layout")
+s2.add(Dot(id="pole", pos=(-2, 0), r=0.2, tags=["key"]))
+s2.add(Text(id="pole.label", text="pole"))  # the label of X is the child object X.label
+s2.add(Text(id="title", text="Residues", pos=(0, 3), style={"size": "title"}))
+s2.constrain("label(pole) near pole")  # the placer picks a free spot and keeps it there
+s2.constrain("on_screen(title)")
+s2.at(0).to("pole.pos", (2, 1), duration=2)
+
+assert s2.engine.layout.slots["pole.label"][0] == "n"  # sits above, and follows the pole
+assert s2.engine.lint() == []
+```
+
+A rule is `SUBJECT RELATION TARGET [gap N]`, or a guard `NAME(...)`; join several with `and`.
+The subject is what moves; it needs a `pos` parameter that is not an expression.
+
+| Rule | Meaning |
+| --- | --- |
+| `a above b`, `below`, `left_of`, `right_of` (`gap N` optional) | touch that side, centered on it |
+| `a near b` (`gap N` optional) | label placer: 8 slots around `b` plus 8 leader-line slots further out |
+| `a align_x b`, `a align_y b` | same x (stacked) or same y (side by side) |
+| `a inside b` | `a`'s box within `b`'s box |
+| `on_screen(a)` or `on_screen(a, margin)` | keep `a` inside the frame (moves it when it can) |
+| `no_overlap(a, b, ...)`, `min_size_px(a, n)`, `readable(a)` | checked by the linter |
+
+- `label(x)` means the object `x.label`. Numbers are in the object's layer units.
+- Layout is solved at every marker, every transition end and 10 times a second, then baked.
+  `engine.state_at(t)`, the inspector and the renderer all read the same bake.
+- A label changes slot only when another slot is over 20% better, and then it jumps.
+- `engine.layout` shows the bake: `times`, `slots` (per label, per key time), `issues`.
+- A rule that cannot hold is a lint error `unsolved`, with the times. Nothing is dropped.
+- `outside`, `tangent_to`, `attach_to`, `visible_in_3d` arrive with 3D (Milestone 6).
+
+## Lint: find problems before rendering
+
+```python
+s2.add(Text(id="note", text="note", pos=(-2, 0.1)))  # dropped right on top of the pole
+issues = s2.engine.lint()
+assert [(i.code, i.ids) for i in issues] == [("overlap", ("note", "pole"))]
+assert issues[0].severity == "warning" and issues[0].times and issues[0].fix_hint
+assert s2.engine.apply({"op": "set_param", "path": "note.pos", "value": [-4, -2]}).ok
+assert s2.engine.lint() == []
+```
+
+`engine.lint()` checks every marker, every transition end and every 0.5 s (`step=`).
+Each issue has `code`, `severity`, `message`, `ids`, `times`, `fix_hint`, and `fix` (patch ops).
+
+| Code | Severity | Means |
+| --- | --- | --- |
+| `overlap` | warning | a label, or an object tagged `key`, overlaps something |
+| `offscreen` | warning | a label or key object is cut by the frame |
+| `contrast` | warning | text too close in brightness to what is behind it |
+| `tiny` | warning | an object or text too small to read |
+| `orphan` | warning | an object that never appears |
+| `clutter` | warning | too many objects change at once in one block (between two markers) |
+| `unsolved` | error | a constraint or guard does not hold |
+| `orphan_override` | error | a tweak whose object is gone |
+
+`engine.autofix()` applies every `fix` the linter offers (add `near` for a child label that
+overlaps, `on_screen` for something cut by the frame), lints again, and returns
+`{"applied": [...], "remaining": [...]}`. Each round is one undo step. Thresholds live in
+the theme's `[lint]` table.
+
+## Storyboards: look at the whole scene at once
+
+```python no-run
+# no-run: needs OpenGL 4.3
+board = engine.storyboard(marks=True)  # start, every marker, end; or pass a list of times
+save_png("out/board.png", board["image"])  # one contact sheet, captions show time and marker
+board["frames"]  # [{"t", "marker", "objects": brief inspector lines}]
+```
+
+`marks=True` draws each object's box and id on the stills, so a vision model can tie what it
+sees to object ids.
 
 ## Inspect: see what is on screen
 
@@ -145,7 +229,8 @@ engine = load("residues.phasor.json")  # or load("residues.py")
 | --- | --- | --- |
 | `phasor doctor [--json] [--require A\|B\|C]` | M0 | Prove CUDA, NVRTC, OpenGL 4.3, encoders; print tier |
 | `phasor inspect SCENE [--t T] [--id ID] [--detail brief\|standard\|full]` | M1 | What is on screen at time t |
-| `phasor lint` / `phasor storyboard` | M2 | Linter and keyframe contact sheet |
+| `phasor lint SCENE [--fix] [--strict] [--json] [--step S]` | M2 | Lint; exit 1 on errors (`--strict`: on warnings too). `--fix` applies suggested fixes and saves them |
+| `phasor storyboard SCENE [-o PNG] [--t T]... [--marks] [--json]` | M2 | Keyframe contact sheet plus what the inspector sees |
 | `phasor render` / `phasor bench` | M3 | Final render, kernel benchmarks |
 | `phasor mcp` | M5 | MCP server |
 | `phasor gui` | M10 | Editor |

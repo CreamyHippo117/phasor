@@ -1,0 +1,344 @@
+"""The linter: visual problems found before anyone renders (SPEC "Linter").
+
+It looks at the baked scene at sampled times plus every marker, through the inspector, and
+returns one issue per problem with the times it was seen. Rules in this milestone:
+
+| code      | severity | catches                                                        |
+| overlap   | warning  | a label, or an object tagged ``key``, overlapping something    |
+| offscreen | warning  | a label or key object cut by the frame                         |
+| contrast  | warning  | text too close in brightness to what is behind it              |
+| tiny      | warning  | objects or text too small to read                              |
+| orphan    | warning  | an object that never appears                                   |
+| clutter   | warning  | too many objects changing at once in one block                 |
+| unsolved  | error    | a constraint that does not hold (from the bake, or a guard)    |
+
+Thresholds come from the theme's ``[lint]`` table.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from typing import Any
+
+import numpy as np
+
+from phasor.core.color import contrast_ratio, over
+from phasor.core.constraints import LABEL_SUFFIX
+from phasor.core.ids import parent_of
+from phasor.core.issues import Issue
+from phasor.core.state import SceneState
+from phasor.inspect.passes import PassRunner, inspect_size
+from phasor.layout.geometry import footprint, view_of
+from phasor.layout.plan import MOVE_PARAM, Plan
+from phasor.time.compile import Compiled, CompiledExpr
+from phasor.time.tracks import ResolvedTrack
+
+DEFAULT_STEP = 0.5  # seconds between lint samples
+FAINT = 0.05  # objects at or below this opacity are treated as not shown
+CONTAINED = 0.98  # a label this much inside a shape is "on" it, not overlapping it
+MAX_TIMES = 12
+
+
+def sample_times(c: Compiled, step: float = DEFAULT_STEP) -> tuple[float, ...]:
+    """Every marker, both ends, the ends of every transition, and a grid ``step`` apart."""
+    end = c.duration
+    ts = {0.0, end, *c.time_map.markers.values()}
+    for node in c.nodes.values():
+        if isinstance(node, ResolvedTrack):
+            ts.update(s.t1 for s in node.segments)
+    ts.update(np.arange(0.0, end + 1e-9, step).tolist())
+    return tuple(sorted({round(t, 6) for t in ts if 0.0 <= t <= end}))
+
+
+def _is_label(e: dict[str, Any]) -> bool:
+    return e["semantic"].get("kind") == "label"
+
+
+def _shown(e: dict[str, Any]) -> bool:
+    return e["opacity"] > FAINT and e["on_screen_fraction"] > 0
+
+
+def _area(b) -> float:
+    return max(b[2] - b[0], 0.0) * max(b[3] - b[1], 0.0)
+
+
+def _box_overlap(a, b) -> float:
+    w = min(a[2], b[2]) - max(a[0], b[0])
+    h = min(a[3], b[3]) - max(a[1], b[1])
+    return w * h if w > 0 and h > 0 else 0.0
+
+
+class _Frame:
+    """One sampled time: the state, its inspector entries, and overlap measurements."""
+
+    def __init__(self, state: SceneState, snap: dict[str, Any], runner: PassRunner | None):
+        self.state, self.runner = state, runner
+        self.entries = {e["id"]: e for e in snap["objects"]}
+        self.size = inspect_size(state)
+        self._masks: dict[str, np.ndarray] = {}
+
+    def box(self, object_id: str):
+        return self.entries[object_id]["bbox"]["px"]
+
+    def _mask(self, object_id: str) -> np.ndarray | None:
+        """The object's silhouette at inspector resolution. None for a label: text is judged
+        by its whole box, because anything crossing the box hurts reading."""
+        if _is_label(self.entries[object_id]):
+            return None
+        if object_id not in self._masks:
+            self._masks[object_id] = (
+                self.runner.solo_mask(self.state, self.size, object_id)
+                if self.runner is not None
+                else footprint(self.state, self.state[object_id], self.size)
+            )
+        return self._masks[object_id]
+
+    def _rect(self, box) -> tuple[slice, slice]:
+        sx, sy = self.size[0] / self.state.width, self.size[1] / self.state.height
+        x0, x1 = int(np.floor(box[0] * sx)), int(np.ceil(box[2] * sx))
+        y0, y1 = int(np.floor(box[1] * sy)), int(np.ceil(box[3] * sy))
+        w, h = self.size
+        return (slice(min(max(y0, 0), h), min(max(y1, 0), h)),
+                slice(min(max(x0, 0), w), min(max(x1, 0), w)))  # fmt: skip
+
+    def covered(self, label_id: str, other_id: str) -> float:
+        """Share of ``label_id``'s box covered by ``other_id``."""
+        a, b = self.box(label_id), self.box(other_id)
+        if _box_overlap(a, b) <= 0:
+            return 0.0
+        mask = self._mask(other_id)
+        if mask is None:
+            return _box_overlap(a, b) / max(_area(a), 1e-9)
+        cut = mask[self._rect(a)]
+        return float(cut.mean()) if cut.size else 0.0
+
+    def shared(self, a_id: str, b_id: str) -> float:
+        """Overlap of two objects as a share of the smaller one."""
+        a, b = self.box(a_id), self.box(b_id)
+        if _box_overlap(a, b) <= 0:
+            return 0.0
+        ma, mb = self._mask(a_id), self._mask(b_id)
+        if ma is None and mb is None:
+            return _box_overlap(a, b) / max(min(_area(a), _area(b)), 1e-9)
+        if ma is None:
+            return self.covered(a_id, b_id)
+        if mb is None:
+            return self.covered(b_id, a_id)
+        smaller = min(int(ma.sum()), int(mb.sum()))
+        return float((ma & mb).sum() / smaller) if smaller else 0.0
+
+    def contrast(self, label_id: str) -> float:
+        """Contrast of a label against the background and any shape it mostly sits on."""
+        me = self.state[label_id]
+        bg = self.state.background
+        for obj in self.state.draw_order():
+            if obj.id == label_id:
+                break
+            on_it = obj.params.opacity > FAINT and "color" in obj.style
+            if on_it and self.covered(label_id, obj.id) > 0.5:
+                c = obj.style["color"]
+                bg = over((*c[:3], c[3] * obj.params.opacity), bg)
+        c = me.style["color"]
+        return contrast_ratio(over((*c[:3], c[3] * me.params.opacity), bg), bg)
+
+
+class _Findings:
+    def __init__(self) -> None:
+        self.found: dict[tuple, dict[str, Any]] = {}
+
+    def add(self, code: str, ids: tuple[str, ...], t: float, **info: Any) -> None:
+        entry = self.found.setdefault((code, ids, info.get("path")), {"times": [], **info})
+        entry["times"].append(t)
+
+    def issues(self, make: Callable[..., Issue]) -> list[Issue]:
+        return [make(code, ids, **info) for (code, ids, _), info in sorted(self.found.items(),
+                key=lambda kv: (kv[0][0], kv[0][1], kv[0][2] or ""))]  # fmt: skip
+
+
+def _when(times: list[float]) -> str:
+    shown = ", ".join(f"{t:g}" for t in times[:MAX_TIMES])
+    more = f" and {len(times) - MAX_TIMES} more" if len(times) > MAX_TIMES else ""
+    return f"at t = {shown}{more} s"
+
+
+def _movable(c: Compiled, object_id: str) -> bool:
+    node = c.nodes.get(f"{object_id}.{MOVE_PARAM}")
+    return node is not None and not isinstance(node, CompiledExpr)
+
+
+def _near_fix(c: Compiled, plan: Plan, label_id: str) -> tuple[dict[str, Any], ...]:
+    owner = parent_of(label_id)
+    if (
+        owner is None
+        or not label_id.endswith(f".{LABEL_SUFFIX}")
+        or label_id in plan.moving
+        or not _movable(c, label_id)
+    ):
+        return ()
+    return ({"op": "add_constraint", "rule": f"label({owner}) near {owner}"},)
+
+
+def clutter(c: Compiled) -> list[Issue]:
+    """Too many objects changing at once inside one block (the span between two markers)."""
+    limit = c.theme.lint["clutter"]
+    object_ids = {o.id for o in c.objects}
+    spans = []  # (t0, t1, object id)
+    for path, node in c.nodes.items():
+        owner = path.rpartition(".")[0]
+        if isinstance(node, ResolvedTrack) and owner in object_ids:
+            spans += [(s.t0, s.t1, owner) for s in node.segments]
+    edges = sorted({0.0, c.duration, *c.time_map.markers.values()})
+    names = {t: n for n, t in sorted(c.time_map.markers.items(), reverse=True)}
+    out = []
+    for a, b in zip(edges, [*edges[1:], float("inf")], strict=True):
+        worst: tuple[int, float, tuple[str, ...]] = (0, 0.0, ())
+        for start in sorted({s[0] for s in spans if a <= s[0] < b}):
+            busy = tuple(sorted({o for t0, t1, o in spans if t0 <= start < max(t1, t0 + 1e-9)}))
+            if len(busy) > worst[0]:
+                worst = (len(busy), start, busy)
+        if worst[0] > limit:
+            block = f"starting at {names[a]!r}" if a in names else f"from {a:g} s"
+            block = f"the block {block}"
+            out.append(Issue(
+                "clutter", f"{worst[0]} objects change at once at t = {worst[1]:g} s in {block} "
+                f"(limit {limit:g})", severity="warning", ids=worst[2], times=(worst[1],),
+                fix_hint="stagger the transitions or split the block with another marker",
+            ))  # fmt: skip
+    return out
+
+
+def run(
+    c: Compiled,
+    plan: Plan,
+    state_at: Callable[[float], SceneState],
+    snapshot_at: Callable[[float], dict[str, Any]],
+    runner: PassRunner | None,
+    *,
+    step: float = DEFAULT_STEP,
+) -> list[Issue]:
+    """Every visual lint issue for the scene. ``state_at``/``snapshot_at`` give the baked
+    scene, so the linter judges exactly what will render."""
+    th = c.theme.lint
+    f = _Findings()
+    ever_shown: set[str] = set()
+    solved_on_screen = {g.ids[0] for _, g in plan.guards("on_screen")} & plan.solved
+
+    for t in sample_times(c, step):
+        state = state_at(t)
+        fr = _Frame(state, snapshot_at(t), runner)
+        height = state.height
+        shown = [e for e in fr.entries.values() if _shown(e)]
+        ever_shown.update(e["id"] for e in shown)
+        labels = [e for e in shown if _is_label(e)]
+
+        seen_pairs = set()
+        for a in shown:
+            if not (_is_label(a) or "key" in a["tags"]):
+                continue
+            for b in shown:
+                pair = tuple(sorted((a["id"], b["id"])))
+                if a is b or pair in seen_pairs:
+                    continue
+                if _is_label(a) and not _is_label(b):
+                    share = fr.covered(a["id"], b["id"])
+                elif _is_label(b) and not _is_label(a):
+                    share = fr.covered(b["id"], a["id"])
+                elif _is_label(a) or "key" in b["tags"]:
+                    share = fr.shared(a["id"], b["id"])
+                else:
+                    continue
+                if th["overlap"] < share:
+                    seen_pairs.add(pair)
+                    if share <= CONTAINED or (_is_label(a) and _is_label(b)):
+                        f.add("overlap", pair, t)
+
+        for e in shown:
+            important = _is_label(e) or "key" in e["tags"]
+            if important and e["on_screen_fraction"] < 0.999:
+                f.add("offscreen", (e["id"],), t)
+            x0, y0, x1, y1 = e["bbox"]["px"]
+            if _is_label(e):
+                if (y1 - y0) < th["text_min"] * height:
+                    f.add("tiny", (e["id"],), t, px=y1 - y0, what="text")
+            elif max(x1 - x0, y1 - y0) < th["tiny"] * height:
+                f.add("tiny", (e["id"],), t, px=max(x1 - x0, y1 - y0), what="object")
+        for e in labels:
+            ratio = fr.contrast(e["id"])
+            if ratio < th["contrast"]:
+                f.add("contrast", (e["id"],), t, ratio=ratio)
+
+        # Guards: explicit demands. Breaking one is an error, reported as "unsolved".
+        for rule, g in plan.guards():
+            es = [fr.entries[i] for i in g.ids]
+            if any(e["opacity"] <= FAINT for e in es):
+                continue
+            if g.kind == "no_overlap":
+                for i, a in enumerate(g.ids):
+                    for b in g.ids[i + 1 :]:
+                        if fr.shared(a, b) > th["overlap"]:
+                            f.add("unsolved", (a, b), t, path=rule.path, rule=rule.spec.rule,
+                                  why=f"{a!r} and {b!r} overlap")  # fmt: skip
+            elif g.kind == "on_screen" and g.ids[0] not in solved_on_screen:
+                unit = view_of(state, state[g.ids[0]]).units_per_height
+                m = (c.theme.layout["margin"] if g.value is None else g.value / unit) * height
+                x0, y0, x1, y1 = es[0]["bbox"]["px"]
+                if min(x0, y0, state.width - x1, height - y1) < m - 0.5:
+                    f.add("unsolved", g.ids, t, path=rule.path, rule=rule.spec.rule,
+                          why=f"{g.ids[0]!r} crosses the frame margin")  # fmt: skip
+            elif g.kind == "min_size_px":
+                x0, y0, x1, y1 = es[0]["bbox"]["px"]
+                if max(x1 - x0, y1 - y0) < g.value - 0.5:
+                    side = max(x1 - x0, y1 - y0)
+                    f.add("unsolved", g.ids, t, path=rule.path, rule=rule.spec.rule,
+                          why=f"{g.ids[0]!r} is {side:.0f} px, under {g.value:g}")  # fmt: skip
+            elif g.kind == "readable" and "color" in state[g.ids[0]].style:
+                ratio = fr.contrast(g.ids[0])
+                if ratio < th["contrast"]:
+                    f.add("unsolved", g.ids, t, path=rule.path, rule=rule.spec.rule,
+                          why=f"{g.ids[0]!r} has contrast {ratio:.1f} (minimum "
+                          f"{th['contrast']:g})")  # fmt: skip
+
+    def make(code: str, ids: tuple[str, ...], times: list[float], **info: Any) -> Issue:
+        when, ts = _when(times), tuple(times)
+        if code == "overlap":
+            fix = tuple(op for i in ids for op in _near_fix(c, plan, i))
+            stuck = [i for i in ids if i in plan.placed]
+            hint = (
+                "apply the suggested fix (a 'near' constraint lets the placer find free space)"
+                if fix else
+                f"the placer found no free slot for {stuck[0]!r}; move or shrink a neighbor"
+                if stuck else
+                "move one of them, or name the label '<owner>.label' and add the constraint "
+                "'label(<owner>) near <owner>'"
+            )  # fmt: skip
+            return Issue(code, f"{ids[0]!r} and {ids[1]!r} overlap {when}", "warning", ids,
+                         fix_hint=hint, times=ts, fix=fix)  # fmt: skip
+        if code == "offscreen":
+            (i,) = ids
+            can = _movable(c, i) and i not in plan.moving
+            fix = ({"op": "add_constraint", "rule": f"on_screen({i})"},) if can else ()
+            hint = "apply the suggested fix (on_screen)" if fix else "move it inward"
+            return Issue(code, f"{i!r} is cut by the frame {when}", "warning", ids,
+                         fix_hint=hint, times=ts, fix=fix)  # fmt: skip
+        if code == "contrast":
+            return Issue(code, f"{ids[0]!r} has contrast {info['ratio']:.1f} against what is "
+                         f"behind it (minimum {th['contrast']:g}) {when}", "warning", ids,
+                         fix_hint="use a brighter color role such as 'primary' or 'highlight', "
+                         "raise its opacity, or move it", times=ts)  # fmt: skip
+        if code == "tiny":
+            return Issue(code, f"{info['what']} {ids[0]!r} is only {info['px']:.0f} px "
+                         f"{when}", "warning", ids,
+                         fix_hint="use a larger size role, or zoom in", times=ts)  # fmt: skip
+        return Issue("unsolved", f"constraint {info['rule']!r} does not hold: {info['why']} "
+                     f"{when}", "error", ids, path=info["path"], times=ts,
+                     fix_hint="make room, or change the rule")  # fmt: skip
+
+    issues = f.issues(make)
+    for o in c.objects:
+        if o.id not in ever_shown:
+            issues.append(Issue(
+                "orphan", f"{o.id!r} never appears: it is invisible or off screen at every "
+                "sampled time", "warning", (o.id,),
+                fix_hint="animate its opacity or position into view, or remove it",
+            ))  # fmt: skip
+    return issues + clutter(c)

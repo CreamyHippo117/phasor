@@ -3,7 +3,7 @@
 GPU-rendered math animations that an AI can see, check and fix. Working name.
 
 Design: [SPEC.md](SPEC.md). Rules for contributors and agents: [CLAUDE.md](CLAUDE.md).
-Status: Milestone 1 (core + inspector). See [MILESTONE_1.md](MILESTONE_1.md).
+Status: Milestone 2 (layout + linter). See [MILESTONE_2.md](MILESTONE_2.md).
 API for humans and agents: [docs/ai/API.md](docs/ai/API.md).
 
 ```bash

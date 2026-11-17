@@ -12,7 +12,7 @@ from typing import Any
 
 from phasor.core import io
 from phasor.core.objects import ObjectBase
-from phasor.core.patch import AddObject, AddSegment, SetMarker, SetParam
+from phasor.core.patch import AddConstraint, AddObject, AddSegment, SetMarker, SetParam
 from phasor.core.schema import Document, ExprSpec, MarkerRef, Meta, Segment
 from phasor.engine import Engine
 
@@ -69,6 +69,11 @@ class Scene:
     def set(self, path: str, value: Any) -> None:
         """Set a parameter (objects and cameras): ``s.set("camera.height", 6)``."""
         self._apply(SetParam(path=path, value=value))
+
+    def constrain(self, rule: str, *, priority: str = "strong") -> None:
+        """Add a layout rule: ``s.constrain("label(pole) near pole")``. The engine solves it
+        at every key time; a rule it cannot satisfy shows up in ``engine.lint()``."""
+        self._apply(AddConstraint(rule=rule, priority=priority))
 
     def marker(self, name: str, t: float) -> None:
         """Place a narration marker at ``t`` seconds."""

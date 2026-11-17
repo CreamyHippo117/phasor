@@ -10,9 +10,11 @@ from typing import Annotated, Any, Literal
 
 from pydantic import Field, TypeAdapter, ValidationError
 
+from phasor.core.constraints import normalize_rule, rule_ids
 from phasor.core.ids import split_path
 from phasor.core.issues import DocumentError, Issue
 from phasor.core.schema import (
+    ConstraintSpec,
     ConstValue,
     Document,
     ExprSpec,
@@ -88,6 +90,19 @@ class SetMeta(Model):
     value: ConstValue | None
 
 
+class AddConstraint(Model):
+    """Add a layout rule, e.g. ``label(pole) near pole``."""
+
+    op: Literal["add_constraint"] = "add_constraint"
+    rule: str
+    priority: Literal["required", "strong", "medium", "weak"] = "strong"
+
+
+class RemoveConstraint(Model):
+    op: Literal["remove_constraint"] = "remove_constraint"
+    rule: str
+
+
 Op = Annotated[
     AddObject
     | RemoveObject
@@ -98,7 +113,9 @@ Op = Annotated[
     | ClearTrack
     | SetMarker
     | RemoveMarker
-    | SetMeta,
+    | SetMeta
+    | AddConstraint
+    | RemoveConstraint,
     Field(discriminator="op"),
 ]
 
@@ -108,7 +125,7 @@ class Patch(Model):
 
 
 _PATCH = TypeAdapter(Patch)
-TWEAK_OPS = (SetParam, SetStyle)  # the ops an overrides file can hold
+TWEAK_OPS = (SetParam, SetStyle)  # the per-target ops an overrides file can hold
 
 
 def parse_patch(patch: Any) -> Patch:
@@ -206,6 +223,21 @@ def _apply_op(doc: Document, op: Any) -> Document:
             if op.field not in Meta.model_fields:
                 raise _fail("unknown_meta", f"no meta field {op.field!r}")
             return doc.model_copy(update={"meta": doc.meta.model_copy(update={op.field: op.value})})
+        case AddConstraint():
+            try:
+                spec = ConstraintSpec(rule=op.rule, priority=op.priority)
+            except ValidationError as e:
+                raise _fail("bad_constraint", e.errors()[0]["msg"]) from e
+            if any(c.rule == spec.rule for c in doc.constraints):
+                raise _fail("duplicate_constraint", f"constraint {spec.rule!r} already exists")
+            return doc.model_copy(update={"constraints": (*doc.constraints, spec)})
+        case RemoveConstraint():
+            rule = normalize_rule(op.rule)
+            if all(c.rule != rule for c in doc.constraints):
+                raise _fail("unknown_constraint", f"no constraint {rule!r}")
+            return doc.model_copy(
+                update={"constraints": tuple(c for c in doc.constraints if c.rule != rule)}
+            )
     raise _fail("unknown_op", f"unsupported op {op!r}")  # pragma: no cover
 
 
@@ -249,29 +281,64 @@ def apply_overrides(base: Document, overrides: Overrides) -> tuple[Document, lis
             )  # fmt: skip
             continue
         doc = _apply_op(doc, SetStyle(id=target, key=key, role=role))
+    have = {c.rule for c in base.constraints}
+    for spec in overrides.constraints:
+        missing = [i for i in rule_ids(spec.rule) if i not in known]
+        if missing:
+            orphans.append(
+                Issue("orphan_override", f"constraint override {spec.rule!r} names missing "
+                      f"object(s) {missing}", ids=tuple(missing),
+                      path=f"constraints[{spec.rule}]", fix_hint=hint)
+            )  # fmt: skip
+        elif spec.rule not in have:  # the script may have adopted the same rule since
+            doc = doc.model_copy(update={"constraints": (*doc.constraints, spec)})
     return doc, orphans
 
 
 def record_tweaks(overrides: Overrides, patch: Patch) -> Overrides:
     """Fold tweak ops into an overrides file. Raises if the patch holds anything else."""
     params, styles = dict(overrides.params), dict(overrides.styles)
+    constraints = list(overrides.constraints)
     for op in patch.ops:
         if isinstance(op, SetParam):
             params[op.path] = op.value
         elif isinstance(op, SetStyle):
             styles[f"{op.id}.{op.key}"] = op.role
+        elif isinstance(op, AddConstraint):
+            if all(c.rule != normalize_rule(op.rule) for c in constraints):
+                constraints.append(ConstraintSpec(rule=op.rule, priority=op.priority))
+        elif isinstance(op, RemoveConstraint) and any(
+            c.rule == normalize_rule(op.rule) for c in constraints
+        ):
+            constraints = [c for c in constraints if c.rule != normalize_rule(op.rule)]
         else:
             raise _fail(
                 "scripted_scene",
                 f"'{op.op}' cannot be applied to a scene built by a script",
                 fix_hint="change the script for structure and timing; "
-                "tweaks may only use set_param and set_style",
+                "tweaks may only use set_param, set_style and add_constraint",
             )
-    return Overrides(params=params, styles=styles)
+    return Overrides(params=params, styles=styles, constraints=tuple(constraints))
 
 
 __all__ = [
-    "AddObject", "AddSegment", "ClearTrack", "ExprSpec", "Op", "Patch", "RemoveMarker",
-    "RemoveObject", "SetMarker", "SetMeta", "SetParam", "SetStyle", "SetTags",
-    "apply_ops", "apply_overrides", "parse_patch", "record_tweaks",
+    "AddConstraint",
+    "AddObject",
+    "AddSegment",
+    "ClearTrack",
+    "ExprSpec",
+    "Op",
+    "Patch",
+    "RemoveConstraint",
+    "RemoveMarker",
+    "RemoveObject",
+    "SetMarker",
+    "SetMeta",
+    "SetParam",
+    "SetStyle",
+    "SetTags",
+    "apply_ops",
+    "apply_overrides",
+    "parse_patch",
+    "record_tweaks",
 ]  # fmt: skip

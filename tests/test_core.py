@@ -114,7 +114,7 @@ def test_canonical_file_roundtrip_is_byte_stable(tmp_path):
 def test_migrate_rejects_missing_and_future_versions():
     with pytest.raises(DocumentError, match="schema_version"):
         io.parse_document({"meta": {"title": "t"}})
-    with pytest.raises(DocumentError, match="reads up to 1"):
+    with pytest.raises(DocumentError, match="reads up to 2"):
         io.parse_document({"schema_version": 999, "meta": {"title": "t"}})
 
 

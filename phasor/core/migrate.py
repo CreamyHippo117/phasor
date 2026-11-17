@@ -8,8 +8,15 @@ from typing import Any
 from phasor.core.issues import DocumentError, Issue
 from phasor.core.schema import SCHEMA_VERSION
 
+
 # from_version -> function returning the document at from_version + 1
-MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {}
+def _v1_to_v2(raw: dict[str, Any]) -> dict[str, Any]:
+    """Version 2 added ``constraints`` (layout rules)."""
+    raw.setdefault("constraints", [])
+    return raw
+
+
+MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {1: _v1_to_v2}
 
 
 def migrate(raw: dict[str, Any]) -> dict[str, Any]:

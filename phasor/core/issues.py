@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 
@@ -14,6 +14,9 @@ class Issue:
     ids: tuple[str, ...] = ()
     path: str | None = None
     fix_hint: str | None = None
+    times: tuple[float, ...] = ()  # sample times (seconds) at which a lint rule fired
+    # Patch ops that would fix it, for ``Engine.autofix``. Not part of the issue's identity.
+    fix: tuple[dict[str, Any], ...] = field(default=(), compare=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {k: (list(v) if isinstance(v, tuple) else v) for k, v in asdict(self).items()}

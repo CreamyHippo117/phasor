@@ -20,3 +20,18 @@ title = 0.075
 label = 0.042
 annotation = 0.032
 math = 0.048
+
+# Layout defaults, as fractions of the frame height.
+[layout]
+gap = 0.012          # space between a label and what it names
+margin = 0.02        # default margin for on_screen()
+leader = 0.09        # how far a leader-line slot sits beyond the compass slots
+
+# Lint thresholds. Move them to change what the linter complains about.
+[lint]
+overlap = 0.03       # share of the smaller object that must be covered to count as overlap
+contrast = 3.0       # minimum WCAG contrast ratio for text against what is behind it
+tiny = 0.006         # objects whose larger side is under this share of the frame height
+text_min = 0.02      # text lower than this share of the frame height
+clutter = 4          # more objects than this changing at once in one block
+crowded = 0.05       # a placed label still covered by more than this share is "unsolved"

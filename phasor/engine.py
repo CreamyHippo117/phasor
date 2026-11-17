@@ -11,7 +11,7 @@ none can be created the inspector runs in analytic mode (tier C).
 from __future__ import annotations
 
 from collections import OrderedDict
-from dataclasses import dataclass, field
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -22,20 +22,45 @@ from phasor.core.patch import TWEAK_OPS, apply_ops, apply_overrides, parse_patch
 from phasor.core.schema import Document, Meta, Overrides
 from phasor.core.state import SceneState
 from phasor.inspect import inspector
+from phasor.inspect import lint as lint_rules
+from phasor.inspect.oracle import PassOracle
 from phasor.inspect.passes import PassRunner
-from phasor.time.compile import Compiled, compile_document, evaluate
+from phasor.layout.bake import Bake, bake, baked_state
+from phasor.layout.plan import Plan, compile_plan
+from phasor.time.compile import Compiled, compile_document
 
 STATE_CACHE_SIZE = 256
 UNDO_LIMIT = 200
 
 
-@dataclass(frozen=True)
 class PatchResult:
-    ok: bool
-    version: int
-    errors: tuple[Issue, ...] = ()
-    lint_added: tuple[Issue, ...] = ()
-    lint_resolved: tuple[Issue, ...] = ()
+    """What ``Engine.apply`` returns. The lint delta is worked out the first time it is read
+    (it needs the layout bake and the inspector), so building a scene stays fast."""
+
+    def __init__(
+        self,
+        ok: bool,
+        version: int,
+        errors: tuple[Issue, ...] = (),
+        delta: Callable[[], tuple[tuple[Issue, ...], tuple[Issue, ...]]] | None = None,
+    ) -> None:
+        self.ok, self.version, self.errors = ok, version, errors
+        self._delta = delta
+        self._lint: tuple[tuple[Issue, ...], tuple[Issue, ...]] | None = None
+
+    def _resolve(self) -> tuple[tuple[Issue, ...], tuple[Issue, ...]]:
+        if self._lint is None:
+            self._lint = self._delta() if self._delta else ((), ())
+            self._delta = None
+        return self._lint
+
+    @property
+    def lint_added(self) -> tuple[Issue, ...]:
+        return self._resolve()[0]
+
+    @property
+    def lint_resolved(self) -> tuple[Issue, ...]:
+        return self._resolve()[1]
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -53,20 +78,27 @@ class PatchResult:
             raise DocumentError(list(self.errors))
         return self
 
+    def __repr__(self) -> str:
+        return f"PatchResult(ok={self.ok}, version={self.version}, errors={list(self.errors)})"
 
-@dataclass(frozen=True)
+
 class _Snapshot:
-    """One point in history. Everything else the Engine holds is derived from this."""
+    """One point in history: the document, plus what is derived from it. The layout bake
+    and the lint result are filled in on first use and kept, so undo gets them back free."""
 
-    base: Document
-    overrides: Overrides
-    compiled: Compiled = field(compare=False)
-    lint: tuple[Issue, ...] = field(compare=False)
+    def __init__(self, base: Document, overrides: Overrides) -> None:
+        self.base, self.overrides = base, overrides
+        effective, orphans = apply_overrides(base, overrides)
+        self.compiled: Compiled = compile_document(effective)
+        self.plan: Plan = compile_plan(self.compiled)
+        self.orphans: tuple[Issue, ...] = tuple(orphans)
+        self.bake: Bake | None = None
+        self.lint: dict[float, tuple[Issue, ...]] = {}
+        self.states: OrderedDict[float, SceneState] = OrderedDict()
+        self.snapshots: OrderedDict[float, dict[str, Any]] = OrderedDict()
 
 
-def _build(base: Document, overrides: Overrides) -> _Snapshot:
-    effective, orphans = apply_overrides(base, overrides)
-    return _Snapshot(base, overrides, compile_document(effective), tuple(orphans))
+_build = _Snapshot
 
 
 class Engine:
@@ -83,8 +115,6 @@ class Engine:
         self._undo: list[_Snapshot] = []
         self._redo: list[_Snapshot] = []
         self._version = 0
-        self._states: OrderedDict[float, SceneState] = OrderedDict()
-        self._snapshots: OrderedDict[float, dict[str, Any]] = OrderedDict()
         self._passes = passes
 
     # ------------------------------------------------------------ files
@@ -133,20 +163,49 @@ class Engine:
     def duration(self) -> float:
         return self._snap.compiled.duration
 
-    def lint(self) -> list[Issue]:
-        """Current lint issues. Milestone 1 knows ``orphan_override``; visual rules arrive in M2."""
-        return list(self._snap.lint)
+    def lint(self, step: float = lint_rules.DEFAULT_STEP) -> list[Issue]:
+        """Every lint issue: dangling overrides, unsolved constraints, and the visual rules
+        checked at each marker and every ``step`` seconds. Cached per document version."""
+        return list(self._lint(self._snap, step))
+
+    def _lint(self, snap: _Snapshot, step: float) -> tuple[Issue, ...]:
+        if step not in snap.lint:
+            visual = lint_rules.run(
+                snap.compiled,
+                snap.plan,
+                lambda t: self._state(snap, t),
+                lambda t: self._snapshot_of(snap, t),
+                self.pass_runner(),
+                step=step,
+            )
+            snap.lint[step] = (*snap.orphans, *self._bake(snap).issues, *visual)
+        return snap.lint[step]
+
+    def _bake(self, snap: _Snapshot) -> Bake:
+        if snap.bake is None:
+            runner = self.pass_runner()
+            oracle = PassOracle(runner) if runner is not None else None
+            snap.bake = bake(snap.compiled, snap.plan, oracle)
+        return snap.bake
+
+    @property
+    def layout(self) -> Bake:
+        """The layout bake for the current document: key times, tracks, chosen label slots."""
+        return self._bake(self._snap)
 
     def state_at(self, t: float) -> SceneState:
-        """Pure function of (document, t). Cached per document version."""
+        """Pure function of (document, t), layout included. Cached per document version."""
+        return self._state(self._snap, t)
+
+    def _state(self, snap: _Snapshot, t: float) -> SceneState:
         t = float(t)
-        if t in self._states:
-            self._states.move_to_end(t)
-            return self._states[t]
-        state = evaluate(self._snap.compiled, t)
-        self._states[t] = state
-        if len(self._states) > STATE_CACHE_SIZE:
-            self._states.popitem(last=False)
+        if t in snap.states:
+            snap.states.move_to_end(t)
+            return snap.states[t]
+        state = baked_state(snap.compiled, self._bake(snap), t)
+        snap.states[t] = state
+        if len(snap.states) > STATE_CACHE_SIZE:
+            snap.states.popitem(last=False)
         return state
 
     # ------------------------------------------------------------ write
@@ -178,6 +237,9 @@ class Engine:
                 new = _build(base, overrides)
         except DocumentError as e:
             return PatchResult(False, self._version, errors=tuple(e.issues))
+        if self._undo:  # keep evaluated caches only for the current and previous step
+            self._undo[-1].states.clear()
+            self._undo[-1].snapshots.clear()
         self._undo.append(old)
         del self._undo[:-UNDO_LIMIT]
         self._redo.clear()
@@ -200,14 +262,30 @@ class Engine:
     def _switch(self, new: _Snapshot, old: _Snapshot) -> PatchResult:
         self._snap = new
         self._version += 1
-        self._states.clear()
-        self._snapshots.clear()
-        return PatchResult(
-            True,
-            self._version,
-            lint_added=tuple(i for i in new.lint if i not in old.lint),
-            lint_resolved=tuple(i for i in old.lint if i not in new.lint),
-        )
+
+        def delta() -> tuple[tuple[Issue, ...], tuple[Issue, ...]]:
+            step = lint_rules.DEFAULT_STEP
+            before, after = self._lint(old, step), self._lint(new, step)
+            return (
+                tuple(i for i in after if i not in before),
+                tuple(i for i in before if i not in after),
+            )
+
+        return PatchResult(True, self._version, delta=delta)
+
+    def autofix(self, max_rounds: int = 3) -> dict[str, Any]:
+        """Apply the fixes the linter suggests (for example: let the label placer move an
+        overlapping label), re-lint, and repeat. Everything goes through ``apply``, so each
+        round is one undo step. Returns what was applied and what is still wrong."""
+        applied: list[dict[str, Any]] = []
+        for _ in range(max_rounds):
+            ops: list[dict[str, Any]] = []
+            for issue in self.lint():
+                ops += [op for op in issue.fix if op not in ops]
+            if not ops or not self.apply(ops).ok:
+                break
+            applied += ops
+        return {"applied": applied, "remaining": self.lint()}
 
     # ------------------------------------------------------------ inspect
 
@@ -223,12 +301,15 @@ class Engine:
         return self._passes  # type: ignore[return-value]
 
     def _snapshot(self, t: float) -> dict[str, Any]:
+        return self._snapshot_of(self._snap, t)
+
+    def _snapshot_of(self, snap: _Snapshot, t: float) -> dict[str, Any]:
         t = float(t)
-        if t not in self._snapshots:
-            self._snapshots[t] = inspector.snapshot(self.state_at(t), self.pass_runner())
-            if len(self._snapshots) > STATE_CACHE_SIZE:
-                self._snapshots.popitem(last=False)
-        return self._snapshots[t]
+        if t not in snap.snapshots:
+            snap.snapshots[t] = inspector.snapshot(self._state(snap, t), self.pass_runner())
+            if len(snap.snapshots) > STATE_CACHE_SIZE:
+                snap.snapshots.popitem(last=False)
+        return snap.snapshots[t]
 
     def inspect(self, t: float, id: str | None = None, detail: str = "standard") -> Any:
         """Everything on screen at ``t`` (or one object), at the requested detail level."""
@@ -275,6 +356,44 @@ class Engine:
             raise RuntimeError("no OpenGL renderer on this machine (run `phasor doctor`)")
         return encode_srgb8(runner.color(self.state_at(t), size))
 
+    def storyboard_times(self, count: int = 6) -> list[float]:
+        """Start, every marker and the end; padded with evenly spaced times up to ``count``."""
+        end = self.duration
+        ts = {0.0, end, *self.document.timeline.markers.values()}
+        if len(ts) < count and end > 0:
+            ts.update(round(end * k / (count - 1), 6) for k in range(count))
+        return sorted(t for t in ts if 0.0 <= t <= end)
+
+    def storyboard(
+        self,
+        times: list[float] | None = None,
+        *,
+        marks: bool = False,
+        size: tuple[int, int] = (480, 270),
+        columns: int = 3,
+    ) -> dict[str, Any]:
+        """Keyframe stills on one contact sheet, plus what the inspector sees in each.
+
+        Returns ``{"image": (h, w, 3) uint8, "frames": [{"t", "marker", "objects"}]}``.
+        ``marks=True`` draws each object's box and id on the stills (set-of-mark), so a
+        vision model can tie what it sees to object ids. Needs OpenGL (tier A or B).
+        """
+        from phasor.render.storyboard import contact_sheet, draw_marks
+
+        named = sorted(self.document.timeline.markers.items(), reverse=True)
+        markers = {t: n for n, t in named}
+        frames, cells = [], []
+        for t in self.storyboard_times() if times is None else times:
+            still = self.still(t, size)
+            snap = self._snapshot(t)
+            if marks:
+                still = draw_marks(still, snap)
+            label = f"t = {t:g} s" + (f"  [{markers[t]}]" if t in markers else "")
+            cells.append((label, still))
+            lines = inspector.render_detail(snap, "brief")["objects"]
+            frames.append({"t": float(t), "marker": markers.get(t), "objects": lines})
+        return {"image": contact_sheet(cells, columns), "frames": frames}
+
     def _require(self, id: str | None) -> None:
         if id is not None and self.document.object(id) is None:
             known = sorted(o.id for o in self.document.objects)
@@ -288,4 +407,4 @@ def _drop_superseded(overrides: Overrides, patch: Any) -> Overrides:
             params.pop(op.path, None)
         elif isinstance(op, TWEAK_OPS[1]):
             styles.pop(f"{op.id}.{op.key}", None)
-    return Overrides(params=params, styles=styles)
+    return overrides.model_copy(update={"params": params, "styles": styles})

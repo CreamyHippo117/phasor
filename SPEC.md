@@ -182,9 +182,11 @@ This is the part that lets an AI work with its eyes open: it states intent as co
 
 **Constraints**
 
-- Relations: `above`, `below`, `left_of`, `right_of`, `near`, `align`, `inside`, `outside`, `tangent_to`, `attach_to(anchor)`.
-- Guards: `no_overlap(a, b, ...)`, `on_screen(a, margin)`, `visible_in_3d(a)` (not occluded), `min_size_px(a, n)`, `readable(a)` (contrast vs background).
-- Solved per frame (or per span) with a small solver: priorities, soft vs hard, and a report of any constraint it could not satisfy.
+- Relations: `above`, `below`, `left_of`, `right_of`, `near`, `align_x`, `align_y`, `inside`, `outside`, `tangent_to`, `attach_to(anchor)`. `outside`, `tangent_to` and `attach_to` arrive with 3D (Milestone 6).
+- A rule reads `subject relation target [gap n]`; the subject is what moves. `label(x)` is the child object `x.label`. Clauses join with `and`.
+- Guards: `no_overlap(a, b, ...)`, `on_screen(a, margin)`, `visible_in_3d(a)` (not occluded, Milestone 6), `min_size_px(a, n)`, `readable(a)` (contrast vs background). `on_screen` moves the object when it can; the others are checked by the linter and reported as `unsolved` when broken.
+- Solved at every key time (markers, transition ends, a 10 Hz grid) with priorities `required`, `strong` (default), `medium`, `weak`, and a report of any constraint it could not satisfy.
+- A baked position is stored on screen relative to its anchor, so labels stay glued to moving anchors between key times. A label that changes slot jumps; eased moves come from choreography verbs.
 - 3D labels: billboard toward camera, auto-nudge out of occlusion, optional leader lines.
 
 **Inspector (query API)**
@@ -202,14 +204,16 @@ This is the part that lets an AI work with its eyes open: it states intent as co
 | offscreen | Text or important objects cut by the frame |
 | occluded\_label | 3D labels hidden behind surfaces |
 | contrast | Text unreadable against glow or domain coloring |
-| orphan | Objects that never leave the scene or never appear |
+| orphan | Objects that never appear ("never leave" needs enter/exit verbs, Milestone 5) |
 | z\_fight | Coplanar surfaces flickering |
 | clutter | Too many simultaneous changes in one block |
 | tiny | Objects smaller than N px |
 | unsolved | Constraints the solver could not satisfy |
 
-- `phasor lint scene.py` runs it at sampled times plus every marker; output is JSON and human-readable.
-- Strict mode fails CI (and AI self-review) on errors.
+- `occluded_label` and `z_fight` arrive with 3D (Milestone 6); in 2D a covered label is an `overlap`.
+- Issues carry the times they were seen and, where the linter is sure, a `fix` (patch ops). `Engine.autofix()` and `phasor lint --fix` apply them.
+- `phasor lint scene.py` runs it at sampled times (every 0.5 s by default), every transition end and every marker; output is JSON and human-readable.
+- Exit code 1 on errors; `--strict` also fails on warnings.
 
 ## 3D spatial awareness
 

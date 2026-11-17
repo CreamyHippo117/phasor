@@ -10,6 +10,35 @@ Known traps and how phasor reports them.
 `unknown_ref`, `cycle`, `track_on_expr`, `bad_segment` (overlapping or backwards),
 `unknown_marker`, `scripted_scene`.
 
+## A constraint was accepted but does nothing visible
+
+`apply` only rejects rules that can never work (`unknown_id`, `not_movable`,
+`conflicting_constraints`, `bad_constraint`). A rule that cannot hold at some moment is
+accepted and reported by `engine.lint()` as `unsolved` with the times. Always lint after
+adding constraints.
+
+## The label did not move when I set its `pos`
+
+A constrained object's `pos` is only a starting hint; layout decides where it is. Remove the
+constraint (`remove_constraint`) or change the rule. An object whose `pos` is an expression
+cannot be constrained (`not_movable`).
+
+## Lint looks at samples, not every frame
+
+Lint checks markers, transition ends and every 0.5 s. A collision that lasts two frames
+between samples is missed. Put a marker where it matters, or pass a smaller `step`.
+
+## `overlap` on a label that sits on a big shape
+
+A label fully inside a shape is not an overlap; it is judged by `contrast`. A label half on
+a shape is an overlap.
+
+## Layout can differ slightly between machines
+
+With OpenGL the label placer avoids the pixels objects really cover (the id pass). With no
+OpenGL it uses bounding boxes, and a thin stripe for lines. Near-ties may pick a different
+slot on a different machine. The linter judges whatever was chosen.
+
 ## `visible_fraction` is `null`
 
 Either there is no OpenGL on this machine (`"occlusion": "analytic"`), or the object is
