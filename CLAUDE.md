@@ -5,7 +5,7 @@ compounding. If this file and SPEC.md disagree, stop and ask.
 
 ## Where we are
 
-- Current milestone: **2 built (awaiting boundary review, Windows check and owner decisions in ADR 0001/0002), 3 next**. See `MILESTONE_*.md` for what is built and deferred.
+- Current milestone: **2 built (awaiting boundary review, Windows check and owner decisions in ADR 0001/0002). 3 in progress: kernels, tiles and CopyBridge are built (`MILESTONE_3.md`); the rest of 3 is next and suits a smaller model**. See `MILESTONE_*.md` for what is built and deferred.
 - One milestone per branch. No work on milestone N+1 until N's exit demo and tests pass.
 - Before declaring a milestone done, run the `phasor-milestone-gate` skill.
 
@@ -62,6 +62,10 @@ compounding. If this file and SPEC.md disagree, stop and ask.
 - New lint rules and layout features are tested with `passes=None` and with OpenGL (see
   `MODES` in `tests/test_lint.py`); CI on Windows has no OpenGL.
 - GL queries (even `ctx.info`) must run inside `with ctx:`.
+- Every kernel is tested three ways: its NumPy reference against known maths, its CUDA
+  source compiled for the CPU (`tests/cuda_emu.py`), and on a real GPU (`gpu` marker).
+  Add each new kernel to `CASES` in `tests/test_kernels.py`. Launchers may only use array
+  calls NumPy and CuPy share, or the emulator cannot run them.
 - When a test and the code disagree, work out which one is wrong before changing either.
   In Milestone 1 it was the test about as often as the code.
 

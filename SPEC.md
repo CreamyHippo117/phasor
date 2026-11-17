@@ -315,7 +315,8 @@ CUDA does the math, OpenGL draws the picture, and one narrow bridge connects the
 - CuPy `RawKernel` is the only way to write GPU math in v1. No Numba, no second path.
 - Kernels are CUDA C strings in `render/gpu/kernels/`, registered with `@kernel(name, signature, reference=numpy_fn)`. Registration fails without a NumPy reference.
 - CuPy compiles through NVRTC at first use and caches the result, so users need no C++ compiler. NVRTC itself comes from pip via the `cupy-cuda12x[ctk]` extra (phasor's `gpu` extra), so no CUDA Toolkit install is needed either. `phasor doctor` must prove this on a clean Windows machine.
-- SymPy expressions become kernel code through `sympy.ccode` plus a small complex-math header (`render/gpu/complex.cuh`). One expression feeds the kernel, the NumPy reference and the LaTeX label.
+- SymPy expressions become kernel code through a small emitter (`render/gpu/codegen.py`; `sympy.ccode` has no complex type) plus a complex-math header (`render/gpu/complex.cuh`). One expression feeds the kernel, the NumPy reference and the LaTeX label. Formula text is read by a whitelist parser and never evaluated as Python.
+- Kernel sources stay plain C++ plus the CUDA keywords, so the same string can be compiled for the CPU in tests (`tests/cuda_emu.py`) on machines without a GPU.
 
 **CUDA to OpenGL bridge (`render/gpu/bridge.py`)**
 

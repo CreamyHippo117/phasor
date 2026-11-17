@@ -53,3 +53,23 @@ def mark_color(index: int) -> tuple[int, int, int]:
 
     r, g, b = colorsys.hsv_to_rgb((index * 0.61803398875) % 1.0, 0.75, 1.0)
     return (round(r * 255), round(g * 255), round(b * 255))
+
+
+def phase_lut(n: int = 256, lightness: float = 0.74, chroma: float = 0.125):
+    """A cyclic, perceptually even color wheel for complex phase: ``(n, 3)`` float32 linear
+    RGB. Entry k is the color of phase ``2*pi*k/n``; it walks the OKLCH hue circle at
+    constant lightness and chroma, so no hue looks brighter than another (unlike HSV)."""
+    hue = 2 * np.pi * np.arange(n) / n + np.pi / 6  # phase 0 (positive reals) is warm red
+    a, b = chroma * np.cos(hue), chroma * np.sin(hue)
+    l_ = (lightness + 0.3963377774 * a + 0.2158037573 * b) ** 3
+    m_ = (lightness - 0.1055613458 * a - 0.0638541728 * b) ** 3
+    s_ = (lightness - 0.0894841775 * a - 1.2914855480 * b) ** 3
+    rgb = np.stack(
+        [
+            4.0767416621 * l_ - 3.3077115913 * m_ + 0.2309699292 * s_,
+            -1.2684380046 * l_ + 2.6097574011 * m_ - 0.3413193965 * s_,
+            -0.0041960863 * l_ - 0.7034186147 * m_ + 1.7076147010 * s_,
+        ],
+        axis=1,
+    )
+    return np.ascontiguousarray(np.clip(rgb, 0.0, 1.0), dtype=np.float32)

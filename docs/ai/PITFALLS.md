@@ -85,3 +85,15 @@ and the stdlib `time`/`inspect` modules would be shadowed.
 `phasor.core`, `phasor.style`, `phasor.time` and `phasor.layout` must not import CuPy,
 ModernGL or PyAV, even lazily. `lint-imports` catches static imports and
 `tests/test_layers.py` catches runtime ones.
+
+## Kernel tests pass but there is no GPU here
+
+Three different things can be "passing": the NumPy reference, the CUDA source compiled for
+the CPU (`tests/cuda_emu.py`), and the kernel on a real GPU (`gpu` marker). Only the last
+proves NVRTC and CuPy accept it. Say which ones ran.
+
+## Writing a kernel
+
+Scalars passed to a kernel must be NumPy scalars of the exact C type (`np.int32`,
+`np.float32`, `np.float64`). Cast constants with `R(...)` so float32 kernels do not drift
+into double math. Guard `if (i >= n) return;` because the last block has spare threads.

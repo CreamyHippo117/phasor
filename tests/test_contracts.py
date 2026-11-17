@@ -59,6 +59,16 @@ def _offenders(pattern: str, allowed: set[str]) -> list[str]:
             {"layout/bake.py", "engine.py"},
         ),
         (
+            "one kernel path: only the registry (and the doctor's probe) creates a RawKernel",
+            r"\bRawKernel\(|\bElementwiseKernel\(|\bnumba\b",
+            {"render/gpu/registry.py", "render/doctor.py"},
+        ),
+        (
+            "nothing outside the bridge moves pixels between CUDA and GL",
+            r"\basnumpy\(|\.get\(\)\s*$",
+            {"render/gpu/bridge.py", "render/doctor.py"},
+        ),
+        (
             "expressions are compiled from a whitelist, never evaluated as Python",
             r"(?<![\w.])(eval|exec)\(",
             set(),

@@ -223,6 +223,41 @@ s.save("residues.phasor.json")  # canonical, diff-friendly
 engine = load("residues.phasor.json")  # or load("residues.py")
 ```
 
+## GPU kernels: per-pixel math
+
+```python
+from phasor.render import gpu
+
+f = gpu.ComplexFunction.parse("1/(z**2 + 1)")  # one formula: kernel code, NumPy and LaTeX
+assert f.latex() == r"\frac{1}{z^{2} + 1}"
+
+picture = gpu.render("domain", 160, 90, function=f, center=(0, 0), height=4.5)
+assert picture.shape == (90, 160, 4)  # linear RGBA float32, row 0 = top
+
+field = gpu.render("escape", 160, 90, center=(-0.5, 0), height=2.5, max_iter=100)
+assert field.shape == (90, 160) and (field == -1).any()  # -1 marks points in the set
+```
+
+| Kernel | Parameters | Returns |
+| --- | --- | --- |
+| `domain` | `function`, `center`, `height`, `contour=0.35`, `lut=None`, `precision="f32"` | RGBA: hue = phase, bands = each doubling of the modulus, poles white |
+| `escape` | `center`, `height`, `max_iter=256`, `julia=None`, `precision=None` | smooth escape count; Mandelbrot, or the Julia set of `julia=(re, im)` |
+| `tonemap` | `image`, `exposure=1.0` | ACES filmic curve, linear in and out (whole image) |
+| `gauss` | `image`, `sigma`, `axis` | one pass of a Gaussian blur along x (0) or y (1) (whole image) |
+
+- `center` and `height` describe the view like the 2D camera: the point at the middle of
+  the frame and how many units the frame is tall.
+- `gpu.render(name, width, height_px, supersample=1, backend="auto", **params)` runs tile by
+  tile within the VRAM budget and returns a NumPy array. `gpu.run(name, tile, **params)`
+  runs one tile and returns a CuPy array on CUDA.
+- With no CUDA the NumPy reference runs instead: same result, slower. `backend="cuda"`
+  demands the GPU; `backend="reference"` forces NumPy.
+- `escape` picks float64 by itself once `height` is under 1e-5.
+- Formulas may use `z`, `i`, `pi`, `e`, numbers, `+ - * / **` and
+  `exp log sqrt sin cos tan sinh cosh tanh conj abs`. Anything else is a `FunctionError`.
+- A new kernel needs `@kernel(name, signature, reference=numpy_fn)`; registration fails
+  without a NumPy reference that takes the same parameters.
+
 ## Command line
 
 | Command | Status | Purpose |

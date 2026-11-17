@@ -1,0 +1,389 @@
+"""Milestone 3 (kernels and bridge): registry, code generation, tiles, kernels, bridge.
+
+Three levels of evidence, weakest machine first:
+- NumPy references, checked against known mathematics (run everywhere);
+- the CUDA source itself, compiled for the CPU and compared with the references
+  (``tests/cuda_emu.py``; needs a C++ compiler, so Linux CI);
+- the real thing on CUDA (``gpu`` marker; skipped without an NVIDIA device).
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import pytest
+
+from phasor.core.color import luminance, phase_lut
+from phasor.render import gpu
+from phasor.render.gpu import ComplexFunction, FunctionError, KernelError, Tile, plan_tiles
+from phasor.render.gpu.kernels.fractal import precision_for
+from phasor.render.gpu.registry import get, kernel, plane, registered
+from tests import cuda_emu
+
+FULL = Tile.full(64, 64)
+OFFSET = Tile(8, 4, 48, 40, 64, 48)  # not at the origin, not square: catches index mix-ups
+F = ComplexFunction.parse("1/(z**2 + 1)")
+
+
+def _rgba(seed=0, shape=(24, 32)):
+    rng = np.random.default_rng(seed)
+    return np.ascontiguousarray(rng.random((*shape, 4), dtype=np.float32) * 4.0)
+
+
+IMAGE = _rgba()
+IMAGE_TILE = Tile.full(32, 24)
+
+# name -> list of (tile, params) cases every backend must agree on
+CASES = {
+    "escape": [
+        (FULL, {"center": (-0.5, 0.0), "height": 2.5, "max_iter": 200}),
+        (OFFSET, {"center": (-0.5, 0.0), "height": 2.5, "max_iter": 64, "precision": "f64"}),
+        (OFFSET, {"center": (0.0, 0.0), "height": 3.0, "julia": (-0.8, 0.156)}),
+        (FULL, {"center": (-0.75, 0.1), "height": 1e-6, "max_iter": 400}),
+    ],
+    "domain": [
+        (FULL, {"function": F, "center": (0.0, 0.0), "height": 4.0}),
+        (OFFSET, {"function": F, "center": (0.3, -0.2), "height": 3.0, "contour": 0.0,
+                  "precision": "f64"}),
+    ],
+    "tonemap": [(IMAGE_TILE, {"image": IMAGE, "exposure": 1.7})],
+    "gauss": [
+        (IMAGE_TILE, {"image": IMAGE, "sigma": 1.5, "axis": 0}),
+        (IMAGE_TILE, {"image": IMAGE, "sigma": 2.2, "axis": 1}),
+    ],
+}  # fmt: skip
+ALL_CASES = [(n, t, p) for n, cases in CASES.items() for t, p in cases]
+needs_compiler = pytest.mark.skipif(cuda_emu.compiler() is None, reason="no C++ compiler")
+
+
+def _close(name: str, got: np.ndarray, want: np.ndarray, *, strict: bool) -> None:
+    """Agreement between a kernel and its reference. Color kernels may differ on the few
+    pixels that sit on a discontinuity (a contour edge, a branch cut); real GPUs also fuse
+    multiply-adds, which moves fractal pixels on the set's boundary."""
+    assert got.shape == want.shape and got.dtype == want.dtype == np.float32
+    err = np.abs(got.astype(np.float64) - want)
+    if got.ndim == 3:
+        err = err.max(axis=-1)
+    tol, allowed = (1e-4, 0.0) if strict else (2e-2, 0.02)
+    if name == "domain":
+        allowed = max(allowed, 0.01)
+    assert (err > tol).mean() <= allowed, (name, float(err.max()), float((err > tol).mean()))
+
+
+# ---------------------------------------------------------------- registry
+
+
+def test_every_kernel_has_a_reference_and_a_signature():
+    ks = registered()
+    assert sorted(ks) == sorted(CASES) == ["domain", "escape", "gauss", "tonemap"]
+    assert all(callable(k.reference) and "->" in k.signature for k in ks.values())
+
+
+def test_registration_fails_without_a_matching_reference():
+    with pytest.raises(KernelError, match="no NumPy reference"):
+        kernel("orphan", "() -> x")(lambda gpu, tile: None)
+    with pytest.raises(KernelError, match="reference takes"):
+        kernel("skewed", "() -> x", reference=lambda tile, a: None)(lambda gpu, tile, b: None)
+    with pytest.raises(KernelError, match="already registered"):
+        kernel("escape", "() -> x", reference=lambda tile: None)(lambda gpu, tile: None)
+    assert "orphan" not in registered() and "skewed" not in registered()
+    with pytest.raises(KernelError, match="no kernel 'nope'"):
+        get("nope")
+
+
+def test_run_falls_back_to_the_reference_and_cuda_can_be_demanded():
+    tile, params = CASES["escape"][0]
+    want = get("escape").reference(tile, **params)
+    np.testing.assert_array_equal(gpu.run("escape", tile, backend="reference", **params), want)
+    if gpu.default_gpu() is None:
+        np.testing.assert_array_equal(gpu.run("escape", tile, **params), want)
+        with pytest.raises(KernelError, match="no CUDA device"):
+            gpu.run("escape", tile, backend="cuda", **params)
+    with pytest.raises(ValueError, match="backend"):
+        gpu.run("escape", tile, backend="opencl", **params)
+
+
+# ---------------------------------------------------------------- the same source, three ways
+
+
+@needs_compiler
+@pytest.mark.parametrize(("name", "tile", "params"), ALL_CASES, ids=lambda v: str(v)[:24])
+def test_cuda_source_matches_reference_when_compiled_for_cpu(name, tile, params):
+    k = get(name)
+    got = k.launch(cuda_emu.EmuGpu(), tile, **params)
+    _close(name, got, k.reference(tile, **params), strict=True)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize(("name", "tile", "params"), ALL_CASES, ids=lambda v: str(v)[:24])
+def test_cuda_kernel_matches_reference_on_the_gpu(name, tile, params):
+    from phasor.render.gpu.bridge import to_host
+
+    got = to_host(gpu.run(name, tile, backend="cuda", **params))
+    _close(name, got, get(name).reference(tile, **params), strict=False)
+
+
+# ---------------------------------------------------------------- view and tiles
+
+
+def test_plane_maps_pixel_centers_with_y_up():
+    x, y = plane(Tile.full(4, 2), (10.0, -1.0), 2.0)  # 4 x 2 world units, centered there
+    np.testing.assert_allclose(x[0], [8.5, 9.5, 10.5, 11.5])
+    np.testing.assert_allclose(y[:, 0], [-0.5, -1.5])  # row 0 is the top
+    xt, yt = plane(Tile(2, 1, 2, 1, 4, 2), (10.0, -1.0), 2.0)
+    np.testing.assert_array_equal(xt, x[1:, 2:])
+    np.testing.assert_array_equal(yt, y[1:, 2:])
+
+
+@pytest.mark.parametrize(
+    ("w", "h", "bpp", "budget"),
+    [
+        (3840, 2160, 16, 64 * 2**20),
+        (1920, 1080, 64, 10 * 2**20),
+        (100, 7, 16, 16 * 30),
+        (5, 5, 4, 1),
+    ],
+)
+def test_tile_plans_cover_the_image_once_within_budget(w, h, bpp, budget):
+    tiles = plan_tiles(w, h, bpp, budget)
+    seen = np.zeros((h, w), dtype=np.int32)
+    for t in tiles:
+        seen[t.y0 : t.y0 + t.h, t.x0 : t.x0 + t.w] += 1
+        assert t.n * bpp <= max(budget, bpp)
+    assert (seen == 1).all()
+    heights = {t.h for t in tiles}
+    assert max(heights) - min(heights) <= max(1, max(heights) // 2)  # no sliver tiles
+
+
+def test_plan_defaults_and_bad_input():
+    assert plan_tiles(64, 64, 16, 10**9) == [Tile.full(64, 64)]
+    assert len(plan_tiles(64, 64, 16)) == 1  # the default budget is large
+    with pytest.raises(ValueError):
+        plan_tiles(0, 10, 16)
+    with pytest.raises(ValueError, match="does not fit"):
+        Tile(60, 0, 10, 10, 64, 64)
+    assert Tile(1, 2, 3, 4, 8, 8).scaled(2) == Tile(2, 4, 6, 8, 16, 16)
+
+
+@pytest.mark.parametrize("name", ["escape", "domain"])
+def test_tiles_stitch_into_exactly_the_full_image(name):
+    _, params = CASES[name][0]
+    whole = gpu.render(name, 64, 48, backend="reference", **params)
+    pieces = gpu.render(name, 64, 48, backend="reference", budget=16 * 64 * 5, **params)
+    np.testing.assert_array_equal(whole, pieces)
+    assert whole.shape[:2] == (48, 64)
+
+
+def test_supersampling_averages_each_pixel():
+    params = {"function": F, "center": (0.0, 0.0), "height": 4.0, "backend": "reference"}
+    fine = gpu.render("domain", 32, 32, **params)
+    base = gpu.render("domain", 16, 16, **params)
+    soft = gpu.render("domain", 16, 16, supersample=2, budget=16 * 4 * 16 * 3, **params)
+    np.testing.assert_allclose(soft, fine.reshape(16, 2, 16, 2, 4).mean(axis=(1, 3)), atol=1e-6)
+    assert soft.shape == base.shape and not np.allclose(soft, base)
+    with pytest.raises(ValueError):
+        gpu.render("domain", 16, 16, supersample=0, **params)
+
+
+# ---------------------------------------------------------------- fractals
+
+
+def _escape(c, max_iter=100):
+    """The smooth escape count at one point (a one-pixel image centered on it)."""
+    return float(get("escape").reference(Tile.full(1, 1), c, 1e-3, max_iter, None, "f64")[0, 0])
+
+
+def test_mandelbrot_membership_and_smooth_counts():
+    for inside in [(0.0, 0.0), (-1.0, 0.0), (-0.2, 0.3), (0.25, 0.0), (-1.75488, 0.0)]:
+        assert _escape(inside) == -1.0
+    assert 0 < _escape((2.0, 2.0)) < _escape((0.5, 0.5)) < 100  # nearer the set: slower
+    # Smooth means no integer steps: along a line outside the set the count changes a
+    # little per sample, where a plain iteration count would sit still and then jump by 1.
+    line = np.array([_escape((x, 0.6)) for x in np.linspace(1.0, 3.0, 201)])
+    steps = -np.diff(line)
+    assert (steps > 0).all() and steps.max() < 0.05 and line[0] - line[-1] > 1
+    assert np.abs(line - np.round(line)).max() > 0.4  # fractional, not whole iterations
+    field = get("escape").reference(FULL, (-0.5, 0.0), 2.5, 200)
+    np.testing.assert_allclose(field, field[::-1], atol=1e-3)  # symmetric about the real axis
+    assert 0.2 < (field < 0).mean() < 0.4
+
+
+def test_julia_set_of_zero_is_the_unit_disc():
+    k = get("escape").reference
+    field = k(FULL, (0.0, 0.0), 3.0, 60, (0.0, 0.0))
+    x, y = plane(FULL, (0.0, 0.0), 3.0)
+    r = np.hypot(x, y)
+    assert (field[r < 0.97] == -1).all() and (field[r > 1.03] >= 0).all()
+
+
+def test_precision_policy():
+    assert precision_for(2.5) == "f32" and precision_for(1e-5) == "f32"
+    assert precision_for(9e-6) == "f64"
+    deep = {"center": (-0.75, 0.1), "height": 1e-6, "max_iter": 300}
+    k = get("escape").reference
+    auto, f64, f32 = (
+        k(FULL, **deep),
+        k(FULL, **deep, precision="f64"),
+        k(FULL, **deep, precision="f32"),
+    )
+    np.testing.assert_array_equal(auto, f64)
+    # float32 cannot tell neighboring pixels apart at this depth: it renders in blocks.
+    assert (np.diff(f32, axis=1) == 0).mean() > 0.5 > 0.05 > (np.diff(f64, axis=1) == 0).mean()
+
+
+# ---------------------------------------------------------------- domain coloring and codegen
+
+
+def test_phase_wheel_is_cyclic_even_and_in_gamut():
+    lut = phase_lut()
+    assert lut.shape == (256, 3) and lut.dtype == np.float32
+    assert lut.min() >= 0 and lut.max() <= 1
+    steps = np.abs(np.diff(np.vstack([lut, lut[:1]]), axis=0)).max()
+    assert steps < 0.03  # no seam, including from the last entry back to the first
+    lum = np.array([luminance(c) for c in lut])
+    assert lum.std() / lum.mean() < 0.12  # no hue is much brighter than another (HSV: ~0.5)
+    assert len({tuple(np.round(c, 2)) for c in lut[::32]}) == 8
+
+
+def test_domain_coloring_reads_phase_and_modulus():
+    k = get("domain").reference
+    lut = phase_lut()
+    ident = ComplexFunction.parse("z")
+    one = Tile.full(1, 1)
+
+    def color(z, contour=0.0, f=ident):
+        return k(one, f, (z.real, z.imag), 1e-9, contour, lut)[0, 0]
+
+    np.testing.assert_allclose(color(1 + 0j), [*lut[0], 1], atol=1e-6)  # phase 0
+    np.testing.assert_allclose(color(1j), [*lut[64], 1], atol=1e-5)  # phase pi/2
+    np.testing.assert_allclose(color(-1 + 0j), [*lut[128], 1], atol=1e-5)
+    np.testing.assert_allclose(color(3 - 3j), [*lut[224], 1], atol=1e-5)  # modulus ignored
+    # Contours: brightness climbs within a band and drops when |f| doubles.
+    shades = [color(complex(m, 0), contour=0.5)[0] / lut[0][0] for m in (1.0, 1.4, 1.99, 2.0)]
+    assert shades == pytest.approx([0.5, 0.5 + 0.5 * np.log2(1.4), 0.5 + 0.5 * np.log2(1.99), 0.5],
+                                   abs=1e-4)  # fmt: skip
+    np.testing.assert_array_equal(color(1j, f=F), [1, 1, 1, 1])  # the pole of 1/(z^2+1): white
+    assert color(0j)[3] == 1 and np.isfinite(color(0j)).all()  # a zero is finite and opaque
+
+
+@pytest.mark.parametrize(
+    ("source", "at", "value"),
+    [
+        ("1/(z**2 + 1)", 2.0, 0.2),
+        ("z**3 - 1", 1j, -1 - 1j),
+        ("exp(i*pi*z)", 1.0, -1.0),
+        ("sqrt(z)", -4.0, 2j),
+        ("(z - 1)/(z + 1)", 3.0, 0.5),
+        ("conj(z)*z + abs(z)", 3 + 4j, 30.0),
+        ("-z + 2.5e0", 1.0, 1.5),
+        ("z**(1/2) * e**z", 0.0, 0.0),
+        ("cosh(z)**2 - sinh(z)**2", 0.3 - 2j, 1.0),
+        ("3", 5j, 3.0),
+    ],
+)
+def test_functions_parse_and_evaluate(source, at, value):
+    f = ComplexFunction.parse(source)
+    assert f.numpy()(np.array([at]))[0] == pytest.approx(value, abs=1e-12)
+    assert f.latex() and f.c()
+
+
+@pytest.mark.parametrize(
+    "source",
+    ["__import__('os').system('true')", "z.real", "w + 1", "f(z)", "z if z else 1", "exp(z, 2)",
+     "[z]", "'z'", "1/0", "z +", "lambda: z"],
+)  # fmt: skip
+def test_only_formulas_are_accepted(source):
+    with pytest.raises(FunctionError):
+        ComplexFunction.parse(source)
+
+
+@needs_compiler
+@pytest.mark.parametrize(
+    "source",
+    ["z", "z**3 - 1", "exp(z)", "sin(z)/z", "sqrt(z)", "log(z)", "(z - 1)/(z + 1)", "tanh(z)",
+     "conj(z)*z + abs(z)", "z**(1 + i)", "cos(z) + cosh(z) - e", "pi*z**-2", "tan(z) - sinh(z)",
+     "z**(-1/2) + z**2.5"],
+)  # fmt: skip
+def test_generated_c_computes_what_numpy_computes(source):
+    """The C that codegen emits (through complex.cuh) against SymPy's own NumPy function:
+    two independent routes from one expression."""
+    f = ComplexFunction.parse(source)
+    k = get("domain")
+    params = {"function": f, "center": (0.2, -0.1), "height": 5.0, "contour": 0.4,
+              "precision": "f64"}  # fmt: skip
+    _close("domain", k.launch(cuda_emu.EmuGpu(), OFFSET, **params),
+           k.reference(OFFSET, **params), strict=True)  # fmt: skip
+
+
+# ---------------------------------------------------------------- post-processing
+
+
+def test_tonemap_is_a_monotone_curve_from_0_to_1_that_keeps_alpha():
+    ramp = np.zeros((1, 6, 4), dtype=np.float32)
+    ramp[0, :, :3] = np.array([0, 0.18, 1, 4, 1e4, np.nan], dtype=np.float32)[:, None]
+    ramp[..., 3] = 0.25
+    out = get("tonemap").reference(Tile.full(6, 1), ramp)
+    v = out[0, :, 0]
+    assert v[0] == 0 and v[5] == 0 and v[4] == 1 and (np.diff(v[:5]) > 0).all()
+    assert 0.2 < v[1] < 0.35 and (out[..., 3] == 0.25).all()
+    brighter = get("tonemap").reference(Tile.full(6, 1), ramp, exposure=2.0)
+    assert (brighter[0, 1:4, 0] > v[1:4]).all()
+
+
+def test_gauss_keeps_flat_images_and_spreads_an_impulse_evenly():
+    k = get("gauss").reference
+    flat = np.full((9, 9, 4), 0.7, dtype=np.float32)
+    np.testing.assert_allclose(k(Tile.full(9, 9), flat, 2.0, 0), flat, atol=1e-6)
+    dot = np.zeros((21, 21, 4), dtype=np.float32)
+    dot[10, 10] = 1.0
+    t = Tile.full(21, 21)
+    blur = k(t, k(t, dot, 1.5, 0), 1.5, 1)
+    assert blur.sum(axis=(0, 1)) == pytest.approx([1, 1, 1, 1], abs=1e-5)  # energy kept
+    np.testing.assert_allclose(blur, blur[::-1, ::-1], atol=1e-7)
+    np.testing.assert_allclose(blur, blur.transpose(1, 0, 2), atol=1e-7)
+    assert blur[10, 10, 0] == blur.max() and blur[10, 12, 0] == pytest.approx(
+        blur[10, 10, 0] * np.exp(-0.5 * 4 / 1.5**2), rel=1e-5
+    )
+    only_x = k(t, dot, 1.5, 0)
+    assert (only_x[10] > 0).any() and only_x[9].sum() == 0  # axis 0 blurs along x
+
+
+def test_post_kernels_reject_tiles_and_wrong_images():
+    with pytest.raises(KernelError, match="whole image"):
+        get("gauss").reference(Tile(0, 0, 16, 12, 32, 24), IMAGE[:12, :16].copy(), 1.0, 0)
+    with pytest.raises(KernelError, match="float32"):
+        get("tonemap").reference(IMAGE_TILE, IMAGE.astype(np.float64))
+    with pytest.raises(KernelError, match="axis"):
+        get("gauss").launch(None, IMAGE_TILE, IMAGE, 1.0, 2)
+
+
+# ---------------------------------------------------------------- the bridge
+
+
+@pytest.mark.gl
+def test_copy_bridge_round_trips_a_frame_and_reuses_its_texture():
+    from phasor.render.glcontext import shared_context
+    from phasor.render.gpu.bridge import CopyBridge
+
+    bridge = CopyBridge(shared_context())
+    frame = _rgba(3, (18, 40))
+    frame[0, 0] = [9.5, 0.0, 0.25, 1.0]  # HDR values and a known corner survive
+    tex = bridge.upload(frame)
+    assert tex.size == (40, 18) and tex.components == 4 and tex.dtype == "f2"
+    np.testing.assert_allclose(bridge.read_back(), frame, rtol=1e-3, atol=1e-4)  # float16
+    np.testing.assert_allclose(bridge.read_back()[0, 0], [9.5, 0.0, 0.25, 1.0], atol=1e-6)
+    assert bridge.upload(frame * 0.5) is tex  # same size: the texture is reused
+    np.testing.assert_allclose(bridge.read_back(), frame * 0.5, rtol=1e-3, atol=1e-4)
+    assert bridge.upload(_rgba(4, (8, 8))) is not tex
+    with pytest.raises(ValueError, match="RGBA"):
+        bridge.upload(np.zeros((4, 4, 3), dtype=np.float32))
+
+
+@pytest.mark.gl
+def test_a_kernel_frame_reaches_opengl_through_the_bridge():
+    from phasor.render.glcontext import shared_context
+    from phasor.render.gpu.bridge import CopyBridge
+
+    frame = gpu.render("domain", 96, 54, function=F, center=(0, 0), height=4.0)
+    bridge = CopyBridge(shared_context())
+    bridge.upload(frame)
+    np.testing.assert_allclose(bridge.read_back(), frame, rtol=1e-3, atol=1e-4)
