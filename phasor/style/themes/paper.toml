@@ -122,7 +122,7 @@ density_min = 0.04   # density: occupied share of the frame under this is "empty
 density_max = 0.6    # ... and over this is "crowded"
 rhythm = 0.3         # motion_rhythm: seconds within which unrelated objects should not all move
 margin = 0.05        # margin: content must stay out of this outer share of the frame
-stroke_mix = 3       # stroke_mix: more than this many stroke weights in one frame
+stroke_mix = 2       # stroke_mix: more than this many stroke weights in one frame
 
 # Living motion (SPEC "Living motion"). Everything is a smooth deterministic function of
 # (object id, seed, t); scene `life` "off" turns it all off, "subtle" scales amplitudes by

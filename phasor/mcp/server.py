@@ -74,10 +74,10 @@ def build_server(workspace: Workspace | None = None) -> MCPServer:
 
     @server.tool(structured_output=False)
     @_wrap
-    def review(step: float = 0.5, with_picture: bool = True) -> list[Any]:
+    def review(step: float = 0.5, with_picture: bool = True, aesthetic: bool = False) -> list[Any]:
         """The self-review loop in one call: lint, the inspector at every marker and a
         storyboard image. Fix ``todo`` and call again until ``clean`` is true."""
-        r = ws.review(step, with_picture)
+        r = ws.review(step, with_picture, aesthetic)
         parts: list[Any] = [json.dumps(r)]
         if r["storyboard"]:
             parts.append(Image(path=r["storyboard"]))

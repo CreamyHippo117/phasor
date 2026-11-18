@@ -310,14 +310,18 @@ class Workspace:
             raise ToolError("detail is brief, standard or full")
         return self._guard(lambda: self.engine.inspect(t, id=id, detail=detail))
 
-    def lint(self, fix: bool = False, strict: bool = False, step: float = 0.5) -> dict[str, Any]:
+    def lint(
+        self, fix: bool = False, strict: bool = False, step: float = 0.5, aesthetic: bool = False
+    ) -> dict[str, Any]:
         """Find visual problems (overlap, off-screen, contrast, tiny text, clutter, ...).
-        ``fix=True`` applies the fixes that are certain, then reports what is left."""
+        ``fix=True`` applies the fixes that are certain, then reports what is left.
+        ``aesthetic=True`` also judges taste: focal point, color restraint, glow clipping,
+        density, motion rhythm, margins, stroke weights."""
         e = self.engine
         applied: list[dict[str, Any]] = []
         if fix:
-            applied = e.autofix()["applied"]
-        issues = e.lint(step, strict=strict)
+            applied = e.autofix(aesthetic=aesthetic)["applied"]
+        issues = e.lint(step, strict=strict, aesthetic=aesthetic)
         return {
             "clean": not issues,
             "errors": sum(i.severity == "error" for i in issues),
@@ -372,11 +376,14 @@ class Workspace:
 
     # ------------------------------------------------------------ outputs
 
-    def review(self, step: float = 0.5, with_picture: bool = True) -> dict[str, Any]:
+    def review(
+        self, step: float = 0.5, with_picture: bool = True, aesthetic: bool = False
+    ) -> dict[str, Any]:
         """One call for the self-review loop: lint, what is on screen at every marker, and
-        a storyboard. Fix what ``issues`` lists, then call again until ``clean``."""
+        a storyboard. Fix what ``issues`` lists, then call again until ``clean``. Pass
+        ``aesthetic=True`` for the beauty pass (taste rules on top of the correctness ones)."""
         e = self.engine
-        lint = self.lint(step=step, strict=bool(e.document.narration))
+        lint = self.lint(step=step, strict=bool(e.document.narration), aesthetic=aesthetic)
         times = e.storyboard_times()
         marks = {t: n for n, t in e.document.timeline.markers.items()}
         frames = [

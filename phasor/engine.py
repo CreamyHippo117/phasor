@@ -21,8 +21,9 @@ from phasor.core.issues import DocumentError, Issue
 from phasor.core.patch import TWEAK_OPS, apply_ops, apply_overrides, parse_patch, record_tweaks
 from phasor.core.schema import Document, Meta, Overrides
 from phasor.core.state import SceneState
+from phasor.inspect import aesthetic as aesthetic_rules
+from phasor.inspect import critic, inspector
 from phasor.inspect import events as event_log
-from phasor.inspect import inspector
 from phasor.inspect import lint as lint_rules
 from phasor.inspect.oracle import PassOracle
 from phasor.inspect.passes import PassRunner
@@ -95,6 +96,7 @@ class _Snapshot:
         self.orphans: tuple[Issue, ...] = tuple(orphans)
         self.bake: Bake | None = None
         self.lint: dict[float, tuple[Issue, ...]] = {}
+        self.aesthetic: tuple[Issue, ...] | None = None
         self.states: OrderedDict[float, SceneState] = OrderedDict()
         self.snapshots: OrderedDict[float, dict[str, Any]] = OrderedDict()
 
@@ -169,12 +171,62 @@ class Engine:
     def duration(self) -> float:
         return self._snap.compiled.duration
 
-    def lint(self, step: float = lint_rules.DEFAULT_STEP, *, strict: bool = False) -> list[Issue]:
+    def lint(
+        self,
+        step: float = lint_rules.DEFAULT_STEP,
+        *,
+        strict: bool = False,
+        aesthetic: bool = False,
+    ) -> list[Issue]:
         """Every lint issue: dangling overrides, unsolved constraints, and the visual rules
         checked at each marker and every ``step`` seconds. Cached per document version.
-        ``strict`` adds rules that only matter for finished scenes (``raw_motion``)."""
+        ``strict`` adds rules that only matter for finished scenes (``raw_motion``);
+        ``aesthetic`` adds the taste rules (focal point, color restraint, glow clip, density,
+        motion rhythm, margin, stroke mix)."""
         issues = list(self._lint(self._snap, step))
-        return issues + lint_rules.strict_rules(self._snap.compiled) if strict else issues
+        if strict:
+            issues += lint_rules.strict_rules(self._snap.compiled)
+        if aesthetic:
+            issues += self._aesthetic(self._snap)
+        return issues
+
+    def critique(self) -> dict[str, Any]:
+        """The art-director's report: the taste score (0 = nothing to criticise) and every
+        aesthetic issue with the markers it happens at, certain ``fix`` ops and judgement
+        ``suggested`` ops. See ``inspect/critic.py``."""
+        issues = [i for i in self._aesthetic(self._snap)]
+        return critic.critique(self._snap.compiled, issues, lambda t: self._snapshot(t))
+
+    def polish(self, rounds: int = 3) -> dict[str, Any]:
+        """Critique, apply the fixes (certain ones, then judgement suggestions), and repeat,
+        at most ``rounds`` times (SPEC: three). Every round is undoable. Returns the score
+        before and after and what each round did; stops early when nothing is left to do."""
+        history = []
+        before = self.critique()
+        report = before
+        for k in range(1, rounds + 1):
+            ops: list[dict[str, Any]] = []
+            for i in report["issues"]:
+                for op in i["fix"] or i["suggested"]:
+                    if op not in ops:
+                        ops.append(op)
+            if not ops or not self.apply(ops).ok:
+                break
+            report = self.critique()
+            history.append({"round": k, "applied": ops, "score": report["score"]})
+        return {"before": before["score"], "after": report["score"], "rounds": history,
+                "remaining": report["issues"]}  # fmt: skip
+
+    def _aesthetic(self, snap: _Snapshot) -> tuple[Issue, ...]:
+        if snap.aesthetic is None:
+            snap.aesthetic = tuple(aesthetic_rules.rules(
+                snap.compiled,
+                snap.plan,
+                lambda t: self._state(snap, t),
+                lambda t: self._snapshot_of(snap, t),
+                self.pass_runner(),
+            ))  # fmt: skip
+        return snap.aesthetic
 
     def audio_track(self):
         """The narration as one mono int16 track covering the scene, and its sample rate;
@@ -314,19 +366,20 @@ class Engine:
 
         return PatchResult(True, self._version, delta=delta)
 
-    def autofix(self, max_rounds: int = 3) -> dict[str, Any]:
+    def autofix(self, max_rounds: int = 3, *, aesthetic: bool = False) -> dict[str, Any]:
         """Apply the fixes the linter suggests (for example: let the label placer move an
         overlapping label), re-lint, and repeat. Everything goes through ``apply``, so each
-        round is one undo step. Returns what was applied and what is still wrong."""
+        round is one undo step. ``aesthetic`` includes the taste rules' fixes. Returns what
+        was applied and what is still wrong."""
         applied: list[dict[str, Any]] = []
         for _ in range(max_rounds):
             ops: list[dict[str, Any]] = []
-            for issue in self.lint():
-                ops += [op for op in issue.fix if op not in ops]
+            for issue in self.lint(aesthetic=aesthetic):
+                ops += [op for op in issue.fix if op not in ops and op not in applied]
             if not ops or not self.apply(ops).ok:
                 break
             applied += ops
-        return {"applied": applied, "remaining": self.lint()}
+        return {"applied": applied, "remaining": self.lint(aesthetic=aesthetic)}
 
     # ------------------------------------------------------------ inspect
 

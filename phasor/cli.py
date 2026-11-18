@@ -61,8 +61,8 @@ def _cmd_lint(args: argparse.Namespace) -> int:
 
     try:
         engine = load(args.scene)
-        fixed = engine.autofix()["applied"] if args.fix else []
-        issues = engine.lint(step=args.step, strict=args.strict)
+        fixed = engine.autofix(aesthetic=args.aesthetic)["applied"] if args.fix else []
+        issues = engine.lint(step=args.step, strict=args.strict, aesthetic=args.aesthetic)
         if fixed:
             # A script keeps its fixes in name.overrides.json; a document is rewritten.
             engine.save(_save_target(args.scene))
@@ -204,6 +204,7 @@ def build_parser() -> argparse.ArgumentParser:
     li = sub.add_parser("lint", help="find visual problems at every marker and sampled times")
     li.add_argument("scene", help="a .phasor.json document or a .py script that builds a Scene")
     li.add_argument("--fix", action="store_true", help="apply the fixes the linter suggests")
+    li.add_argument("--aesthetic", action="store_true", help="also check taste (focal point, ...)")
     li.add_argument("--strict", action="store_true", help="exit 1 on warnings too")
     li.add_argument("--json", action="store_true", help="machine-readable output")
     li.add_argument("--step", type=float, default=0.5, help="seconds between samples")
