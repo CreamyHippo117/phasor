@@ -423,3 +423,117 @@ def test_restore_is_one_undoable_step_and_versions_only_grow(ws):
     assert r["version"] > before and list(ws.summary()["objects"]) == ["pole"]
     ws.undo()
     assert "pole.label" in ws.summary()["objects"]
+
+
+# ---------------------------------------------------------------- Milestone 7: taste tools
+
+
+def test_scene_new_takes_a_look_and_presets_in_patches(tmp_path):
+    w = Workspace(tmp_path)
+    assert w.scene_new("lk")["theme"] == "midnight_glow"  # dark by default
+    s = w.scene_new("lk", look="calm")
+    assert s["theme"] == "midnight_glow"
+    assert w.engine.document.meta.life == "subtle" and w.engine.document.meta.look == "calm"
+    r = w.scene_edit({"op": "add_object", "object": {"id": "p", "type": "domain_coloring",
+                      "preset": "soft_phase", "params": {"function": "1/(z**2 + 1)"}}})  # fmt: skip
+    assert r["ok"], r["errors"]
+    obj = w.engine.document.object("p")
+    assert obj.style["colormap"] == "soft_phase" and obj.params["softness"] == 0.8
+    chalk = w.scene_new("c", look="chalk")
+    assert chalk["theme"] == "paper"
+    kinds = w.object_types()
+    assert "soft_phase" in kinds["types"]["domain_coloring"]["presets"]
+    assert {"calm", "glow", "chalk"} <= set(kinds["looks"])
+
+
+def test_an_unknown_preset_is_a_clear_error(tmp_path):
+    w = Workspace(tmp_path)
+    w.scene_new("x")
+    with pytest.raises(ToolError, match="no preset 'nope'"):
+        w.scene_edit({"op": "add_object", "object": {"id": "q", "type": "dot", "preset": "nope"}})
+
+
+def test_critique_polish_and_the_rubric(tmp_path):
+    (tmp_path / "STYLE.md").write_text("# my taste\none hero per beat\n")
+    w = Workspace(tmp_path)
+    w.scene_new("rough")
+    w.scene_edit(
+        [
+            {"op": "set_param", "path": "camera.height", "value": 6},
+            {
+                "op": "add_object",
+                "object": {
+                    "id": "a",
+                    "type": "dot",
+                    "params": {"pos": [5.2, 0]},
+                    "style": {"color": "highlight"},
+                },
+            },
+            {
+                "op": "add_object",
+                "object": {
+                    "id": "b",
+                    "type": "dot",
+                    "params": {"pos": [0, 0]},
+                    "style": {"color": "highlight"},
+                },
+            },
+            {"op": "set_marker", "name": "beat", "t": 1.0},
+        ]
+    )
+    c = w.critique()
+    assert c["score"] > 0 and "one hero per beat" in c["rubric"] and c["gallery"] == 0
+    assert {"focal_point", "margin"} <= {i["code"] for i in c["issues"]}
+    p = w.polish()
+    assert p["after"] < p["before"] and p["rounds"]
+
+
+@pytest.mark.gl
+@pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
+def test_variants_choose_and_the_choice_is_recorded(tmp_path):
+    from phasor.style import choices
+
+    w = Workspace(tmp_path)
+    w.scene_new("vv", look="glow")
+    w.scene_edit(
+        [
+            {
+                "op": "add_object",
+                "object": {"id": "d", "type": "dot", "params": {"r": 1.0}, "preset": "beacon"},
+            },
+            {"op": "set_marker", "name": "beat", "t": 1.0},
+        ]
+    )
+    r = w.variants("beat")
+    assert Path(r["image"]).exists() and [v["name"] for v in r["variants"]] == [
+        "as_is",
+        "calmer",
+        "bolder",
+    ]
+    out = w.choose("calmer", note="less shouty")
+    assert out["applied"] and w.engine.document.object("d").style["glow"] == "soft"
+    log = choices.read(tmp_path / "style" / "choices.jsonl")
+    assert log[0]["winner"] == "calmer" and log[0]["options"] == ["as_is", "calmer", "bolder"]
+    with pytest.raises(ToolError, match="no variant 'neon'"):
+        w.choose("neon")
+    with pytest.raises(ToolError, match="call variants first"):
+        Workspace(tmp_path).choose("calmer")
+
+
+@pytest.mark.gl
+@pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
+def test_storyboard_compare_over_the_workspace(tmp_path):
+    import numpy as np
+    from PIL import Image
+
+    (tmp_path / "gallery").mkdir()
+    Image.fromarray(np.full((90, 160, 3), 40, dtype=np.uint8)).save(
+        tmp_path / "gallery" / "dark.png"
+    )
+    (tmp_path / "gallery" / "dark.txt").write_text("calm and dark\n")
+    w = Workspace(tmp_path)
+    w.scene_new("cmp")
+    w.scene_edit({"op": "add_object", "object": {"id": "d", "type": "dot", "params": {"r": 1.0}}})
+    r = w.storyboard(times=[0.0], compare=True)
+    assert Path(r["compare_image"]).exists() and r["gallery_size"] == 1
+    assert r["compare"][0]["nearest"][0]["note"] == "calm and dark"

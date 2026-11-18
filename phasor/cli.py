@@ -1,4 +1,4 @@
-"""phasor command line: doctor | render | storyboard | lint | inspect | bench | mcp | gui.
+"""phasor command line: doctor | render | storyboard | lint | inspect | bench | style | mcp | gui.
 
 A thin client (SPEC contract 1): it holds no scene state of its own. Commands from
 later milestones are registered now so the surface is stable, and exit with code 2
@@ -138,7 +138,8 @@ def _cmd_render(args: argparse.Namespace) -> int:
         default = stem + (".png" if args.frame is not None else ".mp4")
         r = render_file(
             engine, args.out or default, preset=args.preset, fps=args.fps, start=args.start,
-            end=args.end, frame=args.frame, progress=progress,
+            end=args.end, frame=args.frame, progress=progress, shutter=args.shutter,
+            blur_samples=args.blur_samples,
         )  # fmt: skip
     except (DocumentError, OSError, ValueError, RuntimeError, EncodeError) as e:
         print(f"\nphasor render: {e}", file=sys.stderr)
@@ -152,6 +153,35 @@ def _cmd_render(args: argparse.Namespace) -> int:
         sound = ", with narration" if r["narration"] else ""
         print(f"\nwrote {r['path']}: {r['frames']} frames, {w}x{h} at {r['fps']:g} fps, "
               f"{r['encoder']}{sound}")  # fmt: skip
+    return 0
+
+
+def _cmd_style(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from phasor.style import choices
+
+    path = Path(args.choices)
+    try:
+        report = choices.tune(path, args.min)
+    except (OSError, ValueError) as e:
+        print(f"phasor style: {e}", file=sys.stderr)
+        return 1
+    prefs = path.with_name("preferences.json")
+    if report["choices"]:
+        prefs.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return 0
+    if not report["choices"]:
+        print(f"no choices yet in {path}: pick variants (the `variants` and `choose` tools)")
+        return 0
+    print(f"{report['choices']} choice(s) in {path}")
+    for name, r in report["options"].items():
+        print(f"  {name:12s} won {r['won']} of {r['offered']} ({r['rate']:.0%})")
+    fav = report["favored"]
+    print(f"you favor: {fav}" if fav else f"no clear favorite yet (needs {args.min}+ appearances)")
+    print(f"wrote {prefs}")
     return 0
 
 
@@ -227,8 +257,19 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--start", type=float, help="first time in seconds (default 0)")
     r.add_argument("--end", type=float, help="last time in seconds (default: the end)")
     r.add_argument("--frame", type=float, help="render only the frame at this time, as PNG")
+    r.add_argument("--motion-blur", type=float, metavar="SHUTTER", dest="shutter",
+                   help="shutter as a share of a frame (0 off, 0.5 film standard); "
+                   "default: off for preview, 0.5 for final and 4k")  # fmt: skip
+    r.add_argument("--blur-samples", type=int, help="sub-frames per frame when blurring (4)")
     r.add_argument("--quiet", action="store_true")
     r.set_defaults(func=_cmd_render)
+
+    st = sub.add_parser("style", help="what your recorded choices say about your taste")
+    st.add_argument("action", choices=["tune"], help="tune: tally style/choices.jsonl")
+    st.add_argument("--choices", default="style/choices.jsonl", help="the choices log")
+    st.add_argument("--min", type=int, default=3, help="appearances needed to call a favorite")
+    st.add_argument("--json", action="store_true", help="machine-readable output")
+    st.set_defaults(func=_cmd_style)
 
     b = sub.add_parser("bench", help="ms per frame per kernel and peak VRAM")
     b.add_argument("--width", type=int, default=1920)

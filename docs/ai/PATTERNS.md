@@ -146,3 +146,25 @@ assert [i for i in orb.engine.lint() if i.code == "unsolved"] == []
   part always hides another from some side, and `events` will say so.
 - Check a 3D scene with `engine.events()`: `problems(...)` lists every moment a label or
   key object is hidden or leaves the frame, with the marker being spoken and fixes.
+
+## Make it beautiful: the taste loop
+
+After the scene is correct (`review` clean), run the beauty pass: `lint(aesthetic=True)` or
+`critique`, look at the storyboard against `STYLE.md` (and `storyboard(compare=True)` once
+the project has a `gallery/`), `polish` for what is certain, then decide the rest yourself.
+Unsure between looks? `variants` on a marker and `choose`.
+
+```python
+from phasor import Dot, Scene
+
+draft = Scene("taste", passes=None, look="calm")
+draft.set("camera.height", 6)
+draft.add(Dot(id="hero", pos=(0, 0), r=1.0, preset="beacon", tags=["key"]))
+draft.marker("beat", 1.0)
+assert draft.engine.critique()["score"] == 0.0  # one hero, clear margin, filled enough
+```
+
+- Start from a look (`calm`, `glow`) and presets, not from bare parameters.
+- Keep one `highlight` per beat; step everything else back with roles.
+- Rainbows where hue carries meaning (domain coloring); elsewhere vary the palette.
+- Never hand-tune glow or stroke numbers: roles and presets are the taste knobs.

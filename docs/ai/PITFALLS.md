@@ -169,3 +169,24 @@ region events, and `when_hidden` returns no spans.
 
 Parameter values are numbers, strings, booleans and tuples. `drift=-1` (the default) means
 "the theme's drift"; `drift=0` holds the camera still.
+
+## Everything is still (no life)
+
+A plain `Scene(...)` has `life="off"` (old documents stay still too). Use a look
+(`calm`, `glow`) or `life="subtle"`/`"lively"`. A wiggling dot never moves a label's value or
+a computed pole; tag objects that must be perfectly still `"exact"`.
+
+## `critique` has issues `polish` will not fix
+
+Only certain fixes (a margin rule, one stroke weight, a glow notch down) and the one
+judgement it is willing to make (which of several `highlight`s to keep) are applied. An
+empty frame, two colliding motions, or "nothing highlighted yet" are yours to decide.
+
+## `chalk` looks washed out
+
+Light themes are opt-in and glow is nearly absent on them by design (soft halos, never
+white blow-outs). For emphasis use `highlight`, heavier strokes and dimming rather than glow.
+
+## `variants` needs OpenGL
+
+It renders pictures. Without OpenGL (tier C) use `critique`, which works from geometry.

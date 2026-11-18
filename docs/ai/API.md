@@ -4,7 +4,7 @@ One canonical example per public name. No deprecated aliases. Every ```python bl
 folder runs in CI (`tests/test_docs.py`), top to bottom in one namespace per file. Mark a
 block ```python no-run only when it cannot run in CI, and say why next to it.
 
-Status: through Milestone 6. This file is the Python API; to drive phasor from an AI client
+Status: through Milestone 7. This file is the Python API; to drive phasor from an AI client
 (MCP) read `MCP.md` first.
 
 ## Build a scene
@@ -32,8 +32,8 @@ s.set("camera.height", 6)  # world units visible top to bottom
 | --- | --- | --- |
 | `Dot` | `pos`, `r` (world radius, default 0.1) | `color` (emphasis, primary), `glow` (glow, none) |
 | `Line` | `points` (2 or more) | `color` (emphasis, primary), `stroke` (stroke, regular), `glow` (glow, none) |
-| `cx.DomainColoring` | `function` (e.g. `"1/(z**2 + 1)"`), `pos` (center), `size` (w, h), `contour` (0-1) | `colormap` (colormap, phase) |
-| `cx.Fractal` | `kind` (`mandelbrot`/`julia`), `c` (Julia constant), `pos`, `size`, `max_iter`, `density` | `colormap` (colormap, sequential) |
+| `cx.DomainColoring` | `function` (e.g. `"1/(z**2 + 1)"`), `pos` (center), `size` (w, h), `contour` (0-1), `softness` (0-1, edge feathering), `hue` (turns the wheel) | `colormap` (colormap, phase) |
+| `cx.Fractal` | `kind` (`mandelbrot`/`julia`), `c` (Julia constant), `pos`, `size`, `max_iter`, `density`, `hue` | `colormap` (colormap, sequential) |
 | `cx.RiemannSurface` | `kind` (`sqrt`/`cbrt`/`log`), `pos` (branch point), `radius`, `height` (`re`/`im`), `scale`, `rings`, `segments` | `colormap` (colormap, phase), `material` (surface, solid) |
 | `Text` | `text`, `pos`, `anchor` (`center`/`left`/`right`), `leader`, `leader_on` (set by layout) | `color` (emphasis, primary), `size` (text, label), `leader` (stroke, hairline) |
 
@@ -347,6 +347,83 @@ assert field.shape == (90, 160) and (field == -1).any()  # -1 marks points in th
   `exp log sqrt sin cos tan sinh cosh tanh conj abs`. Anything else is a `FunctionError`.
 - A new kernel needs `@kernel(name, signature, reference=numpy_fn)`; registration fails
   without a NumPy reference that takes the same parameters.
+
+## Looks, presets, living motion and taste
+
+Start a scene from a **look**: a theme plus a few choices, by name. The default is dark
+(`midnight_glow`); light is opt-in.
+
+| Look | Theme | Life | Character |
+| --- | --- | --- | --- |
+| `calm` | `midnight_glow` | `subtle` | soft contour edges, gentle glow, slow drift |
+| `glow` | `midnight_glow` | `lively` | strong bloom, everything breathes |
+| `chalk` | `paper` | `off` | light page, ink strokes, no glow, crisp, perfectly still |
+
+Themes: `midnight_glow` (dark blue-black), `aurora` (dark green-black, teal and violet),
+`paper` (light). `Scene(title, theme=..., look=..., life=...)`; explicit `theme` and `life`
+beat the look's. The document stores the resolved values, so a look changing later never
+changes an old scene.
+
+**Object presets** are named starting points: `Dot(id="d", preset="beacon")`,
+`cx.DomainColoring(id="p", function="z", preset="soft_phase")`. Precedence: what you set
+yourself, then the preset, then the look, then the type's default. Presets: `dot`: `plain`,
+`glowing`, `beacon`; `line`: `ink`, `glowing`, `beam`, `hairline`; `domain_coloring`:
+`classic` (hard edges), `soft_phase` (restrained wheel, feathered), `vivid`; `fractal`:
+`classic`, `ember`, `ocean`; `riemann_surface`: `glass`, `soft_glass`.
+
+**Palettes** are style roles (`colormap`): `phase` (the full wheel: use it where hue means
+phase), `soft_phase` (three-hue wheel), `sequential`, `ember`, `ocean` (two-tone ramps).
+Fewer rainbows does not mean none: domain coloring keeps the full wheel.
+
+**Edges**: `cx.DomainColoring(softness=0..1)` feathers the modulus bands (0.5 by default).
+
+**Living motion** (`life`: `off`, `subtle`, `lively`): glow breathes, dots drift a fraction
+of their radius, color fields turn a few percent of the wheel, all a deterministic function
+of (object id, `seed`, t), so the same frame always renders the same. Tag an object
+`"exact"` to keep it perfectly still; the geometry of a field (a pole's place) never moves.
+The default for plain `Scene(...)` is `off`; looks turn it on.
+
+```python
+from phasor import Dot, Scene, cx
+
+calm = Scene("alive", look="calm", passes=None)
+calm.set("camera.height", 4.5)
+calm.add(cx.DomainColoring(id="plane", function="1/(z**2 + 1)", preset="soft_phase"))
+calm.add(Dot(id="pole", pos=(0, 1), r=0.08, preset="beacon", tags=["key"]))
+calm.add(Dot(id="origin", pos=(0, 0), r=0.08, tags=["exact"]))  # never wiggles
+
+meta = calm.engine.document.meta
+assert (meta.theme, meta.life, meta.look) == ("midnight_glow", "subtle", "calm")
+assert calm.engine.document.object("plane").params["softness"] == 0.8  # from the preset
+assert calm.engine.state_at(0.0)["origin"].params.pos == (0.0, 0.0, 0.0)
+assert calm.engine.state_at(2.0)["pole"].params.pos != calm.engine.state_at(0.0)["pole"].params.pos
+```
+
+**Taste, the art director and variants.** `lint(aesthetic=True)` adds the taste rules:
+`focal_point` (one `highlight` per beat), `color_restraint` (three saturated hues at most;
+phase coloring exempt), `glow_clip`, `density`, `motion_rhythm`, `margin`, `stroke_mix`.
+Thresholds are the theme's `[lint]`. `engine.critique()` scores them (0 is nothing to
+criticise) with the markers and the fixes; `engine.polish(rounds=3)` applies them, each round
+one undo step; `engine.variants(beat)` shows calmer and bolder looks of one beat side by side;
+`engine.storyboard(compare="gallery")` holds frames beside the three nearest in your
+`gallery/`. `phasor style tune` reads `style/choices.jsonl` (every pick, appended by the
+`choose` tool) and says what you favor.
+
+```python
+from phasor import Dot, Scene
+
+rough = Scene("rough", passes=None)
+rough.set("camera.height", 6)
+rough.add(Dot(id="a", pos=(5.2, 0), r=0.2, style={"color": "highlight"}))  # at the edge
+rough.add(Dot(id="b", pos=(0, 0), r=0.9, style={"color": "highlight"}))  # two heroes
+rough.marker("beat", 1.0)
+before = rough.engine.critique()["score"]
+report = rough.engine.polish(rounds=3)
+assert report["after"] < before and len(report["rounds"]) <= 3
+```
+
+Finals render with motion blur (`phasor render --preset final`; `--motion-blur 0` turns it
+off): `engine.frame_blurred(t, fps)` averages sub-frames only where something moves.
 
 ## 3D: orbit camera, surfaces, camera goals
 

@@ -33,6 +33,7 @@ Every change is one undoable step (undo), and checkpoint/restore/diff let you br
 TOOL_NAMES = (
     "scene_new", "scene_open", "scene_save", "scene_edit", "undo", "redo", "animate",
     "narrate", "checkpoint", "restore", "diff", "inspect", "lint", "storyboard", "review",
+    "critique", "polish", "variants", "choose",
     "events", "when_hidden", "free_space_near", "hit_test", "resolve", "render", "docs_search",
     "object_types",
 )  # fmt: skip
@@ -58,19 +59,33 @@ def build_server(workspace: Workspace | None = None) -> MCPServer:
         return fn
 
     for name in TOOL_NAMES:
-        if name not in ("storyboard", "review"):  # these two also return a picture, below
+        if name not in ("storyboard", "review", "variants"):  # these also return a picture, below
             tool(getattr(ws, name))
 
     # These two return a picture next to the data, so they are plain content, not structured.
     @server.tool(structured_output=False)
     @_wrap
     def storyboard(
-        times: list[float] | None = None, marks: bool = True, columns: int = 3
+        times: list[float] | None = None,
+        marks: bool = True,
+        columns: int = 3,
+        compare: bool = False,
     ) -> list[Any]:
         """Keyframes on one contact sheet (returned as an image) plus what the inspector sees
         in each. ``marks`` draws each object's box and id on the picture."""
-        r = ws.storyboard(times, marks, columns)
-        return [json.dumps({k: v for k, v in r.items()}), Image(path=r["image"])]
+        r = ws.storyboard(times, marks, columns, compare)
+        parts: list[Any] = [json.dumps(r), Image(path=r["image"])]
+        if "compare_image" in r:
+            parts.append(Image(path=r["compare_image"]))
+        return parts
+
+    @server.tool(structured_output=False)
+    @_wrap
+    def variants(beat: str | float, n: int = 3) -> list[Any]:
+        """Alternative looks of one beat side by side (as is, calmer, bolder) with taste
+        scores, as an image. Nothing changes until you call ``choose``."""
+        r = ws.variants(beat, n)
+        return [json.dumps(r), Image(path=r["image"])]
 
     @server.tool(structured_output=False)
     @_wrap

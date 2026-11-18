@@ -19,7 +19,11 @@ phasor renders math animations and lets you see, check and fix them. You work th
    (`reveal`, `trace`, `dim_others`, `morph`, ...) anchored to the markers.
 4. `review` after every batch of edits. Fix each `todo`, review again. Look at the storyboard
    image: lint cannot tell you a layout is ugly. At most 5 rounds, then report what is left.
-5. `scene_save`, then `render` with `preset: "preview"`.
+5. The beauty pass: `review` with `aesthetic: true`, or `critique` (score, issues, rubric).
+   Look at the storyboard against `STYLE.md`, `polish` what is certain, decide the rest.
+   Unsure? `variants` on a marker, then `choose`. Start scenes from a look
+   (`scene_new` with `look: "calm"`), and use `preset` in patches.
+6. `scene_save`, then `render` with `preset: "preview"`.
 
 ## Never
 
@@ -27,4 +31,6 @@ phasor renders math animations and lets you see, check and fix them. You work th
 - Animate by raw seconds in a narrated scene. Use markers and verbs.
 - Reuse the id of an object you removed.
 - Claim it looks good without having looked at the storyboard.
+- Reach for a rainbow everywhere: the full wheel is for where hue means phase (domain
+  coloring); elsewhere vary the palette. Dark is the default theme; do not switch it unasked.
 - Open `.py` scenes unless the user says to trust them: a script is code.

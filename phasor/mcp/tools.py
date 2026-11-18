@@ -19,11 +19,12 @@ from phasor.core import io
 from phasor.core.diff import diff_documents
 from phasor.core.ids import file_stem
 from phasor.core.issues import DocumentError, Issue
-from phasor.core.objects import registered_types
+from phasor.core.objects import get_type, registered_types
 from phasor.core.schema import Document, Meta
 from phasor.engine import Engine
 from phasor.mcp import docs
 from phasor.scene import Scene, load
+from phasor.style.looks import DEFAULT_THEME, available_looks, load_look
 from phasor.style.theme import ROLE_GROUPS, available_themes
 from phasor.time import verbs as _verbs
 
@@ -82,6 +83,8 @@ class Workspace:
         self.out_dir = Path(out_dir).resolve() if out_dir else self.root / "phasor_out"
         self.allow_scripts = allow_scripts
         self._engine: Engine | None = None
+        self._variants: dict[str, list[dict[str, Any]]] = {}
+        self._variant_beat = ""
         self.path: Path | None = None  # where the open scene was loaded from / last saved
 
     # ------------------------------------------------------------ plumbing
@@ -131,13 +134,20 @@ class Workspace:
     # ------------------------------------------------------------ scenes
 
     def scene_new(
-        self, title: str, theme: str = "midnight_glow", width: int = 1920, height: int = 1080,
-        fps: float = 60.0,
+        self, title: str, theme: str | None = None, look: str | None = None,
+        life: str | None = None, width: int = 1920, height: int = 1080, fps: float = 60.0,
     ) -> dict[str, Any]:  # fmt: skip
-        """Start an empty scene (replaces the open one; save first if it matters)."""
+        """Start an empty scene (replaces the open one; save first if it matters). The theme
+        is dark (``midnight_glow``) unless a ``look`` ("calm", "glow", "chalk") or ``theme``
+        says otherwise; ``life`` ("off", "subtle", "lively") is the living motion."""
 
         def go():
-            meta = Meta(title=title, theme=theme, width=width, height=height, fps=fps)
+            chosen = load_look(look) if look else None
+            meta = Meta(
+                title=title, theme=theme or (chosen.theme if chosen else DEFAULT_THEME),
+                life=life or (chosen.life if chosen else "off"), look=look, width=width,
+                height=height, fps=fps,
+            )  # fmt: skip
             self._engine = Engine(Document(meta=meta), base_dir=self.root)
             self.path = None
 
@@ -177,9 +187,42 @@ class Workspace:
 
     def scene_edit(self, patch: Any) -> dict[str, Any]:
         """Apply a patch (one op, a list of ops, or ``{"ops": [...]}``). Atomic: if any op
-        is invalid nothing changes. Returns the result and the lint issues it added or fixed."""
-        r = self.engine.apply(patch, origin="tweak")
+        is invalid nothing changes. Returns the result and the lint issues it added or fixed.
+        An ``add_object`` may name a ``preset`` (see ``object_types``); the scene's look fills
+        in what is left unset, and explicit values always win."""
+        r = self.engine.apply(self._with_defaults(patch), origin="tweak")
         return {**_slim_result(r.to_dict()), "objects": len(self.engine.document.objects)}
+
+    def _with_defaults(self, patch: Any) -> Any:
+        """The patch as a list of ops, with ``preset`` and the scene's look resolved in every
+        ``add_object`` (the document stores the resolved values). Other ops pass through."""
+        ops = patch.get("ops") if isinstance(patch, dict) and "ops" in patch else patch
+        listed = ops if isinstance(ops, list | tuple) else [ops]
+        look_name = self.engine.document.meta.look
+        look = load_look(look_name) if look_name else None
+        out = []
+        for op in listed:
+            if not (isinstance(op, dict) and op.get("op") == "add_object"
+                    and isinstance(op.get("object"), dict)):  # fmt: skip
+                out.append(op)
+                continue
+            spec = dict(op["object"])
+            cls = get_type(str(spec.get("type")))
+            preset = spec.pop("preset", None)
+            params, style = dict(spec.get("params", {})), dict(spec.get("style", {}))
+            if preset is not None:
+                if cls is None or preset not in cls.Presets:
+                    known = sorted(cls.Presets) if cls else []
+                    raise ToolError(
+                        f"no preset {preset!r} for {spec.get('type')!r}; presets: {known}"
+                    )
+                chosen = cls.Presets[preset]
+                params = {**chosen.get("params", {}), **params}
+                style = {**chosen.get("style", {}), **style}
+            if look is not None:
+                params, style = look.fill(str(spec.get("type")), params, style)
+            out.append({**op, "object": {**spec, "params": params, "style": style}})
+        return out
 
     def undo(self) -> dict[str, Any]:
         """Revert the last edit (each patch, verb or narration is one step)."""
@@ -331,18 +374,32 @@ class Workspace:
         }
 
     def storyboard(
-        self, times: list[float] | None = None, marks: bool = True, columns: int = 3
+        self,
+        times: list[float] | None = None,
+        marks: bool = True,
+        columns: int = 3,
+        compare: bool = False,
     ) -> dict[str, Any]:  # fmt: skip
         """Render keyframes on one contact sheet (a PNG) with what the inspector sees in
-        each. ``marks`` draws every object's box and id so you can tie picture to ids."""
+        each. ``marks`` draws every object's box and id so you can tie picture to ids.
+        ``compare`` puts each frame beside the three nearest frames in the project's
+        ``gallery/`` (frames you love), with your notes on why they work."""
         from phasor.render.output import save_png
 
         e = self.engine
-        board = self._guard(lambda: e.storyboard(times, marks=marks, columns=columns))
-        out = self.out_dir / f"{file_stem(e.document.meta.title)}.storyboard.v{e.version}.png"
+        gal = self.root / "gallery" if compare else None
+        board = self._guard(lambda: e.storyboard(times, marks=marks, columns=columns, compare=gal))
+        stem = f"{file_stem(e.document.meta.title)}.storyboard.v{e.version}"
+        out = self.out_dir / f"{stem}.png"
         out.parent.mkdir(parents=True, exist_ok=True)
         save_png(out, board["image"])
-        return {"image": str(out), "frames": board["frames"], "version": e.version}
+        result = {"image": str(out), "frames": board["frames"], "version": e.version}
+        if compare:
+            cmp_path = self.out_dir / f"{stem}.compare.png"
+            save_png(cmp_path, board["compare_image"])
+            result.update(compare_image=str(cmp_path), compare=board["compare"],
+                          gallery_size=board["gallery_size"])  # fmt: skip
+        return result
 
     def events(self, t0: float = 0.0, t1: float | None = None, problems_only: bool = True,
                hz: float = 10.0) -> dict[str, Any]:  # fmt: skip
@@ -363,6 +420,70 @@ class Workspace:
         """Empty label-sized places around ``id`` at ``t``, nearest first (boxes are 0-1,
         top-left origin): where a label or note could go."""
         return {"id": id, "t": t, "free": self._guard(lambda: self.engine.free_space_near(id, t))}
+
+    # ------------------------------------------------------------ taste (Milestone 7)
+
+    def _rubric(self) -> str:
+        for folder in (self.root, docs.docs_root()):
+            if folder is not None and (folder / "STYLE.md").exists():
+                return (folder / "STYLE.md").read_text(encoding="utf-8")
+        return ""
+
+    def critique(self) -> dict[str, Any]:
+        """The art-director's report: a taste score (0 = nothing to criticise), every
+        aesthetic issue with the markers it happens at and its fixes (``fix`` is certain,
+        ``suggested`` is judgement), and the rubric (STYLE.md) to judge the storyboard by.
+        Look at the picture too: no rule sees everything."""
+        from phasor.render import gallery
+
+        report = self.engine.critique()
+        report["rubric"] = self._rubric()
+        report["gallery"] = len(gallery.entries(self.root / "gallery"))
+        return report
+
+    def polish(self, rounds: int = 3) -> dict[str, Any]:
+        """Apply the critic's fixes (certain ones, then judgement suggestions), at most
+        ``rounds`` (3) times; each round is undoable. Returns the score before and after and
+        what is left for you to judge."""
+        r = self.engine.polish(min(max(rounds, 1), 3))
+        return {**r, "version": self.engine.version}
+
+    def variants(self, beat: str | float, n: int = 3) -> dict[str, Any]:
+        """Show alternative looks of one beat (a marker name or a time) side by side: as it
+        is, calmer, bolder, each with its taste score. Nothing changes until you ``choose``."""
+        from phasor.render.output import save_png
+
+        e = self.engine
+        r = self._guard(lambda: e.variants(beat, n))
+        out = self.out_dir / f"{file_stem(e.document.meta.title)}.variants.v{e.version}.png"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        save_png(out, r["image"])
+        self._variants = {v["name"]: v["ops"] for v in r["variants"]}
+        self._variant_beat = str(beat)
+        return {"image": str(out), "beat": r["beat"], "t": r["t"],
+                "variants": [{"name": v["name"], "score": v["score"], "changes": len(v["ops"])}
+                             for v in r["variants"]]}  # fmt: skip
+
+    def choose(self, winner: str, note: str = "", apply: bool = True) -> dict[str, Any]:
+        """Pick the winner of the last ``variants`` call. The choice is appended to
+        ``style/choices.jsonl`` (your taste as data) and, with ``apply``, its changes are
+        made to the scene."""
+        from phasor.style import choices
+
+        if not getattr(self, "_variants", None):
+            raise ToolError("call variants first: there is nothing to choose from")
+        if winner not in self._variants:
+            raise ToolError(
+                f"no variant {winner!r}; the last call offered {sorted(self._variants)}"
+            )
+        e = self.engine
+        entry = choices.record(self.root / choices.DEFAULT_PATH, scene=e.document.meta.title,
+                               beat=self._variant_beat, options=list(self._variants),
+                               winner=winner, by="ai", note=note)  # fmt: skip
+        ops = self._variants[winner]
+        result = self.scene_edit(ops) if apply and ops else None
+        return {"recorded": entry, "applied": bool(result and result["ok"]),
+                "edit": result}  # fmt: skip
 
     def hit_test(self, x: float, y: float, t: float = 0.0) -> dict[str, Any]:
         """Objects under an output-pixel point (origin top-left), topmost first."""
@@ -450,11 +571,13 @@ class Workspace:
             style = {
                 k: {"group": g, "default": d} for k, (g, d) in getattr(cls, "Style", {}).items()
             }
-            out[name] = {"params": _jsonable(params), "style": style}
+            out[name] = {"params": _jsonable(params), "style": style,
+                         "presets": sorted(getattr(cls, "Presets", {}))}  # fmt: skip
         return {
             "types": out,
             "roles": {g: list(r) for g, r in ROLE_GROUPS.items()},
             "themes": available_themes(),
+            "looks": available_looks(),
         }
 
 

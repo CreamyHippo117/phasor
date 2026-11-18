@@ -26,7 +26,6 @@ from typing import Any
 
 import numpy as np
 
-from phasor.core.color import linear_to_srgb
 from phasor.core.issues import Issue
 from phasor.core.state import ObjectState, SceneState
 from phasor.inspect.lint import _movable, _shown, _when, sample_times
@@ -58,7 +57,9 @@ def beats(c: Compiled) -> tuple[float, ...]:
 
 
 def _hue_bin(rgb_linear) -> int | None:
-    r, g, b = (float(x) for x in linear_to_srgb(np.asarray(rgb_linear[:3])))
+    # An analysis, not an encode (sRGB is encoded once, in render/output.py): a square root
+    # is close enough to perceptual lightness to tell a saturated hue from a gray.
+    r, g, b = (float(x) for x in np.sqrt(np.clip(np.asarray(rgb_linear[:3]), 0.0, 1.0)))
     h, s, v = colorsys.rgb_to_hsv(r, g, b)
     return int(h * HUE_BINS) % HUE_BINS if s >= SATURATED and v >= 0.2 else None
 

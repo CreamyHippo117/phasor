@@ -25,11 +25,13 @@ from phasor.inspect import aesthetic as aesthetic_rules
 from phasor.inspect import critic, inspector
 from phasor.inspect import events as event_log
 from phasor.inspect import lint as lint_rules
+from phasor.inspect import variants as variant_ops
 from phasor.inspect.oracle import PassOracle
 from phasor.inspect.passes import PassRunner
 from phasor.layout.bake import Bake, bake, baked_state
 from phasor.layout.plan import Plan, compile_plan
 from phasor.time.compile import Compiled, compile_document
+from phasor.time.tracks import ResolvedTrack
 
 STATE_CACHE_SIZE = 256
 UNDO_LIMIT = 200
@@ -463,6 +465,35 @@ class Engine:
 
         return free_slots(self.state_at(t), id, self._oracle())
 
+    def variants(
+        self,
+        beat: str | float,
+        n: int = 3,
+        *,
+        size: tuple[int, int] = (480, 270),
+        score: bool = True,
+    ) -> dict[str, Any]:
+        """Alternative looks of one beat (a marker name or a time), side by side: the scene
+        as it is, calmer (less glow, softer edges) and bolder (more glow, heavier strokes).
+        They are tried on a throwaway copy; this scene does not change. Returns
+        ``{"image", "beat", "t", "variants": [{"name", "ops", "score"}]}``; ``score`` is the
+        critic's taste score of each (lower is better). Apply the winner's ``ops`` with
+        ``apply``. Needs OpenGL."""
+        from phasor.render.storyboard import contact_sheet
+
+        t = self.document.timeline.markers[beat] if isinstance(beat, str) else float(beat)
+        cells, out = [], []
+        for name, ops in variant_ops.make(self.document, n):
+            twin = Engine(self.base, overrides=self.overrides, base_dir=self.base_dir,
+                          passes=self.pass_runner())  # fmt: skip
+            if ops and not twin.apply(ops).ok:
+                continue
+            s = twin.critique()["score"] if score else None
+            cells.append((f"{chr(65 + len(out))}: {name}" + ("" if s is None else f"  (taste {s})"),
+                          twin.still(t, size)))  # fmt: skip
+            out.append({"name": name, "ops": ops, "score": s})
+        return {"image": contact_sheet(cells, len(cells)), "beat": beat, "t": t, "variants": out}
+
     def hit_test(self, x: float, y: float, t: float) -> list[str]:
         """Object ids under an output-pixel point, topmost first."""
         return inspector.hit_test(self.state_at(t), self.pass_runner(), x, y)
@@ -486,6 +517,41 @@ class Engine:
         picture, emission = runner.color_and_emission(self.state_at(t), size)
         return finish(picture, self._snap.compiled.theme, emission)
 
+    def is_moving(self, t0: float, t1: float) -> bool:
+        """Whether anything animated by the document (a transition) runs between ``t0`` and
+        ``t1``. Life (slow wiggle) is not counted: it needs no blur."""
+        for node in self._snap.compiled.nodes.values():
+            if isinstance(node, ResolvedTrack):
+                for seg in node.segments:
+                    if seg.t0 < t1 and seg.t1 > t0 and seg.t1 > seg.t0:
+                        return True
+        return False
+
+    def frame_blurred(
+        self,
+        t: float,
+        fps: float,
+        *,
+        shutter: float = 0.5,
+        samples: int = 4,
+        size: tuple[int, int] | None = None,
+    ):
+        """Like ``frame`` but with motion blur: the average of ``samples`` frames spread over
+        a shutter open ``shutter`` of a frame interval (0.5 is the film standard "180
+        degrees"), centered on ``t``. Where nothing is moving it is exactly ``frame``, so
+        still moments stay sharp and cost nothing extra. Linear light, deterministic."""
+        import numpy as np
+
+        half = shutter / fps / 2
+        if samples <= 1 or shutter <= 0 or not self.is_moving(t - half, t + half):
+            return self.frame(t, size)
+        times = [t + (k + 0.5) / samples * (2 * half) - half for k in range(samples)]
+        acc = None
+        for ts in times:
+            f = self.frame(min(max(ts, 0.0), max(self.duration, 0.0)), size)
+            acc = f.astype(np.float64) if acc is None else acc + f
+        return (acc / len(times)).astype(np.float32)
+
     def storyboard_times(self, count: int = 6) -> list[float]:
         """Start, every marker and the end; padded with evenly spaced times up to ``count``."""
         end = self.duration
@@ -501,12 +567,16 @@ class Engine:
         marks: bool = False,
         size: tuple[int, int] = (480, 270),
         columns: int = 3,
+        compare: str | Path | None = None,
     ) -> dict[str, Any]:
         """Keyframe stills on one contact sheet, plus what the inspector sees in each.
 
         Returns ``{"image": (h, w, 3) uint8, "frames": [{"t", "marker", "objects"}]}``.
         ``marks=True`` draws each object's box and id on the stills (set-of-mark), so a
-        vision model can tie what it sees to object ids. Needs OpenGL (tier A or B).
+        vision model can tie what it sees to object ids. ``compare`` is a gallery folder:
+        the result then also has ``"compare_image"``, each frame beside its three nearest
+        gallery frames, and ``"compare"``, who they were and why you like them. Needs OpenGL
+        (tier A or B).
         """
         from phasor.render.storyboard import contact_sheet, draw_marks
 
@@ -522,7 +592,15 @@ class Engine:
             cells.append((label, still))
             lines = inspector.render_detail(snap, "brief")["objects"]
             frames.append({"t": float(t), "marker": markers.get(t), "objects": lines})
-        return {"image": contact_sheet(cells, columns), "frames": frames}
+        out = {"image": contact_sheet(cells, columns), "frames": frames}
+        if compare is not None:
+            from phasor.render import gallery
+
+            plain = [(c, self.still(f["t"], size)) for (c, _), f in zip(cells, frames, strict=True)]
+            found = gallery.entries(compare)
+            out["compare_image"], out["compare"] = gallery.compare_sheet(plain, found)
+            out["gallery_size"] = len(found)
+        return out
 
     def _require(self, id: str | None) -> None:
         if id is not None and self.document.object(id) is None:

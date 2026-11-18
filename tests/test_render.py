@@ -289,3 +289,39 @@ def test_scripts_still_run_as_documented():
     runpy.run_path(str(ROOT / "examples" / "domain_coloring.py"), run_name="not_main")
     with pytest.raises(DocumentError):
         Scene("x", passes=None).add(cx.DomainColoring(id="p", function="1/"))
+
+
+# ---------------------------------------------------------------- motion blur (Milestone 7)
+
+
+@pytest.mark.gl
+@pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
+def test_motion_blur_smears_moving_things_and_leaves_still_moments_alone():
+    from phasor import Dot, Scene
+
+    s = Scene("blur")
+    s.set("camera.height", 4)
+    s.add(Dot(id="d", pos=(-2, 0), r=0.15, style={"color": "highlight"}))
+    s.marker("go", 1.0)
+    s.at("go").to("d.pos", (2, 0), duration=1.0, ease="linear")
+    e = s.engine
+    size = (320, 180)
+    assert e.is_moving(1.0, 2.0) and not e.is_moving(0.0, 0.9) and not e.is_moving(2.1, 3.0)
+    still_a = e.frame_blurred(0.5, 24, size=size)
+    assert (still_a == e.frame(0.5, size)).all()  # nothing moves: identical, no extra cost
+    sharp = e.frame(1.5, size)
+    blur = e.frame_blurred(1.5, 24, shutter=1.0, samples=6, size=size)
+    assert np.array_equal(blur, e.frame_blurred(1.5, 24, shutter=1.0, samples=6, size=size))
+    _, xs = np.nonzero(sharp[..., :3].max(-1) > 0.05)
+    _, bx = np.nonzero(blur[..., :3].max(-1) > 0.05)
+    assert (bx.max() - bx.min()) > (xs.max() - xs.min()) + 2  # a streak, wider than the dot
+    assert abs(float(blur.sum() - sharp.sum())) < 0.03 * float(
+        sharp.sum()
+    )  # light is spread, not lost
+    assert e.frame_blurred(1.5, 24, shutter=0.0, size=size).tobytes() == sharp.tobytes()
+
+
+def test_the_render_job_blurs_finals_not_previews():
+    from phasor.render.job import BLUR
+
+    assert BLUR["preview"][0] == 0 and BLUR["final"] == (0.5, 4) == BLUR["4k"]

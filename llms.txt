@@ -6,10 +6,10 @@
 
 ## Tools
 
-- `scene_new`: Start an empty scene (replaces the open one; save first if it matters).
+- `scene_new`: Start an empty scene (replaces the open one; save first if it matters). The theme is dark (`midnight_glow`) unless a `look` ("calm", "glow", "chalk") or `theme` says otherwise; `life` ("off", "subtle", "lively") is the living motion.
 - `scene_open`: Open `name.phasor.json` (or a `.py` script when the server allows scripts).
 - `scene_save`: Save the document (`name.phasor.json`); tweaks to a script scene go to its overrides file beside it.
-- `scene_edit`: Apply a patch (one op, a list of ops, or `{"ops": [...]}`). Atomic: if any op is invalid nothing changes. Returns the result and the lint issues it added or fixed.
+- `scene_edit`: Apply a patch (one op, a list of ops, or `{"ops": [...]}`). Atomic: if any op is invalid nothing changes. Returns the result and the lint issues it added or fixed. An `add_object` may name a `preset` (see `object_types`); the scene's look fills in what is left unset, and explicit values always win.
 - `undo`: Revert the last edit (each patch, verb or narration is one step).
 - `redo`: Re-apply the edit that undo reverted.
 - `animate`: Animate with a choreography verb starting at a marker (or seconds). Timing comes from the theme. Returns when it starts and ends so the next step can follow it. `orbit` swings the 3D camera `value` degrees (default 360), until marker `until` if given.
@@ -18,9 +18,13 @@
 - `restore`: Go back to a checkpoint, as one step (undo brings you back again).
 - `diff`: What changed from version `a` to version `b` ('current', 'saved' or a checkpoint).
 - `inspect`: What is on screen at `t`: `brief` (one line each), `standard` or `full`.
-- `lint`: Find visual problems (overlap, off-screen, contrast, tiny text, clutter, ...). `fix=True` applies the fixes that are certain, then reports what is left.
-- `storyboard`: Render keyframes on one contact sheet (a PNG) with what the inspector sees in each. `marks` draws every object's box and id so you can tie picture to ids.
-- `review`: One call for the self-review loop: lint, what is on screen at every marker, and a storyboard. Fix what `issues` lists, then call again until `clean`.
+- `lint`: Find visual problems (overlap, off-screen, contrast, tiny text, clutter, ...). `fix=True` applies the fixes that are certain, then reports what is left. `aesthetic=True` also judges taste: focal point, color restraint, glow clipping, density, motion rhythm, margins, stroke weights.
+- `storyboard`: Render keyframes on one contact sheet (a PNG) with what the inspector sees in each. `marks` draws every object's box and id so you can tie picture to ids. `compare` puts each frame beside the three nearest frames in the project's `gallery/` (frames you love), with your notes on why they work.
+- `review`: One call for the self-review loop: lint, what is on screen at every marker, and a storyboard. Fix what `issues` lists, then call again until `clean`. Pass `aesthetic=True` for the beauty pass (taste rules on top of the correctness ones).
+- `critique`: The art-director's report: a taste score (0 = nothing to criticise), every aesthetic issue with the markers it happens at and its fixes (`fix` is certain, `suggested` is judgement), and the rubric (STYLE.md) to judge the storyboard by. Look at the picture too: no rule sees everything.
+- `polish`: Apply the critic's fixes (certain ones, then judgement suggestions), at most `rounds` (3) times; each round is undoable. Returns the score before and after and what is left for you to judge.
+- `variants`: Show alternative looks of one beat (a marker name or a time) side by side: as it is, calmer, bolder, each with its taste score. Nothing changes until you `choose`.
+- `choose`: Pick the winner of the last `variants` call. The choice is appended to `style/choices.jsonl` (your taste as data) and, with `apply`, its changes are made to the scene.
 - `events`: The event log: when things get hidden, leave or enter the frame, change region or gain an occluder, with the nearest marker and fix hints. `problems_only` keeps the ones a viewer would notice (a label or key object hidden or leaving the frame).
 - `when_hidden`: Time spans where `id` is on screen but less than half of it is visible.
 - `free_space_near`: Empty label-sized places around `id` at `t`, nearest first (boxes are 0-1, top-left origin): where a label or note could go.

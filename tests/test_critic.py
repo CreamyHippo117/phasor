@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 from pathlib import Path
 
 import pytest
@@ -25,7 +26,7 @@ def test_exit_demo_the_critic_pass_improves_a_rough_scene_in_three_rounds(passes
     report = e.polish(rounds=3)
     assert 1 <= len(report["rounds"]) <= 3
     scores = [before["score"], *(r["score"] for r in report["rounds"])]
-    assert all(b < a for a, b in zip(scores, scores[1:], strict=False))  # each round helps
+    assert all(b < a for a, b in itertools.pairwise(scores))  # each round helps
     assert report["after"] <= 0.55 * before["score"]  # measurably better: at least 45% less
 
     # what it did is what the report says: one highlight, strokes agree, nothing at the edge

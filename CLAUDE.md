@@ -6,7 +6,7 @@ compounding. If this file and SPEC.md disagree, stop and ask.
 ## Where we are
 
 - Owner approved ADR 0001, ADR 0002 and id tombstones on 2026-11-18.
-- Current milestone: **2-6 built; boundary review of 2-6 done 2026-11-18 (see `MILESTONE_6.md`). Windows and CUDA untested. 7 next**. See `MILESTONE_*.md` for what is built and deferred.
+- Current milestone: **2-6 built; boundary review of 2-6 done 2026-11-18 (see `MILESTONE_6.md`). 7 built (`MILESTONE_7.md`; boundary review still open). Windows and CUDA untested. 8 next**. See `MILESTONE_*.md` for what is built and deferred.
 - One milestone per branch. No work on milestone N+1 until N's exit demo and tests pass.
 - Before declaring a milestone done, run the `phasor-milestone-gate` skill.
 
@@ -89,6 +89,12 @@ compounding. If this file and SPEC.md disagree, stop and ask.
 - 3D: the camera solver lives in `layout/camera.py` and runs only inside the bake; it may set
   only camera parameters the document leaves unset. Lower layers get depth through the
   oracle's `depth` (ADR 0001 pattern); 3D labels are judged by what is in front of them.
+
+- Beauty: dark (`midnight_glow`) is the default theme, always; light themes are opt-in. Fewer
+  rainbows is not no rainbows: hue that carries meaning (domain-coloring phase) keeps the
+  wheel. Taste knobs are theme `[lint]`/`[life]` values, roles, looks and presets, never
+  numbers typed into a scene. Life is a pure function of (id, seed, t); `exact` objects never
+  move. Aesthetic rules live in `inspect/aesthetic.py` and run only with `aesthetic=True`.
 
 ## Commands
 

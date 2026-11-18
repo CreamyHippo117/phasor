@@ -36,6 +36,8 @@ a variant and compare.
 | `storyboard` | keyframe picture with each object's box and id drawn on it |
 | `hit_test`, `resolve` | what is at a pixel; which object ids "the label of the pole" means |
 | `events`, `when_hidden`, `free_space_near` | 3D: when things get hidden or leave the frame (with fixes), spans an object is hidden, empty places next to an object |
+| `critique`, `polish` | the art director: a taste score, aesthetic issues with fixes and the rubric; apply the fixes (3 rounds at most) |
+| `variants`, `choose` | alternative looks of one beat side by side (as is, calmer, bolder); pick one, it is recorded in `style/choices.jsonl` and applied |
 | `diff`, `checkpoint`, `restore`, `undo`, `redo` | compare and branch |
 | `render` | a video (`preview`, `final`, `4k`) or one PNG with `frame` |
 | `docs_search` | find the API, a pattern or an example |
@@ -140,6 +142,27 @@ object you want to appear (it is hidden until then).
 `fix` ops you can send to `scene_edit`), `frames` (a line per object at each marker) and
 `storyboard` (an image path; the image also arrives inline). Read the picture, not only the
 lint: lint cannot tell you a layout is ugly.
+
+## The beauty pass
+
+`review` and `lint` take `aesthetic: true` for the taste rules on top of the correctness
+ones: `focal_point` (exactly one `highlight` per beat), `color_restraint` (at most three
+saturated hues; a phase-coloring plane is exempt, hue is its meaning), `glow_clip`,
+`density`, `motion_rhythm`, `margin`, `stroke_mix`. Then:
+
+1. `critique` returns `score` (0 = nothing to criticise), issues tied to ids and markers,
+   `fix` ops (certain) and `suggested` ops (judgement), and the rubric text (`STYLE.md`).
+2. Look at the storyboard (`storyboard` with `compare: true` puts each frame beside the three
+   nearest frames in the project's `gallery/`) and judge by the rubric. Rules cannot see
+   everything.
+3. `polish` applies what the critic is sure of, three rounds at most; whatever is left is
+   yours to judge (an empty frame, two motions that collide).
+4. Unsure which look? `variants` on a marker, then `choose` one.
+
+Start scenes from a look: `scene_new` with `look: "calm"` (soft edges, gentle life), `"glow"`
+(lively bloom) or `"chalk"` (light paper page, still, crisp). `object_types` lists each
+type's `presets`; in a patch, `{"preset": "soft_phase"}` inside an `add_object`. Explicit
+values win, then the preset, then the look. The default theme is dark.
 
 ## Traps this loop has already hit
 
