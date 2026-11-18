@@ -6,7 +6,7 @@ compounding. If this file and SPEC.md disagree, stop and ask.
 ## Where we are
 
 - Owner approved ADR 0001, ADR 0002 and id tombstones on 2026-11-18.
-- Current milestone: **2 built (awaiting boundary review and Windows check). 3 built (untested on CUDA). 4 built (`MILESTONE_4.md`). 5 built (`MILESTONE_5.md`). 6 built (`MILESTONE_6.md`). 7 next**. See `MILESTONE_*.md` for what is built and deferred.
+- Current milestone: **2-6 built; boundary review of 2-6 done 2026-11-18 (see `MILESTONE_6.md`). Windows and CUDA untested. 7 next**. See `MILESTONE_*.md` for what is built and deferred.
 - One milestone per branch. No work on milestone N+1 until N's exit demo and tests pass.
 - Before declaring a milestone done, run the `phasor-milestone-gate` skill.
 
