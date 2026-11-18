@@ -86,12 +86,21 @@ class DomainColoring(_Plane):
 
     type: ClassVar[str] = "domain_coloring"
     Style: ClassVar = {"colormap": ("colormap", "phase")}
+    # Hue means phase here, so the full wheel stays the default; presets vary the rest.
+    Presets: ClassVar = {
+        "classic": {"params": {"softness": 0.0, "contour": 0.35}},  # hard contour edges
+        "soft_phase": {"params": {"softness": 0.8, "contour": 0.25},
+                       "style": {"colormap": "soft_phase"}},  # restrained three-hue wheel
+        "vivid": {"params": {"softness": 0.5, "contour": 0.4}},
+    }  # fmt: skip
 
     class Params(ParamsBase):
         function: str = Field(min_length=1)  # e.g. "1/(z**2 + 1)"; see docs/ai/API.md
         pos: Vec3 = (0.0, 0.0, 0.0)  # center of the rectangle
         size: tuple[float, float] = (8.0, 4.5)  # width and height in world units
         contour: float = Field(0.35, ge=0, le=1)  # how dark the modulus bands get
+        softness: float = Field(0.5, ge=0, le=1)  # feathering of the band edges (0: hard)
+        hue: float = 0.0  # turns the color wheel (a share of one turn); life adds a little
 
         @field_validator("function")
         @classmethod
@@ -138,6 +147,7 @@ class DomainColoring(_Plane):
         p = me.params
         corner, r, u = _rect(p)
         lut = np.asarray(me.style["colormap"], dtype=np.float32)
+        lut = np.roll(lut, -round(p.hue * len(lut)), axis=0)
         f = _parse(p.function.strip())
 
         def pixels(pw: int, ph: int, center: tuple[float, float], height: float) -> np.ndarray:
@@ -146,7 +156,8 @@ class DomainColoring(_Plane):
             return gpu.render(
                 "domain", pw, ph, supersample=SUPERSAMPLE, function=f,
                 center=(corner[0] + center[0], corner[1] + center[1]), height=height,
-                contour=p.contour, lut=lut, precision="f64" if height < F64_BELOW else "f32",
+                contour=p.contour, soft=p.softness, lut=lut,
+                precision="f64" if height < F64_BELOW else "f32",
             )  # fmt: skip
 
         ctx.field(corner, r, u, pixels=pixels, opacity=p.opacity)
@@ -159,6 +170,11 @@ class Fractal(_Plane):
 
     type: ClassVar[str] = "fractal"
     Style: ClassVar = {"colormap": ("colormap", "sequential")}
+    Presets: ClassVar = {
+        "classic": {"style": {"colormap": "sequential"}},
+        "ember": {"style": {"colormap": "ember"}, "params": {"density": 0.3}},
+        "ocean": {"style": {"colormap": "ocean"}, "params": {"density": 0.3}},
+    }  # fmt: skip
 
     class Params(ParamsBase):
         kind: Literal["mandelbrot", "julia"] = "mandelbrot"
@@ -167,6 +183,7 @@ class Fractal(_Plane):
         size: tuple[float, float] = (3.2, 1.8)
         max_iter: int = Field(256, ge=1, le=100_000)
         density: float = Field(0.35, gt=0)  # color bands per sqrt(iteration)
+        hue: float = 0.0  # shifts colors along the ramp (share of a cycle); life adds a little
 
     def features(self, state: SceneState) -> dict[str, np.ndarray]:
         return {"center": np.asarray(self.me(state).params.pos)}
@@ -195,7 +212,7 @@ class Fractal(_Plane):
                 height=height, max_iter=p.max_iter, julia=p.c if p.kind == "julia" else None,
             )  # fmt: skip
             out = gpu.run("palette", gpu.Tile.full(pw, ph), field=field, lut=lut,
-                          density=p.density, inside=inside)  # fmt: skip
+                          density=p.density, offset=p.hue, inside=inside)  # fmt: skip
             return to_host(out)
 
         ctx.field(corner, r, u, pixels=pixels, opacity=p.opacity)
@@ -223,6 +240,10 @@ class RiemannSurface(ObjectBase):
 
     type: ClassVar[str] = "riemann_surface"
     Style: ClassVar = {"colormap": ("colormap", "phase"), "material": ("surface", "solid")}
+    Presets: ClassVar = {
+        "glass": {"style": {"material": "glass"}},  # sheets that do not hide each other
+        "soft_glass": {"style": {"material": "glass", "colormap": "soft_phase"}},
+    }
 
     class Params(ParamsBase):
         kind: Literal["sqrt", "cbrt", "log"] = "sqrt"

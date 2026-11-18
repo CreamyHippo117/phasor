@@ -16,6 +16,7 @@ from typing import Annotated, Any
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
+from phasor.core import life
 from phasor.core.issues import DocumentError, Issue
 from phasor.core.objects import SceneObject, get_type, registered_types
 from phasor.core.schema import Document, ExprSpec
@@ -272,10 +273,18 @@ def evaluate(c: Compiled, t: float, replace: Mapping[str, Any] | None = None) ->
         except (ExprError, ValueError) as e:
             raise DocumentError(Issue("bad_expr", f"{path} at t={t:g}: {e}", path=path)) from e
 
-    def build(target: str, model: type[BaseModel]) -> BaseModel:
+    meta = c.doc.meta
+    life_amp = life.scale(meta.life, c.theme.life)
+
+    def build(target: str, model: type[BaseModel], tags: tuple[str, ...] = (), style=None):
         values = {n: env[f"{target}.{n}"] for n in model.model_fields}
         if "dim" in values and "opacity" in values:  # what is drawn is opacity x dim
             values["opacity"] = values["opacity"] * values["dim"]
+        if style is not None:  # objects live (cameras do not): see core/life.py
+            values, style = life.adjust(target, tags, set(model.model_fields), values, style,
+                                        seed=meta.seed, amp=life_amp, theme_life=c.theme.life,
+                                        t=t)  # fmt: skip
+            built[target] = style
         try:
             return model.model_validate(values)
         except ValidationError as e:
@@ -285,7 +294,7 @@ def evaluate(c: Compiled, t: float, replace: Mapping[str, Any] | None = None) ->
                 Issue("bad_param", f"{path} at t={t:g}: {err['msg']}", ids=(target,), path=path)
             ) from e
 
-    meta = c.doc.meta
+    built: dict[str, Any] = {}
     aspect = meta.width / meta.height
     cam_spec = c.doc.camera(c.doc.timeline.camera)
     cam_params = build(cam_spec.id, CAMERA_PARAMS[cam_spec.kind])
@@ -294,8 +303,8 @@ def evaluate(c: Compiled, t: float, replace: Mapping[str, Any] | None = None) ->
     else:
         camera = ortho_camera(cam_params, aspect)
     objects = tuple(
-        ObjectState(o.id, o.type, o.index, build(o.id, o.params_model), o.style, o.roles,
-                    o.tags, o.layer, o.impl)
+        ObjectState(o.id, o.type, o.index, build(o.id, o.params_model, o.tags, o.style),
+                    MappingProxyType(built[o.id]), o.roles, o.tags, o.layer, o.impl)
         for o in c.objects
     )  # fmt: skip
     return SceneState(

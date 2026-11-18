@@ -31,6 +31,11 @@ class Dot(ObjectBase):
 
     type: ClassVar[str] = "dot"
     Style: ClassVar = {"color": ("emphasis", "primary"), "glow": ("glow", "none")}
+    Presets: ClassVar = {
+        "plain": {},
+        "glowing": {"style": {"glow": "soft"}},
+        "beacon": {"style": {"color": "highlight", "glow": "strong"}},
+    }
 
     class Params(ParamsBase):
         pos: Vec3 = (0.0, 0.0, 0.0)
@@ -75,6 +80,12 @@ class Line(ObjectBase):
         "color": ("emphasis", "primary"),
         "stroke": ("stroke", "regular"),
         "glow": ("glow", "none"),
+    }
+    Presets: ClassVar = {
+        "ink": {},  # plain, regular stroke
+        "glowing": {"style": {"glow": "soft", "stroke": "bold"}},
+        "beam": {"style": {"glow": "strong", "stroke": "bold", "color": "highlight"}},
+        "hairline": {"style": {"stroke": "hairline", "color": "muted"}},
     }
 
     class Params(ParamsBase):

@@ -28,10 +28,22 @@ def _v3_to_v4(raw: dict[str, Any]) -> dict[str, Any]:
     return raw
 
 
+def _v4_to_v5(raw: dict[str, Any]) -> dict[str, Any]:
+    """Version 5 added ``meta.life`` (living motion), ``meta.seed`` and ``meta.look``. Older
+    documents keep their stillness: life is off."""
+    meta = dict(raw.get("meta", {}))
+    meta.setdefault("life", "off")
+    meta.setdefault("seed", 0)
+    meta.setdefault("look", None)
+    raw["meta"] = meta
+    return raw
+
+
 MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {
     1: _v1_to_v2,
     2: _v2_to_v3,
     3: _v3_to_v4,
+    4: _v4_to_v5,
 }
 
 

@@ -26,7 +26,10 @@ ROLE_GROUPS: dict[str, tuple[str, ...]] = {
     "glow": ("none", "soft", "strong"),
     "text": ("title", "label", "annotation", "math"),
     "surface": ("solid", "glass", "wire", "emissive"),
-    "colormap": ("phase", "sequential"),
+    # Cyclic wheels (phase) and ramps (the rest). `phase` is the full wheel: use it where hue
+    # means something (domain coloring). `soft_phase` is a restrained three-hue wheel,
+    # `ember` and `ocean` are two-tone ramps for fractals and plain fields.
+    "colormap": ("phase", "soft_phase", "sequential", "ember", "ocean"),
 }
 _SECTION = {
     "emphasis": "palette",
@@ -41,7 +44,33 @@ LUT_SIZE = 256
 
 _TABLES = {
     "layout": ("gap", "margin", "leader"),
-    "lint": ("overlap", "contrast", "tiny", "text_min", "clutter", "crowded", "occluded"),
+    "lint": (
+        "overlap",
+        "contrast",
+        "tiny",
+        "text_min",
+        "clutter",
+        "crowded",
+        "occluded",
+        "hues",
+        "clip",
+        "density_min",
+        "density_max",
+        "rhythm",
+        "margin",
+        "stroke_mix",
+    ),
+    "life": (
+        "glow",
+        "glow_period",
+        "point",
+        "point_period",
+        "field",
+        "field_period",
+        "shimmer",
+        "shimmer_period",
+        "subtle",
+    ),
     "bloom": ("threshold", "strength", "levels", "exposure", "knee"),
     "narration": ("words_per_second", "lead", "gap", "pause_per_change", "pause_max"),
     "camera": (
@@ -110,6 +139,7 @@ class Theme:
     narration: dict[str, float] = field(default_factory=dict)  # speaking rate, pacing
     camera: dict[str, float] = field(default_factory=dict)  # 3D drift and solver defaults
     light: dict[str, float] = field(default_factory=dict)  # three-point rig and depth fog
+    life: dict[str, float] = field(default_factory=dict)  # living motion (see core/life.py)
     motion: dict[str, Any] = field(default_factory=dict)  # verb -> {duration, ease}, + scalars
 
     def resolve(self, group: str, role: str) -> Any:

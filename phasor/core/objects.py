@@ -137,6 +137,9 @@ class ObjectBase:
     type: ClassVar[str]
     # style key -> (role group, default role). Scenes may only use roles, never raw values.
     Style: ClassVar[dict[str, tuple[str, str]]] = {}
+    # Named starting points: name -> {"params": {...}, "style": {...}}. ``preset="soft_phase"``
+    # fills in what you did not set yourself; explicit values always win.
+    Presets: ClassVar[dict[str, dict[str, dict[str, Any]]]] = {}
 
     def __init__(
         self,
@@ -145,10 +148,21 @@ class ObjectBase:
         style: dict[str, str] | None = None,
         tags: tuple[str, ...] | list[str] = (),
         layer: str = "world",
+        preset: str | None = None,
         **params: Any,
     ) -> None:
         self.id = id
-        self._spec_fields = {"style": style or {}, "tags": tuple(tags), "layer": layer}
+        style = dict(style or {})
+        if preset is not None:
+            if preset not in self.Presets:
+                raise ValueError(
+                    f"{type(self).__name__} has no preset {preset!r}; presets are "
+                    f"{sorted(self.Presets)}"
+                )
+            chosen = self.Presets[preset]
+            params = {**chosen.get("params", {}), **params}
+            style = {**chosen.get("style", {}), **style}
+        self._spec_fields = {"style": style, "tags": tuple(tags), "layer": layer}
         self._params = params
 
     def to_spec(self) -> ObjectSpec:

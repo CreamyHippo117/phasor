@@ -15,7 +15,8 @@ from phasor.core.constraints import PRIORITIES, RuleError, normalize_rule, parse
 from phasor.core.ids import is_valid_id, is_valid_name, parent_of, split_path
 from phasor.core.values import normalize
 
-SCHEMA_VERSION = 4  # 2: `constraints` (M2); 3: `retired_ids`; 4: `narration`, `Segment.verb` (M4)
+SCHEMA_VERSION = 5  # 2: `constraints` (M2); 3: `retired_ids`; 4: `narration`, `Segment.verb` (M4);
+# 5: `meta.life`, `meta.seed`, `meta.look` (M7)
 OVERRIDES_VERSION = 1
 
 
@@ -154,12 +155,16 @@ class Meta(Model):
     theme: str = "midnight_glow"
     color_space: Literal["srgb"] = "srgb"
     duration: float | None = Field(None, ge=0)  # None: derived from tracks and markers
+    # Living motion (core/life.py): "off", "subtle" or "lively"; the seed varies the wiggle.
+    life: Literal["off", "subtle", "lively"] = "off"
+    seed: int = 0
+    look: str | None = None  # the look preset the scene started from (the values are resolved)
     # "script": built by a Python script; later tweaks go to name.overrides.json.
     source: Literal["document", "script"] = "document"
 
 
 class Document(Model):
-    schema_version: Literal[4] = SCHEMA_VERSION
+    schema_version: Literal[5] = SCHEMA_VERSION
     meta: Meta
     objects: tuple[ObjectSpec, ...] = ()
     constraints: tuple[ConstraintSpec, ...] = ()

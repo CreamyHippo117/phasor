@@ -29,8 +29,9 @@ from phasor.core.patch import (
     SetNarration,
     SetParam,
 )
-from phasor.core.schema import Document, ExprSpec, MarkerRef, Meta, Segment
+from phasor.core.schema import Document, ExprSpec, MarkerRef, Meta, ObjectSpec, Segment
 from phasor.engine import Engine
+from phasor.style.looks import DEFAULT_THEME, load_look
 from phasor.time import verbs as _verbs
 from phasor.time.narration import block_of, repace
 
@@ -143,13 +144,23 @@ class Scene:
         self,
         title: str,
         *,
-        theme: str = "midnight_glow",
+        theme: str | None = None,
+        look: str | None = None,
+        life: str | None = None,
+        seed: int = 0,
         width: int = 1920,
         height: int = 1080,
         fps: float = 60.0,
         **engine_kwargs: Any,
     ) -> None:
-        meta = Meta(title=title, theme=theme, width=width, height=height, fps=fps, source="script")
+        """``look`` names a preset (``calm``, ``glow``, ``chalk``): it picks the theme and
+        ``life`` and supplies defaults for objects. ``theme`` and ``life`` you give win over
+        the look's. The theme is dark (``midnight_glow``) unless you or the look say else."""
+        self.look = load_look(look) if look else None
+        theme = theme or (self.look.theme if self.look else DEFAULT_THEME)
+        life = life or (self.look.life if self.look else "off")
+        meta = Meta(title=title, theme=theme, width=width, height=height, fps=fps, life=life,
+                    seed=seed, look=look, source="script")  # fmt: skip
         engine_kwargs.setdefault("base_dir", _caller_dir())
         self.engine = Engine(Document(meta=meta), **engine_kwargs)
 
@@ -159,14 +170,22 @@ class Scene:
         client gets the same verbs as a script)."""
         scene = cls.__new__(cls)
         scene.engine = engine
+        look = engine.document.meta.look
+        scene.look = load_look(look) if look else None
         return scene
 
     def _apply(self, op: Any) -> None:
         self.engine.apply(op, origin="script").raise_for_errors()
 
     def add(self, obj: ObjectBase) -> ObjectBase:
-        """Add an object: ``s.add(Dot(id="dot", pos=(1, 2)))``. Returns it for chaining."""
-        self._apply(AddObject(object=obj.to_spec()))
+        """Add an object: ``s.add(Dot(id="dot", pos=(1, 2)))``. Returns it for chaining.
+        The scene's look fills in what the object leaves unset (the values are stored)."""
+        spec = obj.to_spec()
+        if self.look is not None:
+            params, style = self.look.fill(spec.type, dict(spec.params), dict(spec.style))
+            spec = ObjectSpec(id=spec.id, type=spec.type, params=params, style=style,
+                              tags=spec.tags, layer=spec.layer)  # fmt: skip
+        self._apply(AddObject(object=spec))
         return obj
 
     def use_camera(self, kind: str = "orbit", **params: Any) -> None:

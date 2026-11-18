@@ -44,6 +44,7 @@ CASES = {
         (FULL, {"function": F, "center": (0.0, 0.0), "height": 4.0}),
         (OFFSET, {"function": F, "center": (0.3, -0.2), "height": 3.0, "contour": 0.0,
                   "precision": "f64"}),
+        (FULL, {"function": F, "center": (0.0, 0.0), "height": 4.0, "soft": 0.8}),
     ],
     "tonemap": [
         (IMAGE_TILE, {"image": IMAGE, "exposure": 1.7}),
@@ -412,3 +413,18 @@ def test_a_kernel_frame_reaches_opengl_through_the_bridge():
     with ctx:
         bridge.upload(frame)
         np.testing.assert_allclose(bridge.read_back(), frame, rtol=1e-3, atol=1e-4)
+
+
+def test_soft_contours_remove_the_jump_and_keep_the_bands():
+    k = get("domain").reference
+    lut = phase_lut()
+    ident = ComplexFunction.parse("z")
+    one = Tile.full(1, 1)
+
+    def shade(m, soft):
+        return k(one, ident, (m, 0.0), 1e-9, 0.5, lut, "f32", soft)[0, 0, 0] / lut[0][0]
+
+    just_below, just_above = 1.999999, 2.0
+    assert abs(shade(just_below, 0.0) - shade(just_above, 0.0)) > 0.4  # hard: a step
+    assert abs(shade(just_below, 0.8) - shade(just_above, 0.8)) < 1e-3  # feathered: continuous
+    assert shade(1.2, 0.8) == pytest.approx(shade(1.2, 0.0))  # the rest of the band is untouched

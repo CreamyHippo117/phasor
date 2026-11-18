@@ -32,9 +32,9 @@
 
 ## Object types (use these names in add_object)
 
-- `domain_coloring`: function, pos, size, contour
+- `domain_coloring`: function, pos, size, contour, softness, hue
 - `dot`: pos, r
-- `fractal`: kind, c, pos, size, max_iter, density
+- `fractal`: kind, c, pos, size, max_iter, density, hue
 - `line`: points, progress
 - `riemann_surface`: kind, pos, radius, height, scale, rings, segments
 - `text`: text, pos, anchor, leader, leader_on
