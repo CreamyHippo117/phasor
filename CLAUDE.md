@@ -6,7 +6,7 @@ compounding. If this file and SPEC.md disagree, stop and ask.
 ## Where we are
 
 - Owner approved ADR 0001, ADR 0002 and id tombstones on 2026-11-18.
-- Current milestone: **2 built (awaiting boundary review and Windows check). 3 built (untested on CUDA). 4 built (`MILESTONE_4.md`). 5 next**. See `MILESTONE_*.md` for what is built and deferred.
+- Current milestone: **2 built (awaiting boundary review and Windows check). 3 built (untested on CUDA). 4 built (`MILESTONE_4.md`). 5 built (`MILESTONE_5.md`). 6 next**. See `MILESTONE_*.md` for what is built and deferred.
 - One milestone per branch. No work on milestone N+1 until N's exit demo and tests pass.
 - Before declaring a milestone done, run the `phasor-milestone-gate` skill.
 
@@ -78,6 +78,13 @@ compounding. If this file and SPEC.md disagree, stop and ask.
   the same result whatever order the script writes them in.
 - When a test and the code disagree, work out which one is wrong before changing either.
   In Milestone 1 it was the test about as often as the code.
+
+- MCP tools are methods of `mcp/tools.py` `Workspace` (plain data in and out, tested without
+  the protocol); `mcp/server.py` only names them. Add a tool there, to `TOOL_NAMES`, to
+  `docs/ai/MCP.md` and regenerate `llms.txt` (`uv run python -m phasor.mcp.llms`).
+- Client commands register through the `phasor.commands` entry point; `cli` never imports a
+  sibling client. Tools that return a picture use `structured_output=False`.
+- A ```json patch / ```json calls block in `docs/ai/MCP.md` runs in CI like a python block.
 
 ## Commands
 

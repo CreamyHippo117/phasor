@@ -13,7 +13,6 @@ import sys
 
 # command -> (milestone, help)
 PLANNED = {
-    "mcp": (5, "MCP server for AI clients"),
     "gui": (10, "editor app"),
 }
 
@@ -121,65 +120,38 @@ def _cmd_storyboard(args: argparse.Namespace) -> int:
     return 0
 
 
-PRESETS = {  # name -> (width, height, fps); None means "the scene's own"
-    "preview": (960, 540, 30.0),
-    "final": (None, None, None),
-    "4k": (3840, 2160, None),
-}
-
-
 def _cmd_render(args: argparse.Namespace) -> int:
     from pathlib import Path
 
     from phasor.core.issues import DocumentError
-    from phasor.render.doctor import run_doctor
-    from phasor.render.encode import EncodeError, open_writer
-    from phasor.render.output import encode_srgb8, save_png
+    from phasor.render.encode import EncodeError
+    from phasor.render.job import render_file
     from phasor.scene import load
 
+    def progress(k: int, n: int) -> None:
+        if not args.quiet:
+            print(f"\rframe {k}/{n}", end="", file=sys.stderr, flush=True)
+
+    stem = Path(args.scene).name.split(".")[0]
     try:
         engine = load(args.scene)
-        meta = engine.document.meta
-        w, h, fps = PRESETS[args.preset]
-        size = (w or meta.width, h or meta.height)
-        fps = args.fps or fps or meta.fps
-        tier = run_doctor().tier
-        if tier == "C":
-            print(
-                "phasor render: no OpenGL here (tier C); nothing can be rendered", file=sys.stderr
-            )
-            return 1
-        if tier == "B":
-            print("warning: no CUDA device (tier B): kernels run on NumPy, so this is slow",
-                  file=sys.stderr)  # fmt: skip
-        if args.frame is not None:
-            out = Path(args.out or Path(args.scene).name.split(".")[0] + ".png")
-            save_png(out, encode_srgb8(engine.frame(args.frame, size)))
-            print(f"wrote {out} ({size[0]}x{size[1]}, t = {args.frame:g} s)")
-            return 0
-        start = args.start or 0.0
-        end = engine.duration if args.end is None else args.end
-        count = max(1, round((end - start) * fps))
-        out = Path(args.out or Path(args.scene).name.split(".")[0] + ".mp4")
-        writer = open_writer(out, *size, fps)
-        for k in range(count):
-            writer.write(encode_srgb8(engine.frame(start + k / fps, size)))
-            if not args.quiet:
-                print(f"\rframe {k + 1}/{count}", end="", file=sys.stderr, flush=True)
-        writer.close()
-        track = engine.audio_track()
-        if track is not None and out.suffix in (".mp4", ".mov"):
-            from phasor.render.encode import mux_audio
-
-            samples, rate = track
-            first = round(start * rate)
-            mux_audio(out, samples[first : first + round(count / fps * rate)], rate)
+        default = stem + (".png" if args.frame is not None else ".mp4")
+        r = render_file(
+            engine, args.out or default, preset=args.preset, fps=args.fps, start=args.start,
+            end=args.end, frame=args.frame, progress=progress,
+        )  # fmt: skip
     except (DocumentError, OSError, ValueError, RuntimeError, EncodeError) as e:
         print(f"\nphasor render: {e}", file=sys.stderr)
         return 1
-    sound = "" if track is None else ", with narration"
-    print(f"\nwrote {out}: {count} frames, {size[0]}x{size[1]} at {fps:g} fps, "
-          f"{writer.encoder}{sound}")  # fmt: skip
+    for w in r["warnings"]:
+        print(f"warning: {w}", file=sys.stderr)
+    w, h = r["size"]
+    if args.frame is not None:
+        print(f"wrote {r['path']} ({w}x{h}, t = {args.frame:g} s)")
+    else:
+        sound = ", with narration" if r["narration"] else ""
+        print(f"\nwrote {r['path']}: {r['frames']} frames, {w}x{h} at {r['fps']:g} fps, "
+              f"{r['encoder']}{sound}")  # fmt: skip
     return 0
 
 
@@ -207,6 +179,7 @@ def _planned(name: str, milestone: int):
 
 def build_parser() -> argparse.ArgumentParser:
     from phasor import __version__
+    from phasor.render.job import PRESETS
 
     p = argparse.ArgumentParser(prog="phasor", description=__doc__.splitlines()[0])
     p.add_argument("--version", action="version", version=f"phasor {__version__}")
@@ -263,6 +236,12 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--dir", default="benchmarks", help="where results are saved")
     b.set_defaults(func=_cmd_bench)
 
+    # Client commands (mcp, later gui) register themselves through the "phasor.commands"
+    # entry-point group, so this module never imports a sibling client (contract 6).
+    from importlib.metadata import entry_points
+
+    for ep in entry_points(group="phasor.commands"):
+        ep.load()(sub)
     for name, (milestone, help_) in PLANNED.items():
         sp = sub.add_parser(name, help=f"{help_} (Milestone {milestone})")
         sp.add_argument("args", nargs=argparse.REMAINDER)

@@ -520,6 +520,8 @@ Any AI should be able to author, inspect, critique and repair scenes through too
 | `render` | Final render with preset; returns progress and output path |
 | `docs_search` | Search the API reference and examples |
 
+**As built (Milestone 5).** The table above is the minimum; the server also has `scene_new`, `animate` (the choreography verbs), `narrate`, `review` (the self-review loop below in one call: lint, inspector lines at every marker, storyboard image), `undo`/`redo`, `checkpoint`/`restore`, and `object_types` (type names, parameters, style roles). Tool logic is plain Python in `phasor/mcp/tools.py` (`Workspace`), served by `phasor/mcp/server.py`. Safety: paths stay inside `--root`; `.py` scenes are code and are refused unless `--allow-scripts`; a failed patch changes nothing. `phasor mcp` registers itself with the CLI through the `phasor.commands` entry-point group, because sibling clients may not import each other (contract 6). Attaching to a running GUI waits for Milestone 10: today `phasor mcp` always hosts its own headless Engine.
+
 **Self-review loop (built in)**
 
 1. Edit the scene.

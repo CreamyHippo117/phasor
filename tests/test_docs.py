@@ -26,3 +26,27 @@ def test_doc_code_blocks_run(path: Path):
     for i, m in enumerate(BLOCK.finditer(text)):
         code = m.group(1)
         exec(compile(code, f"{path.name}[block {i}]", "exec"), ns)
+
+
+MCP_BLOCK = re.compile(r"^```json (patch|calls)[ \t]*\n(.*?)^```", re.S | re.M)
+
+
+def test_mcp_doc_examples_run_in_order(tmp_path):
+    """Every ```json patch block (a patch) and ```json calls block (a tool call per line)
+    in docs/ai/MCP.md runs, in order, against one scene."""
+    import json
+
+    from phasor.mcp.tools import Workspace
+
+    ws = Workspace(tmp_path)
+    ws.scene_new("doc")
+    blocks = MCP_BLOCK.findall((DOCS / "MCP.md").read_text(encoding="utf-8"))
+    assert len(blocks) >= 5
+    for i, (kind, body) in enumerate(blocks):
+        if kind == "patch":
+            r = ws.scene_edit(json.loads(body))
+            assert r["ok"], f"MCP.md block {i}: {r['errors']}"
+            continue
+        for line in filter(str.strip, body.splitlines()):
+            call = json.loads(line)
+            getattr(ws, call.pop("tool"))(**call)

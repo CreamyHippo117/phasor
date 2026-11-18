@@ -140,3 +140,9 @@ are written gives no extra room. Calling it again is harmless.
 
 With `voice="estimate"` (or `auto` on a machine without espeak-ng) there is timing but no
 audio. `phasor render` prints "with narration" when a track was muxed.
+
+## Driving phasor over MCP
+
+Positions of overlay text are frame heights (a centered title is `x = 0.8889`), lint clean
+does not mean it looks good (look at the storyboard), and `.py` scenes are refused unless
+the server runs with `--allow-scripts`. The full list is at the end of `MCP.md`.

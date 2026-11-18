@@ -21,10 +21,16 @@ gl = ["moderngl>=5.12"]
 gpu = ["cupy-cuda12x[ctk]>=13.3"]
 # Video encoding (NVENC when the driver supports it, libx264 otherwise).
 encode = ["av>=14"]
-all = ["phasor[gl,gpu,encode]"]
+all = ["phasor[gl,gpu,encode,mcp]"]
+# The MCP server an AI client connects to (`phasor mcp`).
+mcp = ["mcp>=2.0,<3"]
 
 [project.scripts]
 phasor = "phasor.cli:main"
+
+# Sibling clients add their own commands (`phasor mcp`) without `cli` importing them.
+[project.entry-points."phasor.commands"]
+mcp = "phasor.mcp.cli:register"
 
 [dependency-groups]
 dev = [
@@ -39,6 +45,11 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["phasor"]
+
+# The AI docs and examples travel with the package so `docs_search` works when installed.
+[tool.hatch.build.targets.wheel.force-include]
+"docs/ai" = "phasor/_docs/docs/ai"
+"examples" = "phasor/_docs/examples"
 
 # ---------------------------------------------------------------- ruff
 [tool.ruff]

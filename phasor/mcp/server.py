@@ -1,0 +1,106 @@
+"""The MCP server: ``phasor mcp``. A thin client of ``Engine`` (SPEC contract 1).
+
+Every tool is a method of ``Workspace`` (``tools.py``); this file only names them for the
+protocol, turns ``ToolError`` into an error the client can read, and hands pictures to
+vision models as images.
+"""
+
+from __future__ import annotations
+
+import functools
+import json
+from pathlib import Path
+from typing import Any
+
+from mcp.server.mcpserver import Image, MCPServer
+from mcp.server.mcpserver.exceptions import ToolError as ClientError
+
+from phasor.mcp import docs
+from phasor.mcp.tools import ToolError, Workspace
+
+INSTRUCTIONS = """\
+phasor makes math animations you can see, check and fix. Work in this loop:
+1. object_types and docs_search tell you what exists. scene_new starts a scene.
+2. scene_edit adds objects (patches: add_object, set_param, add_constraint...). Name objects
+   by meaning (pole_i, loop, loop.label). Style takes role names, never raw colors.
+3. narrate gives the scene a voice; animate (verbs) anchors motion to the words.
+4. review checks everything at once: lint, what is on screen at each marker, a storyboard
+   picture. Fix the todo items (scene_edit, or lint with fix=true) and review again until clean.
+5. scene_save, then render. Report what you built and anything you could not fix.
+Every change is one undoable step (undo), and checkpoint/restore/diff let you branch and compare."""
+
+
+TOOL_NAMES = (
+    "scene_new", "scene_open", "scene_save", "scene_edit", "undo", "redo", "animate",
+    "narrate", "checkpoint", "restore", "diff", "inspect", "lint", "storyboard", "review",
+    "hit_test", "resolve", "render", "docs_search", "object_types",
+)  # fmt: skip
+
+
+def _wrap(fn):
+    @functools.wraps(fn)
+    def run(*a, **kw):
+        try:
+            return fn(*a, **kw)
+        except ToolError as e:
+            raise ClientError(json.dumps({"error": str(e), "issues": e.issues})) from e
+
+    return run
+
+
+def build_server(workspace: Workspace | None = None) -> MCPServer:
+    ws = workspace or Workspace()
+    server = MCPServer("phasor", instructions=INSTRUCTIONS)
+
+    def tool(fn):
+        server.tool()(_wrap(fn))
+        return fn
+
+    for name in TOOL_NAMES:
+        if name not in ("storyboard", "review"):  # these two also return a picture, below
+            tool(getattr(ws, name))
+
+    # These two return a picture next to the data, so they are plain content, not structured.
+    @server.tool(structured_output=False)
+    @_wrap
+    def storyboard(
+        times: list[float] | None = None, marks: bool = True, columns: int = 3
+    ) -> list[Any]:
+        """Keyframes on one contact sheet (returned as an image) plus what the inspector sees
+        in each. ``marks`` draws each object's box and id on the picture."""
+        r = ws.storyboard(times, marks, columns)
+        return [json.dumps({k: v for k, v in r.items()}), Image(path=r["image"])]
+
+    @server.tool(structured_output=False)
+    @_wrap
+    def review(step: float = 0.5, with_picture: bool = True) -> list[Any]:
+        """The self-review loop in one call: lint, the inspector at every marker and a
+        storyboard image. Fix ``todo`` and call again until ``clean`` is true."""
+        r = ws.review(step, with_picture)
+        parts: list[Any] = [json.dumps(r)]
+        if r["storyboard"]:
+            parts.append(Image(path=r["storyboard"]))
+        return parts
+
+    @server.resource("phasor://docs/{name}")
+    def doc(name: str) -> str:
+        """The docs written for AI: API, PATTERNS, PITFALLS."""
+        return docs.read(name)
+
+    @server.prompt()
+    def build_scene(request: str) -> str:
+        """Build a scene from a one-line request and check it before reporting."""
+        return (
+            f"Build this phasor scene: {request}\n\n"
+            "Start with object_types and docs_search (read PATTERNS). scene_new, then add "
+            "objects with scene_edit, narrate with markers, animate with verbs anchored to "
+            "them. Then loop: review, fix every todo, review again (at most 5 rounds). "
+            "Save it, render a preview, and report what changed and any issue you left."
+        )
+
+    return server
+
+
+def serve(root: str | Path | None = None, out: str | Path | None = None,
+          allow_scripts: bool = False) -> None:  # fmt: skip
+    build_server(Workspace(root, out, allow_scripts=allow_scripts)).run("stdio")

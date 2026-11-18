@@ -1,0 +1,44 @@
+# phasor
+
+> GPU-rendered math animations that an AI can see, check and fix. You build a scene with
+> patches over MCP (`phasor mcp`), check it with `review` (lint + inspector + storyboard
+> picture), and fix what it finds. Read docs/ai/MCP.md first.
+
+## Tools
+
+- `scene_new`: Start an empty scene (replaces the open one; save first if it matters).
+- `scene_open`: Open `name.phasor.json` (or a `.py` script when the server allows scripts).
+- `scene_save`: Save the document (`name.phasor.json`); tweaks to a script scene go to its overrides file beside it.
+- `scene_edit`: Apply a patch (one op, a list of ops, or `{"ops": [...]}`). Atomic: if any op is invalid nothing changes. Returns the result and the lint issues it added or fixed.
+- `undo`: Revert the last edit (each patch, verb or narration is one step).
+- `redo`: Re-apply the edit that undo reverted.
+- `animate`: Animate with a choreography verb starting at a marker (or seconds). Timing comes from the theme. Returns when it starts and ends so the next step can follow it.
+- `narrate`: Set the narration. `[[name]]` puts a marker at the next word. Every animation anchored to a marker follows the voice. `pace` adds breathing room after busy sentences.
+- `checkpoint`: Remember the current document under `name` (to compare or return to later).
+- `restore`: Go back to a checkpoint. Undo history starts over (checkpoints are kept).
+- `diff`: What changed from version `a` to version `b` ('current', 'saved' or a checkpoint).
+- `inspect`: What is on screen at `t`: `brief` (one line each), `standard` or `full`.
+- `lint`: Find visual problems (overlap, off-screen, contrast, tiny text, clutter, ...). `fix=True` applies the fixes that are certain, then reports what is left.
+- `storyboard`: Render keyframes on one contact sheet (a PNG) with what the inspector sees in each. `marks` draws every object's box and id so you can tie picture to ids.
+- `review`: One call for the self-review loop: lint, what is on screen at every marker, and a storyboard. Fix what `issues` lists, then call again until `clean`.
+- `hit_test`: Objects under an output-pixel point (origin top-left), topmost first.
+- `resolve`: Turn words like 'the pole on the left' or 'label of the loop' into object ids.
+- `render`: Render a video (preset: preview 960x540@30, final, 4k) or one PNG (`frame`).
+- `docs_search`: Search the API reference, patterns, pitfalls and examples.
+- `object_types`: What a patch may add: object types (use these exact names in `add_object`) with their parameters and defaults and style keys (role group, default role), the role names each group accepts (style takes roles, never raw colors), and the themes.
+
+## Object types (use these names in add_object)
+
+- `domain_coloring`: function, pos, size, contour
+- `dot`: pos, r
+- `fractal`: kind, c, pos, size, max_iter, density
+- `line`: points, progress
+- `text`: text, pos, anchor, leader, leader_on
+
+## Docs
+
+- docs/ai/MCP.md: the loop, every tool, every patch operation (all examples are tested)
+- docs/ai/API.md: the Python API, one example per name
+- docs/ai/PATTERNS.md: idioms (label a pole, tie parameters, narrate and animate)
+- docs/ai/PITFALLS.md: known traps and how the linter reports them
+- examples/: small tested scenes

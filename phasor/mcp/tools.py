@@ -1,0 +1,491 @@
+"""What an AI client can do with phasor, as plain functions (no MCP library in here).
+
+``Workspace`` holds the one open scene. Every method takes and returns JSON-friendly data,
+so the same behavior is tested directly and served over MCP by ``server.py``. Nothing here
+writes a document except through ``Engine.apply`` (SPEC contract 1).
+
+Safety: paths must stay inside ``root``; ``.py`` scenes are executable code and are
+refused unless ``allow_scripts`` is on; patches are validated before they apply and a
+failed patch changes nothing.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+from typing import Any
+
+from phasor.core import io
+from phasor.core.diff import diff_documents
+from phasor.core.issues import DocumentError, Issue
+from phasor.core.objects import registered_types
+from phasor.core.schema import Document, Meta, Overrides
+from phasor.engine import Engine
+from phasor.mcp import docs
+from phasor.scene import Scene, load
+from phasor.style.theme import ROLE_GROUPS, available_themes
+from phasor.time import verbs as _verbs
+
+VERBS = (
+    "reveal",
+    "exit",
+    "trace",
+    "bloom_in",
+    "dim_others",
+    "undim",
+    "focus_pull",
+    "morph",
+    "settle",
+)
+MAX_CHECKPOINTS = 32
+
+
+SHOWN_TIMES = 6
+
+
+def _slim(issue: dict[str, Any]) -> dict[str, Any]:
+    """An issue for a client: a rule that fires at 35 sample times lists the first few and
+    the total (the full list is noise to read)."""
+    times = issue.get("times", [])
+    if len(times) > SHOWN_TIMES:
+        issue = {**issue, "times": times[:SHOWN_TIMES], "times_total": len(times)}
+    return issue
+
+
+def _slim_result(r: dict[str, Any]) -> dict[str, Any]:
+    d = r.get("lint_delta")
+    if d:
+        r = {**r, "lint_delta": {k: [_slim(i) for i in v] for k, v in d.items()}}
+    return r
+
+
+class ToolError(Exception):
+    """A client mistake with a message the client can act on (not a crash)."""
+
+    def __init__(self, message: str, issues: list[Issue] | None = None) -> None:
+        super().__init__(message)
+        self.issues = [i.to_dict() for i in issues or []]
+
+
+class Workspace:
+    def __init__(
+        self,
+        root: str | Path | None = None,
+        out_dir: str | Path | None = None,
+        *,
+        allow_scripts: bool = False,
+    ) -> None:
+        self.root = Path(root or Path.cwd()).resolve()
+        self.out_dir = Path(out_dir).resolve() if out_dir else self.root / "phasor_out"
+        self.allow_scripts = allow_scripts
+        self._engine: Engine | None = None
+        self.path: Path | None = None  # where the open scene was loaded from / last saved
+        self._checkpoints: dict[str, tuple[Document, Overrides]] = {}
+
+    # ------------------------------------------------------------ plumbing
+
+    @property
+    def engine(self) -> Engine:
+        if self._engine is None:
+            raise ToolError("no scene is open: call scene_new or scene_open first")
+        return self._engine
+
+    def _inside(self, path: str | Path, *, must_exist: bool = False) -> Path:
+        p = Path(path)
+        p = (p if p.is_absolute() else self.root / p).resolve()
+        if p != self.root and self.root not in p.parents:
+            raise ToolError(f"{path} is outside the workspace folder {self.root}")
+        if must_exist and not p.exists():
+            raise ToolError(f"{path} does not exist (workspace folder: {self.root})")
+        return p
+
+    def _guard(self, fn):
+        try:
+            return fn()
+        except DocumentError as e:
+            raise ToolError(str(e), e.issues) from e
+        except (KeyError, ValueError, OSError) as e:
+            raise ToolError(str(e.args[0]) if isinstance(e, KeyError) and e.args else str(e)) from e
+
+    def summary(self) -> dict[str, Any]:
+        e = self.engine
+        d = e.document
+        return {
+            "title": d.meta.title,
+            "theme": d.meta.theme,
+            "size": [d.meta.width, d.meta.height],
+            "fps": d.meta.fps,
+            "duration": e.duration,
+            "version": e.version,
+            "path": str(self.path) if self.path else None,
+            "source": "script" if e.scripted else "document",
+            "objects": {o.id: o.type for o in d.objects},
+            "markers": dict(sorted(d.timeline.markers.items(), key=lambda kv: kv[1])),
+            "constraints": [f"{c.rule} ({c.priority})" for c in d.constraints],
+            "narration": d.narration.script if d.narration else None,
+            "checkpoints": sorted(self._checkpoints),
+        }
+
+    # ------------------------------------------------------------ scenes
+
+    def scene_new(
+        self, title: str, theme: str = "midnight_glow", width: int = 1920, height: int = 1080,
+        fps: float = 60.0,
+    ) -> dict[str, Any]:  # fmt: skip
+        """Start an empty scene (replaces the open one; save first if it matters)."""
+
+        def go():
+            meta = Meta(title=title, theme=theme, width=width, height=height, fps=fps)
+            self._engine = Engine(Document(meta=meta), base_dir=self.root)
+            self.path = None
+            self._checkpoints.clear()
+
+        self._guard(go)
+        return self.summary()
+
+    def scene_open(self, path: str) -> dict[str, Any]:
+        """Open ``name.phasor.json`` (or a ``.py`` script when the server allows scripts)."""
+        p = self._inside(path, must_exist=True)
+        if p.suffix == ".py" and not self.allow_scripts:
+            raise ToolError(
+                "this server does not run scripts (a .py scene is code). Open the saved "
+                ".phasor.json instead, or start the server with --allow-scripts"
+            )
+        self._engine = self._guard(lambda: load(p))
+        self.path = p
+        self._checkpoints.clear()
+        return self.summary()
+
+    def scene_save(self, path: str | None = None) -> dict[str, Any]:
+        """Save the document (``name.phasor.json``); tweaks to a script scene go to its
+        overrides file beside it."""
+        e = self.engine
+        if path is None and self.path is None:
+            raise ToolError("this scene has no path yet: pass path, e.g. 'residues.phasor.json'")
+        target = self._inside(path) if path else self.path
+        assert target is not None
+        if target.suffix == ".py":
+            target = target.with_name(target.stem + io.DOC_SUFFIX)
+        if not target.name.endswith(io.DOC_SUFFIX):
+            raise ToolError(f"scene files end in {io.DOC_SUFFIX}, got {target.name}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        self._guard(lambda: e.save(target))
+        self.path = target
+        return {"saved": str(target), "version": e.version}
+
+    # ------------------------------------------------------------ editing
+
+    def scene_edit(self, patch: Any) -> dict[str, Any]:
+        """Apply a patch (one op, a list of ops, or ``{"ops": [...]}``). Atomic: if any op
+        is invalid nothing changes. Returns the result and the lint issues it added or fixed."""
+        r = self.engine.apply(patch, origin="tweak")
+        return {**_slim_result(r.to_dict()), "objects": len(self.engine.document.objects)}
+
+    def undo(self) -> dict[str, Any]:
+        """Revert the last edit (each patch, verb or narration is one step)."""
+        r = self.engine.undo()
+        return {"undone": r is not None, **(_slim_result(r.to_dict()) if r else {})}
+
+    def redo(self) -> dict[str, Any]:
+        """Re-apply the edit that undo reverted."""
+        r = self.engine.redo()
+        return {"redone": r is not None, **(_slim_result(r.to_dict()) if r else {})}
+
+    def animate(
+        self,
+        verb: str,
+        at: str | float,
+        targets: list[str] | None = None,
+        offset: float = 0.0,
+        path: str | None = None,
+        value: Any = None,
+    ) -> dict[str, Any]:
+        """Animate with a choreography verb starting at a marker (or seconds). Timing comes
+        from the theme. Returns when it starts and ends so the next step can follow it."""
+        if verb not in VERBS:
+            raise ToolError(f"unknown verb {verb!r}; verbs are {list(VERBS)}")
+        e = self.engine
+        if e.scripted:
+            raise ToolError(
+                "this scene is built by a script, so structure and timing belong in the "
+                "script; open its .phasor.json to animate here"
+            )
+        targets = targets or []
+        if verb in ("morph", "settle"):
+            if path is None or value is None:
+                raise ToolError(f"{verb} needs path and value, e.g. path='dot.pos', value=[1, 2]")
+            args: tuple = (path, value)
+        elif verb == "focus_pull":
+            if len(targets) != 1:
+                raise ToolError("focus_pull needs exactly one target id")
+            args = (targets[0],)
+        else:
+            args = tuple(targets)
+        step = Scene.of(e).at(at, offset)
+
+        def go():
+            try:
+                getattr(step, verb)(*args)
+            except _verbs.VerbError as err:
+                raise ToolError(str(err)) from err
+
+        self._guard(go)
+        base = e.document.timeline.markers[at] if isinstance(at, str) else float(at)
+        start = base + offset
+        return {"verb": verb, "start": start, "end": start + step._end, "version": e.version}
+
+    def narrate(self, script: str, voice: str = "auto", pace: bool = True) -> dict[str, Any]:
+        """Set the narration. ``[[name]]`` puts a marker at the next word. Every animation
+        anchored to a marker follows the voice. ``pace`` adds breathing room after busy
+        sentences."""
+        e = self.engine
+        if e.scripted:
+            raise ToolError("this scene is built by a script: change the narration there")
+        scene = Scene.of(e)
+
+        def go():
+            scene.narrate(script, voice=voice)
+            if pace:
+                scene.pace()
+
+        self._guard(go)
+        return {
+            "markers": dict(sorted(e.document.timeline.markers.items(), key=lambda kv: kv[1])),
+            "duration": e.duration,
+            "voice": e.document.narration.voice if e.document.narration else None,
+        }
+
+    # ------------------------------------------------------------ checkpoints
+
+    def checkpoint(self, name: str) -> dict[str, Any]:
+        """Remember the current document under ``name`` (to compare or return to later)."""
+        if not re.fullmatch(r"[A-Za-z0-9_.-]{1,40}", name) or name in ("current", "saved"):
+            raise ToolError(
+                "checkpoint names are 1-40 letters, digits, _ . -  (not 'current'/'saved')"
+            )
+        if name not in self._checkpoints and len(self._checkpoints) >= MAX_CHECKPOINTS:
+            raise ToolError(f"at most {MAX_CHECKPOINTS} checkpoints; reuse a name")
+        e = self.engine
+        self._checkpoints[name] = (e.base, e.overrides)
+        return {"checkpoint": name, "version": e.version, "all": sorted(self._checkpoints)}
+
+    def restore(self, name: str) -> dict[str, Any]:
+        """Go back to a checkpoint. Undo history starts over (checkpoints are kept)."""
+        if name not in self._checkpoints:
+            raise ToolError(f"no checkpoint {name!r}; have {sorted(self._checkpoints)}")
+        doc, ov = self._checkpoints[name]
+        keep = self.engine
+        self._engine = Engine(doc, overrides=ov, base_dir=keep.base_dir)
+        return self.summary()
+
+    def _version_of(self, ref: str) -> Document:
+        if ref == "current":
+            return self.engine.document
+        if ref == "saved":
+            if self.path is None or not self.path.exists():
+                raise ToolError("nothing saved yet")
+            return io.load_document(self.path)
+        if ref in self._checkpoints:
+            doc, ov = self._checkpoints[ref]
+            return Engine(doc, overrides=ov).document
+        raise ToolError(
+            f"no version {ref!r}; use 'current', 'saved' or {sorted(self._checkpoints)}"
+        )
+
+    def diff(self, a: str = "saved", b: str = "current") -> dict[str, Any]:
+        """What changed from version ``a`` to version ``b`` ('current', 'saved' or a checkpoint)."""
+        return {"a": a, "b": b, **diff_documents(self._version_of(a), self._version_of(b))}
+
+    # ------------------------------------------------------------ seeing
+
+    def inspect(self, t: float = 0.0, id: str | None = None, detail: str = "standard") -> Any:
+        """What is on screen at ``t``: ``brief`` (one line each), ``standard`` or ``full``."""
+        if detail not in ("brief", "standard", "full"):
+            raise ToolError("detail is brief, standard or full")
+        return self._guard(lambda: self.engine.inspect(t, id=id, detail=detail))
+
+    def lint(self, fix: bool = False, strict: bool = False, step: float = 0.5) -> dict[str, Any]:
+        """Find visual problems (overlap, off-screen, contrast, tiny text, clutter, ...).
+        ``fix=True`` applies the fixes that are certain, then reports what is left."""
+        e = self.engine
+        applied: list[dict[str, Any]] = []
+        if fix:
+            applied = e.autofix()["applied"]
+        issues = e.lint(step, strict=strict)
+        return {
+            "clean": not issues,
+            "errors": sum(i.severity == "error" for i in issues),
+            "warnings": sum(i.severity == "warning" for i in issues),
+            "issues": [_slim(i.to_dict()) for i in issues],
+            "applied": applied,
+        }
+
+    def storyboard(
+        self, times: list[float] | None = None, marks: bool = True, columns: int = 3
+    ) -> dict[str, Any]:  # fmt: skip
+        """Render keyframes on one contact sheet (a PNG) with what the inspector sees in
+        each. ``marks`` draws every object's box and id so you can tie picture to ids."""
+        from phasor.render.output import save_png
+
+        e = self.engine
+        board = self._guard(lambda: e.storyboard(times, marks=marks, columns=columns))
+        name = f"{e.document.meta.title}.storyboard.v{e.version}.png"
+        out = self.out_dir / name
+        out.parent.mkdir(parents=True, exist_ok=True)
+        save_png(out, board["image"])
+        return {"image": str(out), "frames": board["frames"], "version": e.version}
+
+    def hit_test(self, x: float, y: float, t: float = 0.0) -> dict[str, Any]:
+        """Objects under an output-pixel point (origin top-left), topmost first."""
+        return {"t": t, "x": x, "y": y, "ids": self.engine.hit_test(x, y, t)}
+
+    def resolve(self, query: str, t: float = 0.0, limit: int = 5) -> dict[str, Any]:
+        """Turn words like 'the pole on the left' or 'label of the loop' into object ids."""
+        e = self.engine
+        snap = e.inspect(t, detail="standard")["objects"]
+        return {"query": query, "t": t, "matches": _resolve(e.document, snap, query)[:limit]}
+
+    # ------------------------------------------------------------ outputs
+
+    def review(self, step: float = 0.5, with_picture: bool = True) -> dict[str, Any]:
+        """One call for the self-review loop: lint, what is on screen at every marker, and
+        a storyboard. Fix what ``issues`` lists, then call again until ``clean``."""
+        e = self.engine
+        lint = self.lint(step=step, strict=bool(e.document.narration))
+        times = e.storyboard_times()
+        marks = {t: n for n, t in e.document.timeline.markers.items()}
+        frames = [
+            {"t": t, "marker": marks.get(t), "objects": e.inspect(t, detail="brief")["objects"]}
+            for t in times
+        ]
+        board: dict[str, Any] | None = None
+        note = None
+        if with_picture:
+            try:
+                board = self.storyboard(times)
+            except (ToolError, RuntimeError) as err:
+                note = f"no picture ({err}); judge from the inspector lines and lint"
+        todo = [f"{i['code']} [{', '.join(i['ids'])}]: {i['message']}" for i in lint["issues"]]
+        return {
+            "clean": lint["clean"],
+            "issues": lint["issues"],
+            "todo": todo,
+            "frames": frames,
+            "storyboard": board["image"] if board else None,
+            "note": note,
+            "next": "done: report what you built and anything you could not resolve"
+            if lint["clean"]
+            else "fix the todo items (scene_edit, or lint with fix=true), then review again",
+        }
+
+    def render(
+        self, preset: str = "preview", out: str | None = None, start: float | None = None,
+        end: float | None = None, frame: float | None = None,
+    ) -> dict[str, Any]:  # fmt: skip
+        """Render a video (preset: preview 960x540@30, final, 4k) or one PNG (``frame``)."""
+        from phasor.render.encode import EncodeError
+        from phasor.render.job import PRESETS, render_file
+
+        if preset not in PRESETS:
+            raise ToolError(f"preset is one of {sorted(PRESETS)}")
+        e = self.engine
+        stem = e.document.meta.title
+        default = self.out_dir / (f"{stem}.png" if frame is not None else f"{stem}.mp4")
+        target = self._inside(out) if out else default
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            return render_file(e, target, preset=preset, start=start, end=end, frame=frame)
+        except (RuntimeError, EncodeError, OSError, ValueError) as err:
+            raise ToolError(str(err)) from err
+
+    # ------------------------------------------------------------ learning
+
+    def docs_search(self, query: str, limit: int = 5) -> dict[str, Any]:
+        """Search the API reference, patterns, pitfalls and examples."""
+        return {"query": query, "results": docs.search(query, limit)}
+
+    def object_types(self) -> dict[str, Any]:
+        """What a patch may add: object types (use these exact names in ``add_object``) with their
+        parameters and defaults and style keys (role group, default role), the role names each
+        group accepts (style takes roles, never raw colors), and the themes."""
+        out: dict[str, Any] = {}
+        for name, cls in sorted(registered_types().items()):
+            params = {}
+            for k, f in cls.Params.model_fields.items():
+                params[k] = (
+                    "required" if f.is_required() else f.get_default(call_default_factory=True)
+                )
+            style = {
+                k: {"group": g, "default": d} for k, (g, d) in getattr(cls, "Style", {}).items()
+            }
+            out[name] = {"params": _jsonable(params), "style": style}
+        return {
+            "types": out,
+            "roles": {g: list(r) for g, r in ROLE_GROUPS.items()},
+            "themes": available_themes(),
+        }
+
+
+def _jsonable(v: Any) -> Any:
+    if isinstance(v, dict):
+        return {k: _jsonable(x) for k, x in v.items()}
+    if isinstance(v, tuple | list):
+        return [_jsonable(x) for x in v]
+    if hasattr(v, "tolist"):
+        return v.tolist()
+    return v if isinstance(v, str | int | float | bool | type(None)) else str(v)
+
+
+# ---------------------------------------------------------------- resolve
+
+_STOP = {"the", "a", "an", "of", "at", "on", "in", "to", "for", "and", "is", "that", "this"}
+_REGION_WORDS = {"left", "right", "top", "bottom", "upper", "lower", "center", "middle", "centre"}
+
+
+def _tokens(text: str) -> list[str]:
+    return [w for w in re.split(r"[^a-z0-9]+", text.lower()) if w and w not in _STOP]
+
+
+def _resolve(doc: Document, snap: list[dict[str, Any]], query: str) -> list[dict[str, Any]]:
+    """Score objects against the words: id parts, tags, type, displayed text, screen region.
+    "label of X" / "X's label" prefers the child ``X.label``."""
+    words = _tokens(query)
+    wants_label = "label" in words
+    by_id = {e["id"]: e for e in snap}
+    scored: list[tuple[float, str, list[str]]] = []
+    for o in doc.objects:
+        why: list[str] = []
+        score = 0.0
+        id_parts = set(re.split(r"[._]", o.id))
+        text = ""
+        tp = o.params.get("text")
+        if isinstance(tp, str):
+            text = tp
+        text_tokens = set(_tokens(text))
+        entry = by_id.get(o.id, {})
+        region_tokens = set(re.split(r"[-\s]", str(entry.get("region", ""))))
+        for w in words:
+            if w in id_parts or w == o.id:
+                score += 3
+                why.append(f"id has '{w}'")
+            elif w in {t.lower() for t in o.tags}:
+                score += 2
+                why.append(f"tagged '{w}'")
+            elif w in text_tokens:
+                score += 2.5
+                why.append(f"text says '{w}'")
+            elif w == o.type.split(".")[-1].lower():
+                score += 1.5
+                why.append(f"is a {w}")
+            elif w in _REGION_WORDS and w in region_tokens:
+                score += 1
+                why.append(f"is on the {w}")
+        if wants_label and o.id.endswith(".label"):
+            score += 1.5 if score else 0
+        elif wants_label and score and not o.id.endswith(".label"):
+            score -= 0.5
+        if score > 0:
+            scored.append((score, o.id, why))
+    scored.sort(key=lambda s: (-s[0], s[1]))
+    return [{"id": i, "score": round(s, 2), "why": w, "region": by_id.get(i, {}).get("region")}
+            for s, i, w in scored]  # fmt: skip

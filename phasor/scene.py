@@ -145,6 +145,14 @@ class Scene:
         engine_kwargs.setdefault("base_dir", _caller_dir())
         self.engine = Engine(Document(meta=meta), **engine_kwargs)
 
+    @classmethod
+    def of(cls, engine: Engine) -> Scene:
+        """A builder around an engine that already exists (the MCP server uses this, so a
+        client gets the same verbs as a script)."""
+        scene = cls.__new__(cls)
+        scene.engine = engine
+        return scene
+
     def _apply(self, op: Any) -> None:
         self.engine.apply(op, origin="script").raise_for_errors()
 

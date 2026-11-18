@@ -4,8 +4,8 @@ One canonical example per public name. No deprecated aliases. Every ```python bl
 folder runs in CI (`tests/test_docs.py`), top to bottom in one namespace per file. Mark a
 block ```python no-run only when it cannot run in CI, and say why next to it.
 
-Status: Milestone 1 (core + inspector). Layout constraints and the visual linter arrive in
-Milestone 2; GPU kernels, bloom and video in Milestone 3.
+Status: through Milestone 5. This file is the Python API; to drive phasor from an AI client
+(MCP) read `MCP.md` first.
 
 ## Build a scene
 
