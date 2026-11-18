@@ -54,6 +54,8 @@ class Request:
     anchor: Box
     gap: float
     leader_len: float | None = None  # None: this object cannot draw a leader line
+    # What hides this label, when that differs per label (3D: depends on its depth).
+    coverage: Coverage | None = None
 
 
 @dataclass(frozen=True)
@@ -110,7 +112,8 @@ def place(
         hit += sum(box.overlap(p.box(q)) for q in requests
                    if q.id != req.id and (p := chosen.get(q.id)))  # fmt: skip
         overlap = cut + hit / area
-        occlusion = coverage.fraction(box) if coverage else 0.0
+        cov = req.coverage or coverage
+        occlusion = cov.fraction(box) if cov else 0.0
         ax, ay = req.anchor.center
         off = (center[0] - ax, center[1] - ay)
         cost = (

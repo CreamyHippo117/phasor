@@ -13,6 +13,7 @@ order, which makes "nearest surface" well defined without z-fighting.
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 from collections import OrderedDict
 from typing import Any
@@ -293,9 +294,7 @@ class GLRenderer:
                 self._emit_clear[size] = ctx.framebuffer([textures[1]])
                 self._targets[key] = (ms, resolved)
             elif pass_ == "id":
-                fbo = ctx.framebuffer(
-                    [ctx.texture(size, 1, dtype="u4")], ctx.depth_renderbuffer(size)
-                )
+                fbo = ctx.framebuffer([ctx.texture(size, 1, dtype="u4")], ctx.depth_texture(size))
                 self._targets[key] = (fbo, fbo)
             else:
                 fbo = ctx.framebuffer([ctx.texture(size, 1, dtype="f1")])
@@ -579,12 +578,41 @@ class GLRenderer:
             state, ("id", size, force), lambda: self._render(state, "id", size, force=force)
         )
 
+    def depth_buffer(self, state, size) -> np.ndarray:
+        def make():
+            world = dataclasses.replace(
+                state, objects=tuple(o for o in state.objects if o.layer != "overlay")
+            )
+            with self.ctx:
+                self._render_current(world, "id", size)
+                fbo, _ = self._target("id", size)
+                raw = fbo.read(components=1, attachment=-1, dtype="f4")
+            w, h = size
+            z = np.frombuffer(raw, dtype=np.float32).reshape(h, w)[::-1].astype(np.float64)
+            return _view_depth(state.camera, z, size)
+
+        return self._cached(state, ("depth", size), make)
+
     def solo_mask(self, state, size, object_id: str, zoom_out: float = 1.0) -> np.ndarray:
         return self._cached(
             state,
             ("solo", size, object_id, round(zoom_out, 6)),
             lambda: self._render(state, "solo", size, only=object_id, zoom=zoom_out),
         )
+
+
+def _view_depth(cam, z01: np.ndarray, size) -> np.ndarray:
+    """Depth-buffer values (0..1) -> distance along the view direction; inf where empty."""
+    w, h = size
+    xs = (np.arange(w) + 0.5) / w * 2 - 1
+    ys = 1 - (np.arange(h) + 0.5) / h * 2
+    xx, yy = np.meshgrid(xs, ys)
+    ndc = np.stack([xx, yy, z01 * 2 - 1, np.ones_like(xx)], axis=-1).reshape(-1, 4)
+    world = ndc @ np.linalg.inv(cam.view_proj).T
+    world = world[:, :3] / world[:, 3:4]
+    d = ((world - cam.eye) @ cam.forward).reshape(h, w)
+    d[z01 >= 1.0] = np.inf
+    return d
 
 
 @functools.cache

@@ -16,6 +16,7 @@ the same tracks, and it is cached per document version by the Engine.
 from __future__ import annotations
 
 import bisect
+import dataclasses
 import itertools
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -52,18 +53,64 @@ class OcclusionOracle(Protocol):
         """(h, w) bool, row 0 = top: pixels covered by an occluding object not in ``exclude``."""
         ...
 
+    def depth(self, state: SceneState, exclude: frozenset[str]) -> np.ndarray:
+        """(h, w) float, row 0 = top: distance along the view direction to the nearest
+        occluding object not in ``exclude`` (``inf``: nothing; ``-inf``: an overlay object,
+        which covers everything in the world). For 3D labels, which are hidden only by what
+        is in front of them."""
+        ...
+
 
 class AnalyticOracle:
-    """No renderer: every occluding object covers its ``geometry.footprint``."""
+    """No renderer: every occluding object covers its ``geometry.footprint``, at the depth
+    of its center."""
 
-    def coverage(self, state: SceneState, exclude: frozenset[str]) -> np.ndarray:
-        size = (ANALYTIC_WIDTH, max(1, round(ANALYTIC_WIDTH / state.aspect)))
-        mask = np.zeros(size[::-1], dtype=bool)
+    def _size(self, state: SceneState) -> tuple[int, int]:
+        return (ANALYTIC_WIDTH, max(1, round(ANALYTIC_WIDTH / state.aspect)))
+
+    def _occluders(self, state: SceneState, exclude: frozenset[str]):
         for obj in state.objects:
             if obj.id in exclude or obj.params.opacity < 0.5 or is_backdrop(state, obj):
                 continue
+            yield obj
+
+    def coverage(self, state: SceneState, exclude: frozenset[str]) -> np.ndarray:
+        size = self._size(state)
+        mask = np.zeros(size[::-1], dtype=bool)
+        for obj in self._occluders(state, exclude):
             mask |= footprint(state, obj, size)
         return mask
+
+    def depth(self, state: SceneState, exclude: frozenset[str]) -> np.ndarray:
+        size = self._size(state)
+        out = np.full(size[::-1], np.inf)
+        for obj in self._occluders(state, exclude):
+            cam = state.camera_for(obj)
+            d = (
+                -np.inf
+                if obj.layer == "overlay"
+                else cam.depth(obj.impl.world_bounds(state).center)[0]
+            )
+            m = footprint(state, obj, size)
+            out[m] = np.minimum(out[m], d)
+        return out
+
+
+LIFT = 0.04  # a 3D label sits this share of the way from its anchor toward the camera
+
+
+def anchor_base(state: SceneState, object_id: str, ref: str | None):
+    """Where a laid-out object lives in depth. In 2D: its own position. Under a perspective
+    camera an object placed against ``ref`` (a label) lives at ``ref``'s depth, nudged toward
+    the camera so it is not buried in what it names; layout then only slides it sideways
+    in the camera plane, so it keeps that depth."""
+    obj = state[object_id]
+    own = state.values[f"{object_id}.{MOVE_PARAM}"]
+    cam = state.camera_for(obj)
+    if ref is None or not cam.perspective or state[ref].layer != obj.layer:
+        return own
+    center = np.asarray(state[ref].impl.world_bounds(state).center)
+    return normalize(center + (cam.eye - center) * LIFT)
 
 
 @dataclass(frozen=True)
@@ -103,10 +150,13 @@ class Bake:
             if tr.kind == "scalar":
                 out[tr.path] = float(v)
                 continue
-            obj = pre[tr.path.rpartition(".")[0]]
+            object_id = tr.path.rpartition(".")[0]
+            obj = pre[object_id]
             if tr.ref is not None:
                 v = v + np.asarray(screen_box(pre, pre[tr.ref]).center)
-            out[tr.path] = _to_world(pre, obj, pre.values[tr.path], v)
+            base = pre.values[tr.path] if tr.path.endswith(".leader") else anchor_base(
+                pre, object_id, tr.ref)  # fmt: skip
+            out[tr.path] = _to_world(pre, obj, base, v)
         return out
 
 
@@ -164,6 +214,9 @@ def bake(c: Compiled, plan: Plan, oracle: OcclusionOracle | None = None) -> Bake
 
     for t in times:
         pre = evaluate(c, t)
+        if pre.camera.perspective:  # 3D: everything placed against an anchor lives at its depth
+            based = {pos[i]: anchor_base(pre, i, ref[i]) for i in plan.moving if ref[i]}
+            pre = evaluate(c, t, based) if based else pre
         boxes = {o.id: screen_box(pre, o) for o in pre.objects}
         replace: dict[str, object] = {}
 
@@ -221,10 +274,22 @@ def bake(c: Compiled, plan: Plan, oracle: OcclusionOracle | None = None) -> Bake
             # Backdrops (domain planes) are meant to be written on: not obstacles.
             backdrops = {o.id for o in state.objects if is_backdrop(state, o)}
             skip = placed_ids | set(fixed) | backdrops
+            if state.camera.perspective:
+                # Hidden only by what is in front of the label: one mask per label depth.
+                depth = oracle.depth(state, frozenset(skip))
+                requests = [
+                    dataclasses.replace(r, coverage=Coverage(
+                        depth < _label_depth(state, r.id) * (1 - DEPTH_SLACK), state.aspect))
+                    if state[r.id].layer != "overlay" else r
+                    for r in requests
+                ]  # fmt: skip
+                shared = None
+            else:
+                shared = Coverage(oracle.coverage(state, skip), state.aspect)
             result = labels.place(
                 requests,
                 frame=frame(state),
-                coverage=Coverage(oracle.coverage(state, skip), state.aspect),
+                coverage=shared,
                 obstacles=fixed_labels,
                 previous=previous,
             )
@@ -281,6 +346,14 @@ def bake(c: Compiled, plan: Plan, oracle: OcclusionOracle | None = None) -> Bake
         ))  # fmt: skip
     kind = "analytic" if isinstance(oracle, AnalyticOracle) else "pixel"
     return Bake(times, tracks, tuple(issues), {k: tuple(v) for k, v in slots.items()}, kind)
+
+
+DEPTH_SLACK = 0.01  # a surface this close behind or level with a label does not hide it
+
+
+def _label_depth(state: SceneState, object_id: str) -> float:
+    obj = state[object_id]
+    return float(state.camera_for(obj).depth(state.values[f"{object_id}.{MOVE_PARAM}"])[0])
 
 
 def boxes_pre_center(pre: SceneState, object_id: str) -> tuple[float, float]:

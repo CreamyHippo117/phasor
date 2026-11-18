@@ -32,6 +32,12 @@ class PassRunner(Protocol):
         0 for background. Objects in ``force`` write even if they normally would not occlude."""
         ...
 
+    def depth_buffer(self, state: SceneState, size: tuple[int, int]) -> np.ndarray:
+        """(h, w) float64, row 0 = top: distance along the camera's view direction to the
+        nearest occluding world surface; ``inf`` where there is none. Overlay objects are
+        left out (they have no depth in the world)."""
+        ...
+
     def solo_mask(
         self, state: SceneState, size: tuple[int, int], object_id: str, zoom_out: float = 1.0
     ) -> np.ndarray:

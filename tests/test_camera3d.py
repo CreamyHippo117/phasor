@@ -145,3 +145,40 @@ def test_surfaces_are_lit_not_flat():
     assert len(sheet) > 5000
     lum = sheet.mean(-1)
     assert lum.std() > 8  # shading varies across the surface
+
+
+# ---------------------------------------------------------------- 3D labels
+
+MODES = [None, pytest.param("auto", marks=pytest.mark.gl)]
+
+
+def _labelled(passes, azimuth=-90.0):
+    s = Scene("lab3d", passes=passes)
+    s.use_camera("orbit", distance=9, elevation=25, azimuth=azimuth, drift=0)
+    s.add(cx.RiemannSurface(id="surf", radius=2.2))
+    s.add(Dot(id="bp", pos=(0, 0, 0), r=0.07, style={"color": "highlight"}, tags=["key"]))
+    s.add(Text(id="bp.label", text="branch point"))
+    s.constrain("label(bp) near bp")
+    return s
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_a_3d_label_lives_at_its_anchors_depth_and_stays_beside_it(passes):
+    e = _labelled(passes).engine
+    st = e.state_at(0)
+    cam = st.camera
+    label_depth = cam.depth(st["bp.label"].params.pos)[0]
+    assert label_depth == pytest.approx(0.96 * cam.depth((0, 0, 0))[0], rel=1e-6)
+    by = {o["id"]: o for o in e.inspect(0)["objects"]}
+    (ax, ay), (lx, ly) = by["bp"]["center"]["norm"], by["bp.label"]["center"]["norm"]
+    assert math.hypot((lx - ax) * 16 / 9, ly - ay) < 0.15
+    assert by["bp.label"]["on_screen_fraction"] == 1.0
+
+
+@pytest.mark.gl
+@pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
+def test_3d_labels_avoid_only_what_is_in_front_of_them():
+    for az in (-90.0, 0.0, 60.0, 150.0, 240.0):
+        e = _labelled("auto", az).engine
+        lab = next(o for o in e.inspect(0)["objects"] if o["id"] == "bp.label")
+        assert lab["visible_fraction"] >= 0.95, (az, lab["hidden_by"])
