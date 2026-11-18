@@ -17,6 +17,7 @@ from phasor.core import text as text_metrics
 from phasor.core.objects import Bounds, DrawContext, ObjectBase, ParamsBase, Pass, register
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
+from phasor.domains.strokes import polyline
 
 DISC_SEGMENTS = 64
 
@@ -134,25 +135,8 @@ class Line(ObjectBase):
         pts = self._drawn(state)
         if me.params.progress <= 0:
             return
-        flat = np.c_[pts @ cam.right, pts @ cam.up]  # coordinates in the camera plane
-        seg = np.diff(flat, axis=0)
-        norm = np.linalg.norm(seg, axis=1, keepdims=True)
-        seg = seg / np.where(norm == 0, 1, norm)
-        normals = np.c_[-seg[:, 1], seg[:, 0]]
-        # Miter at each vertex: average the neighboring normals, lengthen to keep the width.
-        n_prev = np.vstack([normals[:1], normals])
-        n_next = np.vstack([normals, normals[-1:]])
-        miter = n_prev + n_next
-        miter /= np.maximum(np.linalg.norm(miter, axis=1, keepdims=True), 1e-9)
-        scale = 1 / np.maximum((miter * n_prev).sum(1), 0.25)  # miter limit 4x
-        offset = (miter * scale[:, None]) * (np.asarray(self._width(state, pts))[:, None] / 2)
-        off3 = np.outer(offset[:, 0], cam.right) + np.outer(offset[:, 1], cam.up)
-        positions = np.empty((2 * len(pts), 3))
-        positions[0::2], positions[1::2] = pts + off3, pts - off3
-        k = 2 * np.arange(len(pts) - 1)
-        indices = np.vstack([np.c_[k, k + 1, k + 2], np.c_[k + 1, k + 3, k + 2]])
-        ctx.triangles(positions, indices, color=_rgba(me.style["color"], me.params.opacity),
-                      glow=me.style["glow"])  # fmt: skip
+        polyline(ctx, cam, pts, self._width(state, pts), color=_rgba(me.style["color"],
+                 me.params.opacity), glow=me.style["glow"])  # fmt: skip
 
 
 @register

@@ -20,7 +20,10 @@ _LAZY = {
     "Line": "phasor.domains.basic",
     "Text": "phasor.domains.basic",
 }
-_MODULES = {"cx": "phasor.domains.cx"}  # domain modules: ``from phasor import cx``
+_MODULES = {  # domain modules: ``from phasor import cx``
+    "cx": "phasor.domains.cx",
+    "ac": "phasor.domains.acoustics",
+}
 
 __all__ = ["__version__", *_LAZY, *_MODULES]
 
