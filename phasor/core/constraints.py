@@ -29,16 +29,26 @@ RELATIONS = {
 }
 # guard -> (min ids, max ids or None for any number, takes an optional trailing number)
 GUARDS = {
+    "visible_in_3d": (1, 1, False),  # not hidden by what is in front of it (checked by lint)
     "no_overlap": (2, None, False),
     "on_screen": (1, 1, True),
     "min_size_px": (1, 1, True),
     "readable": (1, 1, False),
 }
+# camera goal -> (min ids, max ids or None, takes a trailing number). Written
+# ``camera keep_visible(a, b)``: the camera solver moves the camera to satisfy them.
+CAMERA = "camera"
+CAMERA_GOALS = {
+    "keep_visible": (1, None, False),
+    "center": (1, 1, False),
+    "thirds": (1, 1, False),
+    "avoid_occlusion": (1, None, False),
+    "min_size": (1, 1, True),  # share of the frame height its bounding sphere should span
+}
 NOT_YET = {
-    "outside": 6,
-    "tangent_to": 6,
-    "attach_to": 6,
-    "visible_in_3d": 6,
+    "outside": 8,
+    "tangent_to": 8,
+    "attach_to": 8,
 }
 PRIORITIES = ("required", "strong", "medium", "weak")
 LABEL_SUFFIX = "label"
@@ -69,7 +79,16 @@ class Guard:
     value: float | None = None
 
 
-Clause = Relation | Guard
+@dataclass(frozen=True)
+class Goal:
+    """A camera goal: what the camera solver should achieve, not an angle."""
+
+    kind: str
+    ids: tuple[str, ...]
+    value: float | None = None
+
+
+Clause = Relation | Guard | Goal
 
 
 def label_id(owner: str) -> str:
@@ -127,6 +146,16 @@ class _Parser:
 
     def clause(self) -> Clause:
         tok = self.peek()
+        if tok == ("id", CAMERA) and self.i + 1 < len(self.toks):
+            nxt = self.toks[self.i + 1][1]
+            call = self.i + 2 < len(self.toks) and self.toks[self.i + 2][1] == "("
+            if nxt in CAMERA_GOALS or (call and nxt not in GUARDS):
+                self.take("id", CAMERA)
+                g = self.guard(CAMERA_GOALS)
+                return Goal(g.kind, g.ids, g.value)
+            if nxt in GUARDS or nxt in RELATIONS:
+                raise self.fail(f"the camera takes goals ({', '.join(sorted(CAMERA_GOALS))}), "
+                                f"not {nxt!r}")  # fmt: skip
         if tok and tok[0] == "id" and tok[1] in NOT_YET and self._call_follows():
             raise self.fail(f"{tok[1]!r} arrives in Milestone {NOT_YET[tok[1]]}; not supported yet")
         if tok and tok[0] == "id" and tok[1] in GUARDS and self._call_follows():
@@ -153,9 +182,11 @@ class _Parser:
     def _call_follows(self) -> bool:
         return self.i + 1 < len(self.toks) and self.toks[self.i + 1][1] == "("
 
-    def guard(self) -> Guard:
+    def guard(self, table: dict = GUARDS) -> Guard:
         kind = self.take("id")
-        lo, hi, numbered = GUARDS[kind]
+        if kind not in table:
+            raise self.fail(f"unknown camera goal {kind!r} (use one of {sorted(table)})")
+        lo, hi, numbered = table[kind]
         self.take("sym", "(")
         ids: list[str] = []
         value = None
@@ -177,6 +208,8 @@ class _Parser:
             raise self.fail(f"{kind} needs {n} different object ids")
         if kind == "min_size_px" and value is None:
             raise self.fail("min_size_px needs a size, e.g. min_size_px(dot, 12)")
+        if kind == "min_size" and (value is None or not 0 < value <= 1):
+            raise self.fail("min_size needs a share of the frame height, e.g. min_size(a, 0.3)")
         if value is not None and value < 0:
             raise self.fail("the number must not be negative")
         return Guard(kind, tuple(ids), value)

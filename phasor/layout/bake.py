@@ -132,8 +132,24 @@ class Bake:
     times: tuple[float, ...] = ()
     tracks: tuple[Track, ...] = ()
     issues: tuple[Issue, ...] = ()
+    # The camera solver's result: "camera.<param>" -> value at each key time.
+    camera: dict[str, tuple] = field(default_factory=dict)
     slots: dict[str, tuple[str, ...]] = field(default_factory=dict)  # label id -> slot per key
     occlusion: str = "analytic"  # "pixel" when the placer read the real id pass
+
+    def camera_at(self, t: float) -> dict[str, object]:
+        """Solved camera parameters at ``t`` (linear between key times, which are 10 Hz)."""
+        if not self.camera:
+            return {}
+        ts = self.times
+        i = min(max(bisect.bisect_right(ts, t) - 1, 0), len(ts) - 1)
+        j = min(i + 1, len(ts) - 1)
+        u = 0.0 if j == i else min(max((t - ts[i]) / (ts[j] - ts[i]), 0.0), 1.0)
+        out: dict[str, object] = {}
+        for path, vals in self.camera.items():
+            a, b = np.asarray(vals[i], dtype=np.float64), np.asarray(vals[j], dtype=np.float64)
+            out[path] = normalize(a + (b - a) * u)
+        return out
 
     def values_at(self, t: float, pre: SceneState) -> dict[str, object]:
         """Solved parameter values at ``t``, given the scene as the document alone gives it."""
@@ -181,10 +197,12 @@ def key_times(c: Compiled) -> tuple[float, ...]:
 
 
 def baked_state(c: Compiled, baked: Bake, t: float) -> SceneState:
-    """The scene at ``t`` with layout applied. Pure: depends only on (document, bake, t)."""
-    pre = evaluate(c, t)
+    """The scene at ``t`` with layout applied. Pure: depends only on (document, bake, t).
+    The solved camera goes in first, so labels are placed as that camera sees them."""
+    cam = baked.camera_at(t)
+    pre = evaluate(c, t, cam) if cam else evaluate(c, t)
     values = baked.values_at(t, pre)
-    return evaluate(c, t, values) if values else pre
+    return evaluate(c, t, {**cam, **values}) if values else pre
 
 
 def bake(c: Compiled, plan: Plan, oracle: OcclusionOracle | None = None) -> Bake:
@@ -193,6 +211,14 @@ def bake(c: Compiled, plan: Plan, oracle: OcclusionOracle | None = None) -> Bake
     oracle = oracle or AnalyticOracle()
     lay = c.theme.layout
     times = key_times(c)
+    cam_issues: tuple[Issue, ...] = ()
+    solved_camera: dict[str, tuple] = {}
+    if plan.goals:
+        from phasor.layout import camera as camera_solver
+
+        sol = camera_solver.solve(c, plan, times, lambda st, i: hidden_share(st, i, oracle))
+        solved_camera, cam_issues = sol.values, sol.issues
+    camera_keys = {k: {p: v[k] for p, v in solved_camera.items()} for k in range(len(times))}
     placed_ids = frozenset(plan.placed)
     pos = {i: f"{i}.{MOVE_PARAM}" for i in plan.moving}
 
@@ -212,11 +238,12 @@ def bake(c: Compiled, plan: Plan, oracle: OcclusionOracle | None = None) -> Bake
     def fail(rule, ids, message, t):
         failures.setdefault((rule.index, message), (tuple(ids), []))[1].append(t)
 
-    for t in times:
-        pre = evaluate(c, t)
+    for k_time, t in enumerate(times):
+        cam_now = camera_keys[k_time]
+        pre = evaluate(c, t, cam_now) if cam_now else evaluate(c, t)
         if pre.camera.perspective:  # 3D: everything placed against an anchor lives at its depth
             based = {pos[i]: anchor_base(pre, i, ref[i]) for i in plan.moving if ref[i]}
-            pre = evaluate(c, t, based) if based else pre
+            pre = evaluate(c, t, {**cam_now, **based}) if based else pre
         boxes = {o.id: screen_box(pre, o) for o in pre.objects}
         replace: dict[str, object] = {}
 
@@ -248,7 +275,7 @@ def bake(c: Compiled, plan: Plan, oracle: OcclusionOracle | None = None) -> Bake
                 move(pre, object_id, cx - bx, cy - by)
             for u in unsolved:
                 fail(plan.rules[u.index], u.clause.ids, u.message, t)
-        state = evaluate(c, t, replace) if replace else pre
+        state = evaluate(c, t, {**cam_now, **replace}) if replace else pre
 
         # Stage 2: the label placer.
         if plan.placed:
@@ -345,7 +372,67 @@ def bake(c: Compiled, plan: Plan, oracle: OcclusionOracle | None = None) -> Bake
             fix_hint="lower its priority, loosen it, or make room (move or shrink a neighbor)",
         ))  # fmt: skip
     kind = "analytic" if isinstance(oracle, AnalyticOracle) else "pixel"
-    return Bake(times, tracks, tuple(issues), {k: tuple(v) for k, v in slots.items()}, kind)
+    return Bake(times, tracks, (*cam_issues, *issues),
+                slots={k: tuple(v) for k, v in slots.items()}, occlusion=kind,
+                camera=solved_camera)  # fmt: skip
+
+
+def hidden_share(state: SceneState, object_id: str, oracle: OcclusionOracle) -> float:
+    """Share of an object hidden by what is in front of it (the camera solver's stage 2):
+    pixels in its projected bounding disc (half radius) whose nearest surface, leaving out
+    the object itself and all labels, is clearly nearer than the object."""
+    obj = state[object_id]
+    cam = state.camera_for(obj)
+    b = obj.impl.world_bounds(state)
+    labels_ = {o.id for o in state.objects if o.impl.semantics(state).get("kind") == "label"}
+    depth = oracle.depth(state, frozenset({object_id} | labels_))
+    h, w = depth.shape
+    d = float(cam.depth(b.center)[0])
+    if d <= 0:
+        return 1.0
+    ((px, py),) = cam.to_screen([b.center], w, h)
+    r = max(0.5 * b.radius / (cam.units_per_height(b.center)) * h, 1.5)
+    yy, xx = np.mgrid[0:h, 0:w] + 0.5
+    disc = (xx - px) ** 2 + (yy - py) ** 2 <= r * r
+    if not disc.any():
+        return 0.0
+    return float((depth[disc] < d * (1 - 2 * DEPTH_SLACK)).mean())
+
+
+GAP = 0.012  # space left between an object and a free slot, in screen heights
+FREE = 0.01  # a slot this little covered counts as free space
+
+
+def free_slots(state: SceneState, object_id: str, oracle: OcclusionOracle | None,
+               size: tuple[float, float] = (0.13, 0.042)) -> list[dict]:  # fmt: skip
+    """Empty label-sized places around an object, nearest first (the placer's slots, in
+    screen heights; ``size`` is (w, h)). Boxes are reported top-left normalized, like the
+    inspector: ``[x0, y0, x1, y1]`` with y down."""
+    oracle = oracle or AnalyticOracle()
+    obj = state[object_id]
+    anchor = screen_box(state, obj)
+    skip = frozenset({object_id} | {o.id for o in state.objects if is_backdrop(state, o)})
+    if state.camera_for(obj).perspective:
+        d = float(state.camera_for(obj).depth(obj.impl.world_bounds(state).center)[0])
+        cov = Coverage(oracle.depth(state, skip) < d * (1 - LIFT), state.aspect)
+    else:
+        cov = Coverage(oracle.coverage(state, skip), state.aspect)
+    req = labels.Request(object_id, size[0], size[1], anchor, GAP)
+    fr = frame(state)
+    out = []
+    for slot, center, _ in labels.candidates(req):
+        box = Box.around(center, *size)
+        if box.overlap(fr) < box.area * 0.999 or cov.fraction(box) > FREE:
+            continue
+        a = state.aspect
+        out.append({
+            "slot": slot,
+            "box": [round(box.x0 / a, 4), round(1 - box.y1, 4), round(box.x1 / a, 4),
+                    round(1 - box.y0, 4)],
+            "distance": round(float(np.hypot(center[0] - anchor.center[0],
+                                             center[1] - anchor.center[1])), 4),
+        })  # fmt: skip
+    return sorted(out, key=lambda s: s["distance"])
 
 
 DEPTH_SLACK = 0.01  # a surface this close behind or level with a label does not hide it

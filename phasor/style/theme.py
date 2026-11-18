@@ -41,7 +41,7 @@ LUT_SIZE = 256
 
 _TABLES = {
     "layout": ("gap", "margin", "leader"),
-    "lint": ("overlap", "contrast", "tiny", "text_min", "clutter", "crowded"),
+    "lint": ("overlap", "contrast", "tiny", "text_min", "clutter", "crowded", "occluded"),
     "bloom": ("threshold", "strength", "levels", "exposure", "knee"),
     "narration": ("words_per_second", "lead", "gap", "pause_per_change", "pause_max"),
     "camera": ("drift", "drift_period", "fill", "thirds", "smooth", "margin"),

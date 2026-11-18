@@ -182,3 +182,13 @@ def test_3d_labels_avoid_only_what_is_in_front_of_them():
         e = _labelled("auto", az).engine
         lab = next(o for o in e.inspect(0)["objects"] if o["id"] == "bp.label")
         assert lab["visible_fraction"] >= 0.95, (az, lab["hidden_by"])
+
+
+def test_solver_projection_matches_the_camera():
+    from phasor.layout.camera import _cam_xy
+
+    c = cam(distance=7, azimuth=20, elevation=35)
+    pts = np.array([[1.0, 2.0, 0.5], [-1.0, 0.3, -0.2]])
+    x, y, behind = _cam_xy(c, pts)
+    ndc = c.project(pts)
+    assert np.allclose(x, ndc[:, 0]) and np.allclose(y, ndc[:, 1]) and behind == 0

@@ -10,20 +10,23 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from phasor.core.constraints import Guard, Relation, parse_rule
+from phasor.core.constraints import Goal, Guard, Relation, parse_rule
 from phasor.core.issues import DocumentError, Issue
 from phasor.core.schema import ConstraintSpec
 from phasor.time.compile import Compiled, CompiledExpr
 
 MOVE_PARAM = "pos"  # layout moves an object by writing this parameter
 LEADER_PARAMS = ("leader", "leader_on")
+# What the camera solver may choose, when the document leaves it unset. The field of view
+# is kept as given: with distance free, a zoom adds nothing but ambiguity.
+CAMERA_FREE = ("azimuth", "elevation", "distance", "target")
 
 
 @dataclass(frozen=True)
 class Rule:
     index: int
     spec: ConstraintSpec
-    clauses: tuple[Relation | Guard, ...]
+    clauses: tuple[Relation | Guard | Goal, ...]
 
     @property
     def path(self) -> str:
@@ -36,6 +39,10 @@ class Plan:
     solved: frozenset[str] = frozenset()  # ids moved by stage 1 (the linear solver)
     placed: tuple[str, ...] = ()  # ids moved by stage 2 (label placer), in rule order
     leaders: frozenset[str] = frozenset()  # placed ids that can draw a leader line
+    # Camera goals, and the camera parameters the solver may set: the ones the document
+    # leaves at their defaults (neither set nor animated).
+    goals: tuple[tuple[Rule, Goal], ...] = ()
+    camera_free: tuple[str, ...] = ()
 
     @property
     def moving(self) -> frozenset[str]:
@@ -43,7 +50,7 @@ class Plan:
 
     @property
     def empty(self) -> bool:
-        return not self.moving
+        return not self.moving and not self.goals
 
     def relations(self, kinds=None):
         for r in self.rules:
@@ -67,6 +74,7 @@ def compile_plan(compiled: Compiled) -> Plan:
     rules: list[Rule] = []
     solved: set[str] = set()
     placed: list[str] = []
+    goals: list[tuple[Rule, Goal]] = []
 
     def movable(rule: Rule, object_id: str) -> bool:
         obj = objects[object_id]
@@ -99,6 +107,9 @@ def compile_plan(compiled: Compiled) -> Plan:
                     fix_hint="objects are " + ", ".join(sorted(objects)),
                 ))  # fmt: skip
                 continue
+            if isinstance(clause, Goal):
+                goals.append((rule, clause))
+                continue
             if isinstance(clause, Relation):
                 if not movable(rule, clause.subject):
                     continue
@@ -118,10 +129,22 @@ def compile_plan(compiled: Compiled) -> Plan:
                 "that also places it", ids=(object_id,),
                 fix_hint="keep one: 'near' lets the placer choose; above/below/... fix the side",
             ))  # fmt: skip
+    free: tuple[str, ...] = ()
+    if goals:
+        cam = compiled.doc.camera(compiled.doc.timeline.camera)
+        if cam.kind != "orbit":
+            issues.append(Issue(
+                "camera_goal_2d", "camera goals need the 3D camera", path=goals[0][0].path,
+                fix_hint="use s.use_camera('orbit') (patch: set_camera kind 'orbit')",
+            ))  # fmt: skip
+        else:
+            tracked = {p.rsplit(".", 1)[1] for p in compiled.doc.timeline.tracks
+                       if p.startswith(f"{cam.id}.")}  # fmt: skip
+            free = tuple(p for p in CAMERA_FREE if p not in cam.params and p not in tracked)
     if issues:
         raise DocumentError(issues)
     leaders = frozenset(
         i for i in placed
         if all(p in objects[i].params_model.model_fields for p in LEADER_PARAMS)
     )  # fmt: skip
-    return Plan(tuple(rules), frozenset(solved), tuple(placed), leaders)
+    return Plan(tuple(rules), frozenset(solved), tuple(placed), leaders, tuple(goals), free)

@@ -10,6 +10,7 @@ dependencies = [
     "numpy>=1.26",
     "pillow>=13.0.0",
     "pydantic>=2.7",
+    "scipy>=1.13",
     "sympy>=1.14.0",
 ]
 

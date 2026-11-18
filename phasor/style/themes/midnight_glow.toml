@@ -107,6 +107,7 @@ tiny = 0.006         # objects whose larger side is under this share of the fram
 text_min = 0.02      # text lower than this share of the frame height
 clutter = 4          # more objects than this changing at once in one block
 crowded = 0.05       # a placed label still covered by more than this share is "unsolved"
+occluded = 0.9       # 3D: a label less visible than this is "occluded_label"
 
 # Choreography verbs: how long each takes (seconds) and how it eases. `stagger` delays each
 # further object when a verb moves several; `dim_level` is the opacity dim_others leaves.

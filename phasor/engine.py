@@ -21,6 +21,7 @@ from phasor.core.issues import DocumentError, Issue
 from phasor.core.patch import TWEAK_OPS, apply_ops, apply_overrides, parse_patch, record_tweaks
 from phasor.core.schema import Document, Meta, Overrides
 from phasor.core.state import SceneState
+from phasor.inspect import events as event_log
 from phasor.inspect import inspector
 from phasor.inspect import lint as lint_rules
 from phasor.inspect.oracle import PassOracle
@@ -195,11 +196,13 @@ class Engine:
             snap.lint[step] = (*snap.orphans, *self._bake(snap).issues, *visual)
         return snap.lint[step]
 
+    def _oracle(self) -> PassOracle | None:
+        runner = self.pass_runner()
+        return PassOracle(runner) if runner is not None else None
+
     def _bake(self, snap: _Snapshot) -> Bake:
         if snap.bake is None:
-            runner = self.pass_runner()
-            oracle = PassOracle(runner) if runner is not None else None
-            snap.bake = bake(snap.compiled, snap.plan, oracle)
+            snap.bake = bake(snap.compiled, snap.plan, self._oracle())
         return snap.bake
 
     @property
@@ -355,6 +358,33 @@ class Engine:
         """Who hides it and by how much."""
         e = self._entry(id, t)
         return {"t": float(t), "id": id, "hidden_by": e["hidden_by"]}
+
+    # ------------------------------------------------------------ events (SPEC "Event log")
+
+    def _samples(self, t0: float, t1: float | None, hz: float):
+        ts = event_log.sample_times(self.duration, self.document.timeline.markers, t0, t1, hz)
+        return [(t, self._snapshot(t)) for t in ts]
+
+    def events(
+        self, t0: float = 0.0, t1: float | None = None, *, hz: float = event_log.HZ
+    ) -> list[dict[str, Any]]:
+        """What changes on screen between ``t0`` and ``t1``: visibility crossing 0.9 / 0.5 /
+        0.1, entering or leaving the frame, region changes, new occluders. Problems a viewer
+        would notice have ``"severity": "warning"``; ``event_log.problems`` picks them out."""
+        return event_log.log(self._samples(t0, t1, hz), self.document.timeline.markers)
+
+    def when_hidden(self, id: str, *, below: float = 0.5, hz: float = event_log.HZ):
+        """Time spans where ``id`` is shown but less than ``below`` of it is visible."""
+        self._require(id)
+        return [list(s) for s in event_log.hidden_spans(self._samples(0.0, None, hz), id, below)]
+
+    def free_space_near(self, id: str, t: float) -> list[dict[str, Any]]:
+        """Empty places on screen around ``id`` at ``t`` (the label placer's slots that
+        nothing covers), nearest first: where a label or note could go."""
+        self._require(id)
+        from phasor.layout.bake import free_slots
+
+        return free_slots(self.state_at(t), id, self._oracle())
 
     def hit_test(self, x: float, y: float, t: float) -> list[str]:
         """Object ids under an output-pixel point, topmost first."""

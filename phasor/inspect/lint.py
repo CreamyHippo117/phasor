@@ -12,6 +12,10 @@ returns one issue per problem with the times it was seen. Rules in this mileston
 | orphan    | warning  | an object that never appears                                   |
 | clutter   | warning  | too many objects changing at once in one block                 |
 | unsolved  | error    | a constraint that does not hold (from the bake, or a guard)    |
+| occluded_label | warning | 3D: a label partly hidden by something in front of it      |
+
+Under a perspective camera ``overlap`` only compares labels with labels and points with
+points: a label in front of a surface is fine, and one behind it is ``occluded_label``.
 
 Thresholds come from the theme's ``[lint]`` table.
 """
@@ -294,6 +298,10 @@ def run(
         shown = [e for e in fr.entries.values() if _shown(e)]
         ever_shown.update(e["id"] for e in shown)
         labels = [e for e in shown if _is_label(e)]
+        persp = state.camera.perspective
+
+        def both(a, b, kind) -> bool:
+            return a["semantic"].get("kind") == kind and b["semantic"].get("kind") == kind
 
         seen_pairs = set()
         for a in shown:
@@ -303,6 +311,8 @@ def run(
                 pair = tuple(sorted((a["id"], b["id"])))
                 if a is b or pair in seen_pairs:
                     continue
+                if persp and not (both(a, b, "label") or both(a, b, "point")):
+                    continue  # depth decides in 3D: see occluded_label
                 if _is_label(a) and not _is_label(b):
                     share = fr.covered(a["id"], b["id"])
                 elif _is_label(b) and not _is_label(a):
@@ -326,6 +336,12 @@ def run(
                     f.add("tiny", (e["id"],), t, px=y1 - y0, what="text")
             elif max(x1 - x0, y1 - y0) < th["tiny"] * height:
                 f.add("tiny", (e["id"],), t, px=max(x1 - x0, y1 - y0), what="object")
+        if persp:
+            for e in labels:
+                v = e["visible_fraction"]
+                if e["layer"] != "overlay" and v is not None and v < th["occluded"]:
+                    by = e["hidden_by"][0]["id"] if e["hidden_by"] else None
+                    f.add("occluded_label", (e["id"],), t, visible=v, by=by)
         for e in labels:
             missing = text_metrics.missing_glyphs(e["semantic"].get("text", ""))
             if missing:
@@ -358,6 +374,12 @@ def run(
                     side = max(x1 - x0, y1 - y0)
                     f.add("unsolved", g.ids, t, path=rule.path, rule=rule.spec.rule,
                           why=f"{g.ids[0]!r} is {side:.0f} px, under {g.value:g}")  # fmt: skip
+            elif g.kind == "visible_in_3d":
+                v = es[0]["visible_fraction"]
+                if v is not None and es[0]["on_screen_fraction"] > 0 and v < th["occluded"]:
+                    by = es[0]["hidden_by"][0]["id"] if es[0]["hidden_by"] else "something"
+                    f.add("unsolved", g.ids, t, path=rule.path, rule=rule.spec.rule,
+                          why=f"{g.ids[0]!r} is only {v:.0%} visible, behind {by!r}")  # fmt: skip
             elif g.kind == "readable" and "color" in state[g.ids[0]].style:
                 ratio = fr.contrast(g.ids[0])
                 if ratio < th["contrast"]:
@@ -398,6 +420,13 @@ def run(
                          f"they show as empty boxes {when}", "warning", ids, times=ts,
                          fix_hint="write them in ASCII for now (z^2, pi), or use a math "
                          "label once LaTeX arrives")  # fmt: skip
+        if code == "occluded_label":
+            by = f" behind {info['by']!r}" if info.get("by") else ""
+            return Issue(code, f"label {ids[0]!r} is hidden{by} (only {info['visible']:.0%} "
+                         f"visible) {when}", "warning", ids, times=ts,
+                         fix_hint="give it a 'near' constraint so the placer moves it, add the "
+                         f"camera goal 'camera avoid_occlusion({ids[0]})', or make the "
+                         "occluder glass")  # fmt: skip
         if code == "tiny":
             return Issue(code, f"{info['what']} {ids[0]!r} is only {info['px']:.0f} px "
                          f"{when}", "warning", ids,
