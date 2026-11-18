@@ -74,8 +74,9 @@ Constraints say where things go; the layout solver does the arithmetic:
 ]
 ```
 
-Rules: `a above b gap N`, `label(x) near x`, `align_x(a, b)`, `align_y(a, b)`,
-`inside(a, b)`, `on_screen(a, margin)`, `no_overlap(a, b)`, `min_size_px(a, N)`,
+Rules: `a above b gap N`, `label(x) near x`, `a outside b`, `a tangent_to b`,
+`a attach_to b at top` (a named spot: top, bottom, left, right, center, ... or a feature such as
+an arrow's `tip`), `align_x(a, b)`, `align_y(a, b)`, `inside(a, b)`, `on_screen(a, margin)`, `no_overlap(a, b)`, `min_size_px(a, N)`,
 `readable(a)`; join with `and`; priorities `required`, `strong`, `medium`, `weak`.
 
 Change things later with `set_param`, `set_style`, `set_tags`, `remove_object`,
@@ -86,6 +87,23 @@ Change things later with `set_param`, `set_style`, `set_tags`, `remove_object`,
   {"op": "set_param", "path": "pole_i.r", "value": 0.2},
   {"op": "set_style", "id": "loop", "key": "stroke", "role": "bold"},
   {"op": "set_tags", "id": "loop", "tags": ["contour"]}
+]
+```
+
+Domain objects are added the same way (`object_types` lists their parameters and presets):
+`epicycles`, `partial_sum`, `spectrum`, `spectrogram` (fourier); `transform_grid`, `arrow`,
+`eigen_lines`, `matrix` (linear algebra); `room`, `source`, `listener`, `wavefront`,
+`image_sources`, `impulse_response`, `pressure_slice` (acoustics). A parameter may be an
+expression, which is how a `matrix` object reads a grid's matrix: `"matrix": {"expr": "grid.matrix"}`.
+
+```json patch
+[
+  {"op": "add_object", "object": {"id": "grid", "type": "transform_grid",
+    "params": {"matrix": [[2, 1], [1, 2]], "pos": [5, -1, 0], "extent": 2}}},
+  {"op": "add_object", "object": {"id": "entries", "type": "matrix",
+    "params": {"matrix": {"expr": "grid.matrix"}, "pos": [5, 3, 0]}}},
+  {"op": "add_object", "object": {"id": "tone", "type": "spectrum",
+    "params": {"frequencies": [100.5], "amplitudes": [1.0], "window": "hann", "pos": [-7, -4, 0]}}}
 ]
 ```
 

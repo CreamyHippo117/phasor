@@ -4,7 +4,7 @@ One canonical example per public name. No deprecated aliases. Every ```python bl
 folder runs in CI (`tests/test_docs.py`), top to bottom in one namespace per file. Mark a
 block ```python no-run only when it cannot run in CI, and say why next to it.
 
-Status: through Milestone 7. This file is the Python API; to drive phasor from an AI client
+Status: through Milestone 8. This file is the Python API; to drive phasor from an AI client
 (MCP) read `MCP.md` first.
 
 ## Build a scene
@@ -217,6 +217,9 @@ The subject is what moves; it needs a `pos` parameter that is not an expression.
 | `a near b` (`gap N` optional) | label placer: 8 slots around `b` plus 8 leader-line slots further out |
 | `a align_x b`, `a align_y b` | same x (stacked) or same y (side by side) |
 | `a inside b` | `a`'s box within `b`'s box |
+| `a outside b` (`gap N`) | no overlap: leave by whichever side needs the least movement |
+| `a tangent_to b` | touch the outside edge of `b` (boxes), lined up with it |
+| `a attach_to b at top` (`gap N`) | sit at a named spot of `b`: `top`, `bottom`, `left`, `right`, `center`, `top_left`, ..., or one of its feature points such as an arrow's `tip` |
 | `on_screen(a)` or `on_screen(a, margin)` | keep `a` inside the frame (moves it when it can) |
 | `no_overlap(a, b, ...)`, `min_size_px(a, n)`, `readable(a)` | checked by the linter |
 
@@ -226,7 +229,8 @@ The subject is what moves; it needs a `pos` parameter that is not an expression.
 - A label changes slot only when another slot is over 20% better, and then it jumps.
 - `engine.layout` shows the bake: `times`, `slots` (per label, per key time), `issues`.
 - A rule that cannot hold is a lint error `unsolved`, with the times. Nothing is dropped.
-- `outside`, `tangent_to`, `attach_to`, `visible_in_3d` arrive with 3D (Milestone 6).
+- `visible_in_3d(a)` (not hidden by anything in front of it) is a guard checked by the linter.
+- `camera keep_visible(a)` and the other camera goals are in the 3D section.
 
 ## Lint: find problems before rendering
 
@@ -424,6 +428,68 @@ assert report["after"] < before and len(report["rounds"]) <= 3
 
 Finals render with motion blur (`phasor render --preset final`; `--motion-blur 0` turns it
 off): `engine.frame_blurred(t, fps)` averages sub-frames only where something moves.
+
+## Domains: fourier, linalg, acoustics
+
+Domain modules register their own object types: `from phasor import fourier, linalg, ac`.
+They are plain objects: styled by roles, labelled by `near` rules, animated by verbs, and
+every parameter (a matrix, a frequency, a radius) can be tracked or tied to another with an
+expression.
+
+**`fourier`**: `Epicycles(points=..., terms=N, phase=0..1)` (a closed curve drawn by N rotating
+circles; `phase` animates the tip), `PartialSum(kind="square"|"sawtooth"|"triangle", terms=N)`
+(the Gibbs overshoot is in the semantics), `Spectrum(frequencies=, amplitudes=, window=)` (bars
+per bin; `leakage` in the semantics), `Spectrogram(f0=, f1=)` (a chirp, backdrop). The maths is
+`phasor.domains.fourier_math`: `epicycle_coefficients`, `series_partial_sum`, `window`,
+`spectrum`, `leakage`, `spectrogram`, `convolve`.
+
+**`linalg`**: `TransformGrid(matrix=((a, b), (c, d)))` (2x2: the grid, the unit square whose
+area is the determinant, the images of the basis vectors; 3x3: the unit cube), `EigenLines`,
+`Arrow(start=, end=)`, `Matrix(matrix=expr("grid.matrix"))` (entries stay linked). Semantics
+give determinant, eigenvalues, singular values and rank. `linalg_math` has `svd` (its
+`stages` are rotate, stretch, rotate: morph through them), `null_space`, `gram_schmidt`,
+`project`.
+
+**`ac`** (acoustics): `Room(size=(8, 5, 3), material="curtain")` (glass walls: they never hide
+the source or listener), `Source`, `Listener`, `Wavefront(center=, radius=expr("343 * t"))` (a
+negative radius draws nothing, so `343 * (t - 0.5)` starts at 0.5 s), `ImageSources(order=)`,
+`ImpulseResponse(layer="overlay", pos=, extent=)` (arrival spikes; `reveal` and `show_rt60`
+animate; semantics give `rt60`, `rt60_theory_eyring` and `rt60_reliable`), `PressureSlice(time=)`
+(a slice of the real wave-equation field). Materials and absorption: `ac_math.MATERIALS`.
+
+```python
+import numpy as np
+from phasor import Scene, ac, expr, fourier, linalg
+
+dom = Scene("domains", passes=None)
+dom.set("camera.height", 8)
+dom.add(linalg.TransformGrid(id="grid", matrix=((2.0, 1.0), (1.0, 2.0))))
+dom.add(linalg.Matrix(id="mat", matrix=expr("grid.matrix"), pos=(-5.5, 3.2, 0)))  # live entries
+dom.add(fourier.PartialSum(id="wave", kind="square", terms=9, pos=(0, -3, 0), extent=(5, 1.6)))
+dom.marker("go", 1.0)
+dom.at("go").morph("grid.matrix", ((1.0, 0.0), (0.0, 3.0)))
+
+e = dom.engine
+assert e.state_at(3.0)["mat"].params.matrix == ((1.0, 0.0), (0.0, 3.0))  # the numbers follow
+sem = e.inspect(0.0, id="grid")["objects"][0]["semantic"]
+assert sem["determinant"] == 3.0 and sem["singular_values"] == [3.0, 1.0]
+assert 0.085 < e.inspect(0.0, id="wave")["objects"][0]["semantic"]["gibbs_overshoot"] < 0.1
+
+room = Scene("room", passes=None)
+room.add(ac.Room(id="room", size=(8, 5, 3), material="curtain"))
+room.add(
+    ac.ImpulseResponse(id="ir", material="curtain", order=10, layer="overlay", pos=(0.1, 0.9, 0))
+)
+ir = room.engine.inspect(0.0, id="ir")["objects"][0]["semantic"]
+assert abs(ir["first_arrival_ms"] - 4.0311 / 343 * 1000) < 1e-3 and ir["arrivals"] > 1000
+```
+
+**Simulations** (`phasor.core.simulation`): a `Simulation` has a fixed `dt`, `params()` (the
+seed included), `initial()` and a pure `step(state, dt)`. `runner_for(sim).state_at(t)` is the
+nearest earlier checkpoint plus the remaining steps, cached in memory and under
+`.phasor_cache/<hash of the parameters>/` (or `PHASOR_CACHE`), so scrubbing is cheap and the
+answer never depends on how you got there. `ac_math.RoomFDTD` is one (it refuses a `dt` above
+`dx / (c sqrt(3))`: that is a validation error, not a blow-up).
 
 ## 3D: orbit camera, surfaces, camera goals
 

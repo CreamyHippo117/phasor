@@ -15,6 +15,7 @@ from phasor.core.schema import Document
 from phasor.layout import labels, solver
 from phasor.layout.bake import key_times
 from phasor.layout.geometry import Box, Coverage, footprint, screen_box
+from tests.conftest import gl_available
 
 # ---------------------------------------------------------------- the constraint language
 
@@ -39,7 +40,7 @@ def test_parse_guards_joined_by_and():
         ("a above", "expected an object id"),
         ("a above a", "against itself"),
         ("a align_x b gap 1", "takes no gap"),
-        ("a outside b", "Milestone 8"),
+        ("a attach_to b", "needs a spot"),
         ("camera above b", "takes goals"),
         ("camera spin(a)", "unknown camera goal"),
         ("camera min_size(a)", "share of the frame"),
@@ -431,3 +432,92 @@ def test_the_placer_sees_real_pixels_through_the_id_pass():
     s.constrain("label(dot) near dot")
     assert s.engine.pass_runner() is not None and s.engine.layout.occlusion == "pixel"
     assert s.engine.layout.slots["dot.label"] == ("n",) and s.engine.lint() == []
+
+
+# ---------------------------------------------------------------- outside, tangent_to, attach_to (M8)
+
+
+def test_outside_leaves_by_the_nearest_side_and_moves_only_as_far_as_needed():
+    overlapped = {
+        "a": Box.around((1.12, 0.5), 0.2, 0.1),
+        "b": B,
+    }  # a sits on b, off to the right
+    centers, unsolved = _solve(("a outside b", "strong", 0.02), boxes=overlapped)
+    assert unsolved == []
+    assert centers["a"][0] == pytest.approx(1.0 + 0.05 + 0.02 + 0.1)  # out to the right ...
+    assert centers["a"][1] == pytest.approx(0.5)  # ... without moving in y
+    away = {"a": Box.around((0.2, 0.2), 0.2, 0.1), "b": B}
+    centers, _ = _solve(("a outside b", "strong", 0.02), boxes=away)
+    assert centers["a"] == pytest.approx((0.2, 0.2))  # already outside: it stays put
+    above = {"a": Box.around((1.0, 0.53), 0.2, 0.1), "b": B}
+    centers, _ = _solve(("a outside b", "strong", 0.0), boxes=above)
+    assert centers["a"][1] == pytest.approx(0.5 + 0.05 + 0.05)  # nearest exit is straight up
+
+
+def test_tangent_to_touches_the_outside_edge_and_lines_up():
+    near = {"a": Box.around((0.7, 0.55), 0.2, 0.1), "b": B}  # left of b, nearly touching
+    centers, unsolved = _solve(("a tangent_to b", "strong", None), boxes=near)
+    assert unsolved == []
+    assert centers["a"] == pytest.approx((1.0 - 0.05 - 0.1, 0.5))  # edge to edge, centered on b
+
+
+def test_attach_to_puts_the_object_at_a_named_spot_of_the_target():
+    (clause,) = parse_rule("a attach_to b at top")
+    assert clause == Relation("attach_to", "a", "b", None, "top")
+    anchors = {("b", "top"): (1.0, 0.55), ("b", "right"): (1.05, 0.5), ("b", "tip"): (1.3, 0.8)}
+    for rule, want in (
+        ("a attach_to b at top", (1.0, 0.55 + 0.05 + 0.03)),  # sits on top of the spot
+        ("a attach_to b at right", (1.05 + 0.1 + 0.03, 0.5)),
+        ("a attach_to b at tip", (1.3 + 0.1 + 0.03, 0.8 + 0.05 + 0.03)),  # up and to the right
+    ):
+        (cl,) = parse_rule(rule)
+        centers, unsolved = solver.solve([solver.Item(0, "strong", cl, 0.03)], BOXES,
+                                         frozenset({"a"}), FRAME, anchors)  # fmt: skip
+        assert unsolved == [] and centers["a"] == pytest.approx(want), rule
+
+
+def test_the_new_relations_through_the_engine_in_both_modes():
+    for passes in (None, "auto") if gl_available() else (None,):
+        s = Scene("rel", passes=passes)
+        s.set("camera.height", 6)
+        s.add(Dot(id="hub", pos=(0, 0), r=0.5, tags=["key"]))
+        s.add(Dot(id="moon", pos=(0.3, 0.1), r=0.2))
+        s.add(Text(id="cap", text="north", pos=(3, 2)))
+        s.add(Dot(id="rim", pos=(-3, -2), r=0.2))
+        s.constrain("moon outside hub gap 0.1")
+        s.constrain("rim tangent_to hub")
+        s.constrain("cap attach_to hub at top")
+        e = s.engine
+        assert [i for i in e.lint() if i.code == "unsolved"] == []
+        st = e.state_at(0.0)
+        hub = screen_box(st, st["hub"])
+        moon, rim, cap = (screen_box(st, st[i]) for i in ("moon", "rim", "cap"))
+        assert moon.overlap(hub) == 0.0  # outside
+        assert rim.x1 == pytest.approx(hub.x0, abs=1e-4) or rim.y1 == pytest.approx(
+            hub.y0, abs=1e-4
+        )
+        assert cap.y0 == pytest.approx(hub.y1 + 0.012, abs=1e-3)  # on top of the hub, theme gap
+
+
+def test_attach_to_an_unknown_spot_is_reported_with_the_choices():
+    s = Scene("anch", passes=None)
+    s.add(Dot(id="hub", pos=(0, 0)))
+    s.add(Dot(id="x", pos=(2, 0)))
+    s.constrain("x attach_to hub at roof")
+    (issue,) = [i for i in s.engine.lint() if i.code == "unsolved"]
+    assert "unknown spot 'roof'" in issue.message and "top" in issue.message
+
+
+def test_attach_to_uses_an_objects_own_feature_points():
+    from phasor import linalg
+
+    s = Scene("tip", passes=None)
+    s.set("camera.height", 8)
+    s.add(linalg.Arrow(id="v", start=(0, 0, 0), end=(2, 1, 0)))
+    s.add(Text(id="v.label", text="v"))
+    s.constrain("v.label attach_to v at tip")
+    e = s.engine
+    assert [i for i in e.lint() if i.code == "unsolved"] == []
+    st = e.state_at(0.0)
+    lab, arrow = screen_box(st, st["v.label"]), screen_box(st, st["v"])
+    assert lab.x0 >= arrow.x1 - 0.2 and lab.y0 >= arrow.y1 - 0.2  # beyond the tip, up and right

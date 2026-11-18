@@ -190,3 +190,33 @@ white blow-outs). For emphasis use `highlight`, heavier strokes and dimming rath
 ## `variants` needs OpenGL
 
 It renders pictures. Without OpenGL (tier C) use `critique`, which works from geometry.
+
+## `rt60_reliable` is false
+
+`ImpulseResponse` builds the room's response from image sources up to `order` reflections,
+which describes the first `order * shortest wall / c` seconds completely (`complete_until`).
+A decay longer than that is cut short, not the room's: raise `order` (to about 40) or use a
+more absorbent material. Plaster and concrete ring for seconds, far beyond what the image-source
+method can follow in a small room.
+
+## A shoebox rings longer than Eyring says
+
+Room theory (Sabine, Eyring) assumes a diffuse field; the image-source response of a shoebox is
+not diffuse, so its fitted RT60 lies between Eyring's value and about twice Sabine's. Do not
+treat the formula as the answer the fit must reproduce.
+
+## FDTD refuses my `dt`
+
+The pressure field is a wave-equation simulation: `dt` must be at most `dx / (c sqrt(3))`
+(a validation error, not a blow-up). Leave `dt` to its default, or use a larger `dx`.
+
+## `attach_to` needs a spot
+
+`a attach_to b at top`: the spot is a box spot (`top`, `bottom`, `left`, `right`, `center`,
+`top_left`, ...) or a feature point of `b` (an arrow's `tip`). An unknown spot is reported as
+`unsolved` with the list of spots.
+
+## Simulation cache
+
+Checkpoints live in `.phasor_cache/` (or `PHASOR_CACHE`). Delete it freely: it only costs
+time. A changed parameter is a new hash, so stale results never come back.

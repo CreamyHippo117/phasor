@@ -18,6 +18,8 @@ from typing import Any
 
 import numpy as np
 
+from phasor.domains import fourier_math
+
 C = 343.0
 MATERIALS = {  # broadband absorption coefficients (energy absorbed per reflection)
     "concrete": 0.02,
@@ -146,11 +148,8 @@ def rt60_fit(ir: np.ndarray, fs: int, lo: float = -5.0, hi: float = -25.0) -> di
 
 
 def convolve(dry: np.ndarray, ir: np.ndarray) -> np.ndarray:
-    """Convolution reverb by FFT: the dry signal as it would sound in the room."""
-    n = len(dry) + len(ir) - 1
-    size = 1 << (n - 1).bit_length()
-    wet = np.fft.irfft(np.fft.rfft(dry, size) * np.fft.rfft(ir, size), size)[:n]
-    return wet
+    """Convolution reverb: the dry signal as it would sound in the room (FFT convolution)."""
+    return fourier_math.convolve(dry, ir)
 
 
 # ---------------------------------------------------------------- FDTD pressure field

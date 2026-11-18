@@ -6,7 +6,7 @@ compounding. If this file and SPEC.md disagree, stop and ask.
 ## Where we are
 
 - Owner approved ADR 0001, ADR 0002 and id tombstones on 2026-11-18.
-- Current milestone: **2-6 built; boundary review of 2-6 done 2026-11-18 (see `MILESTONE_6.md`). 7 built (`MILESTONE_7.md`; boundary review still open). Windows and CUDA untested. 8 next**. See `MILESTONE_*.md` for what is built and deferred.
+- Current milestone: **2-6 built; boundary review of 2-6 done 2026-11-18 (see `MILESTONE_6.md`). 7 built (`MILESTONE_7.md`), 8 built (`MILESTONE_8.md`); boundary reviews of 7 and 8 still open. Windows and CUDA untested. 9 next**. See `MILESTONE_*.md` for what is built and deferred.
 - One milestone per branch. No work on milestone N+1 until N's exit demo and tests pass.
 - Before declaring a milestone done, run the `phasor-milestone-gate` skill.
 
@@ -95,6 +95,11 @@ compounding. If this file and SPEC.md disagree, stop and ask.
   wheel. Taste knobs are theme `[lint]`/`[life]` values, roles, looks and presets, never
   numbers typed into a scene. Life is a pure function of (id, seed, t); `exact` objects never
   move. Aesthetic rules live in `inspect/aesthetic.py` and run only with `aesthetic=True`.
+
+- Domains: numerics live in `domains/<name>_math.py` (pure NumPy, no drawing) and objects in
+  `domains/<name>.py`; objects draw strokes through `domains/strokes.py`. A time-stepping model
+  is a `Simulation` (`core/simulation.py`): fixed dt, seed in `params()`, pure `step`, and
+  only `SimRunner.state_at(t)` reads it.
 
 ## Commands
 

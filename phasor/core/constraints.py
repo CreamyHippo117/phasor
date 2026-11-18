@@ -26,7 +26,16 @@ RELATIONS = {
     "align_x": False,
     "align_y": False,
     "inside": False,
+    "outside": True,  # not overlapping: on whichever side needs the least movement
+    "tangent_to": False,  # touching the outside edge of the target, on the nearest side
+    "attach_to": True,  # a named spot on the target: ``a attach_to b at top``
 }
+# Spots every object has (on its screen box); objects may add their own feature names
+# (an arrow's ``tip``, a line's ``end``).
+BOX_ANCHORS = {
+    "center": (0, 0), "top": (0, 1), "bottom": (0, -1), "left": (-1, 0), "right": (1, 0),
+    "top_left": (-1, 1), "top_right": (1, 1), "bottom_left": (-1, -1), "bottom_right": (1, -1),
+}  # fmt: skip
 # guard -> (min ids, max ids or None for any number, takes an optional trailing number)
 GUARDS = {
     "visible_in_3d": (1, 1, False),  # not hidden by what is in front of it (checked by lint)
@@ -45,11 +54,6 @@ CAMERA_GOALS = {
     "avoid_occlusion": (1, None, False),
     "min_size": (1, 1, True),  # share of the frame height its bounding sphere should span
 }
-NOT_YET = {
-    "outside": 8,
-    "tangent_to": 8,
-    "attach_to": 8,
-}
 PRIORITIES = ("required", "strong", "medium", "weak")
 LABEL_SUFFIX = "label"
 
@@ -66,6 +70,7 @@ class Relation:
     subject: str  # the object that moves
     target: str  # the object it is placed against
     gap: float | None = None
+    anchor: str | None = None  # attach_to: the spot on the target (``at top``)
 
     @property
     def ids(self) -> tuple[str, ...]:
@@ -156,17 +161,19 @@ class _Parser:
             if nxt in GUARDS or nxt in RELATIONS:
                 raise self.fail(f"the camera takes goals ({', '.join(sorted(CAMERA_GOALS))}), "
                                 f"not {nxt!r}")  # fmt: skip
-        if tok and tok[0] == "id" and tok[1] in NOT_YET and self._call_follows():
-            raise self.fail(f"{tok[1]!r} arrives in Milestone {NOT_YET[tok[1]]}; not supported yet")
         if tok and tok[0] == "id" and tok[1] in GUARDS and self._call_follows():
             return self.guard()
         subject = self.ref()
         kind = self.take("id")
-        if kind in NOT_YET:
-            raise self.fail(f"{kind!r} arrives in Milestone {NOT_YET[kind]}; not supported yet")
         if kind not in RELATIONS:
             raise self.fail(f"unknown relation {kind!r} (use one of {sorted(RELATIONS)})")
         target = self.ref()
+        anchor = None
+        if kind == "attach_to":
+            if not self.at("at"):
+                raise self.fail("attach_to needs a spot: 'a attach_to b at top'")
+            self.take("id", "at")
+            anchor = self.take("id")
         gap = None
         if self.at("gap"):
             if not RELATIONS[kind]:
@@ -177,7 +184,7 @@ class _Parser:
                 raise self.fail("gap must not be negative")
         if subject == target:
             raise self.fail(f"{subject!r} cannot be constrained against itself")
-        return Relation(kind, subject, target, gap)
+        return Relation(kind, subject, target, gap, anchor)
 
     def _call_follows(self) -> bool:
         return self.i + 1 < len(self.toks) and self.toks[self.i + 1][1] == "("

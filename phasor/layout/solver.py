@@ -49,10 +49,30 @@ class Unsolved:
     message: str
 
 
+def _side(bs: Box, bt: Box, g: float) -> tuple[str, float]:
+    """The side of ``bt`` that ``bs`` is nearest to leaving by (its current position decides,
+    so the rule moves it as little as possible): returns (side, how far it must move)."""
+    options = {
+        "left": (bt.x0 - g) - bs.x1,
+        "right": bs.x0 - (bt.x1 + g),
+        "above": bs.y0 - (bt.y1 + g),  # screen heights grow upward
+        "below": (bt.y0 - g) - bs.y1,
+    }
+    # a positive number is clearance already there; the best side is the one with the most
+    side = max(options, key=lambda k: (options[k], k))
+    return side, -options[side]
+
+
 def solve(
-    items: Sequence[Item], boxes: Mapping[str, Box], movable: frozenset[str], frame: Box
+    items: Sequence[Item],
+    boxes: Mapping[str, Box],
+    movable: frozenset[str],
+    frame: Box,
+    anchors: Mapping[tuple[str, str], tuple[float, float]] | None = None,
 ) -> tuple[dict[str, tuple[float, float]], list[Unsolved]]:
-    """Returns (new center per movable id, constraints that do not hold)."""
+    """Returns (new center per movable id, constraints that do not hold). ``anchors`` gives
+    the screen point of each (object id, spot name) an ``attach_to`` rule names."""
+    anchors = anchors or {}
     solver = kiwi.Solver()
     vx = {i: kiwi.Variable(f"{i}.x") for i in sorted(movable)}
     vy = {i: kiwi.Variable(f"{i}.y") for i in sorted(movable)}
@@ -95,6 +115,43 @@ def solve(
                 return [x(s) == x(t)], []
             case "align_y":
                 return [y(s) == y(t)], []
+            case "outside" | "tangent_to":
+                side, _ = _side(bs, bt, g)
+                touch = c.kind == "tangent_to"
+                edge = {
+                    "left": (
+                        x(s) + bs.w / 2,
+                        x(t) - bt.w / 2 - g,
+                        x(s) + bs.w / 2 <= x(t) - bt.w / 2 - g,
+                    ),
+                    "right": (
+                        x(s) - bs.w / 2,
+                        x(t) + bt.w / 2 + g,
+                        x(s) - bs.w / 2 >= x(t) + bt.w / 2 + g,
+                    ),
+                    "above": (
+                        y(s) - bs.h / 2,
+                        y(t) + bt.h / 2 + g,
+                        y(s) - bs.h / 2 >= y(t) + bt.h / 2 + g,
+                    ),
+                    "below": (
+                        y(s) + bs.h / 2,
+                        y(t) - bt.h / 2 - g,
+                        y(s) + bs.h / 2 <= y(t) - bt.h / 2 - g,
+                    ),
+                }[side]
+                along = (y(s) == y(t)) if side in ("left", "right") else (x(s) == x(t))
+                primary = [edge[0] == edge[1]] if touch else [edge[2]]
+                return primary, [along] if touch else []
+            case "attach_to":
+                ax, ay = anchors[(t, c.anchor)]
+                cx, cy = bt.center
+                dx = 0 if abs(ax - cx) < 1e-9 else (1 if ax > cx else -1)
+                dy = 0 if abs(ay - cy) < 1e-9 else (1 if ay > cy else -1)
+                eqs = []
+                eqs.append(x(s) == ax + dx * (bs.w / 2 + g) if dx else x(s) == ax)
+                eqs.append(y(s) == ay + dy * (bs.h / 2 + g) if dy else y(s) == ay)
+                return eqs, []
             case "inside":
                 return [
                     x(s) - bs.w / 2 >= x(t) - bt.w / 2,

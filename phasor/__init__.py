@@ -23,6 +23,8 @@ _LAZY = {
 _MODULES = {  # domain modules: ``from phasor import cx``
     "cx": "phasor.domains.cx",
     "ac": "phasor.domains.acoustics",
+    "fourier": "phasor.domains.fourier",
+    "linalg": "phasor.domains.linalg",
 }
 
 __all__ = ["__version__", *_LAZY, *_MODULES]

@@ -32,6 +32,7 @@ from phasor.domains import ac_math
 from phasor.domains.strokes import circle, disc, polyline, with_alpha
 
 MAX_SHOWN = 800  # image sources drawn at most
+CHECKPOINT_EVERY = 50  # FDTD steps between cached checkpoints
 
 
 def _vec3_positive(v):
@@ -238,7 +239,8 @@ class Listener(_Marker):
 @register
 class Wavefront(ObjectBase):
     """An expanding spherical wavefront, drawn as a lat-long wire sphere. Its ``radius``
-    follows the speed of sound if you give it ``expr("343 * (t - t_emit)")``."""
+    follows the speed of sound if you give it ``expr("343 * (t - 0.5)")``; before the emission
+    time that is negative, and nothing is drawn."""
 
     type: ClassVar[str] = "wavefront"
     Style: ClassVar = {"color": ("emphasis", "secondary"), "stroke": ("stroke", "hairline"),
@@ -246,7 +248,7 @@ class Wavefront(ObjectBase):
 
     class Params(ParamsBase):
         center: Vec3 = (0.0, 0.0, 0.0)
-        radius: float = Field(0.0, ge=0)
+        radius: float = 0.0  # a negative radius means "not emitted yet": nothing is drawn
         rings: int = Field(6, ge=2, le=24)  # latitude rings; twice as many meridians
 
     def world_bounds(self, state: SceneState) -> Bounds:
@@ -260,7 +262,7 @@ class Wavefront(ObjectBase):
 
     def semantics(self, state: SceneState) -> dict[str, Any]:
         p = self.me(state).params
-        return {"kind": "wavefront", "radius": round(p.radius, 4),
+        return {"kind": "wavefront", "radius": round(max(p.radius, 0.0), 4),
                 "center": list(p.center), "time_to_reach_center": 0.0}  # fmt: skip
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
@@ -526,7 +528,7 @@ class PressureSlice(ObjectBase):
     def _slab(self, state):
         sim = self._sim(state)
         p = self.me(state).params
-        runner = runner_for(sim, every=100)
+        runner = runner_for(sim, every=CHECKPOINT_EVERY)
         return sim.slice_z(runner.state_at(p.time), p.z)
 
     def _rect(self, state):

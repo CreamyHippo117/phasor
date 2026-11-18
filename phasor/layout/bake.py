@@ -23,7 +23,7 @@ from typing import Protocol
 
 import numpy as np
 
-from phasor.core.constraints import Guard, Relation
+from phasor.core.constraints import BOX_ANCHORS, Guard, Relation
 from phasor.core.issues import Issue
 from phasor.core.state import SceneState
 from phasor.core.values import normalize
@@ -260,10 +260,21 @@ def bake(c: Compiled, plan: Plan, oracle: OcclusionOracle | None = None) -> Bake
 
         # Stage 1: linear relations.
         items = []
+        anchors: dict[tuple[str, str], tuple[float, float]] = {}
         for rule, clause in ((r, cl) for r in plan.rules for cl in r.clauses):
             if isinstance(clause, Relation) and clause.kind != "near":
+                if clause.kind == "attach_to":
+                    spot = screen_anchor(pre, boxes, clause.target, clause.anchor)
+                    if spot is None:
+                        names = anchor_names(pre, clause.target)
+                        why = f"names an unknown spot {clause.anchor!r} on {clause.target!r}"
+                        fail(rule, clause.ids, f"{why}; spots are {names}", t)
+                        continue
+                    anchors[(clause.target, clause.anchor)] = spot
                 unit = view_of(pre, pre[clause.subject]).units_per_height
                 gap = lay["gap"] if clause.gap is None else clause.gap / unit
+                if clause.kind == "tangent_to":
+                    gap = 0.0  # tangent means touching
                 items.append(solver.Item(rule.index, rule.spec.priority, clause, gap))
             elif (
                 isinstance(clause, Guard)
@@ -274,12 +285,14 @@ def bake(c: Compiled, plan: Plan, oracle: OcclusionOracle | None = None) -> Bake
                 margin = lay["margin"] if clause.value is None else clause.value / unit
                 items.append(solver.Item(rule.index, rule.spec.priority, clause, margin))
         if items:
-            centers, unsolved = solver.solve(items, boxes, plan.solved, frame(pre))
+            centers, unsolved = solver.solve(items, boxes, plan.solved, frame(pre), anchors)
             for object_id, (cx, cy) in centers.items():
                 bx, by = boxes[object_id].center
                 move(pre, object_id, cx - bx, cy - by)
             for u in unsolved:
                 fail(plan.rules[u.index], u.clause.ids, u.message, t)
+        for object_id in plan.solved:  # a rule that could not run still leaves a key
+            replace.setdefault(pos[object_id], pre.values[pos[object_id]])
         state = evaluate(c, t, {**cam_now, **replace}) if replace else pre
 
         # Stage 2: the label placer.
@@ -446,6 +459,28 @@ DEPTH_SLACK = 0.01  # a surface this close behind or level with a label does not
 def _label_depth(state: SceneState, object_id: str) -> float:
     obj = state[object_id]
     return float(state.camera_for(obj).depth(state.values[f"{object_id}.{MOVE_PARAM}"])[0])
+
+
+def anchor_names(state: SceneState, object_id: str) -> list[str]:
+    feats = state[object_id].impl.features(state)
+    return sorted({*BOX_ANCHORS, *feats})
+
+
+def screen_anchor(
+    state: SceneState, boxes: dict, object_id: str, name: str
+) -> tuple[float, float] | None:
+    """The screen point (in screen heights) of a named spot on an object: a spot on its box
+    (``top``, ``left``, ``center``, ...) or one of its own feature points (an arrow's ``tip``)."""
+    if name in BOX_ANCHORS:
+        b = boxes[object_id]
+        dx, dy = BOX_ANCHORS[name]
+        cx, cy = b.center
+        return (cx + dx * b.w / 2, cy + dy * b.h / 2)
+    feats = state[object_id].impl.features(state)
+    if name in feats:
+        pts = np.atleast_2d(np.asarray(feats[name], dtype=np.float64))
+        return view_of(state, state[object_id]).point(pts[0])
+    return None
 
 
 def boxes_pre_center(pre: SceneState, object_id: str) -> tuple[float, float]:

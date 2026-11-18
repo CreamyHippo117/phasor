@@ -184,7 +184,7 @@ This is the part that lets an AI work with its eyes open: it states intent as co
 
 **Constraints**
 
-- Relations: `above`, `below`, `left_of`, `right_of`, `near`, `align_x`, `align_y`, `inside`, `outside`, `tangent_to`, `attach_to(anchor)`. `outside`, `tangent_to` and `attach_to` were planned for Milestone 6 and moved to Milestone 8, where the acoustics scenes first need them.
+- Relations: `above`, `below`, `left_of`, `right_of`, `near`, `align_x`, `align_y`, `inside`, `outside`, `tangent_to`, `attach_to`. `outside` leaves by whichever side needs the least movement; `tangent_to` touches that side's edge of the target's screen box (boxes, not true curve tangency); `a attach_to b at top` puts `a` beside a named spot of `b` (a screen-box spot, or one of its feature points such as an arrow's `tip`). `outside`, `tangent_to` and `attach_to` arrived in Milestone 8.
 - A rule reads `subject relation target [gap n]`; the subject is what moves. `label(x)` is the child object `x.label`. Clauses join with `and`.
 - Guards: `no_overlap(a, b, ...)`, `on_screen(a, margin)`, `visible_in_3d(a)` (not occluded, Milestone 6), `min_size_px(a, n)`, `readable(a)` (contrast vs background). `on_screen` moves the object when it can; the others are checked by the linter and reported as `unsolved` when broken.
 - Solved at every key time (markers, transition ends, a 10 Hz grid) with priorities `required`, `strong` (default), `medium`, `weak`, and a report of any constraint it could not satisfy.
@@ -481,6 +481,8 @@ Each domain is a plugin package (`phasor.cx`, `phasor.fourier`, ...) that regist
 **Symbolic link**
 
 SymPy is the bridge: an expression drives numerics (lambdified to GPU), the LaTeX label and semantic metadata from one source. Editing the formula updates plot and label together. Equation morphs match terms structurally, not glyph by glyph.
+
+**As built (Milestone 8).** `core/simulation.py` is the `Simulation` of contract 3: a fixed `dt`, `params()` (seed included), `initial()`, pure `step`; `SimRunner.state_at(t)` is the nearest earlier checkpoint plus the remaining steps, memoized and cached on disk under `.phasor_cache/<hash of the parameters>/` (`PHASOR_CACHE` overrides), so it depends only on the parameters and t however you scrub; a damaged checkpoint is recomputed. The three modules are `phasor.fourier` (epicycles, series partial sums with the Gibbs overshoot, spectrum with windows and leakage, spectrogram, FFT convolution), `phasor.linalg` (transform grids in 2D and 3D, eigen lines, vectors, matrices whose entries are linked by expression; determinant, eigenvalues, SVD stages, rank, null space, Gram-Schmidt) and `phasor.ac` (shoebox room, source, listener, wavefront, image sources, impulse response with Schroeder RT60, a 3D FDTD pressure slice that refuses an unstable `dt`). Numerics live in `domains/*_math.py` with no drawing. Not built: Laplace and z-transforms, spherical harmonics, Bessel drum modes, null/column-space pictures, change-of-basis and projection visuals, an interactive absorption slider (Milestone 12), ray tracing beyond the image-source method, convolution-reverb audio export, and the narrated reverb film (its acceptance test, `tests/test_reverb.py`, checks the physics and the inspector instead). The FDTD runs in NumPy (a GPU solver is a later optimization); its walls absorb through a damping shell, an approximation, not an exact boundary condition.
 
 ## Interactivity and outputs
 

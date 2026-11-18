@@ -36,12 +36,27 @@
 
 ## Object types (use these names in add_object)
 
+- `arrow`: start, end
 - `domain_coloring`: function, pos, size, contour, softness, hue
 - `dot`: pos, r
+- `eigen_lines`: matrix, pos, length
+- `epicycles`: points, terms, phase, trace
 - `fractal`: kind, c, pos, size, max_iter, density, hue
+- `image_sources`: size, source, order, material, absorption, r
+- `impulse_response`: size, source, listener, order, material, absorption, pos, extent, duration, reveal, show_rt60
 - `line`: points, progress
+- `listener`: pos, r
+- `matrix`: matrix, pos, digits
+- `partial_sum`: kind, terms, pos, extent, reveal
+- `pressure_slice`: size, origin, source, z, time, dx, material, absorption, frequency, gain, seed
 - `riemann_surface`: kind, pos, radius, height, scale, rings, segments
+- `room`: size, origin, material, absorption
+- `source`: pos, r
+- `spectrogram`: f0, f1, duration, fs, nwin, pos, size
+- `spectrum`: frequencies, amplitudes, window, samples, fs, pos, extent, bins
 - `text`: text, pos, anchor, leader, leader_on
+- `transform_grid`: matrix, pos, extent, spacing, square, basis
+- `wavefront`: center, radius, rings
 
 ## Docs
 
