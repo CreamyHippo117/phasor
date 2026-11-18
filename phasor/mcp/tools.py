@@ -199,9 +199,12 @@ class Workspace:
         offset: float = 0.0,
         path: str | None = None,
         value: Any = None,
+        until: str | None = None,
     ) -> dict[str, Any]:
         """Animate with a choreography verb starting at a marker (or seconds). Timing comes
-        from the theme. Returns when it starts and ends so the next step can follow it."""
+        from the theme. Returns when it starts and ends so the next step can follow it.
+        ``orbit`` swings the 3D camera ``value`` degrees (default 360), until marker ``until``
+        if given."""
         if verb not in VERBS:
             raise ToolError(f"unknown verb {verb!r}; verbs are {list(VERBS)}")
         e = self.engine
@@ -215,6 +218,8 @@ class Workspace:
             if path is None or value is None:
                 raise ToolError(f"{verb} needs path and value, e.g. path='dot.pos', value=[1, 2]")
             args: tuple = (path, value)
+        elif verb == "orbit":
+            args = (360.0 if value is None else float(value), until)
         elif verb == "focus_pull":
             if len(targets) != 1:
                 raise ToolError("focus_pull needs exactly one target id")
@@ -334,6 +339,26 @@ class Workspace:
         out.parent.mkdir(parents=True, exist_ok=True)
         save_png(out, board["image"])
         return {"image": str(out), "frames": board["frames"], "version": e.version}
+
+    def events(self, t0: float = 0.0, t1: float | None = None, problems_only: bool = True,
+               hz: float = 10.0) -> dict[str, Any]:  # fmt: skip
+        """The event log: when things get hidden, leave or enter the frame, change region or
+        gain an occluder, with the nearest marker and fix hints. ``problems_only`` keeps the
+        ones a viewer would notice (a label or key object hidden or leaving the frame)."""
+        from phasor.inspect.events import problems
+
+        log = self._guard(lambda: self.engine.events(t0, t1, hz=hz))
+        shown = problems(log) if problems_only else log
+        return {"events": shown, "total": len(log), "problems": len(problems(log))}
+
+    def when_hidden(self, id: str) -> dict[str, Any]:
+        """Time spans where ``id`` is on screen but less than half of it is visible."""
+        return {"id": id, "spans": self._guard(lambda: self.engine.when_hidden(id))}
+
+    def free_space_near(self, id: str, t: float = 0.0) -> dict[str, Any]:
+        """Empty label-sized places around ``id`` at ``t``, nearest first (boxes are 0-1,
+        top-left origin): where a label or note could go."""
+        return {"id": id, "t": t, "free": self._guard(lambda: self.engine.free_space_near(id, t))}
 
     def hit_test(self, x: float, y: float, t: float = 0.0) -> dict[str, Any]:
         """Objects under an output-pixel point (origin top-left), topmost first."""

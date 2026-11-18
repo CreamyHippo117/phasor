@@ -48,6 +48,7 @@ W_MIN_SIZE = 50.0
 W_OCCLUDE = 20.0
 W_HIDDEN = 50.0  # stage 2: per (hidden share)^2 measured by the oracle
 W_PRIOR = 0.05  # pull toward the camera's default view where the goals do not care
+W_SPEED = 0.3  # smoothness also dislikes speed a little (per scaled unit per solve key)
 HIDDEN_OK = 0.5  # stage 2 re-solves when more than this share of an object is hidden
 ELEVATION = (-80.0, 85.0)
 MAX_TIMES_IN_ISSUE = 12
@@ -99,8 +100,10 @@ def _extent(cam: Camera, s: Sphere) -> tuple[tuple[float, float, float, float], 
 class _Vars:
     """The free parameters as one scaled vector (so every unknown moves about 1 per step)."""
 
-    def __init__(self, free: tuple[str, ...], center: np.ndarray, radius: float) -> None:
+    def __init__(self, free: tuple[str, ...], center: np.ndarray, radius: float,
+                 elevation: tuple[float, float] = ELEVATION) -> None:  # fmt: skip
         self.free, self.center, self.radius = free, center, max(radius, 1e-3)
+        self.elevation = elevation
         self.names: list[str] = []
         for p in free:
             self.names += ["tx", "ty", "tz"] if p == "target" else [p]
@@ -126,7 +129,7 @@ class _Vars:
             if n == "azimuth":
                 upd["azimuth"] = float(v * 45.0)
             elif n == "elevation":
-                upd["elevation"] = float(np.clip(v * 45.0, *ELEVATION))
+                upd["elevation"] = float(np.clip(v * 45.0, *self.elevation))
             elif n == "distance":
                 upd["distance"] = float(self.radius * math.exp(v))
             else:
@@ -141,7 +144,7 @@ class _Vars:
             if n == "azimuth":
                 out.append((None, None))
             elif n == "elevation":
-                out.append((ELEVATION[0] / 45.0, ELEVATION[1] / 45.0))
+                out.append((self.elevation[0] / 45.0, self.elevation[1] / 45.0))
             elif n == "distance":
                 out.append((math.log(0.3), math.log(40.0)))
             else:
@@ -167,6 +170,18 @@ class Problem:
         th = c.theme.camera
         self.fill, self.margin, self.thirds_w = th["fill"], th["margin"], th["thirds"]
         self.smooth_w = th["smooth"]
+        # Overlay text (a title, a caption) owns its strip of the frame: framing keeps the
+        # world out of the top and bottom bands it occupies.
+        self.top, self.bottom = 1.0, -1.0
+        for o in state.objects:
+            if o.layer != "overlay" or o.params.opacity <= 0:
+                continue
+            ndc = state.overlay.project(o.impl.world_bounds(state).corners())
+            y0, y1 = float(ndc[:, 1].min()), float(ndc[:, 1].max())
+            if y0 > 0.3:
+                self.top = min(self.top, y0)
+            elif y1 < -0.3:
+                self.bottom = max(self.bottom, y1)
         ids = sorted({i for _, g in plan.goals for i in g.ids})
         self.spheres = _spheres(state, ids)
         self.kept = [i for _, g in plan.goals if g.kind == "keep_visible" for i in g.ids]
@@ -181,14 +196,15 @@ class Problem:
 
     def goal_cost(self, cam: Camera, rule: Rule, g: Goal) -> float:
         w = PRIORITY[rule.spec.priority]
-        lx, ly = 1.0 - 2.0 * self.margin / self.aspect, 1.0 - 2.0 * self.margin
+        lx = 1.0 - 2.0 * self.margin / self.aspect
+        top, bottom = self.top - 2.0 * self.margin, self.bottom + 2.0 * self.margin
         cost = 0.0
         if g.kind == "keep_visible":
             for i in g.ids:
                 (x0, x1, y0, y1), behind = _extent(cam, self.spheres[i])
                 cost += W_VISIBLE * 10.0 * behind
                 ex = max(0.0, -lx - x0) + max(0.0, x1 - lx)
-                ey = max(0.0, -ly - y0) + max(0.0, y1 - ly)
+                ey = max(0.0, bottom - y0) + max(0.0, y1 - top)
                 cost += W_VISIBLE * (ex * ex + ey * ey)
         elif g.kind == "center":
             x, y, behind = (float(v) if np.ndim(v) == 0 else float(v[0])
@@ -236,8 +252,8 @@ class Problem:
         penalty = W_VISIBLE * 10.0 * sum(p for _, p in found)
         x0, x1 = min(b[0] for b in boxes), max(b[1] for b in boxes)
         y0, y1 = min(b[2] for b in boxes), max(b[3] for b in boxes)
-        size = max((y1 - y0) / 2.0, (x1 - x0) / 2.0)
-        gx, gy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+        size = max((y1 - y0) / (self.top - self.bottom), (x1 - x0) / 2.0)
+        gx, gy = (x0 + x1) / 2.0, (y0 + y1) / 2.0 - (self.top + self.bottom) / 2.0
         return penalty + W_FILL * (size - self.fill) ** 2 + W_GROUP_CENTER * (gx * gx + gy * gy)
 
     def cost(self, p: OrbitCameraParams) -> float:
@@ -309,10 +325,12 @@ def solve(
     allsph = [sp for t in keys for sp in Problem(c, plan, evaluate(c, t)).spheres.values()]
     center = np.mean([sp.center for sp in allsph], axis=0)
     radius = max(float(np.linalg.norm(sp.center - center)) + sp.radius for sp in allsph)
-    vars_ = _Vars(plan.camera_free, center, radius)
+    th = c.theme.camera
+    vars_ = _Vars(plan.camera_free, center, radius, (th["min_elevation"], th["max_elevation"]))
     prior = vars_.encode(OrbitCameraParams(**{**_defaults(), "target": tuple(vars_.center)}))
+    angles = np.array([n in ("azimuth", "elevation") for n in vars_.names], dtype=float)
 
-    def solve_at(t: float, near: np.ndarray | None) -> np.ndarray:
+    def solve_at(t: float, near: np.ndarray | None, last: np.ndarray | None = None) -> np.ndarray:
         """Best camera at ``t``; ``near`` (the neighbor's solution) anchors smoothness."""
         pre = evaluate(c, t)
         prob = Problem(c, plan, pre)
@@ -325,6 +343,8 @@ def solve(
             cost = prob.cost(vars_.decode(x, base)) + W_PRIOR * float(((x - prior) ** 2).sum())
             if near is not None:
                 cost += prob.smooth_w * float(((x - near) ** 2).sum())
+            if last is not None:  # angles only: the target may follow a moving object freely
+                cost += prob.smooth_w * W_SPEED * float((((x - last) * angles) ** 2).sum())
             return cost
 
         starts = _starts(x0, vars_.names) if near is None else [x0]
@@ -352,7 +372,7 @@ def solve(
         elif len(hist) >= 2:
             (ta, xa), (tb, xb) = hist[-2], hist[-1]
             near = xb + (xb - xa) * ((t - tb) / (tb - ta)) if tb > ta else xb
-        solved[t] = solve_at(t, near)
+        solved[t] = solve_at(t, near, hist[-1][1] if hist else None)
         hist.append((t, solved[t]))
 
     def curve() -> np.ndarray:
@@ -362,14 +382,13 @@ def solve(
         return PchipInterpolator(np.array(ks), np.array([solved[k] for k in ks]), axis=0)(
             np.array(times))  # fmt: skip
 
-    # Verify at every key time; where the framing fails between solves (fast motion), solve
-    # there too and join again. Occlusion is left to stage 2 at the solve times: it needs
-    # a render per check.
+    # Verify at every key time; where a goal fails between solves (fast motion, something
+    # passing in front), solve there too and join again.
     at = curve()
     for _ in range(REFINE_ROUNDS):
         bad = [t for t, x in zip(times, at, strict=True)
                if t not in solved and _check(c, plan, t, vars_.decode(x, _base(c, evaluate(c, t))),
-                                             None)]  # fmt: skip
+                                             hidden)]  # fmt: skip
         if not bad or not vars_.names:
             break
         for t, x in zip(times, at, strict=True):
@@ -423,8 +442,8 @@ def _stage2(c, f, x, vars_, base, occl, t, hidden) -> np.ndarray:
 
 def _nearby(x: np.ndarray, names: list[str]) -> list[np.ndarray]:
     out = []
-    for n, deltas in (("elevation", (0.25, 0.5, 0.8, -0.25, -0.5)),
-                      ("azimuth", (0.5, 1.0, -0.5, -1.0))):  # fmt: skip
+    for n, deltas in (("elevation", (0.15, 0.3, 0.45, -0.15, -0.3)),
+                      ("azimuth", (0.3, 0.6, -0.3, -0.6))):  # fmt: skip
         if n in names:
             k = names.index(n)
             for dv in deltas:
@@ -441,7 +460,7 @@ def _check(c, plan, t, p, hidden) -> list[tuple[int, str, tuple[str, ...]]]:
     prob = Problem(c, plan, pre)
     cam = prob.camera(p)
     lx = 1.0 - 2.0 * prob.margin / prob.aspect
-    ly = 1.0 - 2.0 * prob.margin
+    top, bottom = prob.top - 2.0 * prob.margin, prob.bottom + 2.0 * prob.margin
     cam_id = c.doc.timeline.camera
     state = None
     out = []
@@ -452,7 +471,7 @@ def _check(c, plan, t, p, hidden) -> list[tuple[int, str, tuple[str, ...]]]:
             box, behind = _extent(cam, prob.spheres[i])
             if g.kind == "keep_visible":
                 if behind > 0 or box[0] < -lx - 0.02 or box[1] > lx + 0.02 or \
-                        box[2] < -ly - 0.02 or box[3] > ly + 0.02:  # fmt: skip
+                        box[2] < bottom - 0.02 or box[3] > top + 0.02:  # fmt: skip
                     bad.append(i)
                     why = "cannot keep it all in frame"
             elif g.kind == "min_size" and (behind > 0 or _size(box, prob.aspect) < g.value * 0.9):

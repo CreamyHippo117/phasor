@@ -58,7 +58,7 @@ def test_center_and_min_size():
         ball = next(o for o in e.inspect(t)["objects"] if o["id"] == "ball")
         cx_, cy_ = ball["center"]["norm"]
         assert abs(cx_ - 0.5) < 0.03 and abs(cy_ - 0.5) < 0.03
-        x0, y0, x1, y1 = ball["bbox"]["norm"]
+        _, y0, _, y1 = ball["bbox"]["norm"]
         assert (y1 - y0) >= 0.27
 
 
@@ -205,3 +205,63 @@ def test_a_label_on_a_surface_behind_it_is_not_flagged():
     s.constrain("label(bp) near bp")
     codes = {i.code for i in s.engine.lint()}
     assert not codes & {"overlap", "occluded_label"}
+
+
+# ---------------------------------------------------------------- orbit verbs
+
+
+def _orbit_scene(**cam):
+    s = Scene("orb", passes=None)
+    s.use_camera("orbit", **({"drift": 0, "azimuth": -60, "elevation": 25, "distance": 9} | cam))
+    s.add(cx.RiemannSurface(id="surf", radius=2.0))
+    s.add(Dot(id="bp", pos=(0, 0, 0), r=0.07, tags=["key"]))
+    s.marker("spin", 1.0)
+    s.marker("stop", 7.0)
+    return s
+
+
+def test_orbit_turns_the_camera_until_a_marker():
+    s = _orbit_scene()
+    s.at("spin").orbit(360, until="stop")
+    e = s.engine
+    assert e.state_at(0.5).values["camera.azimuth"] == -60
+    assert e.state_at(7.0).values["camera.azimuth"] == pytest.approx(300)
+    seg = e.document.timeline.tracks["camera.azimuth"][0]
+    assert seg.verb == "orbit" and seg.t1.marker == "stop"
+
+
+def test_orbit_by_theme_time_and_orbit_reveal():
+    s = _orbit_scene()
+    s.at("spin").orbit(90)
+    e = s.engine
+    assert e.state_at(1.0 + 14.0 / 4).values["camera.azimuth"] == pytest.approx(30)
+    s2 = _orbit_scene()
+    s2.at("spin").orbit_reveal("bp")
+    st = s2.engine.state_at(0.5)
+    assert st["bp"].params.opacity == 0  # hidden until the reveal
+    assert s2.engine.state_at(4.0).values["camera.azimuth"] == pytest.approx(-25)
+
+
+def test_orbit_needs_the_3d_camera():
+    from phasor.time.verbs import VerbError
+
+    s = Scene("flat", passes=None)
+    s.add(Dot(id="a"))
+    with pytest.raises(VerbError, match="3D camera"):
+        s.at(0).orbit()
+
+
+def test_a_full_orbit_with_goals_keeps_everything_framed():
+    s = Scene("orb", passes=None)
+    s.use_camera("orbit", drift=0, azimuth=-60)  # elevation, distance, target: the solver's
+    s.add(cx.RiemannSurface(id="surf", radius=2.0))
+    s.add(Dot(id="bp", pos=(0, 0, 0), r=0.07, tags=["key"]))
+    s.marker("spin", 1.0)
+    s.marker("stop", 7.0)
+    s.at("spin").orbit(360, until="stop")
+    s.constrain("camera keep_visible(surf, bp)")
+    e = s.engine
+    assert set(e.layout.camera) == {"camera.elevation", "camera.distance", "camera.target"}
+    assert not [i for i in e.lint() if i.code == "unsolved"]
+    probs = events.problems(e.events(hz=4))
+    assert not [p for p in probs if p["event"] == "leaves_frame"]

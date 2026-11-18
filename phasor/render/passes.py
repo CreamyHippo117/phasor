@@ -179,7 +179,7 @@ void main() {
     float a = v_rgba.a * u_opacity;
     if (u_material == 1) {
         float fres = pow(1.0 - max(dot(n, view), 0.0), 3.0);
-        a = clamp(a * (0.55 + 0.9 * fres), 0.0, 1.0);
+        a = clamp(a * (0.75 + 0.9 * fres), 0.0, 1.0);
     }
     float dist = length(u_eye - v_pos);
     float f = 1.0 - exp(-u_fog * max(dist - u_fog_ref, 0.0) / u_fog_ref);
@@ -539,12 +539,22 @@ class GLRenderer:
         return raw.reshape(h, w)[::-1] > 127
 
     def _draw_deferred(self, state, deferred: list, size, zoom) -> None:
-        """Translucent surfaces, sorted far to near, tested against depth but not writing it
-        (order-independent enough for one or two glass sheets; SPEC asks for OIT later)."""
+        """Translucent surfaces, tested against depth but not writing it, drawn far to near:
+        objects by depth, and each surface's own triangles by depth, so a glass surface that
+        folds over itself (two sheets) blends in the right order. Sorting replaces OIT; it is
+        exact except where translucent triangles cut through each other."""
         target, _ = self._target("color", size)
         self.ctx.depth_func = "<="
         target.depth_mask = False
         for _, order, obj, cmd in sorted(deferred, key=lambda d: (-d[0], d[1])):
+            if cmd[0] == "surface":  # its own triangles, far to near too
+                c = dict(cmd[1])
+                tris = np.asarray(c["indices"])
+                centroid = c["positions"][tris].mean(axis=1)
+                c["indices"] = tris[
+                    np.argsort(-state.camera_for(obj).depth(centroid), kind="stable")
+                ]
+                cmd = ("surface", c)
             self._draw_object(state, obj, "color", size, order, zoom, [cmd])
         target.depth_mask = True
         deferred.clear()

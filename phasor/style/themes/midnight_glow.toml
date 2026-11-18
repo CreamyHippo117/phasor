@@ -32,7 +32,7 @@ strong = 6.0
 # brighter at grazing angles. wire: lit, with a coordinate grid drawn on it. emissive: glows.
 [surface]
 solid = 1.0
-glass = 0.35
+glass = 0.45
 wire = 1.0
 emissive = 1.0
 
@@ -66,7 +66,8 @@ pause_max = 1.5
 # 3D camera (SPEC "3D auto-cinematography"). `drift`: slow sway in azimuth, degrees either
 # way, over `drift_period` seconds. The camera solver: `fill` is the share of the frame
 # height the kept objects should span, `thirds` and `smooth` are the weights of those goals,
-# `margin` keeps kept objects this far (frame heights) inside the edge.
+# `margin` keeps kept objects this far (frame heights) inside the edge. The solver keeps
+# elevation between `min_elevation` and `max_elevation`: a top-down view flattens 3D.
 [camera]
 drift = 3.0
 drift_period = 24.0
@@ -74,6 +75,8 @@ fill = 0.7
 thirds = 0.15
 smooth = 1.0
 margin = 0.05
+min_elevation = -60.0
+max_elevation = 65.0
 
 # Three-point light rig, placed relative to the camera (degrees): key from upper right,
 # fill from the left, rim from behind. `fog` dims and blends far surfaces into the
@@ -114,6 +117,7 @@ occluded = 0.9       # 3D: a label less visible than this is "occluded_label"
 [motion]
 stagger = 0.12
 dim_level = 0.25
+orbit_swing = 35.0   # degrees the camera swings during orbit_reveal
 
 [motion.reveal]
 duration = 0.6
@@ -146,3 +150,12 @@ ease = "smoother"
 [motion.settle]
 duration = 0.9
 ease = "spring"
+
+# orbit: seconds per full turn of the camera; orbit_reveal: the whole swing.
+[motion.orbit]
+duration = 14.0
+ease = "in_out"
+
+[motion.orbit_reveal]
+duration = 2.4
+ease = "smoother"

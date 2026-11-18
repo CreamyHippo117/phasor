@@ -118,7 +118,13 @@ class At:
         """Move a parameter like a released spring."""
         return self._verb("settle", path, value)
 
+    def orbit(self, degrees: float = 360.0, until: str | None = None) -> At:
+        """Swing the 3D camera ``degrees`` around its target, over the theme's time per turn
+        or until the marker ``until``."""
+        return self._verb("orbit", degrees, until)
+
     def orbit_reveal(self, *ids: str) -> At:
+        """Reveal objects while the 3D camera swings a little around them."""
         return self._verb("orbit_reveal", *ids)
 
 

@@ -28,13 +28,14 @@ a variant and compare.
 | --- | --- |
 | `scene_new`, `scene_open`, `scene_save` | start, load or save `name.phasor.json` (inside the workspace folder only) |
 | `scene_edit` | apply a patch (below); returns `ok`, `errors`, and the lint issues it added or fixed |
-| `animate` | a choreography verb at a marker or time: `reveal`, `exit`, `trace`, `bloom_in`, `dim_others`, `undim`, `focus_pull`, `morph`, `settle` |
+| `animate` | a choreography verb at a marker or time: `reveal`, `exit`, `trace`, `bloom_in`, `dim_others`, `undim`, `focus_pull`, `morph`, `settle`, and in 3D `orbit` (`value` degrees, `until` a marker) and `orbit_reveal` |
 | `narrate` | set the script and voice; markers appear in `markers` |
 | `inspect` | what is on screen at `t`: `brief` (a line each), `standard`, `full` |
 | `lint` | visual problems; `fix: true` applies the certain fixes |
 | `review` | the whole self-review round in one call |
 | `storyboard` | keyframe picture with each object's box and id drawn on it |
 | `hit_test`, `resolve` | what is at a pixel; which object ids "the label of the pole" means |
+| `events`, `when_hidden`, `free_space_near` | 3D: when things get hidden or leave the frame (with fixes), spans an object is hidden, empty places next to an object |
 | `diff`, `checkpoint`, `restore`, `undo`, `redo` | compare and branch |
 | `render` | a video (`preview`, `final`, `4k`) or one PNG with `frame` |
 | `docs_search` | find the API, a pattern or an example |
@@ -93,6 +94,29 @@ labels may sit on them.
 {"op": "add_object", "object": {"id": "plane", "type": "domain_coloring",
   "params": {"function": "1/(z**2 + 1)", "contour": 0.4}, "style": {"colormap": "phase"}}}
 ```
+
+## 3D
+
+Switch the camera to `orbit` (perspective, z up) and add surfaces. Leave the camera's
+`elevation`, `distance` and `target` unset and give **goals** instead: the camera solver
+chooses them at every moment, also while the camera orbits.
+
+```json patch
+[
+  {"op": "set_camera", "kind": "orbit", "params": {"azimuth": -60}},
+  {"op": "add_object", "object": {"id": "sheet", "type": "riemann_surface",
+    "params": {"kind": "sqrt", "radius": 2.0}, "style": {"material": "glass"}}},
+  {"op": "add_constraint", "rule": "camera keep_visible(sheet)"},
+  {"op": "add_constraint", "rule": "camera avoid_occlusion(pole_i)", "priority": "medium"}
+]
+```
+
+Goals: `keep_visible(a, b)`, `center(a)`, `thirds(a)`, `avoid_occlusion(a)`,
+`min_size(a, 0.3)` (share of the frame height), each written after `camera`. Materials
+(`surface` roles): `solid`, `glass` (see-through, does not hide things), `wire`,
+`emissive`. In 3D a label is hidden only by what is in front of it: lint reports
+`occluded_label`, and `events` lists every moment something important is hidden or
+leaves the frame. A clean 3D scene has no `problems` in `events`.
 
 ## Narration and animation
 

@@ -39,8 +39,8 @@ class OrbitCameraParams(BaseModel):
     distance: float = Field(10.0, gt=0)
     fov: float = Field(35.0, gt=1.0, lt=150.0)  # vertical field of view
     # Slow sway in azimuth, degrees either way (SPEC "3D auto-cinematography").
-    # None: the theme's [camera] drift; 0 holds the camera still.
-    drift: float | None = Field(None, ge=0)
+    # Negative (the default): the theme's [camera] drift; 0 holds the camera still.
+    drift: float = -1.0
 
 
 def _frozen(a) -> np.ndarray:

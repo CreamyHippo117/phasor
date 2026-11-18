@@ -12,7 +12,7 @@
 - `scene_edit`: Apply a patch (one op, a list of ops, or `{"ops": [...]}`). Atomic: if any op is invalid nothing changes. Returns the result and the lint issues it added or fixed.
 - `undo`: Revert the last edit (each patch, verb or narration is one step).
 - `redo`: Re-apply the edit that undo reverted.
-- `animate`: Animate with a choreography verb starting at a marker (or seconds). Timing comes from the theme. Returns when it starts and ends so the next step can follow it.
+- `animate`: Animate with a choreography verb starting at a marker (or seconds). Timing comes from the theme. Returns when it starts and ends so the next step can follow it. `orbit` swings the 3D camera `value` degrees (default 360), until marker `until` if given.
 - `narrate`: Set the narration. `[[name]]` puts a marker at the next word. Every animation anchored to a marker follows the voice. `pace` adds breathing room after busy sentences.
 - `checkpoint`: Remember the current document under `name` (to compare or return to later).
 - `restore`: Go back to a checkpoint. Undo history starts over (checkpoints are kept).
@@ -21,6 +21,9 @@
 - `lint`: Find visual problems (overlap, off-screen, contrast, tiny text, clutter, ...). `fix=True` applies the fixes that are certain, then reports what is left.
 - `storyboard`: Render keyframes on one contact sheet (a PNG) with what the inspector sees in each. `marks` draws every object's box and id so you can tie picture to ids.
 - `review`: One call for the self-review loop: lint, what is on screen at every marker, and a storyboard. Fix what `issues` lists, then call again until `clean`.
+- `events`: The event log: when things get hidden, leave or enter the frame, change region or gain an occluder, with the nearest marker and fix hints. `problems_only` keeps the ones a viewer would notice (a label or key object hidden or leaving the frame).
+- `when_hidden`: Time spans where `id` is on screen but less than half of it is visible.
+- `free_space_near`: Empty label-sized places around `id` at `t`, nearest first (boxes are 0-1, top-left origin): where a label or note could go.
 - `hit_test`: Objects under an output-pixel point (origin top-left), topmost first.
 - `resolve`: Turn words like 'the pole on the left' or 'label of the loop' into object ids.
 - `render`: Render a video (preset: preview 960x540@30, final, 4k) or one PNG (`frame`).

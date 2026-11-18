@@ -44,7 +44,16 @@ _TABLES = {
     "lint": ("overlap", "contrast", "tiny", "text_min", "clutter", "crowded", "occluded"),
     "bloom": ("threshold", "strength", "levels", "exposure", "knee"),
     "narration": ("words_per_second", "lead", "gap", "pause_per_change", "pause_max"),
-    "camera": ("drift", "drift_period", "fill", "thirds", "smooth", "margin"),
+    "camera": (
+        "drift",
+        "drift_period",
+        "fill",
+        "thirds",
+        "smooth",
+        "margin",
+        "min_elevation",
+        "max_elevation",
+    ),
     "light": (
         "key_azimuth",
         "key_elevation",
@@ -146,12 +155,23 @@ def load_theme(name: str) -> Theme:
                  motion=motion)  # fmt: skip
 
 
-VERBS = ("reveal", "exit", "trace", "bloom_in", "dim", "focus_pull", "morph", "settle")
+VERBS = (
+    "reveal",
+    "exit",
+    "trace",
+    "bloom_in",
+    "dim",
+    "focus_pull",
+    "morph",
+    "settle",
+    "orbit",
+    "orbit_reveal",
+)
 
 
 def _motion(theme: str, data: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
-    for key in ("stagger", "dim_level"):
+    for key in ("stagger", "dim_level", "orbit_swing"):
         if key not in data:
             raise ThemeError(f"theme {theme!r} is missing [motion] {key}")
         out[key] = float(data[key])

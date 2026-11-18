@@ -1,7 +1,6 @@
 # phasor patterns
 
-Idioms for common tasks, one canonical way each. More arrive with their milestones:
-3D orbits (M6).
+Idioms for common tasks, one canonical way each.
 
 ## Label something
 
@@ -121,3 +120,29 @@ assert s.engine.lint(strict=True) == []
 ```
 
 Check what is on screen at each marker (the self-review loop above) before rendering.
+
+## Orbit a 3D camera around a surface
+
+Say what must stay in view, leave the camera's elevation, distance and target unset, and
+orbit by verb. The solver frames it at every angle; labels with `near` stay readable.
+
+```python
+from phasor import Dot, Scene, Text, cx
+
+orb = Scene("orbit_pattern", passes=None)
+orb.use_camera("orbit", azimuth=-60)
+orb.add(cx.RiemannSurface(id="sheets", radius=2.0, style={"material": "glass"}))
+orb.add(Dot(id="branch", pos=(0, 0, 0), r=0.08, tags=["key"]))
+orb.add(Text(id="branch.label", text="branch point"))
+orb.constrain("label(branch) near branch")
+orb.constrain("camera keep_visible(sheets)")
+orb.marker("turn", 0.5)
+orb.marker("still", 5.0)
+orb.at("turn").orbit(360, until="still")
+assert [i for i in orb.engine.lint() if i.code == "unsolved"] == []
+```
+
+- Folded or nested surfaces (the two sheets of sqrt) want `material: glass`: solid, one
+  part always hides another from some side, and `events` will say so.
+- Check a 3D scene with `engine.events()`: `problems(...)` lists every moment a label or
+  key object is hidden or leaves the frame, with the marker being spoken and fixes.

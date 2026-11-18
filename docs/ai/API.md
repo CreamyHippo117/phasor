@@ -4,7 +4,7 @@ One canonical example per public name. No deprecated aliases. Every ```python bl
 folder runs in CI (`tests/test_docs.py`), top to bottom in one namespace per file. Mark a
 block ```python no-run only when it cannot run in CI, and say why next to it.
 
-Status: through Milestone 5. This file is the Python API; to drive phasor from an AI client
+Status: through Milestone 6. This file is the Python API; to drive phasor from an AI client
 (MCP) read `MCP.md` first.
 
 ## Build a scene
@@ -34,6 +34,7 @@ s.set("camera.height", 6)  # world units visible top to bottom
 | `Line` | `points` (2 or more) | `color` (emphasis, primary), `stroke` (stroke, regular), `glow` (glow, none) |
 | `cx.DomainColoring` | `function` (e.g. `"1/(z**2 + 1)"`), `pos` (center), `size` (w, h), `contour` (0-1) | `colormap` (colormap, phase) |
 | `cx.Fractal` | `kind` (`mandelbrot`/`julia`), `c` (Julia constant), `pos`, `size`, `max_iter`, `density` | `colormap` (colormap, sequential) |
+| `cx.RiemannSurface` | `kind` (`sqrt`/`cbrt`/`log`), `pos` (branch point), `radius`, `height` (`re`/`im`), `scale`, `rings`, `segments` | `colormap` (colormap, phase), `material` (surface, solid) |
 | `Text` | `text`, `pos`, `anchor` (`center`/`left`/`right`), `leader`, `leader_on` (set by layout) | `color` (emphasis, primary), `size` (text, label), `leader` (stroke, hairline) |
 
 Every type also has `opacity` (0-1; below 0.5 it stops hiding things behind it), `dim`
@@ -42,7 +43,8 @@ Every type also has `opacity` (0-1; below 0.5 it stops hiding things behind it),
 `layer="overlay"` to live in screen space: units are frame heights, origin top-left, y down.
 
 Roles: emphasis `primary secondary muted highlight danger`; stroke `hairline regular bold`;
-text `title label annotation math`; glow `none soft strong`; colormap `phase sequential`.
+text `title label annotation math`; glow `none soft strong`; colormap `phase sequential`;
+surface `solid glass wire emissive` (3D materials; glass is see-through and hides nothing).
 
 `cx` objects are rectangles of the complex plane drawn by GPU kernels: world x is Re z and
 world y is Im z, so the camera zooms into them like into anything else. They are
@@ -345,6 +347,63 @@ assert field.shape == (90, 160) and (field == -1).any()  # -1 marks points in th
   `exp log sqrt sin cos tan sinh cosh tanh conj abs`. Anything else is a `FunctionError`.
 - A new kernel needs `@kernel(name, signature, reference=numpy_fn)`; registration fails
   without a NumPy reference that takes the same parameters.
+
+## 3D: orbit camera, surfaces, camera goals
+
+`use_camera("orbit")` makes the scene 3D: a perspective camera on a sphere around
+`target`, z up. Parameters: `azimuth` (0 looks from +x, 90 from +y), `elevation`,
+`distance`, `fov` (vertical degrees), `drift` (slow sway in degrees; negative = the
+theme's, 0 = still). Text and strokes keep their size on screen at any depth; dots and
+surfaces get smaller with distance like real things. Surfaces are lit by the theme's
+three-point rig and fade into the background with depth (theme `[light]`).
+
+Leave `elevation`, `distance`, `target` (and `azimuth`) unset and give the camera
+**goals**; the camera solver picks the rest at every moment, also while you orbit:
+`keep_visible(a, b)`, `center(a)`, `thirds(a)`, `avoid_occlusion(a)`, `min_size(a, share)`.
+
+```python
+from phasor import Dot, Scene, Text, cx
+
+s3d = Scene("riemann", passes=None)  # passes=None: analytic geometry only, fast
+s3d.use_camera("orbit", azimuth=-60)
+s3d.add(cx.RiemannSurface(id="sheets", kind="sqrt", radius=2.0, style={"material": "glass"}))
+s3d.add(Dot(id="branch", pos=(0, 0, 0), r=0.08, style={"color": "highlight"}, tags=["key"]))
+s3d.add(Text(id="branch.label", text="branch point"))
+s3d.constrain("label(branch) near branch")  # placed by depth: readable from every side
+s3d.constrain("camera keep_visible(sheets)")
+s3d.marker("spin", 1.0)
+s3d.marker("done", 6.0)
+s3d.at("spin").orbit(360, until="done")  # azimuth is animated; the solver works around it
+
+e3 = s3d.engine
+assert e3.state_at(6.0).values["camera.azimuth"] == 300
+assert set(e3.layout.camera) == {"camera.elevation", "camera.distance", "camera.target"}
+sheet = e3.inspect(3.0, id="sheets")["objects"][0]
+assert sheet["on_screen_fraction"] == 1.0 and sheet["semantic"]["sheets"] == 2
+```
+
+- `orbit(degrees, until=None)` turns the camera (theme `[motion.orbit]` time per turn, or
+  until a marker); `orbit_reveal(*ids)` reveals while swinging a little.
+- `focus_pull(id)` in 3D aims at the object and comes close enough to fill the frame.
+- A label (`near` rule) lives at its anchor's depth, nudged toward the camera, and is moved
+  only sideways; it avoids only what is **in front** of it, so it may sit on a surface
+  behind it. Lint: `occluded_label` when something in front hides it; `visible_in_3d(a)`
+  as a rule makes that an error.
+
+### The event log and spatial queries
+
+```python
+log = e3.events(hz=2)  # 10 Hz by default: visibility 0.9/0.5/0.1, frame, region, occluders
+from phasor.inspect.events import problems
+
+assert problems(log) == []  # nothing important hidden or leaving the frame
+assert e3.when_hidden("branch") == []  # spans where less than half of it is visible
+free = e3.free_space_near("branch", 3.0)  # empty label-sized boxes, nearest first
+assert free and set(free[0]) == {"slot", "box", "distance"}
+```
+
+Events carry `t`, the `marker` being spoken, the `id`, `severity` (`warning` = a viewer
+would notice) and `fix_hints`.
 
 ## Command line
 

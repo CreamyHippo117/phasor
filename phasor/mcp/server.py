@@ -33,7 +33,8 @@ Every change is one undoable step (undo), and checkpoint/restore/diff let you br
 TOOL_NAMES = (
     "scene_new", "scene_open", "scene_save", "scene_edit", "undo", "redo", "animate",
     "narrate", "checkpoint", "restore", "diff", "inspect", "lint", "storyboard", "review",
-    "hit_test", "resolve", "render", "docs_search", "object_types",
+    "events", "when_hidden", "free_space_near", "hit_test", "resolve", "render", "docs_search",
+    "object_types",
 )  # fmt: skip
 
 

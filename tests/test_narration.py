@@ -280,7 +280,7 @@ def test_verbs_fail_loudly():
         s.at("go").reveal("ghost")
     with pytest.raises(VerbError, match="no marker 'nope'"):
         s.at("nope").reveal("a")
-    with pytest.raises(VerbError, match="Milestone 6"):
+    with pytest.raises(VerbError, match="3D camera"):
         s.at("go").orbit_reveal("a")
     with pytest.raises(VerbError, match="opacity"):
         s.at("go").settle("a.opacity", 0.5)

@@ -6,7 +6,7 @@ compounding. If this file and SPEC.md disagree, stop and ask.
 ## Where we are
 
 - Owner approved ADR 0001, ADR 0002 and id tombstones on 2026-11-18.
-- Current milestone: **2 built (awaiting boundary review and Windows check). 3 built (untested on CUDA). 4 built (`MILESTONE_4.md`). 5 built (`MILESTONE_5.md`). 6 next**. See `MILESTONE_*.md` for what is built and deferred.
+- Current milestone: **2 built (awaiting boundary review and Windows check). 3 built (untested on CUDA). 4 built (`MILESTONE_4.md`). 5 built (`MILESTONE_5.md`). 6 built (`MILESTONE_6.md`). 7 next**. See `MILESTONE_*.md` for what is built and deferred.
 - One milestone per branch. No work on milestone N+1 until N's exit demo and tests pass.
 - Before declaring a milestone done, run the `phasor-milestone-gate` skill.
 
@@ -85,6 +85,10 @@ compounding. If this file and SPEC.md disagree, stop and ask.
 - Client commands register through the `phasor.commands` entry point; `cli` never imports a
   sibling client. Tools that return a picture use `structured_output=False`.
 - A ```json patch / ```json calls block in `docs/ai/MCP.md` runs in CI like a python block.
+
+- 3D: the camera solver lives in `layout/camera.py` and runs only inside the bake; it may set
+  only camera parameters the document leaves unset. Lower layers get depth through the
+  oracle's `depth` (ADR 0001 pattern); 3D labels are judged by what is in front of them.
 
 ## Commands
 

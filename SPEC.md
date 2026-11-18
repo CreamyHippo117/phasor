@@ -184,7 +184,7 @@ This is the part that lets an AI work with its eyes open: it states intent as co
 
 **Constraints**
 
-- Relations: `above`, `below`, `left_of`, `right_of`, `near`, `align_x`, `align_y`, `inside`, `outside`, `tangent_to`, `attach_to(anchor)`. `outside`, `tangent_to` and `attach_to` arrive with 3D (Milestone 6).
+- Relations: `above`, `below`, `left_of`, `right_of`, `near`, `align_x`, `align_y`, `inside`, `outside`, `tangent_to`, `attach_to(anchor)`. `outside`, `tangent_to` and `attach_to` were planned for Milestone 6 and moved to Milestone 8, where the acoustics scenes first need them.
 - A rule reads `subject relation target [gap n]`; the subject is what moves. `label(x)` is the child object `x.label`. Clauses join with `and`.
 - Guards: `no_overlap(a, b, ...)`, `on_screen(a, margin)`, `visible_in_3d(a)` (not occluded, Milestone 6), `min_size_px(a, n)`, `readable(a)` (contrast vs background). `on_screen` moves the object when it can; the others are checked by the linter and reported as `unsolved` when broken.
 - Solved at every key time (markers, transition ends, a 10 Hz grid) with priorities `required`, `strong` (default), `medium`, `weak`, and a report of any constraint it could not satisfy.
@@ -212,7 +212,7 @@ This is the part that lets an AI work with its eyes open: it states intent as co
 | tiny | Objects smaller than N px |
 | unsolved | Constraints the solver could not satisfy |
 
-- `occluded_label` and `z_fight` arrive with 3D (Milestone 6); in 2D a covered label is an `overlap`.
+- `occluded_label` arrived with 3D (Milestone 6); `z_fight` is still to come. In 2D a covered label is an `overlap`; under a perspective camera `overlap` compares only labels with labels and points with points, and a label behind something is `occluded_label`.
 - Issues carry the times they were seen and, where the linter is sure, a `fix` (patch ops). `Engine.autofix()` and `phasor lint --fix` apply them.
 - `phasor lint scene.py` runs it at sampled times (every 0.5 s by default), every transition end and every marker; output is JSON and human-readable.
 - Exit code 1 on errors; `--strict` also fails on warnings.
@@ -280,6 +280,8 @@ The AI never guesses where things are from pixels: the renderer reports ground t
 - Stage 2: verify the winner with the real `id` and `solo` passes and re-solve if it fails.
 - Solve at markers, spline between them, then verify 10 Hz samples along the path. Failures become lint issues with times.
 - The result is baked into camera tracks like any other layout.
+
+**As built (Milestone 6).** Camera goals are constraint rules on the active camera: `camera keep_visible(a, b)`, `camera center(a)`, `camera thirds(a)`, `camera avoid_occlusion(a)`, `camera min_size(a, share)`, with the usual priorities. The solver chooses only the orbit-camera parameters the document leaves unset (azimuth, elevation, distance, target; the field of view is never solved, since with distance free it only adds ambiguity), so an animated azimuth (the `orbit` verb) is kept and framed around. Stage 1 frames with projected bounding-box corners (a flat surface seen edge-on is thin; its sphere would never say so) and uses spheres only for occlusion; depth is clamped with a graded penalty so the cost stays smooth. `smooth` penalizes jerks (distance from the straight-line continuation of the two previous solves) plus angular speed, not following a moving object. Overlay text claims its strip of the frame, so framing keeps the world out of a title. Solved at markers, transition ends and 1 Hz, joined with PCHIP, checked at every 10 Hz key and re-solved where a goal fails, up to three rounds; what still fails is `unsolved` with times. `frame(ids, during)` is not a query: add a `camera keep_visible` rule (goals hold for the whole scene). `thirds` is a goal you ask for, not on by default (a centered subject orbits better). 3D labels live at their anchor's depth, nudged 4% toward the camera, slide only sideways, and avoid only what is in front of them (the oracle's `depth`); there is no `facing` field because every label is a billboard. `z_fight` is not a lint rule yet. Glass uses per-triangle back-to-front sorting instead of OIT: exact except where translucent triangles cut through each other.
 
 ## Rendering pipeline and visual quality
 

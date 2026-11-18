@@ -146,3 +146,26 @@ audio. `phasor render` prints "with narration" when a track was muxed.
 Positions of overlay text are frame heights (a centered title is `x = 0.8889`), lint clean
 does not mean it looks good (look at the storyboard), and `.py` scenes are refused unless
 the server runs with `--allow-scripts`. The full list is at the end of `MCP.md`.
+
+## 3D: a point on a solid surface vanishes from some angles
+
+A solid surface hides what is behind it, including a point on its other side or on another
+sheet of itself. `events()` reports `occluded`/`hidden` with the time and `hidden_by`.
+Fixes, in order: make the surface `glass` (it then hides nothing), add
+`camera avoid_occlusion(point)`, or move the point.
+
+## 3D: the camera solver ignores my goal
+
+It only sets camera parameters you left unset. Set `elevation` (or animate it) and the
+solver will not touch it; then a goal it cannot meet any other way shows up as `unsolved`
+with the times. Leave it out to let the solver choose.
+
+## 3D: the event log has no visibility events
+
+Visibility needs real pixels (OpenGL). Without it (tier C) the log still has frame and
+region events, and `when_hidden` returns no spans.
+
+## A camera parameter cannot be `None`
+
+Parameter values are numbers, strings, booleans and tuples. `drift=-1` (the default) means
+"the theme's drift"; `drift=0` holds the camera still.

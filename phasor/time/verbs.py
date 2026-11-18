@@ -14,6 +14,7 @@ Pure: verbs read a compiled document and the scene at the anchor time, and retur
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -23,7 +24,6 @@ from phasor.core.state import SceneState
 from phasor.time.compile import Compiled
 from phasor.time.tracks import ResolvedTrack
 
-MILESTONE_6 = {"orbit_reveal": "needs a 3D camera (Milestone 6)"}
 FOCUS_MARGIN = 0.15  # focus_pull leaves this share of the frame around the object
 
 
@@ -210,6 +210,14 @@ class Verbs:
         w, h = b.hi[0] - b.lo[0], b.hi[1] - b.lo[1]
         height = max(h, w / self.state.aspect) * (1 + 2 * margin)
         cam = self.c.doc.timeline.camera
+        if self.c.doc.camera(cam).kind == "orbit":  # 3D: aim at it and come close enough
+            radius = float(b.radius) * (1 + 2 * margin)
+            fov = float(self.state.values[f"{cam}.fov"])
+            dist = radius / max(1e-6, math.tan(math.radians(fov) / 2))
+            s1, d1 = self._segment(f"{cam}.target", tuple(float(v) for v in b.center),
+                                   "focus_pull", 0.0)  # fmt: skip
+            s2, _ = self._segment(f"{cam}.distance", float(dist), "focus_pull", 0.0)
+            return Motion((s1, s2), d1)
         z = float(self.state.values[f"{cam}.center"][2])  # keep the camera's depth
         s1, d1 = self._segment(f"{cam}.center", (cx, cy, z), "focus_pull", 0.0)
         s2, _ = self._segment(f"{cam}.height", float(height), "focus_pull", 0.0)
@@ -230,5 +238,46 @@ class Verbs:
         seg, done = self._segment(path, value, "settle", 0.0)
         return Motion((seg,), done)
 
-    def orbit_reveal(self, *_: Any, **__: Any) -> Motion:
-        raise VerbError(f"orbit_reveal {MILESTONE_6['orbit_reveal']}")
+    def _orbit_camera(self, verb: str) -> str:
+        cam = self.c.doc.timeline.camera
+        if self.c.doc.camera(cam).kind != "orbit":
+            raise VerbError(f"{verb} needs the 3D camera: s.use_camera('orbit')")
+        return cam
+
+    def orbit(self, degrees: float = 360.0, until: str | None = None) -> Motion:
+        """Swing the camera ``degrees`` around its target (positive: counterclockwise seen
+        from above). It takes the theme's ``orbit`` time per full turn, or runs until the
+        marker ``until``. Camera goals keep working during it: the solver frames what you
+        asked for at every angle."""
+        cam = self._orbit_camera("orbit")
+        path = f"{cam}.azimuth"
+        start = float(self.state.values[path])
+        spec = self.motion["orbit"]
+        if until is None:
+            seg, _ = self._segment(path, start + degrees, "orbit", 0.0)
+            duration = spec["duration"] * abs(degrees) / 360.0
+            seg["segment"]["t1"] = _ref(shift(self.at, duration))
+            return Motion((seg,), duration)
+        if until not in self.c.time_map.markers:
+            raise VerbError(f"no marker {until!r}; markers are {sorted(self.c.time_map.markers)}")
+        end = self.c.time_map.markers[until] - self.t
+        if end <= 0:
+            raise VerbError(f"marker {until!r} is not after the orbit starts")
+        seg = {
+            "t0": _ref(self.at),
+            "t1": {"marker": until, "offset": 0.0},
+            "to": start + degrees,
+            "ease": spec["ease"],
+            "verb": "orbit",
+        }
+        return Motion(({"op": "add_segment", "path": path, "segment": seg},), end)
+
+    def orbit_reveal(self, *ids: str) -> Motion:
+        """Reveal objects one after another while the camera swings a little around them,
+        so the eye gets depth from the motion (the theme's ``orbit_swing`` degrees)."""
+        cam = self._orbit_camera("orbit_reveal")
+        shown = self.reveal(*ids, verb="orbit_reveal")
+        path = f"{cam}.azimuth"
+        swing = self.motion["orbit_swing"]
+        seg, done = self._segment(path, float(self.state.values[path]) + swing, "orbit_reveal", 0.0)
+        return Motion((*shown.ops, seg), max(shown.end, done))

@@ -243,7 +243,7 @@ def compile_document(doc: Document) -> Compiled:
 def sway(theme: Theme, params: OrbitCameraParams, t: float) -> float:
     """The camera's slow drift in azimuth at ``t``, in degrees: a pure function of t, so
     time stays pure (contract 3). Amplitude from the camera's ``drift`` or the theme."""
-    amp = theme.camera["drift"] if params.drift is None else params.drift
+    amp = theme.camera["drift"] if params.drift < 0 else params.drift
     period = theme.camera["drift_period"]
     return amp * math.sin(2 * math.pi * t / period) if amp and period > 0 else 0.0
 
