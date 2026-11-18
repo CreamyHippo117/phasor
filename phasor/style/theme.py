@@ -42,6 +42,7 @@ _TABLES = {
     "layout": ("gap", "margin", "leader"),
     "lint": ("overlap", "contrast", "tiny", "text_min", "clutter", "crowded"),
     "bloom": ("threshold", "strength", "levels", "exposure", "knee"),
+    "narration": ("words_per_second", "lead", "gap", "pause_per_change", "pause_max"),
 }
 
 
@@ -80,6 +81,8 @@ class Theme:
     layout: dict[str, float] = field(default_factory=dict)  # fractions of the frame height
     lint: dict[str, float] = field(default_factory=dict)  # linter thresholds
     bloom: dict[str, float] = field(default_factory=dict)  # final-look glow settings
+    narration: dict[str, float] = field(default_factory=dict)  # speaking rate, pacing
+    motion: dict[str, Any] = field(default_factory=dict)  # verb -> {duration, ease}, + scalars
 
     def resolve(self, group: str, role: str) -> Any:
         if role not in ROLE_GROUPS.get(group, ()):
@@ -119,4 +122,23 @@ def load_theme(name: str) -> Theme:
         if missing:
             raise ThemeError(f"theme {name!r} is missing [{section}] keys {missing}")
         extra[section] = {k: float(v) for k, v in data.items()}
-    return Theme(name, hex_to_linear(raw["palette"]["background"]), values, **extra)
+    motion = _motion(name, raw.get("motion", {}))
+    return Theme(name, hex_to_linear(raw["palette"]["background"]), values, **extra,
+                 motion=motion)  # fmt: skip
+
+
+VERBS = ("reveal", "exit", "trace", "bloom_in", "dim", "focus_pull", "morph", "settle")
+
+
+def _motion(theme: str, data: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key in ("stagger", "dim_level"):
+        if key not in data:
+            raise ThemeError(f"theme {theme!r} is missing [motion] {key}")
+        out[key] = float(data[key])
+    for verb in VERBS:
+        spec = data.get(verb)
+        if not isinstance(spec, dict) or "duration" not in spec or "ease" not in spec:
+            raise ThemeError(f"theme {theme!r} needs [motion.{verb}] with duration and ease")
+        out[verb] = {"duration": float(spec["duration"]), "ease": str(spec["ease"])}
+    return out

@@ -164,6 +164,8 @@ def compile_document(doc: Document) -> Compiled:
         add_params(cam.id, CAMERA_PARAMS[cam.kind], cam.params)
 
     duration = max(doc.timeline.markers.values(), default=0.0)
+    if doc.narration is not None:
+        duration = max(duration, doc.narration.end)  # the scene lasts as long as the voice
     for path, segs in sorted(doc.timeline.tracks.items()):
         node = nodes.get(path)
         if path not in owner:
@@ -256,8 +258,11 @@ def evaluate(c: Compiled, t: float, replace: Mapping[str, Any] | None = None) ->
             raise DocumentError(Issue("bad_expr", f"{path} at t={t:g}: {e}", path=path)) from e
 
     def build(target: str, model: type[BaseModel]) -> BaseModel:
+        values = {n: env[f"{target}.{n}"] for n in model.model_fields}
+        if "dim" in values and "opacity" in values:  # what is drawn is opacity x dim
+            values["opacity"] = values["opacity"] * values["dim"]
         try:
-            return model.model_validate({n: env[f"{target}.{n}"] for n in model.model_fields})
+            return model.model_validate(values)
         except ValidationError as e:
             err = e.errors()[0]
             path = f"{target}.{'.'.join(str(p) for p in err['loc'])}"

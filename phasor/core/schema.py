@@ -15,7 +15,7 @@ from phasor.core.constraints import PRIORITIES, RuleError, normalize_rule, parse
 from phasor.core.ids import is_valid_id, is_valid_name, parent_of, split_path
 from phasor.core.values import normalize
 
-SCHEMA_VERSION = 3  # 2: added `constraints` (Milestone 2); 3: `retired_ids`
+SCHEMA_VERSION = 4  # 2: `constraints` (M2); 3: `retired_ids`; 4: `narration`, `Segment.verb` (M4)
 OVERRIDES_VERSION = 1
 
 
@@ -59,6 +59,7 @@ class Segment(Model):
     t1: TimeRef
     to: ConstValue
     ease: str = "smooth"
+    verb: str | None = None  # the choreography verb that made it; None is a raw transition
 
 
 class ObjectSpec(Model):
@@ -102,6 +103,43 @@ def _check_unique_rules(constraints: tuple[ConstraintSpec, ...]) -> None:
             raise ValueError(f"duplicate constraint {r!r}")
 
 
+class Word(Model):
+    """One spoken word, in seconds from the start of its block."""
+
+    text: str
+    start: float = Field(ge=0)
+    end: float = Field(ge=0)
+
+
+class NarrationBlock(Model):
+    """One spoken chunk (a sentence), or a silent pause when ``text`` is empty."""
+
+    text: str
+    start: float = Field(ge=0)  # seconds on the scene timeline
+    duration: float = Field(ge=0)
+    audio: str | None = None  # WAV path relative to the scene's folder; None: silent/estimate
+    words: tuple[Word, ...] = ()
+    markers: dict[str, float] = Field(default_factory=dict)  # name -> seconds from block start
+
+
+class Narration(Model):
+    """The narration and where every marker in it falls (SPEC "Narration sync").
+
+    It is derived data: re-recording replaces it, and with it the markers it owns in
+    ``timeline.markers``. Tracks refer to markers by name, so nothing else changes."""
+
+    script: str
+    voice: str
+    blocks: tuple[NarrationBlock, ...] = ()
+
+    def markers(self) -> dict[str, float]:
+        return {name: round(b.start + dt, 4) for b in self.blocks for name, dt in b.markers.items()}
+
+    @property
+    def end(self) -> float:
+        return max((b.start + b.duration for b in self.blocks), default=0.0)
+
+
 class Timeline(Model):
     markers: dict[str, float] = Field(default_factory=dict)  # the TimeMap (contract 3)
     tracks: dict[str, tuple[Segment, ...]] = Field(default_factory=dict)  # "<id>.<param>" -> segs
@@ -121,12 +159,13 @@ class Meta(Model):
 
 
 class Document(Model):
-    schema_version: Literal[3] = SCHEMA_VERSION
+    schema_version: Literal[4] = SCHEMA_VERSION
     meta: Meta
     objects: tuple[ObjectSpec, ...] = ()
     constraints: tuple[ConstraintSpec, ...] = ()
     # Ids of removed objects. They may never be used again (SPEC contract 2).
     retired_ids: tuple[str, ...] = ()
+    narration: Narration | None = None
     cameras: tuple[CameraSpec, ...] = (CameraSpec(id="camera"),)
     timeline: Timeline = Field(default_factory=Timeline)
 
@@ -152,6 +191,11 @@ class Document(Model):
         for path in self.timeline.tracks:
             split_path(path)
         _check_unique_rules(self.constraints)
+        if self.narration is not None:
+            for name, t in self.narration.markers().items():
+                if self.timeline.markers.get(name) != t:
+                    raise ValueError(f"narration marker {name!r} at {t:g} s is missing from, or "
+                                     "different in, timeline.markers")  # fmt: skip
         back = sorted(seen & set(self.retired_ids))
         if back:
             raise ValueError(f"id {back[0]!r} was retired when its object was removed; ids are "

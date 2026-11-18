@@ -58,7 +58,8 @@ def _is_label(e: dict[str, Any]) -> bool:
 
 
 def _shown(e: dict[str, Any]) -> bool:
-    return e["opacity"] > FAINT and e["on_screen_fraction"] > 0
+    drawn = e["semantic"].get("drawn", 1.0) > 0  # a curve not yet traced shows nothing
+    return e["opacity"] > FAINT and e["on_screen_fraction"] > 0 and drawn
 
 
 def _area(b) -> float:
@@ -71,11 +72,27 @@ def _box_overlap(a, b) -> float:
     return w * h if w > 0 and h > 0 else 0.0
 
 
+def shown_opacity(c: Compiled, object_id: str) -> float:
+    """The opacity an object is meant to have when it is fully shown: its constant value,
+    or the highest its track ever reaches. Fades and dims in between are deliberate, so
+    contrast is judged at this value, not at the moment's."""
+    node = c.nodes.get(f"{object_id}.opacity")
+    if isinstance(node, ResolvedTrack):
+        return max([float(node.initial), *(float(s.to) for s in node.segments)])
+    return float(getattr(node, "value", 1.0))
+
+
 class _Frame:
     """One sampled time: the state, its inspector entries, and overlap measurements."""
 
-    def __init__(self, state: SceneState, snap: dict[str, Any], runner: PassRunner | None):
-        self.state, self.runner = state, runner
+    def __init__(
+        self,
+        state: SceneState,
+        snap: dict[str, Any],
+        runner: PassRunner | None,
+        compiled: Compiled | None = None,
+    ):
+        self.state, self.runner, self.compiled = state, runner, compiled
         self.entries = {e["id"]: e for e in snap["objects"]}
         self.size = inspect_size(state)
         self._masks: dict[str, np.ndarray] = {}
@@ -147,13 +164,15 @@ class _Frame:
         the label mostly sits on."""
         me = self.state[label_id]
         c = me.style["color"]
+        alpha = c[3] * (shown_opacity(self.compiled, label_id) if self.compiled else
+                        me.params.opacity)  # fmt: skip
         backdrop = self._backdrop()
         if backdrop is not None:
             ys, xs = self._rect(self.box(label_id))
             behind = backdrop[ys, xs, :3].reshape(-1, 3)
             if len(behind):
                 bg = (*np.clip(behind.mean(axis=0), 0, None), 1.0)
-                return contrast_ratio(over((*c[:3], c[3] * me.params.opacity), bg), bg)
+                return contrast_ratio(over((*c[:3], alpha), bg), bg)
         bg = self.state.background
         for obj in self.state.draw_order():
             if obj.id == label_id:
@@ -162,7 +181,7 @@ class _Frame:
             if on_it and self.covered(label_id, obj.id) > 0.5:
                 under = obj.style["color"]
                 bg = over((*under[:3], under[3] * obj.params.opacity), bg)
-        return contrast_ratio(over((*c[:3], c[3] * me.params.opacity), bg), bg)
+        return contrast_ratio(over((*c[:3], alpha), bg), bg)
 
 
 class _Findings:
@@ -199,6 +218,28 @@ def _near_fix(c: Compiled, plan: Plan, label_id: str) -> tuple[dict[str, Any], .
     ):
         return ()
     return ({"op": "add_constraint", "rule": f"label({owner}) near {owner}"},)
+
+
+def strict_rules(c: Compiled) -> list[Issue]:
+    """Rules for finished scenes only. ``raw_motion``: transitions written with raw ``to()``
+    instead of a choreography verb (their timing is not the theme's)."""
+    raw: dict[str, list[float]] = {}
+    for path, segs in c.doc.timeline.tracks.items():
+        for seg in segs:
+            if seg.verb is None:
+                raw.setdefault(path.rpartition(".")[0], []).append(c.time_map.resolve(seg.t0))
+    return [
+        Issue(
+            "raw_motion",
+            f"{object_id!r} moves with raw to() transitions {_when(sorted(ts))}",
+            "warning",
+            (object_id,),
+            times=tuple(sorted(ts)),
+            fix_hint="use a verb (reveal, trace, morph, settle, focus_pull, ...) so the "
+            "theme sets timing and easing",
+        )
+        for object_id, ts in sorted(raw.items())
+    ]
 
 
 def clutter(c: Compiled) -> list[Issue]:
@@ -248,7 +289,7 @@ def run(
 
     for t in sample_times(c, step):
         state = state_at(t)
-        fr = _Frame(state, snapshot_at(t), runner)
+        fr = _Frame(state, snapshot_at(t), runner, c)
         height = state.height
         shown = [e for e in fr.entries.values() if _shown(e)]
         ever_shown.update(e["id"] for e in shown)

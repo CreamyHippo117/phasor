@@ -31,6 +31,9 @@ class ParamsBase(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
     opacity: float = Field(1.0, ge=0, le=1)
+    # A second opacity factor, owned by dim_others/undim so that dimming and revealing never
+    # fight over one track. In a SceneState, ``opacity`` already includes it.
+    dim: float = Field(1.0, ge=0, le=1)
     z_index: int = 0  # draw order among coplanar objects; higher draws on top
 
 

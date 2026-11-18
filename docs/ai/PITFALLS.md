@@ -119,3 +119,24 @@ NVIDIA machine.
 `CopyBridge.upload` must be called inside `with ctx:` and does not enter the context
 itself. Leaving a nested `with ctx:` makes no context current, and the next GL call in the
 outer block fails with "cannot create program".
+
+## Animating by seconds in a narrated scene
+
+Anchor to markers: `s.at("loop_draw")`, not `s.at(4.2)`. Seconds do not move when the voice
+changes, so the picture drifts away from the words.
+
+## A revealed object shows from the start
+
+`reveal` hides an object only if nothing animates its opacity earlier. If you fade an
+object yourself before revealing it, it is visible until your fade. Use one verb per
+appearance.
+
+## Pace last
+
+`s.pace()` measures how much each sentence changes on screen. Calling it before the verbs
+are written gives no extra room. Calling it again is harmless.
+
+## No voice in the video
+
+With `voice="estimate"` (or `auto` on a machine without espeak-ng) there is timing but no
+audio. `phasor render` prints "with narration" when a track was muxed.

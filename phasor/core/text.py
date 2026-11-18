@@ -31,13 +31,22 @@ def aspect(text: str) -> float:
 
 @functools.lru_cache(maxsize=512)
 def rasterize(text: str, px_height: int) -> np.ndarray:
-    """Coverage bitmap (uint8, row 0 = top), exactly ``px_height`` tall, ``aspect`` wide."""
+    """Coverage bitmap (uint8, row 0 = top), exactly ``px_height`` tall and ``aspect`` wide.
+
+    Glyphs are drawn at the nearest whole font size, whose line can come out a little wider
+    or narrower than ``aspect`` predicts; the drawing is then resampled to the exact width, so
+    no glyph is cut off, nothing is left blank at the end, and the bitmap fills exactly the
+    quad that bounds report.
+    """
     px_height = max(int(px_height), 2)
     ascent, descent = _font(_REF).getmetrics()
     f = _font(max(1, round(_REF * px_height / (ascent + descent))))
     width = max(1, math.ceil(aspect(text) * px_height))
-    img = Image.new("L", (width, px_height), 0)
+    drawn = max(1, math.ceil(f.getlength(text)))
+    img = Image.new("L", (drawn, px_height), 0)
     ImageDraw.Draw(img).text((0, 0), text, fill=255, font=f)
+    if img.width != width:  # a few percent either way; keeps centered text centered
+        img = img.resize((width, px_height), Image.Resampling.LANCZOS)
     out = np.asarray(img, dtype=np.uint8)
     out.setflags(write=False)
     return out

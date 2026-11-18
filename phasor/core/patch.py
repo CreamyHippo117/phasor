@@ -20,6 +20,7 @@ from phasor.core.schema import (
     ExprSpec,
     Meta,
     Model,
+    Narration,
     ObjectSpec,
     Overrides,
     ParamSpec,
@@ -90,6 +91,15 @@ class SetMeta(Model):
     value: ConstValue | None
 
 
+class SetNarration(Model):
+    """Replace the narration (or remove it with ``None``). The markers the old narration
+    owned leave ``timeline.markers`` and the new ones arrive, so every track anchored to a
+    marker follows the new voice."""
+
+    op: Literal["set_narration"] = "set_narration"
+    narration: Narration | None
+
+
 class AddConstraint(Model):
     """Add a layout rule, e.g. ``label(pole) near pole``."""
 
@@ -115,6 +125,7 @@ Op = Annotated[
     | RemoveMarker
     | SetMeta
     | AddConstraint
+    | SetNarration
     | RemoveConstraint,
     Field(discriminator="op"),
 ]
@@ -228,6 +239,16 @@ def _apply_op(doc: Document, op: Any) -> Document:
             if op.field not in Meta.model_fields:
                 raise _fail("unknown_meta", f"no meta field {op.field!r}")
             return doc.model_copy(update={"meta": doc.meta.model_copy(update={op.field: op.value})})
+        case SetNarration():
+            old = doc.narration.markers() if doc.narration else {}
+            new = op.narration.markers() if op.narration else {}
+            kept = {k: v for k, v in tl.markers.items() if k not in old}
+            clash = sorted(set(kept) & set(new))
+            if clash:
+                raise _fail("marker_conflict", f"narration markers {clash} already exist as "
+                            "hand-placed markers", fix_hint="rename one of them")  # fmt: skip
+            timeline = tl.model_copy(update={"markers": {**kept, **new}})
+            return doc.model_copy(update={"narration": op.narration, "timeline": timeline})
         case AddConstraint():
             try:
                 spec = ConstraintSpec(rule=op.rule, priority=op.priority)
@@ -339,6 +360,7 @@ __all__ = [
     "RemoveObject",
     "SetMarker",
     "SetMeta",
+    "SetNarration",
     "SetParam",
     "SetStyle",
     "SetTags",

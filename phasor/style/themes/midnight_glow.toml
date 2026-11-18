@@ -38,7 +38,7 @@ emissive = 1.0
 # Cyclic color tables. "oklch L C" is the perceptually even phase wheel at OKLCH lightness
 # L and chroma C; kept darker than the paint colors so glowing curves stand out on it.
 [colormap]
-phase = "oklch 0.6 0.11"
+phase = "oklch 0.52 0.1"
 sequential = ["#0b0e14", "#1f2a4d", "#7aa2f7", "#c0caf5", "#ffb454", "#f7768e", "#3b1f3a"]
 
 # Final look: the light that glow roles add blooms (`threshold` applies only when there is
@@ -51,6 +51,16 @@ strength = 0.8
 levels = 5
 exposure = 1.0
 knee = 0.9
+
+# Narration pacing, in seconds. `lead`: silence before the first sentence; `gap`: between
+# sentences; after a sentence whose block changes N things on screen, wait an extra
+# min(N * pause_per_change, pause_max) so the viewer can look (Scene.pace()).
+[narration]
+words_per_second = 2.6
+lead = 0.5
+gap = 0.3
+pause_per_change = 0.25
+pause_max = 1.5
 
 # Layout defaults, as fractions of the frame height.
 [layout]
@@ -66,3 +76,41 @@ tiny = 0.006         # objects whose larger side is under this share of the fram
 text_min = 0.02      # text lower than this share of the frame height
 clutter = 4          # more objects than this changing at once in one block
 crowded = 0.05       # a placed label still covered by more than this share is "unsolved"
+
+# Choreography verbs: how long each takes (seconds) and how it eases. `stagger` delays each
+# further object when a verb moves several; `dim_level` is the opacity dim_others leaves.
+[motion]
+stagger = 0.12
+dim_level = 0.25
+
+[motion.reveal]
+duration = 0.6
+ease = "out"
+
+[motion.exit]
+duration = 0.5
+ease = "in"
+
+[motion.trace]
+duration = 1.4
+ease = "in_out"
+
+[motion.bloom_in]
+duration = 0.8
+ease = "back"
+
+[motion.dim]
+duration = 0.6
+ease = "smooth"
+
+[motion.focus_pull]
+duration = 1.2
+ease = "smoother"
+
+[motion.morph]
+duration = 1.0
+ease = "smoother"
+
+[motion.settle]
+duration = 0.9
+ease = "spring"

@@ -6,7 +6,7 @@ compounding. If this file and SPEC.md disagree, stop and ask.
 ## Where we are
 
 - Owner approved ADR 0001, ADR 0002 and id tombstones on 2026-11-18.
-- Current milestone: **2 built (awaiting boundary review and Windows check). 3 built (`MILESTONE_3.md`; untested on CUDA). 4 next**. See `MILESTONE_*.md` for what is built and deferred.
+- Current milestone: **2 built (awaiting boundary review and Windows check). 3 built (untested on CUDA). 4 built (`MILESTONE_4.md`). 5 next**. See `MILESTONE_*.md` for what is built and deferred.
 - One milestone per branch. No work on milestone N+1 until N's exit demo and tests pass.
 - Before declaring a milestone done, run the `phasor-milestone-gate` skill.
 
@@ -73,6 +73,9 @@ compounding. If this file and SPEC.md disagree, stop and ask.
   Paint below the theme's knee must come out of the tone map unchanged.
 - Kernel-drawn objects call `ctx.field(...)` and render only their visible part; mark them
   `"backdrop": True` in semantics if labels may sit on them.
+- Narrated scenes anchor every motion to a marker and use verbs; `lint(strict=True)` is the
+  check. Verbs live in `time/verbs.py`, take timing from the theme `[motion]`, and must give
+  the same result whatever order the script writes them in.
 - When a test and the code disagree, work out which one is wrong before changing either.
   In Milestone 1 it was the test about as often as the code.
 

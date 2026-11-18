@@ -63,7 +63,7 @@ def _cmd_lint(args: argparse.Namespace) -> int:
     try:
         engine = load(args.scene)
         fixed = engine.autofix()["applied"] if args.fix else []
-        issues = engine.lint(step=args.step)
+        issues = engine.lint(step=args.step, strict=args.strict)
         if fixed:
             # A script keeps its fixes in name.overrides.json; a document is rewritten.
             engine.save(_save_target(args.scene))
@@ -167,10 +167,19 @@ def _cmd_render(args: argparse.Namespace) -> int:
             if not args.quiet:
                 print(f"\rframe {k + 1}/{count}", end="", file=sys.stderr, flush=True)
         writer.close()
+        track = engine.audio_track()
+        if track is not None and out.suffix in (".mp4", ".mov"):
+            from phasor.render.encode import mux_audio
+
+            samples, rate = track
+            first = round(start * rate)
+            mux_audio(out, samples[first : first + round(count / fps * rate)], rate)
     except (DocumentError, OSError, ValueError, RuntimeError, EncodeError) as e:
         print(f"\nphasor render: {e}", file=sys.stderr)
         return 1
-    print(f"\nwrote {out}: {count} frames, {size[0]}x{size[1]} at {fps:g} fps, {writer.encoder}")
+    sound = "" if track is None else ", with narration"
+    print(f"\nwrote {out}: {count} frames, {size[0]}x{size[1]} at {fps:g} fps, "
+          f"{writer.encoder}{sound}")  # fmt: skip
     return 0
 
 

@@ -36,7 +36,8 @@ s.set("camera.height", 6)  # world units visible top to bottom
 | `cx.Fractal` | `kind` (`mandelbrot`/`julia`), `c` (Julia constant), `pos`, `size`, `max_iter`, `density` | `colormap` (colormap, sequential) |
 | `Text` | `text`, `pos`, `anchor` (`center`/`left`/`right`), `leader`, `leader_on` (set by layout) | `color` (emphasis, primary), `size` (text, label), `leader` (stroke, hairline) |
 
-Every type also has `opacity` (0-1; below 0.5 it stops hiding things behind it) and
+Every type also has `opacity` (0-1; below 0.5 it stops hiding things behind it), `dim`
+(0-1, owned by `dim_others`; what is drawn is `opacity` x `dim`) and
 `z_index` (higher draws on top among objects at the same depth). Every object takes
 `layer="overlay"` to live in screen space: units are frame heights, origin top-left, y down.
 
@@ -76,19 +77,73 @@ Operators `+ - * / ** %`, indexing `dot.pos[0]`, constants `pi tau e`, functions
 `sin cos tan exp log sqrt floor ceil abs min max clamp lerp vec length normalize dot midpoint`.
 Scalars broadcast over vectors. A cycle is an error.
 
-## Animate
+## Narrate: words drive time
 
 ```python
-s.marker("appear", 1.0)  # narration marker, in seconds
+from phasor import Dot, Scene
+
+s4 = Scene("narrated", passes=None)
+s4.add(Dot(id="pole", pos=(0, 1), r=0.2))
+s4.narrate(
+    "We start with a function that has a pole [[pole_appears]].\n"
+    "[[pause 0.5]]\n"
+    "Watch it move [[pole_moves]] to the right.",
+    voice="estimate",  # or "auto", "espeak[:lang[:wpm]]", "piper:<model.onnx>"
+)
+s4.at("pole_appears").bloom_in("pole")
+s4.at("pole_moves").settle("pole.pos", (2, 1))
+s4.pace()  # breathing room after sentences that change a lot; run last
+assert s4.engine.lint(strict=True) == []
+```
+
+- One sentence is one block; `[[name]]` marks the moment the next word starts (at the end
+  of a sentence: when it ends). `[[pause 1.5]]` is a silent block.
+- `narrate` writes the markers. Anchor motion to them with `s.at("name")`; never type seconds.
+  Re-narrate (another voice, an edited sentence) and everything moves with the words.
+- Voices: `auto` = espeak-ng if installed, else `estimate` (timing from the text, no audio).
+  Synthesized voices are spoken piece by piece between markers, so markers are exact; clips
+  are cached in `<title>.narration/` beside the script. Your own recordings:
+  `phasor.voice.from_recordings(script, wavs, aligner, base_dir, theme)` with
+  `WhisperX()` or `TimingsFile()`.
+- `phasor render` muxes the narration into the video.
+
+## Animate with verbs
+
+| Verb | Does |
+| --- | --- |
+| `reveal(*ids)` | fade in; hidden until then; drops earlier dimming (it is the new focus) |
+| `exit(*ids)` | fade out |
+| `trace(*ids)` | draw a `Line` from start to end (`progress` 0 to 1); nothing drawn before |
+| `bloom_in(*ids)` | fade in and grow from a point with a small overshoot (objects with `r`) |
+| `dim_others(*keep)` | dim everything else to the theme's `dim_level` (backdrops stay) |
+| `undim()` | bring dimmed objects back |
+| `focus_pull(id, margin=0.15)` | move the camera onto an object |
+| `morph(path, value)` | change any parameter smoothly |
+| `settle(path, value)` | move like a released spring (overshoot, then rest) |
+
+Durations, easing and stagger come from the theme's `[motion]` table. Chain with `then()`:
+`s.at("loop_draw").trace("loop").then().reveal("loop.label")`. Several ids stagger.
+`orbit_reveal` arrives with 3D (Milestone 6).
+
+Dimming uses each object's `dim` factor (drawn opacity = `opacity` x `dim`), so dimming and
+revealing never fight, whatever order you write them in.
+
+## Animate by hand
+
+```python
+s.marker("appear", 1.0)  # a hand-placed marker, in seconds
 s.at("appear").to("pole_i.r", 0.3, duration=0.5)  # ease "smooth" by default
 s.at("appear", offset=1.0).to("pole_i.pos", (2, 1), duration=2.0, ease="in_out")
 s.at(4.0).set("pole_i_label.text", "moved")  # instant change at 4 s
 ```
 
+Raw `to()` is allowed but lints as `raw_motion` with `engine.lint(strict=True)`: prefer verbs.
 Any parameter is animatable by its path, cameras included (`camera.center`, `camera.height`).
 Times anchored to a marker move with it. Segments on one parameter must not overlap.
 A parameter set by `expr(...)` cannot also have a track; animate what it reads.
-Easings: `linear smooth smoother in out in_out`.
+Easings: `linear smooth smoother in out in_out`, and `back spring` (these overshoot: not for
+opacity). Custom easing functions are not supported: a document must mean the same
+everywhere.
 
 ## Engine: state, patches, undo
 
@@ -124,6 +179,7 @@ lint_added, lint_resolved)`. Each error has `code`, `message`, `ids`, `path`, `f
 | `set_marker` / `remove_marker` | `name`, `t` |
 | `set_meta` | `field`, `value` |
 | `add_constraint` | `rule`, `priority` (`required`/`strong`/`medium`/`weak`, default `strong`) |
+| `set_narration` | `narration` (from `phasor.voice.narrate`) or `null`; replaces the markers it owns |
 | `remove_constraint` | `rule` |
 
 On a scene built by a script, `set_param`, `set_style` and `add_constraint` are stored as
@@ -195,6 +251,7 @@ Each issue has `code`, `severity`, `message`, `ids`, `times`, `fix_hint`, and `f
 | `orphan` | warning | an object that never appears |
 | `clutter` | warning | too many objects change at once in one block (between two markers) |
 | `unsolved` | error | a constraint or guard does not hold |
+| `raw_motion` | warning, strict only | a transition written with raw `to()` instead of a verb |
 | `orphan_override` | error | a tweak whose object is gone |
 
 `engine.autofix()` applies every `fix` the linter offers (add `near` for a child label that

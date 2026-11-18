@@ -37,8 +37,14 @@ def draw_marks(still: np.ndarray, snapshot: dict[str, Any]) -> np.ndarray:
     font = _font(max(9, img.height // 32))
     marks = []
     for index, e in enumerate(snapshot["objects"], start=1):
-        if e["opacity"] > 0 and e["on_screen_fraction"] > 0:
-            x0, y0, x1, y1 = e["bbox"]["px"]
+        x0, y0, x1, y1 = e["bbox"]["px"]
+        drawn = e["semantic"].get("drawn", 1.0) > 0  # an untraced curve shows nothing
+        if (
+            e["opacity"] > 0
+            and e["on_screen_fraction"] > 0
+            and drawn
+            and (x1 - x0) * (y1 - y0) >= 1
+        ):
             marks.append((index, e["id"], (x0 * sx - 2, y0 * sy - 2, x1 * sx + 2, y1 * sy + 2)))
     # Boxes that span much of the frame (a long diagonal line) are mostly empty; a tag may
     # sit inside them. Everything else is kept clear.

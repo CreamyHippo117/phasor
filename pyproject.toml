@@ -76,6 +76,7 @@ type = "layers"
 layers = [
     "phasor.cli | phasor.gui | phasor.mcp | phasor.sketch",
     "phasor.scene",
+    "phasor.voice",
     "phasor.engine",
     "phasor.domains",
     "phasor.render",

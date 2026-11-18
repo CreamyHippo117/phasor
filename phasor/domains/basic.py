@@ -79,27 +79,47 @@ class Line(ObjectBase):
 
     class Params(ParamsBase):
         points: tuple[Vec3, ...] = Field(min_length=2)
+        progress: float = Field(1.0, ge=0, le=1)  # drawn share of the length (the trace verb)
 
     def _width(self, state: SceneState) -> float:
         me = self.me(state)
         return me.style["stroke"] * state.camera_for(me).units_per_height()
 
+    def _drawn(self, state: SceneState) -> np.ndarray:
+        """The points of the part drawn so far: the first ``progress`` of the length."""
+        p = self.me(state).params
+        pts = np.asarray(p.points, dtype=np.float64)
+        if p.progress >= 1.0:
+            return pts
+        seg = np.linalg.norm(np.diff(pts, axis=0), axis=1)
+        cum = np.concatenate([[0.0], np.cumsum(seg)])
+        stop = p.progress * cum[-1]
+        k = int(np.searchsorted(cum, stop, side="right"))  # points fully inside
+        k = min(max(k, 1), len(pts) - 1)
+        u = (stop - cum[k - 1]) / seg[k - 1] if seg[k - 1] > 0 else 0.0
+        return np.vstack([pts[:k], pts[k - 1] + u * (pts[k] - pts[k - 1])])
+
     def world_bounds(self, state: SceneState) -> Bounds:
-        return Bounds.of_points(self.me(state).params.points, pad=self._width(state) / 2)
+        return Bounds.of_points(self._drawn(state), pad=self._width(state) / 2)
 
     def features(self, state: SceneState) -> dict[str, np.ndarray]:
-        pts = np.asarray(self.me(state).params.points)
+        pts = self._drawn(state)
         return {"start": pts[0], "end": pts[-1], "curve": pts}
 
     def semantics(self, state: SceneState) -> dict[str, Any]:
         pts = np.asarray(self.me(state).params.points)
         length = float(np.linalg.norm(np.diff(pts, axis=0), axis=1).sum())
-        return {"kind": "polyline", "points": len(pts), "length": length}
+        out: dict[str, Any] = {"kind": "polyline", "points": len(pts), "length": length}
+        if self.me(state).params.progress < 1:  # partly traced; 0 means nothing drawn yet
+            out["drawn"] = round(self.me(state).params.progress, 4)
+        return out
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
         me = self.me(state)
         cam = state.camera_for(me)
-        pts = np.asarray(me.params.points)
+        pts = self._drawn(state)
+        if me.params.progress <= 0:
+            return
         flat = np.c_[pts @ cam.right, pts @ cam.up]  # coordinates in the camera plane
         seg = np.diff(flat, axis=0)
         norm = np.linalg.norm(seg, axis=1, keepdims=True)

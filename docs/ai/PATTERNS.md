@@ -1,7 +1,7 @@
 # phasor patterns
 
 Idioms for common tasks, one canonical way each. More arrive with their milestones:
-narration sync (M4), 3D orbits (M6).
+3D orbits (M6).
 
 ## Label something
 
@@ -97,3 +97,27 @@ assert s.engine.lint() == []
 
 Write math in labels with ASCII (`z^2`, `pi`) until LaTeX arrives: the bundled font has no
 superscripts or Greek, and lint reports `missing_glyph` if you use them.
+
+## A short driven by narration
+
+Write the words first, mark the moments, then attach verbs to the marks. Pace last.
+
+```python
+from phasor import Dot, Scene, Text
+
+s = Scene("short", passes=None)
+s.add(Dot(id="pole", pos=(0, 1), r=0.1, style={"color": "highlight"}))
+s.add(Text(id="pole.label", text="i"))
+s.constrain("label(pole) near pole")
+s.add(Text(id="note", text="only this pole counts", pos=(0, -1)))
+s.narrate(
+    "There is a pole at i [[pole]].\nOnly this pole counts [[focus]].",
+    voice="estimate",
+)
+s.at("pole").bloom_in("pole").then().reveal("pole.label")
+s.at("focus").reveal("note")
+s.pace()
+assert s.engine.lint(strict=True) == []
+```
+
+Check what is on screen at each marker (the self-review loop above) before rendering.

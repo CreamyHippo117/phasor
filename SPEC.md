@@ -161,7 +161,8 @@ Only that pole contributes [[residue_glow]].
 ```
 
 - Audio: record your own voice or use TTS (pluggable: local Piper/Coqui, or a cloud provider).
-- Alignment: WhisperX (or similar forced alignment) gives word timestamps; `[[markers]]` resolve to times.
+- Alignment: synthesized voices are spoken piece by piece between markers, so each `[[marker]]` time is exact without a model. Recordings use WhisperX (or a word-timings file) to place markers on words.
+- `[[pause 1.5]]` writes a silent block. A marker at the end of a sentence means its end.
 - Re-recording re-aligns everything; nothing is hard-timed.
 
 **State tracks and transitions**
@@ -169,12 +170,12 @@ Only that pole contributes [[residue_glow]].
 - Every animatable parameter is a named state variable: `loop.r`, `camera.azimuth`, `julia.c`.
 - A transition sets a target value over a span: `at("loop_draw").to("loop.progress", 1, ease="smooth")`.
 - Evaluation is pure: `scene.state_at(t)` computes everything from the tracks. No hidden mutation.
-- Spans can be anchored to markers, to other spans (`after("loop_draw")`), or to absolute times.
-- Built-in easing library plus physical springs; custom easing as a Python function.
+- Spans can be anchored to markers, to the end of what was just started (`s.at("loop_draw").trace("loop").then()`), or to absolute times.
+- Built-in easing library plus physical springs (`back`, `spring`). No custom easing functions: a document must mean the same on every machine.
 
 **Pacing helpers**
 
-- Auto-pause after an idea, sized by how much changed on screen.
+- Auto-pause after an idea, sized by how much changed on screen (`Scene.pace()`, run after the verbs).
 - Lint warning when too many things change in one block.
 
 ## Layout constraints, inspector and linter
@@ -386,7 +387,8 @@ The AI handles structure, math and timing; the engine and your gallery hold the 
 **Choreography verbs (`time/verbs.py`)**
 
 - The AI animates with verbs, not raw tweens: `reveal`, `trace`, `focus_pull`, `bloom_in`, `settle`, `morph`, `orbit_reveal`, `dim_others`, `exit`.
-- Each verb expands into state transitions with tuned duration, easing, stagger and overshoot, read from the theme.
+- Each verb expands into state transitions with tuned duration, easing, stagger and overshoot, read from the theme. Segments remember the verb that made them.
+- Dimming uses a separate `dim` factor per object (drawn opacity = opacity x dim), so `dim_others` and `reveal` never fight; a reveal drops earlier dimming.
 - Raw `to()` transitions stay available but lint as `raw_motion` in strict mode.
 
 **Aesthetic lint rules (added to the linter)**

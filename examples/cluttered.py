@@ -25,8 +25,8 @@ for name, (x, y) in POLES.items():
 s.add(Text(id="title", text="Three poles", pos=(0, 2.45), style={"size": "title"}))
 
 s.marker("squeeze", 1.0)
-s.at("squeeze").to("pole_a.pos", (-0.45, 0.35), duration=1.5)
-s.at("squeeze").to("pole_c.pos", (0.45, 0.4), duration=1.5)
+s.at("squeeze").morph("pole_a.pos", (-0.45, 0.35))
+s.at("squeeze").morph("pole_c.pos", (0.45, 0.4))
 
 
 def report(title: str) -> None:

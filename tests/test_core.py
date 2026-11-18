@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 
 import numpy as np
 import pytest
@@ -114,7 +115,7 @@ def test_canonical_file_roundtrip_is_byte_stable(tmp_path):
 def test_migrate_rejects_missing_and_future_versions():
     with pytest.raises(DocumentError, match="schema_version"):
         io.parse_document({"meta": {"title": "t"}})
-    with pytest.raises(DocumentError, match="reads up to 3"):
+    with pytest.raises(DocumentError, match="reads up to 4"):
         io.parse_document({"schema_version": 999, "meta": {"title": "t"}})
 
 
@@ -202,3 +203,18 @@ def test_rng_is_deterministic_per_object_and_seed():
     assert rng("a", 1).random() == rng("a", 1).random()
     assert rng("a", 1).random() != rng("a", 2).random()
     assert rng("a", 1).random() != rng("b", 1).random()
+
+
+@pytest.mark.parametrize("px", range(12, 48, 5))
+def test_rasterized_text_never_cuts_off_its_last_glyph(px):
+    """A Milestone 4 render showed "= pi" as "= p": glyphs drawn at the nearest whole font
+    size ran past a bitmap sized from the reference metrics."""
+    from phasor.core.text import aspect, rasterize
+
+    text = "integral around the loop = 2 pi i (-i/2) = pi"
+    bitmap = rasterize(text, px)
+    assert bitmap.shape == (px, math.ceil(aspect(text) * px))
+    inked = np.flatnonzero(bitmap.max(axis=0) > 64)
+    without_last = rasterize(text[:-1], px)
+    assert inked.max() > np.flatnonzero(without_last.max(axis=0) > 64).max() * 0.98
+    assert bitmap.shape[1] - inked.max() < max(3, px * 0.4)  # the "i" is there, at the end

@@ -109,6 +109,7 @@ class Engine:
         overrides: Overrides | None = None,
         title: str = "untitled",
         passes: PassRunner | str | None = "auto",
+        base_dir: str | Path | None = None,
     ) -> None:
         base = document or Document(meta=Meta(title=title))
         self._snap = _build(base, overrides or Overrides())
@@ -116,12 +117,15 @@ class Engine:
         self._redo: list[_Snapshot] = []
         self._version = 0
         self._passes = passes
+        # The folder that files the document refers to (narration audio) are relative to.
+        self.base_dir = Path(base_dir) if base_dir is not None else Path.cwd()
 
     # ------------------------------------------------------------ files
 
     @classmethod
     def open(cls, path: str | Path, **kwargs: Any) -> Engine:
         """Load ``name.phasor.json`` and, if present, ``name.overrides.json`` beside it."""
+        kwargs.setdefault("base_dir", Path(path).parent)
         return cls(
             io.load_document(path), overrides=io.load_overrides(io.overrides_path(path)), **kwargs
         )
@@ -163,10 +167,20 @@ class Engine:
     def duration(self) -> float:
         return self._snap.compiled.duration
 
-    def lint(self, step: float = lint_rules.DEFAULT_STEP) -> list[Issue]:
+    def lint(self, step: float = lint_rules.DEFAULT_STEP, *, strict: bool = False) -> list[Issue]:
         """Every lint issue: dangling overrides, unsolved constraints, and the visual rules
-        checked at each marker and every ``step`` seconds. Cached per document version."""
-        return list(self._lint(self._snap, step))
+        checked at each marker and every ``step`` seconds. Cached per document version.
+        ``strict`` adds rules that only matter for finished scenes (``raw_motion``)."""
+        issues = list(self._lint(self._snap, step))
+        return issues + lint_rules.strict_rules(self._snap.compiled) if strict else issues
+
+    def audio_track(self):
+        """The narration as one mono int16 track covering the scene, and its sample rate;
+        None when there is no recorded or synthesized audio."""
+        from phasor.time.narration import mix_track
+
+        n = self.document.narration
+        return None if n is None else mix_track(n, self.base_dir, self.duration)
 
     def _lint(self, snap: _Snapshot, step: float) -> tuple[Issue, ...]:
         if step not in snap.lint:

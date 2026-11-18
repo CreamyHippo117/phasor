@@ -141,3 +141,30 @@ def open_writer(path: str | Path, width: int, height: int, fps: float) -> Writer
     if backend == "pyav":
         return PyAVWriter(path, width, height, fps, codec)
     return FFmpegWriter(path, width, height, fps, codec, "yuv420p")
+
+
+def mux_audio(video: str | Path, samples: np.ndarray, rate: int) -> None:
+    """Add a mono int16 narration track to a finished video file, in place. The video
+    stream is copied, not re-encoded; the audio becomes AAC (MP4) or PCM (MOV)."""
+    import av
+
+    video = Path(video)
+    tmp = video.with_name(video.stem + ".mux" + video.suffix)
+    with av.open(str(video)) as src, av.open(str(tmp), mode="w") as dst:
+        vin = src.streams.video[0]
+        vout = dst.add_stream_from_template(vin)
+        codec = "pcm_s16le" if video.suffix == ".mov" else "aac"
+        aout = dst.add_stream(codec, rate=rate, layout="mono")
+        for packet in src.demux(vin):
+            if packet.dts is None:
+                continue
+            packet.stream = vout
+            dst.mux(packet)
+        pcm = np.ascontiguousarray(samples, dtype=np.int16).reshape(1, -1)
+        frame = av.AudioFrame.from_ndarray(pcm, format="s16", layout="mono")
+        frame.sample_rate = rate
+        for packet in aout.encode(frame):
+            dst.mux(packet)
+        for packet in aout.encode(None):
+            dst.mux(packet)
+    tmp.replace(video)

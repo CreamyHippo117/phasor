@@ -11,7 +11,7 @@ import phasor.domains  # noqa: F401
 from phasor.core.issues import DocumentError
 from phasor.core.schema import Document, MarkerRef, Meta, ObjectSpec, Segment, Timeline
 from phasor.time.compile import compile_document, evaluate
-from phasor.time.easing import EASINGS
+from phasor.time.easing import EASINGS, OVERSHOOT
 from phasor.time.expr import ExprError, compile_expr
 from phasor.time.tracks import ResolvedSegment, ResolvedTrack, TimeMap
 
@@ -93,7 +93,11 @@ def test_track_instant_segment_and_discrete_values():
 def test_easings_hit_endpoints_and_stay_bounded(name):
     f = EASINGS[name]
     assert f(0.0) == pytest.approx(0.0) and f(1.0) == pytest.approx(1.0)
-    assert all(-1e-9 <= f(i / 50) <= 1 + 1e-9 for i in range(51))
+    values = [f(i / 50) for i in range(51)]
+    if name in OVERSHOOT:  # these go past 1 on purpose, then come back
+        assert 1.02 < max(values) < 1.25 and min(values) >= -1e-9
+    else:
+        assert all(-1e-9 <= v <= 1 + 1e-9 for v in values)
 
 
 def test_timemap_resolves_markers_and_nearest():
