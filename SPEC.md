@@ -385,7 +385,7 @@ The AI handles structure, math and timing; the engine and your gallery hold the 
 | Surface | `solid`, `glass`, `wire`, `emissive` |
 
 - Ship three themes tuned by hand: `midnight_glow`, `aurora`, `paper`. Add more only after these look great.
-- **Backgrounds are not dark by default** (owner, 2026-11-18). The default theme has a light or mid-tone background; dark themes like `midnight_glow` are an opt-in choice, not the house look. Glow and bloom must still read on a light background (soft colored halos, not white blow-outs).
+- **The dark theme is the default, always** (owner, 2026-11-18; replaces an earlier note asking for light defaults). `midnight_glow` stays the house look. Light and mid-tone themes are opt-in choices, and glow and bloom must still read on them (soft colored halos, not white blow-outs).
 
 **Living motion: no frozen frames (owner, 2026-11-18)**
 
@@ -404,13 +404,13 @@ Things on screen should feel alive, not rigid. Every theme has a `[life]` sectio
 **Softer, less clashing pictures (owner, 2026-11-18)**
 
 - Boundaries should not clash: hard edges between regions (domain-coloring contour bands, the rim of a backdrop, a curve crossing a field) are softened or feathered by default. Sharp edges are a choice, not the default.
-- Fewer rainbows: full-hue rainbow colormaps are not the default. Phase coloring uses a restrained palette (two or three hues from the theme, or a muted wheel) unless a scene asks for the full wheel. The `color_restraint` lint rule applies to backdrops too.
+- Fewer rainbows, not no rainbows (owner, 2026-11-18): use judgement. Where hue carries meaning, a full wheel is right: domain coloring encodes phase as hue, so it keeps its rainbow. Elsewhere, vary the palettes and mix things (two or three theme hues, sequential ramps, a muted wheel, monochrome with one accent) instead of reaching for a rainbow every time. The `color_restraint` lint rule judges a frame's saturated hues but does not count a phase-coding backdrop against it.
 
 **Presets**
 
 Making something should start from a preset, not from a blank set of parameters.
 
-- Look presets bundle theme choices: background (light, mid, dark), palette restraint, edge softness, glow level and life level. Examples: `calm` (light, soft edges, subtle life), `chalk` (paper background, no glow, crisp), `glow` (mid-dark, lively bloom).
+- Look presets bundle theme choices: background (dark by default; mid or light on request), palette restraint, edge softness, glow level and life level. Examples: `calm` (soft edges, subtle life, gentle glow), `chalk` (opt-in paper background, no glow, crisp), `glow` (lively bloom).
 - Object presets bundle parameters per object type: a domain-coloring preset picks colormap, contour softness and drift; a fractal preset picks palette, iteration depth and drift; a curve preset picks stroke, glow and shimmer.
 - Usage: `Scene("x", look="calm")`, `cx.DomainColoring(..., preset="soft_phase")`. A preset is just named defaults; anything set explicitly wins, and the document stores the resolved values so it stays reproducible.
 - The AI chooses presets by name (documented in `docs/ai/`), the same way it chooses style roles.
@@ -667,7 +667,7 @@ Build the AI-visible core first, then beauty, then breadth. Each milestone ends 
 | 4 | Narration sync | Script markers, recording/TTS, WhisperX alignment, `TimeMap`, choreography verbs | Residue theorem short driven entirely by narration | Sonnet |
 | 5 | MCP + AI docs | MCP server, detail levels, `docs/ai/`, self-review loop, skill package | An AI builds and fixes a scene from a one-line prompt | Sonnet |
 | 6 | 3D + spatial awareness | Perspective camera, surfaces, OIT, event log, camera solver, 3D label placement, auto-cinematography | Riemann surface of sqrt(z): labels readable through a full orbit, event log clean | Strong for camera solver, then Sonnet |
-| 7 | Beauty system | Aesthetic lint rules, gallery compare, art-director pass, variants, `choices.jsonl`, two more themes, light default background, living motion (`life`), softened edges, restrained colormaps, look and object presets | Critic pass measurably improves a rough scene in 3 rounds | Sonnet |
+| 7 | Beauty system | Aesthetic lint rules, gallery compare, art-director pass, variants, `choices.jsonl`, two more themes (dark stays the default), living motion (`life`), softened edges, varied palettes (rainbow only where hue carries meaning), look and object presets | Critic pass measurably improves a rough scene in 3 rounds | Sonnet |
 | 8 | Domains wave 1 | `fourier`, `linalg`, `acoustics`, `Simulation` checkpoints | 3D reverb scene (section above) | Sonnet |
 | 9 | Domains wave 2 | `pde`, `algebra`, `calc`, perturbation deep zoom | Heat equation, dihedral group and a 1e-30 zoom | Sonnet; strong for perturbation |
 | 10 | GUI editor | Viewport, timeline, inspector, lint panel, MCP attach, variant picker | Edit the reverb scene by hand and by AI in one session | Sonnet |
