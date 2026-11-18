@@ -14,10 +14,30 @@ from phasor import Scene, algebra, expr, pde
 s = Scene("heat_dihedral", look="calm")
 s.set("camera.height", 11)
 
-s.add(pde.Profile(id="rod", kind="heat", length=2.0, diffusivity=0.5, modes=(1.0, 0.4),
-                  time=expr("t / 10"), pos=(-9, 1.0, 0), extent=(5.5, 2.6), preset="glowing"))  # fmt: skip
-s.add(pde.Field(id="plate", kind="heat", mode=(0, 0), diffusivity=0.5, time=expr("t / 10"),
-                size=(4.2, 4.2), pos=(-6.2, -3.2, 0)))  # fmt: skip
+s.add(
+    pde.Profile(
+        id="rod",
+        kind="heat",
+        length=2.0,
+        diffusivity=0.5,
+        modes=(1.0, 0.4),
+        time=expr("t / 10"),
+        pos=(-9, 1.0, 0),
+        extent=(5.5, 2.6),
+        preset="glowing",
+    )
+)
+s.add(
+    pde.Field(
+        id="plate",
+        kind="heat",
+        mode=(0, 0),
+        diffusivity=0.5,
+        time=expr("t / 10"),
+        size=(4.2, 4.2),
+        pos=(-6.2, -3.2, 0),
+    )
+)
 
 s.add(algebra.Polygon(id="square", n=4, pos=(0.2, 2.4, 0), r=1.5))
 s.add(algebra.CayleyTable(id="table", group="D4", pos=(5.4, -1.2, 0), cell=0.7))
@@ -35,5 +55,7 @@ if __name__ == "__main__":
         rod = e.inspect(t, id="rod")["objects"][0]["semantic"]
         plate = e.inspect(t, id="plate")["objects"][0]["semantic"]
         sq = e.inspect(t, id="square")["objects"][0]["semantic"]
-        print(f"t={t:g}: rod max {rod['max']:.3f} (error {rod['max_error_vs_exact']:.4f}), "
-              f"plate heat {plate['total_heat']:.3f}, square = {sq['element']}")  # fmt: skip
+        print(
+            f"t={t:g}: rod max {rod['max']:.3f} (error {rod['max_error_vs_exact']:.4f}), "
+            f"plate heat {plate['total_heat']:.3f}, square = {sq['element']}"
+        )

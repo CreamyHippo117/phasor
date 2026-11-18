@@ -174,7 +174,9 @@ def test_the_clock_diagram_shows_a_subgroup_and_its_cosets():
     e = s.engine
     c = sem(e, "c")
     assert c["subgroup"] == [0, 4, 8] and c["index"] == 4 and c["generator_order"] == 3
-    assert all(len(x) == 3 for x in c["cosets"]) and sorted(sum(c["cosets"], [])) == list(range(12))
+    assert all(len(x) == 3 for x in c["cosets"]) and sorted(
+        x for coset in c["cosets"] for x in coset
+    ) == list(range(12))
     assert sem(e, "whole")["subgroup_order"] == 12  # 5 generates everything: gcd(5, 12) = 1
     assert sem(e, "half")["subgroup"] == [0, 6]
     with pytest.raises(Exception, match="unknown group"):
