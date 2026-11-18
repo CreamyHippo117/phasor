@@ -30,7 +30,7 @@ real GPU.
 
 ## Verification
 
-- `uv run pytest`: **458 passed, 16 skipped** (all need CUDA); ruff, ruff format and
+- `uv run pytest`: **460 passed, 16 skipped** (all need CUDA); ruff, ruff format and
   lint-imports clean; `phasor doctor` tier B. New: `test_camera3d.py`, `test_spatial.py`, `test_riemann_demo.py`
   (slow: the full 10 Hz event log with real pixels, about 3 minutes on llvmpipe).
 - **Exit demo**: the camera turns exactly 360 degrees between the `walk` and `home` markers;
@@ -59,6 +59,10 @@ real GPU.
 7. The 2D "covered pixels" rule made every slot near a surface look blocked; 3D labels now
    use depth.
 8. `Engine.events` (a method) shadowed the `events` module inside the class body.
+9. **Labels cut dark boxes out of glass behind them** (found by watching the rendered
+   video): a text quad wrote depth over its whole rectangle, so glass drawn later was
+   rejected there. Empty text texels are now discarded; a test checks that nothing behind
+   a label gets darker.
 
 ## Deviations from SPEC (SPEC updated in the same commit)
 

@@ -69,6 +69,9 @@ void main() {
 #endif
 #ifdef TEXTURED
     a *= texture(u_tex, v_uv).r;
+    // Empty texels of a text quad write nothing, depth included: otherwise glass drawn
+    // later is cut out behind the whole rectangle of a label.
+    if (a < 0.004) discard;
 #endif
     frag = vec4(u_color.rgb * u_glow * a, a);  // premultiplied; glow > 1 is HDR light
     emit = vec4(u_color.rgb * max(u_glow - 1.0, 0.0) * a, a);

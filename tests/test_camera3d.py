@@ -192,3 +192,26 @@ def test_solver_projection_matches_the_camera():
     x, y, behind = _cam_xy(c, pts)
     ndc = c.project(pts)
     assert np.allclose(x, ndc[:, 0]) and np.allclose(y, ndc[:, 1]) and behind == 0
+
+
+@pytest.mark.gl
+@pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
+def test_a_label_does_not_cut_a_box_out_of_glass_behind_it():
+    def scene(with_label: bool):
+        s = Scene("box", passes="auto")
+        s.use_camera("orbit", distance=7, elevation=25, azimuth=-90, drift=0)
+        s.add(cx.RiemannSurface(id="glass", radius=2.2, style={"material": "glass"}))
+        if with_label:
+            s.add(Text(id="note", text="i         i", pos=(0, 0.3, 0.3)))
+        return s.engine
+
+    plain = scene(False).still(0, (480, 270)).astype(float)
+    e = scene(True)
+    labelled = e.still(0, (480, 270)).astype(float)
+    x0, y0, x1, y1 = next(o for o in e.inspect(0)["objects"] if o["id"] == "note")["bbox"]["px"]
+    k = 480 / 1920
+    box = (slice(int(y0 * k), int(y1 * k)), slice(int(x0 * k), int(x1 * k)))
+    # Light text only brightens what is behind it; a cut-out box would darken it.
+    darker = (labelled[box].mean(-1) < plain[box].mean(-1) - 20).mean()
+    assert plain[box].mean() > 20  # there is glass behind the label to cut
+    assert darker < 0.02
