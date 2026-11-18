@@ -206,7 +206,7 @@ def test_style_roles_resolve_to_linear_theme_values():
         compile_document(_doc([ObjectSpec(id="a", type="dot", style={"color": "highlight"})])), 0
     )
     r, g, b, a = s["a"].style["color"]
-    assert s["a"].roles == {"color": "highlight"}
+    assert s["a"].roles == {"color": "highlight", "glow": "none"}
     assert a == 1.0 and r > g > b  # warm highlight, linear light
     assert r == pytest.approx(
         1.0

@@ -45,7 +45,21 @@ CASES = {
         (OFFSET, {"function": F, "center": (0.3, -0.2), "height": 3.0, "contour": 0.0,
                   "precision": "f64"}),
     ],
-    "tonemap": [(IMAGE_TILE, {"image": IMAGE, "exposure": 1.7})],
+    "tonemap": [
+        (IMAGE_TILE, {"image": IMAGE, "exposure": 1.7}),
+        (IMAGE_TILE, {"image": IMAGE, "bloom": _rgba(5), "bloom_strength": 0.6, "knee": 0.7}),
+    ],
+    "bright": [(IMAGE_TILE, {"image": IMAGE, "threshold": 1.5})],
+    "resize": [
+        (Tile.full(16, 12), {"image": IMAGE}),
+        (Tile.full(45, 31), {"image": IMAGE}),
+        (Tile.full(5, 3), {"image": IMAGE}),
+    ],
+    "palette": [
+        (Tile.full(64, 64), {"field": get("escape").reference(FULL, (-0.5, 0.0), 2.5, 100),
+                             "lut": phase_lut(), "density": 0.4, "offset": 0.2,
+                             "inside": (0.05, 0.1, 0.2)}),
+    ],
     "gauss": [
         (IMAGE_TILE, {"image": IMAGE, "sigma": 1.5, "axis": 0}),
         (IMAGE_TILE, {"image": IMAGE, "sigma": 2.2, "axis": 1}),
@@ -74,7 +88,8 @@ def _close(name: str, got: np.ndarray, want: np.ndarray, *, strict: bool) -> Non
 
 def test_every_kernel_has_a_reference_and_a_signature():
     ks = registered()
-    assert sorted(ks) == sorted(CASES) == ["domain", "escape", "gauss", "tonemap"]
+    assert sorted(ks) == sorted(CASES)
+    assert sorted(ks) == ["bright", "domain", "escape", "gauss", "palette", "resize", "tonemap"]
     assert all(callable(k.reference) and "->" in k.signature for k in ks.values())
 
 
@@ -317,16 +332,20 @@ def test_generated_c_computes_what_numpy_computes(source):
 # ---------------------------------------------------------------- post-processing
 
 
-def test_tonemap_is_a_monotone_curve_from_0_to_1_that_keeps_alpha():
-    ramp = np.zeros((1, 6, 4), dtype=np.float32)
-    ramp[0, :, :3] = np.array([0, 0.18, 1, 4, 1e4, np.nan], dtype=np.float32)[:, None]
+def test_tonemap_keeps_paint_and_rolls_light_off_towards_white():
+    ramp = np.zeros((1, 7, 4), dtype=np.float32)
+    ramp[0, :, :3] = np.array([0, 0.18, 0.9, 1, 4, 1e4, np.nan], dtype=np.float32)[:, None]
     ramp[..., 3] = 0.25
-    out = get("tonemap").reference(Tile.full(6, 1), ramp)
+    out = get("tonemap").reference(Tile.full(7, 1), ramp)
     v = out[0, :, 0]
-    assert v[0] == 0 and v[5] == 0 and v[4] == 1 and (np.diff(v[:5]) > 0).all()
-    assert 0.2 < v[1] < 0.35 and (out[..., 3] == 0.25).all()
-    brighter = get("tonemap").reference(Tile.full(6, 1), ramp, exposure=2.0)
-    assert (brighter[0, 1:4, 0] > v[1:4]).all()
+    assert v[0] == 0 and v[6] == 0 and v[1] == np.float32(0.18) and v[2] == np.float32(0.9)
+    assert (np.diff(v[:5]) > 0).all() and v[5] == pytest.approx(1.0) and v.max() <= 1.0
+    assert (out[..., 3] == 0.25).all()
+    eps = np.float32(1e-3)  # slope 1 on both sides of the knee: no visible crease
+    above = get("tonemap").reference(Tile.full(1, 1), np.full((1, 1, 4), 0.9 + eps, np.float32))
+    assert (above[0, 0, 0] - 0.9) / eps == pytest.approx(1.0, abs=2e-2)
+    brighter = get("tonemap").reference(Tile.full(7, 1), ramp, exposure=2.0)
+    assert (brighter[0, 1:4, 0] > v[1:4]).all()  # (4.0 is already at white)
 
 
 def test_gauss_keeps_flat_images_and_spreads_an_impulse_evenly():
@@ -352,6 +371,8 @@ def test_post_kernels_reject_tiles_and_wrong_images():
         get("gauss").reference(Tile(0, 0, 16, 12, 32, 24), IMAGE[:12, :16].copy(), 1.0, 0)
     with pytest.raises(KernelError, match="float32"):
         get("tonemap").reference(IMAGE_TILE, IMAGE.astype(np.float64))
+    with pytest.raises(KernelError, match="knee"):
+        get("tonemap").launch(None, IMAGE_TILE, IMAGE, knee=1.0)
     with pytest.raises(KernelError, match="axis"):
         get("gauss").launch(None, IMAGE_TILE, IMAGE, 1.0, 2)
 
@@ -364,18 +385,20 @@ def test_copy_bridge_round_trips_a_frame_and_reuses_its_texture():
     from phasor.render.glcontext import shared_context
     from phasor.render.gpu.bridge import CopyBridge
 
-    bridge = CopyBridge(shared_context())
+    ctx = shared_context()
+    bridge = CopyBridge(ctx)
     frame = _rgba(3, (18, 40))
     frame[0, 0] = [9.5, 0.0, 0.25, 1.0]  # HDR values and a known corner survive
-    tex = bridge.upload(frame)
-    assert tex.size == (40, 18) and tex.components == 4 and tex.dtype == "f2"
-    np.testing.assert_allclose(bridge.read_back(), frame, rtol=1e-3, atol=1e-4)  # float16
-    np.testing.assert_allclose(bridge.read_back()[0, 0], [9.5, 0.0, 0.25, 1.0], atol=1e-6)
-    assert bridge.upload(frame * 0.5) is tex  # same size: the texture is reused
-    np.testing.assert_allclose(bridge.read_back(), frame * 0.5, rtol=1e-3, atol=1e-4)
-    assert bridge.upload(_rgba(4, (8, 8))) is not tex
-    with pytest.raises(ValueError, match="RGBA"):
-        bridge.upload(np.zeros((4, 4, 3), dtype=np.float32))
+    with ctx:
+        tex = bridge.upload(frame)
+        assert tex.size == (40, 18) and tex.components == 4 and tex.dtype == "f2"
+        np.testing.assert_allclose(bridge.read_back(), frame, rtol=1e-3, atol=1e-4)  # float16
+        np.testing.assert_allclose(bridge.read_back()[0, 0], [9.5, 0.0, 0.25, 1.0], atol=1e-6)
+        assert bridge.upload(frame * 0.5) is tex  # same size: the texture is reused
+        np.testing.assert_allclose(bridge.read_back(), frame * 0.5, rtol=1e-3, atol=1e-4)
+        assert bridge.upload(_rgba(4, (8, 8))) is not tex
+        with pytest.raises(ValueError, match="RGBA"):
+            bridge.upload(np.zeros((4, 4, 3), dtype=np.float32))
 
 
 @pytest.mark.gl
@@ -384,6 +407,8 @@ def test_a_kernel_frame_reaches_opengl_through_the_bridge():
     from phasor.render.gpu.bridge import CopyBridge
 
     frame = gpu.render("domain", 96, 54, function=F, center=(0, 0), height=4.0)
-    bridge = CopyBridge(shared_context())
-    bridge.upload(frame)
-    np.testing.assert_allclose(bridge.read_back(), frame, rtol=1e-3, atol=1e-4)
+    ctx = shared_context()
+    bridge = CopyBridge(ctx)
+    with ctx:
+        bridge.upload(frame)
+        np.testing.assert_allclose(bridge.read_back(), frame, rtol=1e-3, atol=1e-4)

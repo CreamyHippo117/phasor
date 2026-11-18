@@ -1,6 +1,6 @@
 # midnight_glow: dark blue-black stage, cool primaries, one warm highlight.
 # Colors are sRGB hex; sizes are fractions of the frame height, so a theme looks the same
-# at every resolution. Milestone 1 holds only what the 2D primitives need.
+# at every resolution.
 
 [palette]
 background = "#0b0e14"
@@ -20,6 +20,37 @@ title = 0.075
 label = 0.042
 annotation = 0.032
 math = 0.048
+
+# Emission strength. Colors are multiplied by this, so anything above 1 is HDR light that
+# the bloom picks up. "none" is plain paint.
+[glow]
+none = 1.0
+soft = 2.5
+strong = 6.0
+
+# Surface opacity until 3D materials arrive (Milestone 6).
+[surface]
+solid = 1.0
+glass = 0.35
+wire = 1.0
+emissive = 1.0
+
+# Cyclic color tables. "oklch L C" is the perceptually even phase wheel at OKLCH lightness
+# L and chroma C; kept darker than the paint colors so glowing curves stand out on it.
+[colormap]
+phase = "oklch 0.6 0.11"
+sequential = ["#0b0e14", "#1f2a4d", "#7aa2f7", "#c0caf5", "#ffb454", "#f7768e", "#3b1f3a"]
+
+# Final look: the light that glow roles add blooms (`threshold` applies only when there is
+# no emission target, e.g. to a raw HDR image); `strength` is how bright the halo is; `levels` is how many
+# halvings the bloom pyramid goes down (wider glow); `exposure` scales before tone mapping;
+# colors below `knee` show exactly as written, light above it rolls off smoothly to white.
+[bloom]
+threshold = 1.0
+strength = 0.8
+levels = 5
+exposure = 1.0
+knee = 0.9
 
 # Layout defaults, as fractions of the frame height.
 [layout]

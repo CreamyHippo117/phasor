@@ -20,13 +20,16 @@ _LAZY = {
     "Line": "phasor.domains.basic",
     "Text": "phasor.domains.basic",
 }
+_MODULES = {"cx": "phasor.domains.cx"}  # domain modules: ``from phasor import cx``
 
-__all__ = ["__version__", *_LAZY]
+__all__ = ["__version__", *_LAZY, *_MODULES]
 
 
 def __getattr__(name: str) -> Any:
-    if name in _LAZY:
-        import importlib
+    import importlib
 
+    if name in _LAZY:
         return getattr(importlib.import_module(_LAZY[name]), name)
+    if name in _MODULES:
+        return importlib.import_module(_MODULES[name])
     raise AttributeError(f"module 'phasor' has no attribute {name!r}")

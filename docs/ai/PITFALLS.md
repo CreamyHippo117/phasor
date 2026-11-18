@@ -97,3 +97,25 @@ proves NVRTC and CuPy accept it. Say which ones ran.
 Scalars passed to a kernel must be NumPy scalars of the exact C type (`np.int32`,
 `np.float32`, `np.float64`). Cast constants with `R(...)` so float32 kernels do not drift
 into double math. Guard `if (i >= n) return;` because the last block has spare threads.
+
+## Glow that does not glow
+
+Bloom comes only from `glow` roles (`soft`, `strong`), never from bright paint. A theme
+color at full brightness rolls off by a few levels at the knee; that is the tone map, not
+a bug.
+
+## Text that shows empty boxes
+
+The bundled font has no `²`, `π` or accented letters. Lint reports `missing_glyph`.
+
+## Rendering on a machine without CUDA
+
+It works (tier B) but every kernel runs on NumPy: a 1080p fractal frame takes about 1.5 s
+there, against milliseconds on a GPU. Preview at `--preset preview`; render finals on the
+NVIDIA machine.
+
+## The GL context and the bridge
+
+`CopyBridge.upload` must be called inside `with ctx:` and does not enter the context
+itself. Leaving a nested `with ctx:` makes no context current, and the next GL call in the
+outer block fails with "cannot create program".

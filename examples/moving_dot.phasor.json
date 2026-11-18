@@ -95,7 +95,8 @@
       "type": "dot"
     }
   ],
-  "schema_version": 2,
+  "retired_ids": [],
+  "schema_version": 3,
   "timeline": {
     "camera": "camera",
     "markers": {

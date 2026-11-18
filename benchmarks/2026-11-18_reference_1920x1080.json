@@ -1,0 +1,35 @@
+{
+  "backend": "reference",
+  "frame": [
+    1920,
+    1080
+  ],
+  "kernels": {
+    "bright": {
+      "ms": 69.201
+    },
+    "domain": {
+      "ms": 296.092
+    },
+    "escape": {
+      "ms": 1478.392
+    },
+    "gauss": {
+      "ms": 106.327
+    },
+    "palette": {
+      "ms": 147.279
+    },
+    "resize": {
+      "ms": 35.42
+    },
+    "tonemap": {
+      "ms": 100.944
+    }
+  },
+  "machine": "vm",
+  "peak_vram_bytes": null,
+  "platform": "Linux-6.18.44-fc-v595-x86_64-with-glibc2.39",
+  "repeats": 3,
+  "when": "2026-11-18T01:57:19+00:00"
+}

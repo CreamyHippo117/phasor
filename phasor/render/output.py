@@ -10,8 +10,8 @@ from phasor.core.color import linear_to_srgb
 
 
 def encode_srgb8(linear_rgba: np.ndarray) -> np.ndarray:
-    """Linear RGBA float -> (h, w, 3) uint8 sRGB. Milestone 1 tone mapping is a plain clip;
-    ACES/AgX replace it in Milestone 3 without moving this boundary."""
+    """Linear RGBA in display range (after ``render.post.finish``) -> (h, w, 3) uint8 sRGB.
+    The one place sRGB is encoded; values outside 0..1 are clipped."""
     rgb = linear_to_srgb(linear_rgba[..., :3])
     return np.round(rgb * 255).astype(np.uint8)
 

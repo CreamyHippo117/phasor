@@ -1,6 +1,6 @@
 # ADR 0001: layer order details and dependency inversion for GPU feedback
 
-Status: **Proposed, needs owner approval** (touches SPEC contract 6)
+Status: **Accepted** by the owner on 2026-11-18 (touches SPEC contract 6)
 Date: 2026-11-17, Milestone 0. Milestone 1 was built on it: `inspect` defines `PassRunner`,
 `render` implements it, `Engine` injects it, and tier C falls back to analytic mode.
 

@@ -16,7 +16,13 @@ def _v1_to_v2(raw: dict[str, Any]) -> dict[str, Any]:
     return raw
 
 
-MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {1: _v1_to_v2}
+def _v2_to_v3(raw: dict[str, Any]) -> dict[str, Any]:
+    """Version 3 added ``retired_ids`` (ids of removed objects, never to be reused)."""
+    raw.setdefault("retired_ids", [])
+    return raw
+
+
+MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {1: _v1_to_v2, 2: _v2_to_v3}
 
 
 def migrate(raw: dict[str, Any]) -> dict[str, Any]:

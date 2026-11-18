@@ -84,6 +84,12 @@ class View:
         return abs(1.0 / self._sy)
 
 
+def is_backdrop(state: SceneState, obj: ObjectState) -> bool:
+    """A backdrop (a domain-colored plane, a fractal) is something labels are meant to sit
+    on. Layout does not avoid it; the linter judges readability on it by contrast."""
+    return bool(obj.impl.semantics(state).get("backdrop", False))
+
+
 def view_of(state: SceneState, obj: ObjectState) -> View:
     return View(state.camera_for(obj), state.aspect)
 

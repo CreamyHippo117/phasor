@@ -1,6 +1,7 @@
 # ADR 0002: what the layout bake depends on, and constraints in the overrides file
 
-Status: **Proposed, needs owner approval** (touches SPEC contracts 2, 3 and 7)
+Status: **Accepted** by the owner on 2026-11-18, with both recommended options (touches
+SPEC contracts 2, 3 and 7; their text was updated in the same commit)
 Date: 2026-11-17, Milestone 2. Milestone 2 is built on both points below.
 
 ## 1. Overrides may hold constraints (contract 2)
@@ -32,7 +33,7 @@ near-tie, choose different slots for a label, and `state_at(t)` then differs bet
 Hysteresis and the tie tolerance make this rare; the test suite's scenes give identical
 results in both modes.
 
-**Decision (provisional):** keep the id pass where it exists, as contract 7 says, and
+**Decision:** keep the id pass where it exists, as contract 7 says, and
 record the oracle kind in `engine.layout`. Within one machine the result is deterministic.
 
 **Alternative:** always use the geometric oracle for layout, so the bake is identical

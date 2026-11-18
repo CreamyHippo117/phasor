@@ -13,8 +13,6 @@ import sys
 
 # command -> (milestone, help)
 PLANNED = {
-    "render": (3, "final render with a preset"),
-    "bench": (3, "ms per frame per kernel and peak VRAM"),
     "mcp": (5, "MCP server for AI clients"),
     "gui": (10, "editor app"),
 }
@@ -123,6 +121,73 @@ def _cmd_storyboard(args: argparse.Namespace) -> int:
     return 0
 
 
+PRESETS = {  # name -> (width, height, fps); None means "the scene's own"
+    "preview": (960, 540, 30.0),
+    "final": (None, None, None),
+    "4k": (3840, 2160, None),
+}
+
+
+def _cmd_render(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from phasor.core.issues import DocumentError
+    from phasor.render.doctor import run_doctor
+    from phasor.render.encode import EncodeError, open_writer
+    from phasor.render.output import encode_srgb8, save_png
+    from phasor.scene import load
+
+    try:
+        engine = load(args.scene)
+        meta = engine.document.meta
+        w, h, fps = PRESETS[args.preset]
+        size = (w or meta.width, h or meta.height)
+        fps = args.fps or fps or meta.fps
+        tier = run_doctor().tier
+        if tier == "C":
+            print(
+                "phasor render: no OpenGL here (tier C); nothing can be rendered", file=sys.stderr
+            )
+            return 1
+        if tier == "B":
+            print("warning: no CUDA device (tier B): kernels run on NumPy, so this is slow",
+                  file=sys.stderr)  # fmt: skip
+        if args.frame is not None:
+            out = Path(args.out or Path(args.scene).name.split(".")[0] + ".png")
+            save_png(out, encode_srgb8(engine.frame(args.frame, size)))
+            print(f"wrote {out} ({size[0]}x{size[1]}, t = {args.frame:g} s)")
+            return 0
+        start = args.start or 0.0
+        end = engine.duration if args.end is None else args.end
+        count = max(1, round((end - start) * fps))
+        out = Path(args.out or Path(args.scene).name.split(".")[0] + ".mp4")
+        writer = open_writer(out, *size, fps)
+        for k in range(count):
+            writer.write(encode_srgb8(engine.frame(start + k / fps, size)))
+            if not args.quiet:
+                print(f"\rframe {k + 1}/{count}", end="", file=sys.stderr, flush=True)
+        writer.close()
+    except (DocumentError, OSError, ValueError, RuntimeError, EncodeError) as e:
+        print(f"\nphasor render: {e}", file=sys.stderr)
+        return 1
+    print(f"\nwrote {out}: {count} frames, {size[0]}x{size[1]} at {fps:g} fps, {writer.encoder}")
+    return 0
+
+
+def _cmd_bench(args: argparse.Namespace) -> int:
+    from phasor.render.bench import run_bench, save
+
+    result = run_bench(args.width, args.height, args.repeats)
+    path = save(result, args.dir)
+    print(f"backend {result['backend']}, {args.width}x{args.height}, median of {args.repeats}")
+    for name, r in sorted(result["kernels"].items()):
+        print(f"  {name:8s} {r['ms']:10.2f} ms")
+    if result["peak_vram_bytes"] is not None:
+        print(f"  peak VRAM {result['peak_vram_bytes'] / 2**20:.0f} MB")
+    print(f"saved {path}")
+    return 0
+
+
 def _planned(name: str, milestone: int):
     def run(_: argparse.Namespace) -> int:
         print(f"phasor {name}: not implemented yet (Milestone {milestone})", file=sys.stderr)
@@ -170,6 +235,24 @@ def build_parser() -> argparse.ArgumentParser:
     sb.add_argument("--columns", type=int, default=3)
     sb.add_argument("--json", action="store_true", help="machine-readable output")
     sb.set_defaults(func=_cmd_storyboard)
+
+    r = sub.add_parser("render", help="render a video (or one frame) with the final look")
+    r.add_argument("scene", help="a .phasor.json document or a .py script that builds a Scene")
+    r.add_argument("-o", "--out", help="output: .mp4, .mov (ProRes), a folder or a %%05d.png")
+    r.add_argument("--preset", choices=sorted(PRESETS), default="preview")
+    r.add_argument("--fps", type=float, help="override the preset's frame rate")
+    r.add_argument("--start", type=float, help="first time in seconds (default 0)")
+    r.add_argument("--end", type=float, help="last time in seconds (default: the end)")
+    r.add_argument("--frame", type=float, help="render only the frame at this time, as PNG")
+    r.add_argument("--quiet", action="store_true")
+    r.set_defaults(func=_cmd_render)
+
+    b = sub.add_parser("bench", help="ms per frame per kernel and peak VRAM")
+    b.add_argument("--width", type=int, default=1920)
+    b.add_argument("--height", type=int, default=1080)
+    b.add_argument("--repeats", type=int, default=3)
+    b.add_argument("--dir", default="benchmarks", help="where results are saved")
+    b.set_defaults(func=_cmd_bench)
 
     for name, (milestone, help_) in PLANNED.items():
         sp = sub.add_parser(name, help=f"{help_} (Milestone {milestone})")

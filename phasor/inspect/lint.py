@@ -7,6 +7,7 @@ returns one issue per problem with the times it was seen. Rules in this mileston
 | overlap   | warning  | a label, or an object tagged ``key``, overlapping something    |
 | offscreen | warning  | a label or key object cut by the frame                         |
 | contrast  | warning  | text too close in brightness to what is behind it              |
+| missing_glyph | warning | text with characters the font cannot draw (empty boxes)     |
 | tiny      | warning  | objects or text too small to read                              |
 | orphan    | warning  | an object that never appears                                   |
 | clutter   | warning  | too many objects changing at once in one block                 |
@@ -17,11 +18,13 @@ Thresholds come from the theme's ``[lint]`` table.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Callable
 from typing import Any
 
 import numpy as np
 
+from phasor.core import text as text_metrics
 from phasor.core.color import contrast_ratio, over
 from phasor.core.constraints import LABEL_SUFFIX
 from phasor.core.ids import parent_of
@@ -127,18 +130,38 @@ class _Frame:
         smaller = min(int(ma.sum()), int(mb.sum()))
         return float((ma & mb).sum() / smaller) if smaller else 0.0
 
+    def _backdrop(self) -> np.ndarray | None:
+        """The color pass with every label left out, at inspector size (pixel mode only)."""
+        if self.runner is None:
+            return None
+        if not hasattr(self, "_backdrop_px"):
+            rest = tuple(o for o in self.state.objects
+                         if o.impl.semantics(self.state).get("kind") != "label")  # fmt: skip
+            others = dataclasses.replace(self.state, objects=rest)
+            self._backdrop_px = self.runner.color(others, self.size)
+        return self._backdrop_px
+
     def contrast(self, label_id: str) -> float:
-        """Contrast of a label against the background and any shape it mostly sits on."""
+        """Contrast of a label against what is behind it: measured from the color pass when
+        there is one (so domain coloring and glow count), else the background and any shape
+        the label mostly sits on."""
         me = self.state[label_id]
+        c = me.style["color"]
+        backdrop = self._backdrop()
+        if backdrop is not None:
+            ys, xs = self._rect(self.box(label_id))
+            behind = backdrop[ys, xs, :3].reshape(-1, 3)
+            if len(behind):
+                bg = (*np.clip(behind.mean(axis=0), 0, None), 1.0)
+                return contrast_ratio(over((*c[:3], c[3] * me.params.opacity), bg), bg)
         bg = self.state.background
         for obj in self.state.draw_order():
             if obj.id == label_id:
                 break
             on_it = obj.params.opacity > FAINT and "color" in obj.style
             if on_it and self.covered(label_id, obj.id) > 0.5:
-                c = obj.style["color"]
-                bg = over((*c[:3], c[3] * obj.params.opacity), bg)
-        c = me.style["color"]
+                under = obj.style["color"]
+                bg = over((*under[:3], under[3] * obj.params.opacity), bg)
         return contrast_ratio(over((*c[:3], c[3] * me.params.opacity), bg), bg)
 
 
@@ -263,6 +286,9 @@ def run(
             elif max(x1 - x0, y1 - y0) < th["tiny"] * height:
                 f.add("tiny", (e["id"],), t, px=max(x1 - x0, y1 - y0), what="object")
         for e in labels:
+            missing = text_metrics.missing_glyphs(e["semantic"].get("text", ""))
+            if missing:
+                f.add("missing_glyph", (e["id"],), t, chars="".join(missing))
             ratio = fr.contrast(e["id"])
             if ratio < th["contrast"]:
                 f.add("contrast", (e["id"],), t, ratio=ratio)
@@ -325,6 +351,12 @@ def run(
                          f"behind it (minimum {th['contrast']:g}) {when}", "warning", ids,
                          fix_hint="use a brighter color role such as 'primary' or 'highlight', "
                          "raise its opacity, or move it", times=ts)  # fmt: skip
+        if code == "missing_glyph":
+            shown = ", ".join(repr(ch) for ch in info["chars"])
+            return Issue(code, f"{ids[0]!r} uses characters the font cannot draw ({shown}); "
+                         f"they show as empty boxes {when}", "warning", ids, times=ts,
+                         fix_hint="write them in ASCII for now (z^2, pi), or use a math "
+                         "label once LaTeX arrives")  # fmt: skip
         if code == "tiny":
             return Issue(code, f"{info['what']} {ids[0]!r} is only {info['px']:.0f} px "
                          f"{when}", "warning", ids,

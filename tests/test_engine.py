@@ -246,3 +246,17 @@ def test_engine_falls_back_to_analytic_inspection_without_opengl(monkeypatch):
     assert e.hit_test(1095, 270, 0) == ["dot"]
     with pytest.raises(RuntimeError, match="phasor doctor"):
         e.still(0)
+
+
+def test_removed_ids_are_retired_and_never_reused(tmp_path):
+    e = Engine(title="t", passes=None)
+    assert e.apply({"op": "add_object", "object": {"id": "pole", "type": "dot"}}).ok
+    assert e.apply({"op": "remove_object", "id": "pole"}).ok
+    assert e.document.retired_ids == ("pole",)
+    again = e.apply({"op": "add_object", "object": {"id": "pole", "type": "dot"}})
+    assert not again.ok and again.errors[0].code == "id_retired" and again.errors[0].fix_hint
+    path = tmp_path / "t.phasor.json"
+    e.save(path)
+    assert Engine.open(path, passes=None).document.retired_ids == ("pole",)  # survives a save
+    e.undo()  # undoing the removal brings the object back, and its id is live again
+    assert e.document.object("pole") is not None and e.document.retired_ids == ()

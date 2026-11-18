@@ -14,6 +14,7 @@ order, which makes "nearest surface" well defined without z-fighting.
 from __future__ import annotations
 
 import functools
+from collections import OrderedDict
 from typing import Any
 
 import numpy as np
@@ -25,6 +26,8 @@ from phasor.render.glcontext import shared_context
 
 DEPTH_BIAS = 1e-5  # NDC depth per draw-order step
 MAX_TEXT_PX = 512
+MAX_FIELD_PX = 8192  # largest side of a kernel-drawn quad's texture
+FIELD_CACHE = 16  # kernel results kept, keyed by object parameters and view
 
 _VS = """
 #version 430
@@ -49,17 +52,25 @@ _FS = {
     "color": """
 #version 430
 uniform vec4 u_color;
+uniform float u_glow;
 #ifdef TEXTURED
 uniform sampler2D u_tex;
 in vec2 v_uv;
 #endif
-out vec4 frag;
+layout(location = 0) out vec4 frag;
+layout(location = 1) out vec4 emit;  // only the light above plain paint: the bloom source
 void main() {
     float a = u_color.a;
+#ifdef IMAGE
+    frag = vec4(texture(u_tex, v_uv).rgb * a, a);  // kernel pixels, premultiplied
+    emit = vec4(0.0, 0.0, 0.0, a);                 // they emit nothing, and hide what does
+    return;
+#endif
 #ifdef TEXTURED
     a *= texture(u_tex, v_uv).r;
 #endif
-    frag = vec4(u_color.rgb * a, a);  // premultiplied
+    frag = vec4(u_color.rgb * u_glow * a, a);  // premultiplied; glow > 1 is HDR light
+    emit = vec4(u_color.rgb * max(u_glow - 1.0, 0.0) * a, a);
 }
 """,
     "id": """
@@ -94,9 +105,11 @@ void main() {
 }
 
 
-def _define(src: str, textured: bool) -> str:
+def _define(src: str, kind: str) -> str:
+    """``kind``: ``mesh`` (flat color), ``text`` (coverage bitmap) or ``image`` (RGBA)."""
     head, _, rest = src.strip().partition("\n")
-    return f"{head}\n{'#define TEXTURED' if textured else ''}\n{rest}"
+    defines = {"mesh": "", "text": "#define TEXTURED", "image": "#define TEXTURED\n#define IMAGE"}
+    return f"{head}\n{defines[kind]}\n{rest}"
 
 
 class _Collector:
@@ -105,8 +118,16 @@ class _Collector:
     def __init__(self) -> None:
         self.commands: list[tuple[str, dict[str, Any]]] = []
 
-    def triangles(self, positions, indices=None, *, color, emission=0.0) -> None:
-        self.commands.append(("mesh", {"positions": positions, "indices": indices, "color": color}))
+    def triangles(self, positions, indices=None, *, color, glow=1.0) -> None:
+        self.commands.append(
+            ("mesh", {"positions": positions, "indices": indices, "color": color, "glow": glow})
+        )
+
+    def field(self, corner, right, up, *, pixels, opacity=1.0) -> None:
+        self.commands.append(
+            ("field", {"corner": np.asarray(corner, dtype=np.float64), "right": np.asarray(right),
+                       "up": np.asarray(up), "pixels": pixels, "opacity": opacity})
+        )  # fmt: skip
 
     def text(self, text, origin, height, *, color, anchor="center") -> None:
         self.commands.append(
@@ -120,11 +141,14 @@ class GLRenderer:
 
     def __init__(self, ctx=None) -> None:
         self.ctx = ctx or shared_context()
-        self._programs: dict[tuple[str, bool], Any] = {}
+        self._programs: dict[tuple[str, str], Any] = {}
         self._targets: dict[tuple[str, tuple[int, int]], Any] = {}
         self._text_textures: dict[tuple[str, int], Any] = {}
         self._cache: dict[tuple, np.ndarray] = {}
         self._cache_state: SceneState | None = None
+        self._fields: OrderedDict[tuple, np.ndarray] = OrderedDict()
+        self._emit_clear: dict[tuple[int, int], Any] = {}
+        self._bridge = None
 
     # ------------------------------------------------------------ resources
 
@@ -136,11 +160,11 @@ class GLRenderer:
             name = str(self.ctx.info["GL_RENDERER"]).lower()
         return "software" if any(k in name for k in ("llvmpipe", "softpipe", "swrast")) else "gpu"
 
-    def _program(self, pass_: str, textured: bool):
-        key = (pass_, textured)
+    def _program(self, pass_: str, kind: str):
+        key = (pass_, kind)
         if key not in self._programs:
             self._programs[key] = self.ctx.program(
-                vertex_shader=_define(_VS, textured), fragment_shader=_define(_FS[pass_], textured)
+                vertex_shader=_define(_VS, kind), fragment_shader=_define(_FS[pass_], kind)
             )
         return self._programs[key]
 
@@ -149,12 +173,13 @@ class GLRenderer:
         if key not in self._targets:
             ctx = self.ctx
             if pass_ == "color":
+                # Two targets: the picture, and the emission that feeds the bloom.
                 samples = min(4, ctx.max_samples)
-                ms = ctx.framebuffer(
-                    [ctx.texture(size, 4, samples=samples, dtype="f2")],
-                    ctx.depth_renderbuffer(size, samples=samples),
-                )
-                self._targets[key] = (ms, ctx.framebuffer([ctx.texture(size, 4, dtype="f2")]))
+                textures = [ctx.texture(size, 4, samples=samples, dtype="f2") for _ in range(2)]
+                ms = ctx.framebuffer(textures, ctx.depth_renderbuffer(size, samples=samples))
+                resolved = ctx.framebuffer([ctx.texture(size, 4, dtype="f2") for _ in range(2)])
+                self._emit_clear[size] = ctx.framebuffer([textures[1]])
+                self._targets[key] = (ms, resolved)
             elif pass_ == "id":
                 fbo = ctx.framebuffer(
                     [ctx.texture(size, 1, dtype="u4")], ctx.depth_renderbuffer(size)
@@ -181,17 +206,37 @@ class GLRenderer:
         collector = _Collector()
         obj.impl.draw(collector, state, pass_)
         for kind, c in collector.commands:
-            textured = kind == "text"
-            prog = self._program(pass_, textured)
+            if kind == "field" and pass_ == "color":
+                quad = self._field_quad(state, obj, cam, c, size, zoom)
+                if quad is None:
+                    continue
+                kind, c = "image", {"quad": quad, "color": (0.0, 0.0, 0.0, c["opacity"])}
+            elif kind == "field":  # id and solo: a plain quad
+                p0, r, u = c["corner"], c["right"], c["up"]
+                c = {
+                    "positions": np.array([p0, p0 + r, p0 + r + u, p0 + u]),
+                    "indices": np.array([[0, 1, 2], [0, 2, 3]]),
+                    "color": (0, 0, 0, 1),
+                }
+                kind = "mesh"
+            prog = self._program(pass_, kind)
             prog["u_vp"].write(cam.view_proj.astype("f4").T.tobytes())
             prog["u_bias"].value = order * DEPTH_BIAS
             prog["u_zoom"].value = 1.0 / zoom
             if pass_ == "color":
                 prog["u_color"].value = tuple(float(x) for x in c["color"])
+                if kind != "image":
+                    prog["u_glow"].value = float(c.get("glow", 1.0))
             elif pass_ == "id":
                 prog["u_id"].value = obj.index
             buffers = []
-            if textured:
+            if kind == "image":
+                c["quad"][1].use(0)
+                prog["u_tex"].value = 0
+                vbo = ctx.buffer(c["quad"][0].tobytes())
+                vao = ctx.vertex_array(prog, [(vbo, "3f 2f", "in_pos", "in_uv")])
+                buffers = [vbo]
+            elif kind == "text":
                 corner, wv, hv = text_metrics.quad(
                     c["text"], c["origin"], c["height"], c["anchor"], cam.right, cam.up
                 )
@@ -227,6 +272,53 @@ class GLRenderer:
             for b in buffers:
                 b.release()
 
+    def _field_quad(self, state, obj, cam, c, size, zoom):
+        """Compute a kernel-drawn quad's visible pixels and upload them through the bridge.
+        Returns (vertices with uv, texture), or None when none of it is on screen."""
+        from phasor.render.gpu.bridge import CopyBridge
+
+        p0, r, u = c["corner"], c["right"], c["up"]
+        w, h = size
+        corners = np.array([p0, p0 + r, p0 + u])
+        ndc = cam.project(corners)[:, :2] / zoom
+        px = np.c_[(ndc[:, 0] + 1) / 2 * w, (1 - ndc[:, 1]) / 2 * h]
+        a, b = px[1] - px[0], px[2] - px[0]  # screen motion along right and up
+        s0, s1, t0, t1 = 0.0, 1.0, 0.0, 1.0
+        if abs(a[1]) < 1e-9 and abs(b[0]) < 1e-9 and a[0] != 0 and b[1] != 0:
+            # Axis-aligned on screen (every 2D scene): render only the part in the frame.
+            sa = sorted(((0 - px[0][0]) / a[0], (w - px[0][0]) / a[0]))
+            tb = sorted(((0 - px[0][1]) / b[1], (h - px[0][1]) / b[1]))
+            s0, s1 = max(0.0, sa[0]), min(1.0, sa[1])
+            t0, t1 = max(0.0, tb[0]), min(1.0, tb[1])
+            if s1 <= s0 or t1 <= t0:
+                return None
+        # ceil, but a size that is a whole number up to rounding noise stays that number
+        pw = int(np.clip(np.ceil(np.hypot(*a) * (s1 - s0) - 1e-6), 1, MAX_FIELD_PX))
+        ph = int(np.clip(np.ceil(np.hypot(*b) * (t1 - t0) - 1e-6), 1, MAX_FIELD_PX))
+        rl, ul = float(np.linalg.norm(r)), float(np.linalg.norm(u))
+        center = ((s0 + s1) / 2 * rl, (t0 + t1) / 2 * ul)
+        height = (t1 - t0) * ul
+        key = (obj.type, obj.params, tuple(sorted(obj.roles.items())), pw, ph,
+               round(center[0], 12), round(center[1], 12), round(height, 15))  # fmt: skip
+        if key not in self._fields:
+            pixels = np.asarray(c["pixels"](pw, ph, center, height), dtype=np.float32)
+            if pixels.shape != (ph, pw, 4):
+                raise ValueError(
+                    f"{obj.id}: field pixels must be {(ph, pw, 4)}, got {pixels.shape}"
+                )
+            self._fields[key] = pixels
+            if len(self._fields) > FIELD_CACHE:
+                self._fields.popitem(last=False)
+        self._fields.move_to_end(key)
+        if self._bridge is None:
+            self._bridge = CopyBridge(self.ctx)
+        tex = self._bridge.upload(self._fields[key])
+        q = [p0 + s * r + t * u for s, t in ((s0, t0), (s1, t0), (s0, t1), (s1, t1))]
+        uv = [(0, 0), (1, 0), (0, 1), (1, 1)]  # the bridge stores rows bottom-up: v = 0 is low
+        order_ = (0, 1, 2, 1, 3, 2)
+        verts = np.array([[*q[i], *uv[i]] for i in order_], dtype="f4")
+        return verts, tex
+
     def _render(self, state, pass_, size, **kwargs) -> np.ndarray:
         with self.ctx:  # make our context current: another one may have been used since
             return self._render_current(state, pass_, size, **kwargs)
@@ -242,6 +334,8 @@ class GLRenderer:
         ctx.viewport = (0, 0, *size)
         if pass_ == "color":
             target.clear(*state.background)
+            self._emit_clear[size].clear(0.0, 0.0, 0.0, 0.0)  # no emission until drawn
+            target.use()
             ctx.enable(moderngl.BLEND)
             ctx.blend_func = (moderngl.ONE, moderngl.ONE_MINUS_SRC_ALPHA)
         else:
@@ -265,8 +359,12 @@ class GLRenderer:
             ctx.copy_framebuffer(resolved, target)
         w, h = size
         if pass_ == "color":
-            raw = np.frombuffer(resolved.read(components=4, dtype="f2"), dtype=np.float16)
-            return raw.reshape(h, w, 4)[::-1].astype(np.float32)
+            out = []
+            for attachment in (0, 1):
+                raw = resolved.read(components=4, dtype="f2", attachment=attachment)
+                px = np.frombuffer(raw, dtype=np.float16).reshape(h, w, 4)[::-1]
+                out.append(px.astype(np.float32))
+            return np.stack(out)
         if pass_ == "id":
             raw = np.frombuffer(resolved.read(components=1, dtype="u4"), dtype=np.uint32)
             return raw.reshape(h, w)[::-1].copy()
@@ -285,9 +383,17 @@ class GLRenderer:
     # ------------------------------------------------------------ public
 
     def color(self, state: SceneState, size: tuple[int, int] | None = None) -> np.ndarray:
-        """(h, w, 4) float32 linear RGBA, row 0 = top."""
+        """(h, w, 4) float32 linear RGBA, row 0 = top: the picture before bloom."""
+        return self.color_and_emission(state, size)[0]
+
+    def color_and_emission(
+        self, state: SceneState, size: tuple[int, int] | None = None
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """The picture and its emission (the light glow roles add, which feeds the bloom),
+        both (h, w, 4) float32 linear, row 0 = top."""
         size = size or (state.width, state.height)
-        return self._render(state, "color", size)
+        both = self._render(state, "color", size)
+        return both[0], both[1]
 
     def id_buffer(self, state, size, force: frozenset[str] = frozenset()) -> np.ndarray:
         return self._cached(

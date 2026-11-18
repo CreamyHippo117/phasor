@@ -70,7 +70,7 @@ def test_schema_validates_normalizes_and_rejects_duplicate_rules():
 
 def test_version_1_documents_migrate():
     doc = io.parse_document({"schema_version": 1, "meta": {"title": "old"}})
-    assert doc.schema_version == 2 and doc.constraints == ()
+    assert doc.schema_version == 3 and doc.constraints == () and doc.retired_ids == ()
 
 
 # ---------------------------------------------------------------- stage 2: the label placer

@@ -15,7 +15,7 @@ from phasor.core.constraints import PRIORITIES, RuleError, normalize_rule, parse
 from phasor.core.ids import is_valid_id, is_valid_name, parent_of, split_path
 from phasor.core.values import normalize
 
-SCHEMA_VERSION = 2  # 2: added `constraints` (Milestone 2)
+SCHEMA_VERSION = 3  # 2: added `constraints` (Milestone 2); 3: `retired_ids`
 OVERRIDES_VERSION = 1
 
 
@@ -121,10 +121,12 @@ class Meta(Model):
 
 
 class Document(Model):
-    schema_version: Literal[2] = SCHEMA_VERSION
+    schema_version: Literal[3] = SCHEMA_VERSION
     meta: Meta
     objects: tuple[ObjectSpec, ...] = ()
     constraints: tuple[ConstraintSpec, ...] = ()
+    # Ids of removed objects. They may never be used again (SPEC contract 2).
+    retired_ids: tuple[str, ...] = ()
     cameras: tuple[CameraSpec, ...] = (CameraSpec(id="camera"),)
     timeline: Timeline = Field(default_factory=Timeline)
 
@@ -150,6 +152,10 @@ class Document(Model):
         for path in self.timeline.tracks:
             split_path(path)
         _check_unique_rules(self.constraints)
+        back = sorted(seen & set(self.retired_ids))
+        if back:
+            raise ValueError(f"id {back[0]!r} was retired when its object was removed; ids are "
+                             "never reused, so choose a new name")  # fmt: skip
         return self
 
     def object(self, object_id: str) -> ObjectSpec | None:

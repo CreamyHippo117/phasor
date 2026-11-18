@@ -27,7 +27,15 @@ from phasor.core.issues import Issue
 from phasor.core.state import SceneState
 from phasor.core.values import normalize
 from phasor.layout import labels, solver
-from phasor.layout.geometry import Box, Coverage, footprint, frame, screen_box, view_of
+from phasor.layout.geometry import (
+    Box,
+    Coverage,
+    footprint,
+    frame,
+    is_backdrop,
+    screen_box,
+    view_of,
+)
 from phasor.layout.plan import MOVE_PARAM, Plan
 from phasor.time.compile import Compiled, evaluate
 from phasor.time.tracks import ResolvedTrack
@@ -52,8 +60,9 @@ class AnalyticOracle:
         size = (ANALYTIC_WIDTH, max(1, round(ANALYTIC_WIDTH / state.aspect)))
         mask = np.zeros(size[::-1], dtype=bool)
         for obj in state.objects:
-            if obj.id not in exclude and obj.params.opacity >= 0.5:
-                mask |= footprint(state, obj, size)
+            if obj.id in exclude or obj.params.opacity < 0.5 or is_backdrop(state, obj):
+                continue
+            mask |= footprint(state, obj, size)
         return mask
 
 
@@ -209,10 +218,13 @@ def bake(c: Compiled, plan: Plan, oracle: OcclusionOracle | None = None) -> Bake
                 and o.impl.semantics(state).get("kind") == "label"
             ]  # fmt: skip
             fixed_labels = [boxes[i] for i in fixed]
+            # Backdrops (domain planes) are meant to be written on: not obstacles.
+            backdrops = {o.id for o in state.objects if is_backdrop(state, o)}
+            skip = placed_ids | set(fixed) | backdrops
             result = labels.place(
                 requests,
                 frame=frame(state),
-                coverage=Coverage(oracle.coverage(state, placed_ids | set(fixed)), state.aspect),
+                coverage=Coverage(oracle.coverage(state, skip), state.aspect),
                 obstacles=fixed_labels,
                 previous=previous,
             )

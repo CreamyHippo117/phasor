@@ -64,17 +64,23 @@ def escape_reference(
         zr, zi = x.copy(), y.copy()
         cr, ci = np.full_like(x, julia[0]), np.full_like(y, julia[1])
     two, bail = real(2), real(BAILOUT)
-    count = np.zeros(x.shape, dtype=np.int32)
+    # Iterate only the points that have not escaped yet; escaped ones keep their last z.
+    zr, zi, cr, ci = (a.ravel().copy() for a in (zr, zi, cr, ci))
+    count = np.zeros(zr.shape, dtype=np.int32)
     r2 = zr * zr + zi * zi
+    live = np.flatnonzero(r2 <= bail)
     for _ in range(max_iter):
-        live = r2 <= bail
-        if not live.any():
+        if live.size == 0:
             break
-        t = zr * zr - zi * zi + cr
-        zi = np.where(live, two * zr * zi + ci, zi)
-        zr = np.where(live, t, zr)
-        r2 = np.where(live, zr * zr + zi * zi, r2)
-        count += live
+        a, b = zr[live], zi[live]
+        t = a * a - b * b + cr[live]
+        b = two * a * b + ci[live]
+        zr[live], zi[live] = t, b
+        r2[live] = t * t + b * b
+        count[live] += 1
+        live = live[r2[live] <= bail]
+    r2 = r2.reshape(x.shape)
+    count = count.reshape(x.shape)
     escaped = r2 > bail
     with np.errstate(all="ignore"):
         smooth = count + 1.0 - np.log2(0.5 * np.log(r2.astype(np.float64)))
@@ -102,4 +108,74 @@ def escape(
     args = (*view_args(tile, center, height), np.int32(julia is not None),
             np.float64(jx), np.float64(jy), np.int32(max_iter), out)  # fmt: skip
     gpu.launch(compiled, tile.n, args)
+    return out
+
+
+PALETTE = """
+extern "C" __global__ void phasor_palette(int n, const float* field, const float* lut, int lut_n,
+                                          float density, float offset, const float* inside,
+                                          float* out)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    float* o = out + 4 * (long long)i;
+    float f = field[i];
+    if (f < 0.0f) { o[0] = inside[0]; o[1] = inside[1]; o[2] = inside[2]; o[3] = 1.0f; return; }
+    float t = sqrtf(f) * density + offset;
+    t = t - floorf(t);
+    float g = t * (float)lut_n;
+    int k0 = (int)g;
+    if (k0 >= lut_n) k0 = lut_n - 1;
+    int k1 = (k0 + 1) % lut_n;
+    float u = g - (float)k0;
+    for (int c = 0; c < 3; c++) o[c] = lut[3 * k0 + c] * (1.0f - u) + lut[3 * k1 + c] * u;
+    o[3] = 1.0f;
+}
+"""
+
+
+def _palette_args(field, lut, inside):
+    if field.ndim != 2 or str(field.dtype) != "float32":
+        raise ValueError("palette needs a float32 (h, w) field from the escape kernel")
+    table = np.ascontiguousarray(lut, dtype=np.float32)
+    if table.ndim != 2 or table.shape[1] != 3 or len(table) < 2:
+        raise ValueError("lut must be an (n, 3) table of linear RGB with n >= 2")
+    return table, np.asarray(inside, dtype=np.float32)[:3]
+
+
+def palette_reference(
+    tile: Tile,
+    field: np.ndarray,
+    lut: np.ndarray,
+    density: float = 0.35,
+    offset: float = 0.0,
+    inside: tuple[float, float, float] = (0.0, 0.0, 0.0),
+) -> np.ndarray:
+    table, inside_rgb = _palette_args(field, lut, inside)
+    t = np.sqrt(np.maximum(field, 0)).astype(np.float32) * np.float32(density) + np.float32(offset)
+    t = (t - np.floor(t)).astype(np.float32)
+    g = t * np.float32(len(table))
+    k0 = np.minimum(g.astype(np.int64), len(table) - 1)
+    u = (g - k0.astype(np.float32))[..., None]
+    rgb = table[k0] * (np.float32(1) - u) + table[(k0 + 1) % len(table)] * u
+    out = np.ones((*field.shape, 4), dtype=np.float32)
+    out[..., :3] = np.where((field < 0)[..., None], inside_rgb, rgb)
+    return out
+
+
+@kernel(
+    "palette",
+    "(tile, field, lut, density=0.35, offset=0.0, inside=(0,0,0)) -> float32[h, w, 4]",
+    reference=palette_reference,
+)
+def palette(gpu, tile: Tile, field, lut, density=0.35, offset=0.0, inside=(0.0, 0.0, 0.0)):
+    """Color an escape field: a cyclic table indexed by sqrt(count), so bands stay even as
+    counts grow; points in the set get ``inside``. ``tile`` is the field's own extent."""
+    table, inside_rgb = _palette_args(field, lut, inside)
+    src = gpu.cp.ascontiguousarray(field)
+    out = gpu.cp.empty((*src.shape, 4), dtype=gpu.cp.float32)
+    compiled = gpu.compile(PALETTE, "phasor_palette")
+    args = (np.int32(src.size), src, gpu.cp.asarray(table), np.int32(len(table)),
+            np.float32(density), np.float32(offset), gpu.cp.asarray(inside_rgb), out)  # fmt: skip
+    gpu.launch(compiled, int(src.size), args)
     return out

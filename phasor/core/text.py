@@ -52,3 +52,19 @@ def quad(text: str, origin, height: float, anchor: str, right, up):
     w = aspect(text) * height
     corner = np.asarray(origin, dtype=np.float64) + _ANCHOR_SHIFT[anchor] * w * right
     return corner - (height / 2) * up, w * right, height * up
+
+
+@functools.cache
+def _tofu() -> bytes:
+    return bytes(_font(_REF).getmask("\U000f0000"))  # a private-use code point: never drawn
+
+
+@functools.lru_cache(maxsize=4096)
+def missing_glyphs(text: str) -> tuple[str, ...]:
+    """Characters the font cannot draw (they would show as empty boxes), in order, once each.
+    Whitespace is never missing."""
+    font, tofu, out = _font(_REF), _tofu(), []
+    for ch in dict.fromkeys(text):
+        if not ch.isspace() and bytes(font.getmask(ch)) == tofu:
+            out.append(ch)
+    return tuple(out)

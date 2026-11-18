@@ -5,7 +5,8 @@ compounding. If this file and SPEC.md disagree, stop and ask.
 
 ## Where we are
 
-- Current milestone: **2 built (awaiting boundary review, Windows check and owner decisions in ADR 0001/0002). 3 in progress: kernels, tiles and CopyBridge are built (`MILESTONE_3.md`); the rest of 3 is next and suits a smaller model**. See `MILESTONE_*.md` for what is built and deferred.
+- Owner approved ADR 0001, ADR 0002 and id tombstones on 2026-11-18.
+- Current milestone: **2 built (awaiting boundary review and Windows check). 3 built (`MILESTONE_3.md`; untested on CUDA). 4 next**. See `MILESTONE_*.md` for what is built and deferred.
 - One milestone per branch. No work on milestone N+1 until N's exit demo and tests pass.
 - Before declaring a milestone done, run the `phasor-milestone-gate` skill.
 
@@ -15,10 +16,12 @@ compounding. If this file and SPEC.md disagree, stop and ask.
    CLI/MCP/GUI are thin clients. Every mutation is `Engine.apply(patch) -> PatchResult`
    (validate, record undo, return lint delta). No other write path.
 2. **Document is truth.** pydantic v2 in `core/schema.py`, `schema_version` + `core/migrate.py`.
-   `name.phasor.json` (sorted keys) + `name.overrides.json` (id + param path). Re-running a
+   `name.phasor.json` (sorted keys) + `name.overrides.json` (id + param path, plus added
+   constraints; ADR 0002). Re-running a
    script never loses overrides; a dangling override is lint `orphan_override`.
-   IDs: `[a-z][a-z0-9_]*`, dots for children, never reused, named by meaning not counters.
-3. **Time is pure.** `Engine.state_at(t)` depends only on (document, t), returns frozen data.
+   IDs: `[a-z][a-z0-9_]*`, dots for children, never reused (removed ids go to
+   `retired_ids`), named by meaning not counters.
+3. **Time is pure.** `Engine.state_at(t)` depends only on (document, t) and the occlusion oracle (ADR 0002), returns frozen data.
    Params are a DAG (constants, tracks, expressions); a cycle is a validation error.
    Narration is a separate `TimeMap`. Simulations use fixed dt, seed, cached checkpoints.
    Randomness only via `rng(object_id, seed)`.
@@ -66,6 +69,10 @@ compounding. If this file and SPEC.md disagree, stop and ask.
   source compiled for the CPU (`tests/cuda_emu.py`), and on a real GPU (`gpu` marker).
   Add each new kernel to `CASES` in `tests/test_kernels.py`. Launchers may only use array
   calls NumPy and CuPy share, or the emulator cannot run them.
+- Bloom comes only from the emission target (glow roles); never threshold the picture.
+  Paint below the theme's knee must come out of the tone map unchanged.
+- Kernel-drawn objects call `ctx.field(...)` and render only their visible part; mark them
+  `"backdrop": True` in semantics if labels may sit on them.
 - When a test and the code disagree, work out which one is wrong before changing either.
   In Milestone 1 it was the test about as often as the code.
 

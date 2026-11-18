@@ -291,7 +291,15 @@ def test_color_pass_is_linear_and_encoded_to_srgb_exactly_once(demo):
     assert srgb.dtype == np.uint8 and srgb.shape == (270, 480, 3)
     assert tuple(srgb[5, 5]) == (0x0B, 0x0E, 0x14) and tuple(srgb[135, 240]) == (0x7A, 0xA2, 0xF7)
     assert tuple(srgb[135, 105]) == (0xFF, 0xB4, 0x54)  # the highlight dot
-    assert (demo.still(0, (480, 270)) == srgb).all()
+    # The finished still tone-maps once: channels below the knee (linear 0.9, sRGB 243) come
+    # out exactly as the theme wrote them; brighter ones roll off by a few levels.
+    still = demo.still(0, (480, 270)).astype(int)
+    for y, x in [(5, 5), (135, 240), (135, 105)]:
+        want = srgb[y, x].astype(int)
+        exact = want <= 243
+        assert (still[y, x][exact] == want[exact]).all()
+        assert (want[~exact] - still[y, x][~exact] >= 0).all()
+        assert (want[~exact] - still[y, x][~exact] <= 5).all()
 
 
 @pytest.mark.gl

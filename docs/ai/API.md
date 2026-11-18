@@ -30,8 +30,10 @@ s.set("camera.height", 6)  # world units visible top to bottom
 
 | Type | Parameters | Style keys (role group, default) |
 | --- | --- | --- |
-| `Dot` | `pos`, `r` (world radius, default 0.1) | `color` (emphasis, primary) |
-| `Line` | `points` (2 or more) | `color` (emphasis, primary), `stroke` (stroke, regular) |
+| `Dot` | `pos`, `r` (world radius, default 0.1) | `color` (emphasis, primary), `glow` (glow, none) |
+| `Line` | `points` (2 or more) | `color` (emphasis, primary), `stroke` (stroke, regular), `glow` (glow, none) |
+| `cx.DomainColoring` | `function` (e.g. `"1/(z**2 + 1)"`), `pos` (center), `size` (w, h), `contour` (0-1) | `colormap` (colormap, phase) |
+| `cx.Fractal` | `kind` (`mandelbrot`/`julia`), `c` (Julia constant), `pos`, `size`, `max_iter`, `density` | `colormap` (colormap, sequential) |
 | `Text` | `text`, `pos`, `anchor` (`center`/`left`/`right`), `leader`, `leader_on` (set by layout) | `color` (emphasis, primary), `size` (text, label), `leader` (stroke, hairline) |
 
 Every type also has `opacity` (0-1; below 0.5 it stops hiding things behind it) and
@@ -39,7 +41,33 @@ Every type also has `opacity` (0-1; below 0.5 it stops hiding things behind it) 
 `layer="overlay"` to live in screen space: units are frame heights, origin top-left, y down.
 
 Roles: emphasis `primary secondary muted highlight danger`; stroke `hairline regular bold`;
-text `title label annotation math`.
+text `title label annotation math`; glow `none soft strong`; colormap `phase sequential`.
+
+`cx` objects are rectangles of the complex plane drawn by GPU kernels: world x is Re z and
+world y is Im z, so the camera zooms into them like into anything else. They are
+*backdrops*: labels may sit on them (layout does not avoid them; lint checks contrast).
+Their semantics list the zeros and poles inside them (for rational functions).
+
+```python
+from phasor import Line, Scene, cx
+
+s3 = Scene("poles")
+s3.set("camera.height", 4.5)
+s3.add(cx.DomainColoring(id="plane", function="1/(z**2 + 1)", size=(8, 4.5)))
+s3.add(
+    Line(
+        id="loop",
+        points=[(0.4, 1), (0, 1.4), (-0.4, 1), (0, 0.6), (0.4, 1)],
+        style={"color": "highlight", "glow": "strong"},
+    )
+)
+plane = s3.engine.inspect(0, id="plane")["objects"][0]["semantic"]
+assert sorted(map(tuple, plane["poles"])) == [(0.0, -1.0), (0.0, 1.0)]
+```
+
+`glow` makes a curve emit light: the renderer writes that light to a second target and the
+final look blooms it. Plain paint (`glow: none`) never blooms, and colors below the theme's
+`knee` (linear 0.9) come out exactly as the theme defines them.
 
 ### Expressions
 
@@ -147,7 +175,8 @@ The subject is what moves; it needs a `pos` parameter that is not an expression.
 ```python
 s2.add(Text(id="note", text="note", pos=(-2, 0.1)))  # dropped right on top of the pole
 issues = s2.engine.lint()
-assert [(i.code, i.ids) for i in issues] == [("overlap", ("note", "pole"))]
+found = {(i.code, i.ids) for i in issues}
+assert ("overlap", ("note", "pole")) in found  # (with OpenGL, also "contrast": it sits on the dot)
 assert issues[0].severity == "warning" and issues[0].times and issues[0].fix_hint
 assert s2.engine.apply({"op": "set_param", "path": "note.pos", "value": [-4, -2]}).ok
 assert s2.engine.lint() == []
@@ -160,7 +189,8 @@ Each issue has `code`, `severity`, `message`, `ids`, `times`, `fix_hint`, and `f
 | --- | --- | --- |
 | `overlap` | warning | a label, or an object tagged `key`, overlaps something |
 | `offscreen` | warning | a label or key object is cut by the frame |
-| `contrast` | warning | text too close in brightness to what is behind it |
+| `contrast` | warning | text too close in brightness to what is behind it (with OpenGL: measured on the real picture) |
+| `missing_glyph` | warning | text uses characters the font cannot draw (`²`, `π`, accents): they show as boxes |
 | `tiny` | warning | an object or text too small to read |
 | `orphan` | warning | an object that never appears |
 | `clutter` | warning | too many objects change at once in one block (between two markers) |
@@ -219,6 +249,7 @@ from phasor import load
 from phasor.render.output import save_png
 
 save_png("out/frame.png", engine.still(3.0, (960, 540)))  # (h, w, 3) uint8 sRGB
+picture = engine.frame(3.0, (3840, 2160))  # linear, after bloom and tone map; float32
 s.save("residues.phasor.json")  # canonical, diff-friendly
 engine = load("residues.phasor.json")  # or load("residues.py")
 ```
@@ -266,7 +297,8 @@ assert field.shape == (90, 160) and (field == -1).any()  # -1 marks points in th
 | `phasor inspect SCENE [--t T] [--id ID] [--detail brief\|standard\|full]` | M1 | What is on screen at time t |
 | `phasor lint SCENE [--fix] [--strict] [--json] [--step S]` | M2 | Lint; exit 1 on errors (`--strict`: on warnings too). `--fix` applies suggested fixes and saves them |
 | `phasor storyboard SCENE [-o PNG] [--t T]... [--marks] [--json]` | M2 | Keyframe contact sheet plus what the inspector sees |
-| `phasor render` / `phasor bench` | M3 | Final render, kernel benchmarks |
+| `phasor render SCENE [-o OUT] [--preset preview\|final\|4k] [--fps F] [--start S] [--end E] [--frame T]` | M3 | Video (`.mp4`; `.mov` is ProRes; a folder or `%05d.png` is a PNG sequence) or one PNG with `--frame` |
+| `phasor bench [--width W] [--height H]` | M3 | ms per frame per kernel and peak VRAM; saved in `benchmarks/` |
 | `phasor mcp` | M5 | MCP server |
 | `phasor gui` | M10 | Editor |
 

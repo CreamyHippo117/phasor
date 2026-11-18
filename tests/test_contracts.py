@@ -41,7 +41,7 @@ def _offenders(pattern: str, allowed: set[str]) -> list[str]:
         (
             "contract 3: state depends on (document, t), never on the clock or global randomness",
             r"\btime\.time\(|\bperf_counter\(|datetime\.now\(|\brandom\.\w+\(|np\.random\.",
-            {"core/rng.py"},
+            {"core/rng.py", "render/bench.py"},
         ),
         (
             "contract 4: sRGB encoding happens once, in render/output.py",

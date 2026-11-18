@@ -20,6 +20,11 @@ def inspect_size(state: SceneState) -> tuple[int, int]:
 
 
 class PassRunner(Protocol):
+    def color(self, state: SceneState, size: tuple[int, int] | None = None) -> np.ndarray:
+        """(h, w, 4) float32 linear RGBA, row 0 = top: the picture before bloom and tone
+        mapping. The linter reads it to see what is really behind a label."""
+        ...
+
     def id_buffer(
         self, state: SceneState, size: tuple[int, int], force: frozenset[str] = frozenset()
     ) -> np.ndarray:

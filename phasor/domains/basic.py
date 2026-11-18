@@ -30,7 +30,7 @@ class Dot(ObjectBase):
     """A filled disc: a point, a pole, a sample."""
 
     type: ClassVar[str] = "dot"
-    Style: ClassVar = {"color": ("emphasis", "primary")}
+    Style: ClassVar = {"color": ("emphasis", "primary"), "glow": ("glow", "none")}
 
     class Params(ParamsBase):
         pos: Vec3 = (0.0, 0.0, 0.0)
@@ -62,7 +62,8 @@ class Dot(ObjectBase):
         positions = np.vstack([np.asarray(p.pos)[None, :], rim])
         k = np.arange(DISC_SEGMENTS)
         indices = np.c_[np.zeros_like(k), 1 + k, 1 + (k + 1) % DISC_SEGMENTS]
-        ctx.triangles(positions, indices, color=_rgba(me.style["color"], p.opacity))
+        ctx.triangles(positions, indices, color=_rgba(me.style["color"], p.opacity),
+                      glow=me.style["glow"])  # fmt: skip
 
 
 @register
@@ -70,7 +71,11 @@ class Line(ObjectBase):
     """A polyline through two or more points, with mitered joins."""
 
     type: ClassVar[str] = "line"
-    Style: ClassVar = {"color": ("emphasis", "primary"), "stroke": ("stroke", "regular")}
+    Style: ClassVar = {
+        "color": ("emphasis", "primary"),
+        "stroke": ("stroke", "regular"),
+        "glow": ("glow", "none"),
+    }
 
     class Params(ParamsBase):
         points: tuple[Vec3, ...] = Field(min_length=2)
@@ -112,7 +117,8 @@ class Line(ObjectBase):
         positions[0::2], positions[1::2] = pts + off3, pts - off3
         k = 2 * np.arange(len(pts) - 1)
         indices = np.vstack([np.c_[k, k + 1, k + 2], np.c_[k + 1, k + 3, k + 2]])
-        ctx.triangles(positions, indices, color=_rgba(me.style["color"], me.params.opacity))
+        ctx.triangles(positions, indices, color=_rgba(me.style["color"], me.params.opacity),
+                      glow=me.style["glow"])  # fmt: skip
 
 
 @register

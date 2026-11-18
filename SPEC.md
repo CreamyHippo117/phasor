@@ -60,12 +60,12 @@ These seven decisions are hard to change later. Build them exactly as written in
 
 - Schema: pydantic v2 models in `core/schema.py`. JSON Schema is exported from them for MCP validation and docs. The document carries `schema_version`; migrations live in `core/migrate.py`.
 - Canonical file: `name.phasor.json`, written with sorted keys and stable ordering so git diffs stay clean.
-- A Python script is a builder: running `scene.py` emits the base document. GUI and AI tweaks to a scripted scene are saved in `name.overrides.json`, keyed by object id + parameter path, and applied on top at load. Re-running the script never destroys tweaks. An override whose target id vanished is a lint error (`orphan_override`).
-- IDs match `[a-z][a-z0-9_]*`, use dots for children (`res.pole_i`), and are never reused or renumbered. Auto IDs come from type + meaning (`pole_i`), not counters.
+- A Python script is a builder: running `scene.py` emits the base document. GUI and AI tweaks to a scripted scene are saved in `name.overrides.json`, keyed by object id + parameter path (plus layout constraints added on top of the script's own, ADR 0002), and applied on top at load. Re-running the script never destroys tweaks. An override whose target id vanished is a lint error (`orphan_override`).
+- IDs match `[a-z][a-z0-9_]*`, use dots for children (`res.pole_i`), and are never reused or renumbered: removing an object retires its id in the document (`retired_ids`), and adding it again is an error. Auto IDs come from type + meaning (`pole_i`), not counters.
 
 **3. Time is a pure function**
 
-- `Engine.state_at(t) -> SceneState` depends only on (document, t). `SceneState` is immutable (frozen dataclasses) and holds every object's resolved parameters.
+- `Engine.state_at(t) -> SceneState` depends only on (document, t), given the machine's occlusion oracle: the layout bake reads the real id pass where OpenGL exists and geometry where it does not, so a near-tie can place a label differently on two machines (ADR 0002). `SceneState` is immutable (frozen dataclasses) and holds every object's resolved parameters.
 - Parameters form a DAG of constants, tracks (piecewise segments with easing) and expressions over other parameters. Evaluate in topological order; a cycle is a validation error.
 - Narration lives in a separate `TimeMap` (marker name to seconds). Tracks store marker-relative anchors. Re-recording audio rebuilds only the `TimeMap`.
 - Simulations (PDE, FDTD, particles) are `Simulation` objects with `step(state, dt)`, a fixed dt, a seed, and checkpoints every N steps cached in `.phasor_cache/` under a hash of their parameters. `state_at(t)` = nearest earlier checkpoint + remaining steps.
@@ -103,6 +103,7 @@ Every object type implements the `SceneObject` protocol. A type missing any memb
 - Stage 2: label placer. Candidates = 8 compass slots around the anchor plus leader-line slots. Cost = overlap area + occlusion (from the ID buffer) + distance from anchor + movement since the previous key time.
 - Hysteresis: a label changes slot only when cost improves by more than 20%, so labels never jitter.
 - Constraints the solver cannot satisfy are returned as lint issues, never dropped silently.
+- Layer order and dependency inversion for render output: `docs/decisions/0001-layers.md` (accepted).
 
 ## Scene document and semantic scene graph
 
@@ -299,8 +300,9 @@ Two renderers share one scene: a fast preview for iteration and a CUDA-accelerat
 
 **Look**
 
-- Linear HDR pipeline, tone mapping (ACES / AgX), wide-gamut option.
-- Physically based bloom and glow with per-object emission strength.
+- Linear HDR pipeline, wide-gamut option. Tone mapping is a shoulder curve: identity below the theme's knee (so paint colors show exactly as the theme defines them), then a smooth roll-off to white. ACES and AgX shift every color, including flat paint, so they are not the default; a theme may add them later as an option.
+- Physically based bloom and glow with per-object emission strength: the color pass writes a second target holding only the light glow roles add, and the bloom (a blurred pyramid) is built from that, so plain paint never blooms and thin curves bloom by their energy at any resolution.
+- Kernel-drawn planes (domain coloring, fractals) are backdrops: layout lets labels sit on them, and lint judges the label by contrast against the real color pass.
 - Depth of field, film grain, vignette, chromatic aberration (all subtle and optional).
 - 3D: PBR-lite materials, soft shadows, ambient occlusion, translucent surfaces with order-independent transparency, glowing curves on surfaces.
 - Named themes: palette, background, glow levels, typography, line weights. AI picks themes; it does not invent hex codes.

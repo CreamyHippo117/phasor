@@ -181,6 +181,10 @@ def _apply_op(doc: Document, op: Any) -> Document:
     tl = doc.timeline
     match op:
         case AddObject():
+            if op.object.id in doc.retired_ids:
+                raise _fail("id_retired", f"id {op.object.id!r} belonged to a removed object; "
+                            "ids are never reused", ids=(op.object.id,),
+                            fix_hint="give it a new id that says what it is")  # fmt: skip
             return doc.model_copy(update={"objects": (*doc.objects, op.object)})
         case RemoveObject():
             if doc.object(op.id) is None:
@@ -190,6 +194,7 @@ def _apply_op(doc: Document, op: Any) -> Document:
                 update={
                     "objects": tuple(o for o in doc.objects if o.id != op.id),
                     "timeline": tl.model_copy(update={"tracks": tracks}),
+                    "retired_ids": tuple(sorted({*doc.retired_ids, op.id})),
                 }
             )
         case SetParam():

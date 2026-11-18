@@ -10,6 +10,7 @@ from the ``SceneState`` it is handed. The same instance doubles as the Python bu
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, ClassVar, Literal, Protocol, runtime_checkable
 
@@ -68,8 +69,25 @@ class DrawContext(Protocol):
         indices: np.ndarray | None = None,  # (M, 3) or None for a plain triangle list
         *,
         color: tuple[float, float, float, float],  # linear RGBA, not premultiplied
-        emission: float = 0.0,
+        glow: float = 1.0,  # emission: the color pass multiplies rgb by this (theme glow role)
     ) -> None: ...
+
+    def field(
+        self,
+        corner: np.ndarray,  # world position of the quad's lower-left corner
+        right: np.ndarray,  # world vector along the quad's bottom edge
+        up: np.ndarray,  # world vector along its left edge
+        *,
+        pixels: Callable[[int, int, tuple[float, float], float], np.ndarray],
+        opacity: float = 1.0,
+    ) -> None:
+        """A quad whose color is computed per pixel (domain coloring, fractals). It is one
+        object in the id and solo passes. For the color pass the renderer calls
+        ``pixels(width_px, height_px, center, height)`` with the visible part of the quad as
+        a view in quad coordinates (``center`` and ``height`` measured along ``right`` and
+        ``up`` from ``corner``, in world units), and expects linear RGBA (h, w, 4) float32,
+        row 0 = top."""
+        ...
 
     def text(
         self,

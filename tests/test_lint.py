@@ -96,6 +96,16 @@ def test_a_label_sitting_on_a_shape_is_judged_by_contrast_not_overlap(passes):
 
 
 @pytest.mark.parametrize("passes", MODES)
+def test_characters_the_font_cannot_draw_are_flagged(passes):
+    s = _scene(passes)
+    s.add(Text(id="formula", text="z² + π", pos=(3, 2)))
+    issue = _one(s.engine, "missing_glyph")
+    assert issue.ids == ("formula",) and "'²', 'π'" in issue.message and issue.fix_hint
+    assert s.engine.apply({"op": "set_param", "path": "formula.text", "value": "z^2 + pi"}).ok
+    assert s.engine.lint() == []
+
+
+@pytest.mark.parametrize("passes", MODES)
 def test_faint_text_fails_contrast(passes):
     s = _scene(passes)
     s.add(Text(id="note", text="whisper", pos=(3, 2), opacity=0.15))

@@ -1,7 +1,7 @@
 # phasor patterns
 
 Idioms for common tasks, one canonical way each. More arrive with their milestones:
-contour integrals (M3), narration sync (M4), 3D orbits (M6).
+narration sync (M4), 3D orbits (M6).
 
 ## Label something
 
@@ -72,3 +72,28 @@ from phasor.render.doctor import run_doctor
 if run_doctor().tier == "C":
     print("No OpenGL here: inspect works in analytic mode, stills do not.")
 ```
+
+## A glowing contour on a domain-colored plane
+
+The plane is the backdrop; the contour is a `Line` with `glow`; its label is placed by
+constraint and lands on the plane, not away from it.
+
+```python
+import numpy as np
+
+from phasor import Line, Scene, Text, cx
+
+s = Scene("contour")
+s.set("camera.height", 4.5)
+s.add(cx.DomainColoring(id="plane", function="1/(z**2 + 1)", size=(8, 4.5)))
+ring = [(0.5 * np.cos(a), 1 + 0.5 * np.sin(a)) for a in np.linspace(0, 2 * np.pi, 129)]
+s.add(
+    Line(id="loop", points=ring, style={"color": "highlight", "stroke": "bold", "glow": "strong"})
+)
+s.add(Text(id="loop.label", text="Res = -i/2"))
+s.constrain("label(loop) near loop")
+assert s.engine.lint() == []
+```
+
+Write math in labels with ASCII (`z^2`, `pi`) until LaTeX arrives: the bundled font has no
+superscripts or Greek, and lint reports `missing_glyph` if you use them.

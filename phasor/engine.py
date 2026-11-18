@@ -347,14 +347,23 @@ class Engine:
         return inspector.hit_test(self.state_at(t), self.pass_runner(), x, y)
 
     def still(self, t: float, size: tuple[int, int] | None = None):
-        """Preview still: (h, w, 3) uint8 sRGB. Needs OpenGL (tier A or B)."""
+        """Preview still: (h, w, 3) uint8 sRGB, the same look as the final render.
+        Needs OpenGL (tier A or B)."""
         from phasor.render.output import encode_srgb8
+
+        return encode_srgb8(self.frame(t, size))
+
+    def frame(self, t: float, size: tuple[int, int] | None = None):
+        """The finished picture at ``t`` in linear light: color pass, bloom, tone map.
+        (h, w, 4) float32, row 0 = top. ``still`` and ``phasor render`` both use this."""
         from phasor.render.passes import GLRenderer
+        from phasor.render.post import finish
 
         runner = self.pass_runner()
         if not isinstance(runner, GLRenderer):
             raise RuntimeError("no OpenGL renderer on this machine (run `phasor doctor`)")
-        return encode_srgb8(runner.color(self.state_at(t), size))
+        picture, emission = runner.color_and_emission(self.state_at(t), size)
+        return finish(picture, self._snap.compiled.theme, emission)
 
     def storyboard_times(self, count: int = 6) -> list[float]:
         """Start, every marker and the end; padded with evenly spaced times up to ``count``."""
