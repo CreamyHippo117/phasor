@@ -220,3 +220,24 @@ The pressure field is a wave-equation simulation: `dt` must be at most `dx / (c 
 
 Checkpoints live in `.phasor_cache/` (or `PHASOR_CACHE`). Delete it freely: it only costs
 time. A changed parameter is a new hash, so stale results never come back.
+
+## A PDE time that never finishes
+
+`time` of a `pde` object is simulation time. Heat on a unit rod with k = 1 is over by 0.1 s;
+a 6-metre plate with k = 0.1 takes minutes. Tie it to the scene clock with a factor
+(`time=expr("t / 10")`) and look at `steps` in the semantics: a frame more than 400,000 steps in is
+refused, and a solver step that would be unstable is a validation error, not a blow-up.
+
+## `CayleyTable` says "at most 24"
+
+Tables are drawn for groups up to 24 elements (`D12`, `Z24`, `S4`). Bigger groups are still
+available as numbers in `algebra_math`.
+
+## A `Polygon` has no element name
+
+The semantics name the group element only when the polygon sits on a symmetry: `rotation` a
+multiple of `360 / n` and `flip` exactly 0 or 1. Mid-animation it is `None` on purpose.
+
+## `Taylor` and `RiemannSum` numbers are floats
+
+`order` and `n` are numbers so they can be animated; they are rounded when used.

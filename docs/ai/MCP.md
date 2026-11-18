@@ -93,7 +93,9 @@ Change things later with `set_param`, `set_style`, `set_tags`, `remove_object`,
 Domain objects are added the same way (`object_types` lists their parameters and presets):
 `epicycles`, `partial_sum`, `spectrum`, `spectrogram` (fourier); `transform_grid`, `arrow`,
 `eigen_lines`, `matrix` (linear algebra); `room`, `source`, `listener`, `wavefront`,
-`image_sources`, `impulse_response`, `pressure_slice` (acoustics). A parameter may be an
+`image_sources`, `impulse_response`, `pressure_slice` (acoustics); `pde_profile`, `pde_field`,
+`pde_surface`; `polygon`, `cayley_table`, `clock_diagram` (algebra); `graph`, `riemann_sum`, `taylor`,
+`vector_field` (calculus). A parameter may be an
 expression, which is how a `matrix` object reads a grid's matrix: `"matrix": {"expr": "grid.matrix"}`.
 
 ```json patch
@@ -104,6 +106,18 @@ expression, which is how a `matrix` object reads a grid's matrix: `"matrix": {"e
     "params": {"matrix": {"expr": "grid.matrix"}, "pos": [5, 3, 0]}}},
   {"op": "add_object", "object": {"id": "tone", "type": "spectrum",
     "params": {"frequencies": [100.5], "amplitudes": [1.0], "window": "hann", "pos": [-7, -4, 0]}}}
+]
+```
+
+```json patch
+[
+  {"op": "add_object", "object": {"id": "rod", "type": "pde_profile",
+    "params": {"kind": "heat", "length": 2.0, "diffusivity": 0.5, "modes": [1.0, 0.4],
+               "time": {"expr": "t / 10"}, "pos": [-8, 1, 0]}}},
+  {"op": "add_object", "object": {"id": "square", "type": "polygon",
+    "params": {"n": 4, "pos": [2, 2, 0]}}},
+  {"op": "add_object", "object": {"id": "area", "type": "riemann_sum",
+    "params": {"function": "x**2", "a": 0, "b": 3, "n": 8, "rule": "mid", "pos": [-2, -4, 0]}}}
 ]
 ```
 

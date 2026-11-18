@@ -4,7 +4,7 @@ One canonical example per public name. No deprecated aliases. Every ```python bl
 folder runs in CI (`tests/test_docs.py`), top to bottom in one namespace per file. Mark a
 block ```python no-run only when it cannot run in CI, and say why next to it.
 
-Status: through Milestone 8. This file is the Python API; to drive phasor from an AI client
+Status: through Milestone 9. This file is the Python API; to drive phasor from an AI client
 (MCP) read `MCP.md` first.
 
 ## Build a scene
@@ -490,6 +490,53 @@ nearest earlier checkpoint plus the remaining steps, cached in memory and under
 `.phasor_cache/<hash of the parameters>/` (or `PHASOR_CACHE`), so scrubbing is cheap and the
 answer never depends on how you got there. `ac_math.RoomFDTD` is one (it refuses a `dt` above
 `dx / (c sqrt(3))`: that is a validation error, not a blow-up).
+
+## Domains, wave 2: pde, algebra, calc
+
+`from phasor import pde, algebra, calc`.
+
+**`pde`**: `Profile(kind="heat"|"wave"|"advection"|"schrodinger", time=...)` (a 1D solution
+as a curve, the exact solution drawn beside it), `Field(kind="heat"|"wave"|"reaction")` (a 2D
+colour plane, a backdrop) and `Surface(...)` (the same as a lit 3D surface). `time` is
+simulation time, usually `expr("t / 10")`; frames are checkpointed simulations, so scrubbing is
+cheap. Semantics report the max, `max_error_vs_exact`, the conserved quantity (`total_heat`,
+`norm`). An unstable step is a validation error. The numerics are in `domains/pde_math.py`
+(`Heat1D`, `Heat2D`, `Wave1D`, `Wave2D`, `Advection1D`, `GrayScott`, `Schrodinger1D`,
+`solve_poisson`), all `Simulation`s.
+
+**`algebra`**: `Polygon(n=4, rotation=deg, flip=0..1)` (a dihedral group acting on an n-gon;
+the semantics name the group element when it lands on a symmetry), `CayleyTable(group="D4")`
+(`D<n>`, `Z<n>`, `S<n>`; coloured by element, a Latin square), `ClockDiagram(n=12, step=4)`
+(a cyclic group, a subgroup and its cosets). Groups are in `algebra_math` (`dihedral`, `cyclic`,
+`symmetric`: subgroups, cosets, normality, Lagrange).
+
+**`calc`**: `RiemannSum(function="x**2", a=0, b=3, n=8, rule="mid")` (`n` is a number, so
+animate it and watch the error fall), `Taylor(function="sin(x)", order=5)` (animate `order`),
+`Graph(function=...)` (breaks at poles), `VectorField(p="-y", q="x")` (divergence and curl in the
+semantics). Functions are text in `x` (and `y`), read with a whitelist, never evaluated as Python.
+
+```python
+from phasor import Scene, algebra, calc, expr, pde
+
+s9 = Scene("wave2", passes=None)
+s9.set("camera.height", 10)
+s9.add(pde.Profile(id="rod", kind="heat", length=2.0, diffusivity=0.5, modes=(1.0, 0.4),
+                   time=expr("t / 10"), pos=(-8, 1, 0)))  # fmt: skip
+s9.add(algebra.Polygon(id="square", n=4, pos=(2, 2, 0)))
+s9.add(calc.RiemannSum(id="area", function="x**2", a=0.0, b=3.0, n=4.0, pos=(-2, -4, 0)))
+s9.marker("go", 1.0)
+s9.at("go").morph("square.rotation", 90.0)
+s9.at("go").morph("area.n", 64.0)
+
+e9 = s9.engine
+rod = e9.inspect(3.0, id="rod")["objects"][0]["semantic"]
+assert rod["max_error_vs_exact"] < 3e-3  # the solver sits on the exact solution
+assert e9.inspect(3.0, id="square")["objects"][0]["semantic"]["element"] == "r"
+assert (
+    e9.inspect(0.0, id="area")["objects"][0]["semantic"]["error"]
+    > 10 * (e9.inspect(3.0, id="area")["objects"][0]["semantic"]["error"])
+)  # more pieces, smaller error
+```
 
 ## 3D: orbit camera, surfaces, camera goals
 
