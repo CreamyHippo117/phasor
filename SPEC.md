@@ -383,6 +383,35 @@ The AI handles structure, math and timing; the engine and your gallery hold the 
 | Surface | `solid`, `glass`, `wire`, `emissive` |
 
 - Ship three themes tuned by hand: `midnight_glow`, `aurora`, `paper`. Add more only after these look great.
+- **Backgrounds are not dark by default** (owner, 2026-11-18). The default theme has a light or mid-tone background; dark themes like `midnight_glow` are an opt-in choice, not the house look. Glow and bloom must still read on a light background (soft colored halos, not white blow-outs).
+
+**Living motion: no frozen frames (owner, 2026-11-18)**
+
+Things on screen should feel alive, not rigid. Every theme has a `[life]` section and every scene a `life` setting (`off`, `subtle`, `lively`), so the effect can be turned off entirely.
+
+- Glow breathes: bloom strength and glow roles swell and fade slowly instead of sitting at one value.
+- Points and markers drift: a dot or pole wanders a tiny distance around its true position (a fraction of its own size), never far enough to mislead. Labels follow their anchors.
+- Fields drift: a fractal or domain-colored backdrop slowly pans, rotates its colors or zooms by a hair.
+- Curves shimmer: glowing strokes vary slightly in brightness along their length over time.
+- Rules that keep it honest:
+  - **Purity holds (contract 3).** Life is a deterministic function of (object id, seed, t), built from smooth noise via `rng(object_id, seed)`. The same frame always renders the same, and `state_at(t)` still depends only on the document and t.
+  - **The inspector sees true positions plus the wiggle**, and reports `life` amplitudes, so lint and layout account for it (a label's slot must hold through the whole wiggle).
+  - **Meaningful geometry stays exact.** Life never moves a pole off a computed location by more than the theme's tolerance, never changes a value that a label states, and is off on objects tagged `exact`.
+  - **Amplitudes and speeds live in the theme**; the AI picks a preset, it does not tune numbers.
+
+**Softer, less clashing pictures (owner, 2026-11-18)**
+
+- Boundaries should not clash: hard edges between regions (domain-coloring contour bands, the rim of a backdrop, a curve crossing a field) are softened or feathered by default. Sharp edges are a choice, not the default.
+- Fewer rainbows: full-hue rainbow colormaps are not the default. Phase coloring uses a restrained palette (two or three hues from the theme, or a muted wheel) unless a scene asks for the full wheel. The `color_restraint` lint rule applies to backdrops too.
+
+**Presets**
+
+Making something should start from a preset, not from a blank set of parameters.
+
+- Look presets bundle theme choices: background (light, mid, dark), palette restraint, edge softness, glow level and life level. Examples: `calm` (light, soft edges, subtle life), `chalk` (paper background, no glow, crisp), `glow` (mid-dark, lively bloom).
+- Object presets bundle parameters per object type: a domain-coloring preset picks colormap, contour softness and drift; a fractal preset picks palette, iteration depth and drift; a curve preset picks stroke, glow and shimmer.
+- Usage: `Scene("x", look="calm")`, `cx.DomainColoring(..., preset="soft_phase")`. A preset is just named defaults; anything set explicitly wins, and the document stores the resolved values so it stays reproducible.
+- The AI chooses presets by name (documented in `docs/ai/`), the same way it chooses style roles.
 
 **Choreography verbs (`time/verbs.py`)**
 
@@ -634,7 +663,7 @@ Build the AI-visible core first, then beauty, then breadth. Each milestone ends 
 | 4 | Narration sync | Script markers, recording/TTS, WhisperX alignment, `TimeMap`, choreography verbs | Residue theorem short driven entirely by narration | Sonnet |
 | 5 | MCP + AI docs | MCP server, detail levels, `docs/ai/`, self-review loop, skill package | An AI builds and fixes a scene from a one-line prompt | Sonnet |
 | 6 | 3D + spatial awareness | Perspective camera, surfaces, OIT, event log, camera solver, 3D label placement, auto-cinematography | Riemann surface of sqrt(z): labels readable through a full orbit, event log clean | Strong for camera solver, then Sonnet |
-| 7 | Beauty system | Aesthetic lint rules, gallery compare, art-director pass, variants, `choices.jsonl`, two more themes | Critic pass measurably improves a rough scene in 3 rounds | Sonnet |
+| 7 | Beauty system | Aesthetic lint rules, gallery compare, art-director pass, variants, `choices.jsonl`, two more themes, light default background, living motion (`life`), softened edges, restrained colormaps, look and object presets | Critic pass measurably improves a rough scene in 3 rounds | Sonnet |
 | 8 | Domains wave 1 | `fourier`, `linalg`, `acoustics`, `Simulation` checkpoints | 3D reverb scene (section above) | Sonnet |
 | 9 | Domains wave 2 | `pde`, `algebra`, `calc`, perturbation deep zoom | Heat equation, dihedral group and a 1e-30 zoom | Sonnet; strong for perturbation |
 | 10 | GUI editor | Viewport, timeline, inspector, lint panel, MCP attach, variant picker | Edit the reverb scene by hand and by AI in one session | Sonnet |
