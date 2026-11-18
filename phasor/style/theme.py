@@ -18,7 +18,8 @@ from phasor.core.color import hex_to_linear, phase_lut
 
 THEME_DIR = Path(__file__).parent / "themes"
 
-# role group -> role names. "surface" values are opacities until 3D materials (Milestone 6).
+# role group -> role names. "surface" values are the opacity of each material; how a
+# material is lit (glass, wire, emissive) is decided by the renderer from the role name.
 ROLE_GROUPS: dict[str, tuple[str, ...]] = {
     "emphasis": ("primary", "secondary", "muted", "highlight", "danger"),
     "stroke": ("hairline", "regular", "bold"),
@@ -43,6 +44,22 @@ _TABLES = {
     "lint": ("overlap", "contrast", "tiny", "text_min", "clutter", "crowded"),
     "bloom": ("threshold", "strength", "levels", "exposure", "knee"),
     "narration": ("words_per_second", "lead", "gap", "pause_per_change", "pause_max"),
+    "camera": ("drift", "drift_period", "fill", "thirds", "smooth", "margin"),
+    "light": (
+        "key_azimuth",
+        "key_elevation",
+        "key",
+        "fill_azimuth",
+        "fill_elevation",
+        "fill",
+        "rim_azimuth",
+        "rim_elevation",
+        "rim",
+        "ambient",
+        "specular",
+        "shininess",
+        "fog",
+    ),
 }
 
 
@@ -82,6 +99,8 @@ class Theme:
     lint: dict[str, float] = field(default_factory=dict)  # linter thresholds
     bloom: dict[str, float] = field(default_factory=dict)  # final-look glow settings
     narration: dict[str, float] = field(default_factory=dict)  # speaking rate, pacing
+    camera: dict[str, float] = field(default_factory=dict)  # 3D drift and solver defaults
+    light: dict[str, float] = field(default_factory=dict)  # three-point rig and depth fog
     motion: dict[str, Any] = field(default_factory=dict)  # verb -> {duration, ease}, + scalars
 
     def resolve(self, group: str, role: str) -> Any:

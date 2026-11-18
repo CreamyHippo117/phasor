@@ -81,9 +81,11 @@ class Line(ObjectBase):
         points: tuple[Vec3, ...] = Field(min_length=2)
         progress: float = Field(1.0, ge=0, le=1)  # drawn share of the length (the trace verb)
 
-    def _width(self, state: SceneState) -> float:
+    def _width(self, state: SceneState, points=None):
+        """Stroke width in world units: a share of the frame height, so it looks the same at
+        any zoom. With ``points`` (N, 3), one width per point (perspective: by depth)."""
         me = self.me(state)
-        return me.style["stroke"] * state.camera_for(me).units_per_height()
+        return me.style["stroke"] * state.camera_for(me).units_per_height(points)
 
     def _drawn(self, state: SceneState) -> np.ndarray:
         """The points of the part drawn so far: the first ``progress`` of the length."""
@@ -100,7 +102,8 @@ class Line(ObjectBase):
         return np.vstack([pts[:k], pts[k - 1] + u * (pts[k] - pts[k - 1])])
 
     def world_bounds(self, state: SceneState) -> Bounds:
-        return Bounds.of_points(self._drawn(state), pad=self._width(state) / 2)
+        pts = self._drawn(state)
+        return Bounds.of_points(pts, pad=float(np.max(self._width(state, pts))) / 2)
 
     def features(self, state: SceneState) -> dict[str, np.ndarray]:
         pts = self._drawn(state)
@@ -131,7 +134,7 @@ class Line(ObjectBase):
         miter = n_prev + n_next
         miter /= np.maximum(np.linalg.norm(miter, axis=1, keepdims=True), 1e-9)
         scale = 1 / np.maximum((miter * n_prev).sum(1), 0.25)  # miter limit 4x
-        offset = (miter * scale[:, None]) * (self._width(state) / 2)
+        offset = (miter * scale[:, None]) * (np.asarray(self._width(state, pts))[:, None] / 2)
         off3 = np.outer(offset[:, 0], cam.right) + np.outer(offset[:, 1], cam.up)
         positions = np.empty((2 * len(pts), 3))
         positions[0::2], positions[1::2] = pts + off3, pts - off3
@@ -165,8 +168,8 @@ class Text(ObjectBase):
         """(lower-left corner, width vector, height vector, line height) in world space."""
         me = self.me(state)
         cam = state.camera_for(me)
-        h = me.style["size"] * cam.units_per_height()
         p = me.params
+        h = me.style["size"] * cam.units_per_height(p.pos)
         return (*text_metrics.quad(p.text, p.pos, h, p.anchor, cam.right, cam.up), h)
 
     def world_bounds(self, state: SceneState) -> Bounds:
@@ -200,7 +203,7 @@ class Text(ObjectBase):
                 along /= length
                 start = start + along * min(0.15 * h, length / 2)
                 side = np.cross(cam.forward, along)
-                half = side * (me.style["leader"] * cam.units_per_height() / 2)
+                half = side * (me.style["leader"] * cam.units_per_height(target) / 2)
                 quad = np.array([start - half, start + half, target + half, target - half])
                 ctx.triangles(quad, np.array([[0, 1, 2], [0, 2, 3]]),
                               color=_rgba(color, p.leader_on))  # fmt: skip

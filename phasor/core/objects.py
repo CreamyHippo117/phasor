@@ -92,6 +92,22 @@ class DrawContext(Protocol):
         row 0 = top."""
         ...
 
+    def surface(
+        self,
+        positions: np.ndarray,  # (N, 3) world space
+        indices: np.ndarray,  # (M, 3)
+        *,
+        normals: np.ndarray,  # (N, 3), any sign: surfaces are lit from both sides
+        colors: np.ndarray,  # (N, 4) linear RGBA per vertex, not premultiplied
+        uv: np.ndarray | None = None,  # (N, 2) surface coordinates; the wire material grids them
+        material: str = "solid",  # a surface role: solid | glass | wire | emissive
+        opacity: float = 1.0,  # the material's opacity times the object's
+        glow: float = 1.0,
+    ) -> None:
+        """A lit 3D surface (SPEC "Look": PBR-lite). The renderer lights it with the theme's
+        three-point rig and depth fog; the id and solo passes see plain triangles."""
+        ...
+
     def text(
         self,
         text: str,

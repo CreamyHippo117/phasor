@@ -105,6 +105,105 @@ void main() {
 }
 
 
+# Lit surfaces (SPEC "Look": PBR-lite). World-space lighting from a three-point rig placed
+# relative to the camera, two-sided, Blinn-Phong highlights, and depth fog toward the
+# background. Materials: 0 solid, 1 glass (brighter at grazing angles), 2 wire (a grid
+# drawn along the surface coordinates), 3 emissive (unlit, glowing).
+_VS_LIT = """
+#version 430
+uniform mat4 u_vp;
+uniform float u_bias;
+uniform float u_zoom;
+in vec3 in_pos;
+in vec3 in_normal;
+in vec4 in_rgba;
+in vec2 in_uv;
+out vec3 v_pos;
+out vec3 v_normal;
+out vec4 v_rgba;
+out vec2 v_uv;
+void main() {
+    gl_Position = u_vp * vec4(in_pos, 1.0);
+    gl_Position.xy *= u_zoom;
+    gl_Position.z -= u_bias * gl_Position.w;
+    v_pos = in_pos; v_normal = in_normal; v_rgba = in_rgba; v_uv = in_uv;
+}
+"""
+_FS_LIT = """
+#version 430
+uniform vec3 u_eye;
+uniform vec3 u_light_dir[3];
+uniform float u_light[3];
+uniform float u_ambient;
+uniform float u_specular;
+uniform float u_shininess;
+uniform float u_fog;
+uniform float u_fog_ref;
+uniform vec4 u_bg;
+uniform float u_opacity;
+uniform float u_glow;
+uniform int u_material;
+uniform vec2 u_grid;
+in vec3 v_pos;
+in vec3 v_normal;
+in vec4 v_rgba;
+in vec2 v_uv;
+layout(location = 0) out vec4 frag;
+layout(location = 1) out vec4 emit;
+void main() {
+    vec3 view = normalize(u_eye - v_pos);
+    vec3 n = normalize(v_normal);
+    if (dot(n, view) < 0.0) n = -n;  // two-sided
+    vec3 base = v_rgba.rgb;
+    vec3 c;
+    if (u_material == 3) {
+        c = base * u_glow;
+    } else {
+        float diffuse = u_ambient;
+        float spec = 0.0;
+        for (int i = 0; i < 3; i++) {
+            vec3 l = normalize(u_light_dir[i]);
+            diffuse += u_light[i] * max(dot(n, l), 0.0);
+            vec3 h = normalize(l + view);
+            spec += u_light[i] * pow(max(dot(n, h), 0.0), u_shininess);
+        }
+        c = base * diffuse + vec3(u_specular * spec);
+        if (u_material == 2) {
+            vec2 g = v_uv * u_grid;
+            vec2 d = abs(fract(g - 0.5) - 0.5) / fwidth(g);
+            float line = 1.0 - min(min(d.x, d.y), 1.0);
+            c = mix(c, c * 1.8 + 0.08, line);
+        }
+    }
+    float a = v_rgba.a * u_opacity;
+    if (u_material == 1) {
+        float fres = pow(1.0 - max(dot(n, view), 0.0), 3.0);
+        a = clamp(a * (0.55 + 0.9 * fres), 0.0, 1.0);
+    }
+    float dist = length(u_eye - v_pos);
+    float f = 1.0 - exp(-u_fog * max(dist - u_fog_ref, 0.0) / u_fog_ref);
+    c = mix(c, u_bg.rgb, f);
+    frag = vec4(c * a, a);
+    float g = u_material == 3 ? max(u_glow - 1.0, 0.0) * (1.0 - f) : 0.0;
+    emit = vec4(base * g * a, a);
+}
+"""
+MATERIALS = {"solid": 0, "glass": 1, "wire": 2, "emissive": 3}
+WIRE_LINES = (16.0, 8.0)  # grid lines across the surface's u and v ranges
+
+
+def _light_dirs(cam, light) -> list[tuple[float, float, float]]:
+    """Key, fill and rim directions (toward the light), placed relative to the camera so a
+    surface is lit the same way however the camera moves."""
+    out = []
+    for name in ("key", "fill", "rim"):
+        az = np.radians(light[f"{name}_azimuth"])
+        el = np.radians(light[f"{name}_elevation"])
+        d = np.cos(el) * (np.cos(az) * -cam.forward + np.sin(az) * cam.right) + np.sin(el) * cam.up
+        out.append(tuple(float(x) for x in d))
+    return out
+
+
 def _define(src: str, kind: str) -> str:
     """``kind``: ``mesh`` (flat color), ``text`` (coverage bitmap) or ``image`` (RGBA)."""
     head, _, rest = src.strip().partition("\n")
@@ -127,6 +226,17 @@ class _Collector:
         self.commands.append(
             ("field", {"corner": np.asarray(corner, dtype=np.float64), "right": np.asarray(right),
                        "up": np.asarray(up), "pixels": pixels, "opacity": opacity})
+        )  # fmt: skip
+
+    def surface(self, positions, indices, *, normals, colors, uv=None, material="solid",
+                opacity=1.0, glow=1.0) -> None:  # fmt: skip
+        n = len(positions)
+        self.commands.append(
+            ("surface", {"positions": np.asarray(positions, dtype=np.float64),
+                         "indices": np.asarray(indices), "normals": np.asarray(normals),
+                         "colors": np.asarray(colors), "material": material,
+                         "uv": np.zeros((n, 2)) if uv is None else np.asarray(uv),
+                         "opacity": float(opacity), "glow": float(glow)})
         )  # fmt: skip
 
     def text(self, text, origin, height, *, color, anchor="center") -> None:
@@ -162,6 +272,8 @@ class GLRenderer:
 
     def _program(self, pass_: str, kind: str):
         key = (pass_, kind)
+        if key == ("color", "lit") and key not in self._programs:
+            self._programs[key] = self.ctx.program(vertex_shader=_VS_LIT, fragment_shader=_FS_LIT)
         if key not in self._programs:
             self._programs[key] = self.ctx.program(
                 vertex_shader=_define(_VS, kind), fragment_shader=_define(_FS[pass_], kind)
@@ -200,12 +312,22 @@ class GLRenderer:
 
     # ------------------------------------------------------------ drawing
 
-    def _draw_object(self, state, obj: ObjectState, pass_, size, order: int, zoom: float) -> None:
-        ctx = self.ctx
-        cam = state.camera_for(obj)
+    def _commands(self, state, obj: ObjectState, pass_) -> list:
         collector = _Collector()
         obj.impl.draw(collector, state, pass_)
-        for kind, c in collector.commands:
+        return collector.commands
+
+    def _draw_object(self, state, obj: ObjectState, pass_, size, order: int, zoom: float,
+                     commands=None) -> None:  # fmt: skip
+        ctx = self.ctx
+        cam = state.camera_for(obj)
+        for kind, c in self._commands(state, obj, pass_) if commands is None else commands:
+            if kind == "surface" and pass_ == "color":
+                self._draw_lit(state, cam, c, order, zoom)
+                continue
+            if kind == "surface":  # id and solo: plain triangles
+                kind, c = "mesh", {"positions": c["positions"], "indices": c["indices"],
+                                   "color": (0, 0, 0, 1)}  # fmt: skip
             if kind == "field" and pass_ == "color":
                 quad = self._field_quad(state, obj, cam, c, size, zoom)
                 if quad is None:
@@ -240,7 +362,7 @@ class GLRenderer:
                 corner, wv, hv = text_metrics.quad(
                     c["text"], c["origin"], c["height"], c["anchor"], cam.right, cam.up
                 )
-                px = round(c["height"] / cam.units_per_height() * size[1])
+                px = round(c["height"] / cam.units_per_height(c["origin"]) * size[1])
                 tex = self._text_texture(c["text"], int(np.clip(px, 2, MAX_TEXT_PX)))
                 tex.use(0)
                 prog["u_tex"].value = 0
@@ -271,6 +393,38 @@ class GLRenderer:
             vao.release()
             for b in buffers:
                 b.release()
+
+    def _draw_lit(self, state, cam, c, order: int, zoom: float) -> None:
+        ctx = self.ctx
+        prog = self._program("color", "lit")
+        light = state.light
+        prog["u_vp"].write(cam.view_proj.astype("f4").T.tobytes())
+        prog["u_bias"].value = order * DEPTH_BIAS
+        prog["u_zoom"].value = 1.0 / zoom
+        prog["u_eye"].value = tuple(float(x) for x in cam.eye)
+        prog["u_light_dir"].write(np.array(_light_dirs(cam, light), dtype="f4").tobytes())
+        prog["u_light"].write(np.array([light["key"], light["fill"], light["rim"]],
+                                       dtype="f4").tobytes())  # fmt: skip
+        for name in ("ambient", "specular", "shininess", "fog"):
+            prog[f"u_{name}"].value = float(light[name])
+        prog["u_fog_ref"].value = float(cam.height if cam.perspective else 100.0)
+        prog["u_bg"].value = tuple(float(x) for x in state.background)
+        prog["u_opacity"].value = c["opacity"]
+        prog["u_glow"].value = c["glow"]
+        prog["u_material"].value = MATERIALS.get(c["material"], 0)
+        prog["u_grid"].value = WIRE_LINES
+        n = len(c["positions"])
+        data = np.empty((n, 12), dtype="f4")
+        data[:, 0:3], data[:, 3:6] = c["positions"], c["normals"]
+        data[:, 6:10], data[:, 10:12] = c["colors"], c["uv"]
+        vbo = ctx.buffer(data.tobytes())
+        ibo = ctx.buffer(np.ascontiguousarray(c["indices"], dtype="i4").tobytes())
+        vao = ctx.vertex_array(prog, [(vbo, "3f 3f 4f 2f", "in_pos", "in_normal", "in_rgba",
+                                       "in_uv")], index_buffer=ibo)  # fmt: skip
+        vao.render()
+        vao.release()
+        vbo.release()
+        ibo.release()
 
     def _field_quad(self, state, obj, cam, c, size, zoom):
         """Compute a kernel-drawn quad's visible pixels and upload them through the bridge.
@@ -345,6 +499,7 @@ class GLRenderer:
             ctx.disable(moderngl.DEPTH_TEST)
         else:
             ctx.enable(moderngl.DEPTH_TEST)
+        deferred = []  # see-through surfaces: drawn after everything opaque, far to near
         for order, obj in enumerate(state.draw_order()):
             if only is not None and obj.id != only:
                 continue
@@ -352,9 +507,22 @@ class GLRenderer:
                 continue
             if pass_ == "id" and not occludes(obj) and obj.id not in force:
                 continue
+            commands = self._commands(state, obj, pass_)
+            if pass_ == "color" and obj.layer != "overlay":
+                clear = [c for c in commands if c[0] == "surface"
+                         and (c[1]["opacity"] < 0.999 or c[1]["material"] == "glass")]  # fmt: skip
+                if clear:
+                    cam = state.camera_for(obj)
+                    for c in clear:
+                        deferred.append((float(cam.depth(c[1]["positions"]).mean()), order, obj, c))
+                    commands = [c for c in commands if all(c is not d for d in clear)]
+            if obj.layer == "overlay" and deferred:
+                self._draw_deferred(state, deferred, size, zoom)
             # The overlay layer always sits on top of the world: it ignores world depth.
             ctx.depth_func = "1" if obj.layer == "overlay" else "<="
-            self._draw_object(state, obj, pass_, size, order, zoom)
+            self._draw_object(state, obj, pass_, size, order, zoom, commands)
+        if deferred:
+            self._draw_deferred(state, deferred, size, zoom)
         if resolved is not target:
             ctx.copy_framebuffer(resolved, target)
         w, h = size
@@ -370,6 +538,17 @@ class GLRenderer:
             return raw.reshape(h, w)[::-1].copy()
         raw = np.frombuffer(resolved.read(components=1, dtype="f1"), dtype=np.uint8)
         return raw.reshape(h, w)[::-1] > 127
+
+    def _draw_deferred(self, state, deferred: list, size, zoom) -> None:
+        """Translucent surfaces, sorted far to near, tested against depth but not writing it
+        (order-independent enough for one or two glass sheets; SPEC asks for OIT later)."""
+        target, _ = self._target("color", size)
+        self.ctx.depth_func = "<="
+        target.depth_mask = False
+        for _, order, obj, cmd in sorted(deferred, key=lambda d: (-d[0], d[1])):
+            self._draw_object(state, obj, "color", size, order, zoom, [cmd])
+        target.depth_mask = True
+        deferred.clear()
 
     def _cached(self, state: SceneState, key: tuple, make) -> np.ndarray:
         if self._cache_state is not state:

@@ -8,6 +8,7 @@ finds. ``evaluate`` is then a pure function of (compiled document, t).
 from __future__ import annotations
 
 import functools
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -18,7 +19,13 @@ from pydantic import BaseModel, TypeAdapter, ValidationError
 from phasor.core.issues import DocumentError, Issue
 from phasor.core.objects import SceneObject, get_type, registered_types
 from phasor.core.schema import Document, ExprSpec
-from phasor.core.spatial import OrthoCameraParams, ortho_camera, overlay_camera
+from phasor.core.spatial import (
+    OrbitCameraParams,
+    OrthoCameraParams,
+    ortho_camera,
+    overlay_camera,
+    perspective_camera,
+)
 from phasor.core.state import ObjectState, SceneState
 from phasor.core.values import normalize, same_shape
 from phasor.style.theme import Theme, ThemeError, load_theme
@@ -26,7 +33,7 @@ from phasor.time.easing import EASINGS
 from phasor.time.expr import CompiledExpr, ExprError, compile_expr
 from phasor.time.tracks import ResolvedSegment, ResolvedTrack, TimeMap
 
-CAMERA_PARAMS = {"ortho": OrthoCameraParams}
+CAMERA_PARAMS = {"ortho": OrthoCameraParams, "orbit": OrbitCameraParams}
 
 
 @dataclass(frozen=True)
@@ -233,6 +240,14 @@ def compile_document(doc: Document) -> Compiled:
     return compiled
 
 
+def sway(theme: Theme, params: OrbitCameraParams, t: float) -> float:
+    """The camera's slow drift in azimuth at ``t``, in degrees: a pure function of t, so
+    time stays pure (contract 3). Amplitude from the camera's ``drift`` or the theme."""
+    amp = theme.camera["drift"] if params.drift is None else params.drift
+    period = theme.camera["drift_period"]
+    return amp * math.sin(2 * math.pi * t / period) if amp and period > 0 else 0.0
+
+
 def evaluate(c: Compiled, t: float, replace: Mapping[str, Any] | None = None) -> SceneState:
     """Pure: depends only on (compiled document, t).
 
@@ -273,7 +288,11 @@ def evaluate(c: Compiled, t: float, replace: Mapping[str, Any] | None = None) ->
     meta = c.doc.meta
     aspect = meta.width / meta.height
     cam_spec = c.doc.camera(c.doc.timeline.camera)
-    camera = ortho_camera(build(cam_spec.id, CAMERA_PARAMS[cam_spec.kind]), aspect)
+    cam_params = build(cam_spec.id, CAMERA_PARAMS[cam_spec.kind])
+    if cam_spec.kind == "orbit":
+        camera = perspective_camera(cam_params, aspect, sway(c.theme, cam_params, t))
+    else:
+        camera = ortho_camera(cam_params, aspect)
     objects = tuple(
         ObjectState(o.id, o.type, o.index, build(o.id, o.params_model), o.style, o.roles,
                     o.tags, o.layer, o.impl)
@@ -288,4 +307,5 @@ def evaluate(c: Compiled, t: float, replace: Mapping[str, Any] | None = None) ->
         camera=camera,
         overlay=overlay_camera(aspect),
         values=MappingProxyType(env),
+        light=MappingProxyType(c.theme.light),
     )

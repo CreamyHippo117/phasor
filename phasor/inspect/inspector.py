@@ -31,8 +31,10 @@ TOO_SMALL = "too small or thin to measure at inspector resolution"
 
 
 def occludes(obj: ObjectState) -> bool:
-    """Whether the object writes to the id pass. Translucent objects do not hide others."""
-    return obj.params.opacity >= 0.5
+    """Whether the object writes to the id pass. Translucent objects (including glass
+    surfaces, whose material opacity is under one half) do not hide others."""
+    material = obj.style.get("material", 1.0)
+    return obj.params.opacity * (material if isinstance(material, float) else 1.0) >= 0.5
 
 
 def _r(x: float, n: int = 3) -> float:

@@ -55,14 +55,20 @@ class Box:
 
 
 class View:
-    """Maps one camera's world space to screen heights and back (orthographic cameras)."""
+    """Maps one camera's world space to screen heights and back, near the world point
+    ``at``. For a perspective camera, sizes and shifts depend on depth: a View measures them
+    at ``at``'s depth (the object being placed), so a gap looks the same near or far."""
 
-    def __init__(self, cam: Camera, aspect: float) -> None:
+    def __init__(self, cam: Camera, aspect: float, at=None) -> None:
         self.cam, self.aspect = cam, aspect
-        o = cam.project([cam.eye + cam.forward])[0]
+        if at is None or not cam.perspective:
+            base = cam.eye + cam.forward
+        else:
+            base = cam.eye + cam.forward * max(float(cam.depth(at)[0]), 1e-6)
+        o = cam.project([base])[0]
         # Screen-height change per world unit along the camera's right and up vectors.
-        self._sx = (cam.project([cam.eye + cam.forward + cam.right])[0][0] - o[0]) * aspect / 2
-        self._sy = (cam.project([cam.eye + cam.forward + cam.up])[0][1] - o[1]) / 2
+        self._sx = (cam.project([base + cam.right])[0][0] - o[0]) * aspect / 2
+        self._sy = (cam.project([base + cam.up])[0][1] - o[1]) / 2
 
     def point(self, world) -> tuple[float, float]:
         ndc = self.cam.project([world])[0]
@@ -91,7 +97,9 @@ def is_backdrop(state: SceneState, obj: ObjectState) -> bool:
 
 
 def view_of(state: SceneState, obj: ObjectState) -> View:
-    return View(state.camera_for(obj), state.aspect)
+    cam = state.camera_for(obj)
+    at = obj.impl.world_bounds(state).center if cam.perspective else None
+    return View(cam, state.aspect, at)
 
 
 def screen_box(state: SceneState, obj: ObjectState) -> Box:

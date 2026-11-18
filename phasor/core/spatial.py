@@ -28,6 +28,21 @@ class OrthoCameraParams(BaseModel):
     height: float = Field(8.0, gt=0)  # world units visible from top to bottom of the frame
 
 
+class OrbitCameraParams(BaseModel):
+    """A perspective camera on a sphere around ``target`` (z up). Angles in degrees:
+    azimuth 0 looks from +x toward the target, 90 from +y; elevation 90 looks straight down."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    target: Vec3 = (0.0, 0.0, 0.0)
+    azimuth: float = -60.0
+    elevation: float = Field(30.0, ge=-89.0, le=89.0)
+    distance: float = Field(10.0, gt=0)
+    fov: float = Field(35.0, gt=1.0, lt=150.0)  # vertical field of view
+    # Slow sway in azimuth, degrees either way (SPEC "3D auto-cinematography").
+    # None: the theme's [camera] drift; 0 holds the camera still.
+    drift: float | None = Field(None, ge=0)
+
+
 def _frozen(a) -> np.ndarray:
     a = np.array(a, dtype=np.float64)
     a.setflags(write=False)
@@ -45,10 +60,29 @@ class Camera:
     up: np.ndarray  # the world direction that appears as "up" on screen
     forward: np.ndarray
     height: float = field(default=1.0)  # ortho: world units per frame height
+    tan_half_fov: float = 0.0  # perspective only: tan(vertical fov / 2)
 
-    def units_per_height(self, point=None) -> float:
-        """World units spanned by the full frame height at ``point`` (constant for ortho)."""
-        return self.height
+    @property
+    def perspective(self) -> bool:
+        return self.kind == "perspective"
+
+    def units_per_height(self, point=None):
+        """World units spanned by the full frame height at ``point``. Constant for ortho;
+        for perspective it grows with depth (at the target when ``point`` is None).
+        ``point`` may be (3,) or (N, 3); the result is a float or an (N,) array."""
+        if not self.perspective:
+            if point is not None and np.ndim(point) == 2:
+                return np.full(len(point), self.height)
+            return self.height
+        if point is None:
+            return 2.0 * self.height * self.tan_half_fov  # height holds the target distance
+        d = np.maximum(self.depth(point), 1e-6) * 2.0 * self.tan_half_fov
+        return d if np.ndim(point) == 2 else float(d[0])
+
+    def clip_w(self, points) -> np.ndarray:
+        """The homogeneous w of each point: positive in front of the camera."""
+        p = np.atleast_2d(np.asarray(points, dtype=np.float64))
+        return np.c_[p, np.ones(len(p))] @ self.view_proj[3]
 
     def project(self, points) -> np.ndarray:
         """World points (N, 3) -> NDC (N, 3); x, y in [-1, 1] inside the frame, y up."""
@@ -87,6 +121,50 @@ def ortho_camera(params: OrthoCameraParams, aspect: float) -> Camera:
         up=_frozen([0, 1, 0]),
         forward=_frozen([0, 0, -1]),
         height=params.height,
+    )
+
+
+def orbit_eye(params: OrbitCameraParams, azimuth: float | None = None) -> np.ndarray:
+    az = np.radians(params.azimuth if azimuth is None else azimuth)
+    el = np.radians(params.elevation)
+    d = np.array([np.cos(el) * np.cos(az), np.cos(el) * np.sin(az), np.sin(el)])
+    return np.asarray(params.target, dtype=np.float64) + params.distance * d
+
+
+NEAR, FAR = 0.02, 50.0  # near and far planes as multiples of the camera distance
+
+
+def perspective_camera(params: OrbitCameraParams, aspect: float, sway: float = 0.0) -> Camera:
+    """``sway``: extra azimuth in degrees (the drift, already evaluated at t)."""
+    target = np.asarray(params.target, dtype=np.float64)
+    eye = orbit_eye(params, params.azimuth + sway)
+    forward = (target - eye) / np.linalg.norm(target - eye)
+    world_up = np.array([0.0, 0.0, 1.0])
+    right = np.cross(forward, world_up)
+    right /= np.linalg.norm(right)
+    up = np.cross(right, forward)
+    view = np.eye(4)
+    view[0, :3], view[1, :3], view[2, :3] = right, up, -forward
+    view[:3, 3] = -view[:3, :3] @ eye
+    t = float(np.tan(np.radians(params.fov) / 2))
+    n, f = NEAR * params.distance, FAR * params.distance
+    proj = np.array(
+        [
+            [1 / (t * aspect), 0, 0, 0],
+            [0, 1 / t, 0, 0],
+            [0, 0, -(f + n) / (f - n), -2 * f * n / (f - n)],
+            [0, 0, -1, 0],
+        ]
+    )
+    return Camera(
+        kind="perspective",
+        view_proj=_frozen(proj @ view),
+        eye=_frozen(eye),
+        right=_frozen(right),
+        up=_frozen(up),
+        forward=_frozen(forward),
+        height=params.distance,
+        tan_half_fov=t,
     )
 
 

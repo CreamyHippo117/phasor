@@ -33,6 +33,7 @@
 - `dot`: pos, r
 - `fractal`: kind, c, pos, size, max_iter, density
 - `line`: points, progress
+- `riemann_surface`: kind, pos, radius, height, scale, rings, segments
 - `text`: text, pos, anchor, leader, leader_on
 
 ## Docs

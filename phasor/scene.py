@@ -23,6 +23,7 @@ from phasor.core.patch import (
     AddConstraint,
     AddObject,
     AddSegment,
+    SetCamera,
     SetMarker,
     SetNarration,
     SetParam,
@@ -160,6 +161,13 @@ class Scene:
         """Add an object: ``s.add(Dot(id="dot", pos=(1, 2)))``. Returns it for chaining."""
         self._apply(AddObject(object=obj.to_spec()))
         return obj
+
+    def use_camera(self, kind: str = "orbit", **params: Any) -> None:
+        """Choose the camera: ``"orbit"`` (3D perspective around ``target``; ``azimuth``,
+        ``elevation``, ``distance``, ``fov``, ``drift``) or ``"ortho"`` (2D, the default).
+        Parameters you leave out are free for the camera solver when you give it goals
+        (``s.constrain("camera keep_visible(surface)")``)."""
+        self._apply(SetCamera(kind=kind, params=params))
 
     def set(self, path: str, value: Any) -> None:
         """Set a parameter (objects and cameras): ``s.set("camera.height", 6)``."""

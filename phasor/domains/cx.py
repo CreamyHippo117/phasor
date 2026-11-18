@@ -199,3 +199,105 @@ class Fractal(_Plane):
             return to_host(out)
 
         ctx.field(corner, r, u, pixels=pixels, opacity=p.opacity)
+
+
+# ---------------------------------------------------------------- Riemann surfaces
+
+_BRANCHES = {  # kind -> (turns of the angle the surface needs, f(r, theta) as a complex number)
+    "sqrt": (2, lambda r, th: np.sqrt(r) * np.exp(0.5j * th)),
+    "cbrt": (3, lambda r, th: np.cbrt(r) * np.exp(1j * th / 3)),
+    "log": (2, lambda r, th: np.log(r) + 1j * th),
+}
+_CUTS = {"sqrt": "negative real axis", "cbrt": "negative real axis", "log": "every turn"}
+
+
+@register
+class RiemannSurface(ObjectBase):
+    """The Riemann surface of a multivalued function over the complex plane: each sheet is
+    one branch, and walking once around the branch point carries you onto the next sheet.
+
+    Height is ``Re f(z)`` (or ``Im``) times ``scale``; color is the phase of ``f(z)``, so each
+    sheet has its own colors. Centered on ``pos``, out to ``radius``. A lit 3D surface: give
+    the scene an orbit camera (``s.use_camera("orbit")``).
+    """
+
+    type: ClassVar[str] = "riemann_surface"
+    Style: ClassVar = {"colormap": ("colormap", "phase"), "material": ("surface", "solid")}
+
+    class Params(ParamsBase):
+        kind: Literal["sqrt", "cbrt", "log"] = "sqrt"
+        pos: Vec3 = (0.0, 0.0, 0.0)  # the branch point
+        radius: float = Field(2.0, gt=0)
+        height: Literal["re", "im"] = "re"
+        scale: float = Field(1.0, gt=0)
+        rings: int = Field(28, ge=2, le=400)  # mesh resolution along the radius
+        segments: int = Field(90, ge=8, le=2000)  # per turn around the branch point
+
+    def _grid(self, state: SceneState):
+        """(points (R, T, 3), r (R,), theta (T,), f (R, T) complex)."""
+        p = self.me(state).params
+        turns, fn = _BRANCHES[p.kind]
+        r = np.linspace(p.radius * 0.01, p.radius, p.rings + 1)
+        th = np.linspace(0.0, 2 * np.pi * turns, p.segments * turns + 1)
+        if p.kind == "log":
+            th -= 2 * np.pi * turns / 2
+        rr, tt = np.meshgrid(r, th, indexing="ij")
+        f = fn(rr, tt)
+        h = (f.real if p.height == "re" else f.imag) * p.scale
+        x0, y0, z0 = p.pos
+        pts = np.stack([x0 + rr * np.cos(tt), y0 + rr * np.sin(tt), z0 + h], axis=-1)
+        return pts, r, th, f
+
+    def world_bounds(self, state: SceneState) -> Bounds:
+        pts = self._grid(state)[0].reshape(-1, 3)
+        return Bounds.of_points(pts)
+
+    def features(self, state: SceneState) -> dict[str, np.ndarray]:
+        """``branch_point``, and ``sheets``: one point on each sheet, above the point
+        ``0.75 * radius * i`` of the plane (where the sheets are furthest apart)."""
+        p = self.me(state).params
+        turns, fn = _BRANCHES[p.kind]
+        r = 0.75 * p.radius
+        out = []
+        for k in range(turns):
+            th = np.pi / 2 + 2 * np.pi * k - (2 * np.pi * turns / 2 if p.kind == "log" else 0)
+            f = fn(r, th)
+            h = (f.real if p.height == "re" else f.imag) * p.scale
+            out.append((p.pos[0] + r * np.cos(th), p.pos[1] + r * np.sin(th), p.pos[2] + h))
+        return {"branch_point": np.asarray(p.pos, dtype=np.float64), "sheets": np.array(out)}
+
+    def semantics(self, state: SceneState) -> dict[str, Any]:
+        p = self.me(state).params
+        turns, _ = _BRANCHES[p.kind]
+        return {
+            "kind": "riemann_surface",
+            "function": {"sqrt": "sqrt(z)", "cbrt": "z**(1/3)", "log": "log(z)"}[p.kind],
+            "sheets": turns,
+            "branch_points": [list(p.pos)],
+            "branch_cut": _CUTS[p.kind],
+            "height": f"{'Re' if p.height == 're' else 'Im'} f(z)",
+            "material": self.me(state).roles["material"],
+        }
+
+    def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
+        me = self.me(state)
+        pts, _r, th, f = self._grid(state)
+        nr, nt = pts.shape[:2]
+        # Normals from the grid's tangents (one-sided at the edges).
+        du = np.gradient(pts, axis=0)
+        dv = np.gradient(pts, axis=1)
+        normals = np.cross(du, dv)
+        normals /= np.maximum(np.linalg.norm(normals, axis=-1, keepdims=True), 1e-12)
+        lut = np.asarray(me.style["colormap"], dtype=np.float64)
+        phase = (np.angle(f) % (2 * np.pi)) / (2 * np.pi)
+        rgb = lut[np.minimum((phase * len(lut)).astype(int), len(lut) - 1)]
+        colors = np.concatenate([rgb, np.ones((*rgb.shape[:-1], 1))], axis=-1)
+        uv = np.stack(np.meshgrid(np.linspace(0, 1, nr), th / (2 * np.pi), indexing="ij"),
+                      axis=-1)[..., ::-1]  # fmt: skip
+        k = np.arange(nr - 1)[:, None] * nt + np.arange(nt - 1)[None, :]
+        k = k.ravel()
+        tris = np.vstack([np.c_[k, k + nt, k + 1], np.c_[k + 1, k + nt, k + nt + 1]])
+        ctx.surface(pts.reshape(-1, 3), tris, normals=normals.reshape(-1, 3),
+                    colors=colors.reshape(-1, 4), uv=uv.reshape(-1, 2),
+                    material=me.roles["material"],
+                    opacity=me.params.opacity * me.style["material"])  # fmt: skip

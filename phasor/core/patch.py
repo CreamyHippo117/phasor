@@ -14,6 +14,7 @@ from phasor.core.constraints import normalize_rule, rule_ids
 from phasor.core.ids import split_path
 from phasor.core.issues import DocumentError, Issue
 from phasor.core.schema import (
+    CameraSpec,
     ConstraintSpec,
     ConstValue,
     Document,
@@ -108,6 +109,16 @@ class AddConstraint(Model):
     priority: Literal["required", "strong", "medium", "weak"] = "strong"
 
 
+class SetCamera(Model):
+    """Make camera ``id`` a camera of ``kind`` with ``params`` (replacing its parameters).
+    ``orbit`` is the 3D perspective camera. Tracks on the camera stay and are re-checked."""
+
+    op: Literal["set_camera"] = "set_camera"
+    id: str = "camera"
+    kind: Literal["ortho", "orbit"]
+    params: dict[str, ParamSpec] = Field(default_factory=dict)
+
+
 class RemoveConstraint(Model):
     op: Literal["remove_constraint"] = "remove_constraint"
     rule: str
@@ -126,6 +137,7 @@ Op = Annotated[
     | SetMeta
     | AddConstraint
     | SetNarration
+    | SetCamera
     | RemoveConstraint,
     Field(discriminator="op"),
 ]
@@ -257,6 +269,15 @@ def _apply_op(doc: Document, op: Any) -> Document:
             if any(c.rule == spec.rule for c in doc.constraints):
                 raise _fail("duplicate_constraint", f"constraint {spec.rule!r} already exists")
             return doc.model_copy(update={"constraints": (*doc.constraints, spec)})
+        case SetCamera():
+            cams = doc.cameras
+            new = CameraSpec(id=op.id, kind=op.kind, params=op.params)
+            if all(c.id != op.id for c in cams):
+                raise _fail("unknown_id", f"no camera {op.id!r}; cameras are "
+                            f"{[c.id for c in cams]}", ids=(op.id,))  # fmt: skip
+            return doc.model_copy(
+                update={"cameras": tuple(new if c.id == op.id else c for c in cams)}
+            )
         case RemoveConstraint():
             rule = normalize_rule(op.rule)
             if all(c.rule != rule for c in doc.constraints):

@@ -73,7 +73,7 @@ class ObjectSpec(Model):
 
 class CameraSpec(Model):
     id: str
-    kind: Literal["ortho"] = "ortho"
+    kind: Literal["ortho", "orbit"] = "ortho"  # orbit: perspective, around a target
     params: dict[str, ParamSpec] = Field(default_factory=dict)
 
 
