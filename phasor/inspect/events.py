@@ -2,8 +2,10 @@
 
 The whole timeline is sampled at 10 Hz plus every marker. An event is emitted only when a
 value crosses a threshold: visibility 0.9 / 0.5 / 0.1, entering or leaving the frame, a
-change of screen region, a new occluder. Every threshold has 5% hysteresis, so an object
-grazing an edge does not spam the log. Events carry the time, the nearest marker, the ids
+change of screen region, a new occluder. An event fires the moment a value crosses its
+threshold, and re-arms only once the value is 5% back on the other side (hysteresis), so
+an object grazing an edge does not spam the log, and "hidden" means under 10% visible.
+Events carry the time, the nearest marker, the ids
 and suggested fixes; the ones a viewer would notice as a problem (a label or key object
 hidden or leaving the frame) are ``"severity": "warning"``.
 
@@ -101,7 +103,7 @@ def log(samples: Iterable[tuple[float, dict[str, Any]]], markers: Mapping[str, f
                 if not tr.in_frame:
                     emit(t, "leaves_frame", e, warn, on_screen=on,
                          fix_hints=_frame_hints(e))  # fmt: skip
-            elif tr.in_frame and on < FRAME - HYST:
+            elif tr.in_frame and on < FRAME:
                 tr.in_frame = False
                 emit(t, "leaves_frame", e, warn, on_screen=on, fix_hints=_frame_hints(e))
             elif not tr.in_frame and on > FRAME + HYST:
@@ -119,7 +121,7 @@ def log(samples: Iterable[tuple[float, dict[str, Any]]], markers: Mapping[str, f
                 continue
             hidden_by = e["hidden_by"] or []
             for level in LEVELS:
-                if tr.above[level] and v < level - HYST:
+                if tr.above[level] and v < level:
                     tr.above[level] = False
                     # A label partly hidden is hard to read; any other object only matters
                     # once at least half of it is hidden.

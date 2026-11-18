@@ -31,9 +31,11 @@ from phasor.layout import labels, solver
 from phasor.layout.geometry import (
     Box,
     Coverage,
+    View,
     footprint,
     frame,
     is_backdrop,
+    occludes,
     screen_box,
     view_of,
 )
@@ -70,7 +72,7 @@ class AnalyticOracle:
 
     def _occluders(self, state: SceneState, exclude: frozenset[str]):
         for obj in state.objects:
-            if obj.id in exclude or obj.params.opacity < 0.5 or is_backdrop(state, obj):
+            if obj.id in exclude or not occludes(obj) or is_backdrop(state, obj):
                 continue
             yield obj
 
@@ -170,15 +172,18 @@ class Bake:
             obj = pre[object_id]
             if tr.ref is not None:
                 v = v + np.asarray(screen_box(pre, pre[tr.ref]).center)
-            base = pre.values[tr.path] if tr.path.endswith(".leader") else anchor_base(
-                pre, object_id, tr.ref)  # fmt: skip
-            out[tr.path] = _to_world(pre, obj, base, v)
+            # A position and its leader tip both live at the label's depth (its anchor's,
+            # in 3D), exactly as the bake loop placed them.
+            out[tr.path] = _to_world(pre, obj, anchor_base(pre, object_id, tr.ref), v)
         return out
 
 
 def _to_world(state: SceneState, obj, base, screen_point) -> tuple:
-    """The world point that appears at ``screen_point``, at the depth of ``base``."""
-    view = view_of(state, obj)
+    """The world point that appears at ``screen_point``, at the depth of ``base``. The
+    shift is measured at ``base`` (in 3D a screen offset means more world units further
+    away), never at wherever the object's document position happens to be."""
+    cam = state.camera_for(obj)
+    view = View(cam, state.aspect, base if cam.perspective else None)
     bx, by = view.point(base)
     return normalize(np.asarray(base) + view.shift(screen_point[0] - bx, screen_point[1] - by))
 
@@ -414,7 +419,7 @@ def free_slots(state: SceneState, object_id: str, oracle: OcclusionOracle | None
     skip = frozenset({object_id} | {o.id for o in state.objects if is_backdrop(state, o)})
     if state.camera_for(obj).perspective:
         d = float(state.camera_for(obj).depth(obj.impl.world_bounds(state).center)[0])
-        cov = Coverage(oracle.depth(state, skip) < d * (1 - LIFT), state.aspect)
+        cov = Coverage(oracle.depth(state, skip) < d * (1 - LIFT - DEPTH_SLACK), state.aspect)
     else:
         cov = Coverage(oracle.coverage(state, skip), state.aspect)
     req = labels.Request(object_id, size[0], size[1], anchor, GAP)

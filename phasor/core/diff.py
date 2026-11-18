@@ -44,6 +44,8 @@ def diff_documents(a: Document, b: Document) -> dict[str, Any]:
             )
         if x.tags != y.tags:
             out.append({"kind": "tags_changed", "id": i, "from": list(x.tags), "to": list(y.tags)})
+        if x.layer != y.layer:
+            out.append({"kind": "layer_changed", "id": i, "from": x.layer, "to": y.layer})
     am, bm = a.timeline.markers, b.timeline.markers
     for n in sorted(bm.keys() - am.keys()):
         out.append({"kind": "marker_added", "name": n, "t": bm[n]})
@@ -60,12 +62,20 @@ def diff_documents(a: Document, b: Document) -> dict[str, Any]:
     for p in sorted(at.keys() & bt.keys()):
         if at[p] != bt[p]:
             out.append({"kind": "track_changed", "path": p, "from": len(at[p]), "to": len(bt[p])})
-    ac = {(c.rule, c.priority) for c in a.constraints}
-    bc = {(c.rule, c.priority) for c in b.constraints}
-    for rule, pri in sorted(bc - ac):
-        out.append({"kind": "constraint_added", "rule": rule, "priority": pri})
-    for rule, pri in sorted(ac - bc):
-        out.append({"kind": "constraint_removed", "rule": rule, "priority": pri})
+    ac = {c.rule: c.priority for c in a.constraints}
+    bc = {c.rule: c.priority for c in b.constraints}
+    for rule in sorted(bc.keys() - ac.keys()):
+        out.append({"kind": "constraint_added", "rule": rule, "priority": bc[rule]})
+    for rule in sorted(ac.keys() - bc.keys()):
+        out.append({"kind": "constraint_removed", "rule": rule, "priority": ac[rule]})
+    for rule in sorted(ac.keys() & bc.keys()):
+        if ac[rule] != bc[rule]:
+            out.append({"kind": "priority_changed", "rule": rule, "from": ac[rule], "to": bc[rule]})
+    for i in sorted(set(b.retired_ids) - set(a.retired_ids)):
+        out.append({"kind": "id_retired", "id": i})
+    if a.timeline.camera != b.timeline.camera:
+        out.append({"kind": "active_camera_changed", "from": a.timeline.camera,
+                    "to": b.timeline.camera})  # fmt: skip
     if a.meta != b.meta:
         for k in sorted(type(a.meta).model_fields):
             if getattr(a.meta, k) != getattr(b.meta, k):

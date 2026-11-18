@@ -223,7 +223,15 @@ def mix_track(
 ) -> tuple[np.ndarray, int] | None:
     """The whole narration as one mono int16 track ``duration`` seconds long, each block's
     audio placed at its start. None when no block has audio (estimated timing)."""
-    clips = [(b.start, read_wav(Path(base_dir) / b.audio)) for b in narration.blocks if b.audio]
+    root = Path(base_dir).resolve()
+    clips = []
+    for b in narration.blocks:
+        if not b.audio:
+            continue
+        path = (root / b.audio).resolve()
+        if root not in path.parents:  # a document must not read files outside its folder
+            raise ValueError(f"narration audio {b.audio!r} is outside the scene's folder")
+        clips.append((b.start, read_wav(path)))
     if not clips:
         return None
     rates = {rate for _, (_, rate) in clips}

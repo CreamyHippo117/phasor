@@ -54,3 +54,19 @@ def test_diff_is_symmetric_in_what_it_reports():
     fwd, back = diff_documents(a, b), diff_documents(b, a)
     assert fwd["changes"][0]["kind"] == "object_added"
     assert back["changes"][0]["kind"] == "object_removed"
+
+
+def test_layer_priority_retired_ids_and_camera_changes_are_reported():
+    from phasor.core.patch import apply_ops, parse_patch
+
+    a = _base().engine.document
+    a = apply_ops(a, parse_patch({"op": "add_constraint", "rule": "label(a) near a"}))
+    b = a.model_copy(update={
+        "objects": tuple(o.model_copy(update={"layer": "overlay"}) if o.id == "a.label" else o
+                         for o in a.objects),
+        "constraints": tuple(c.model_copy(update={"priority": "weak"}) for c in a.constraints),
+        "retired_ids": ("gone",),
+    })  # fmt: skip
+    kinds = {c["kind"] for c in diff_documents(a, b)["changes"]}
+    assert {"layer_changed", "priority_changed", "id_retired"} <= kinds
+    assert "constraint_added" not in kinds and "constraint_removed" not in kinds

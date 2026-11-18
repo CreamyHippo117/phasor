@@ -22,7 +22,7 @@ import numpy as np
 
 from phasor.core import text as text_metrics
 from phasor.core.state import ObjectState, SceneState
-from phasor.inspect.inspector import occludes
+from phasor.layout.geometry import occludes
 from phasor.render.glcontext import shared_context
 
 DEPTH_BIAS = 1e-5  # NDC depth per draw-order step

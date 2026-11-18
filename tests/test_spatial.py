@@ -116,10 +116,10 @@ def test_events_fire_on_threshold_crossings_with_hysteresis():
     log = events.log(samples, {"intro": 0.0, "rays": 0.35})
     kinds = [(e["event"], e["t"]) for e in log]
     assert ("partly_occluded", 0.1) in kinds
-    assert [k for k in kinds if k[0] == "occluded"] == [("occluded", 0.6)]  # once, not 3 times
+    assert [k for k in kinds if k[0] == "occluded"] == [("occluded", 0.2)]  # once, not 3 times
     assert ("visible_again", 0.7) in kinds
     occ = next(e for e in log if e["event"] == "occluded")
-    assert occ["marker"] == "rays" and occ["severity"] == "warning"
+    assert occ["marker"] == "intro" and occ["severity"] == "warning"
     assert occ["hidden_by"][0]["id"] == "wall" and occ["fix_hints"]
     assert any(e["event"] == "new_occluder" and e["occluder"] == "wall" for e in log)
 
@@ -265,3 +265,28 @@ def test_a_full_orbit_with_goals_keeps_everything_framed():
     assert not [i for i in e.lint() if i.code == "unsolved"]
     probs = events.problems(e.events(hz=4))
     assert not [p for p in probs if p["event"] == "leaves_frame"]
+
+
+@pytest.mark.parametrize("passes", [None, pytest.param("auto", marks=gl)])
+def test_glass_hides_nothing_in_every_mode(passes):
+    """The analytic oracle and the camera solver use the same rule as the id pass."""
+    from phasor.layout.bake import AnalyticOracle, hidden_share
+    from phasor.layout.geometry import occludes
+
+    s = Scene("glass", passes=passes)
+    s.use_camera("orbit", drift=0, azimuth=-90, elevation=20, distance=9)
+    s.add(cx.RiemannSurface(id="sheets", radius=2.2, style={"material": "glass"}))
+    s.add(Dot(id="behind", pos=(0, 1.5, 0.2), r=0.15, tags=["key"]))
+    st = s.engine.state_at(0)
+    assert not occludes(st["sheets"])
+    oracle = s.engine._oracle() or AnalyticOracle()
+    assert hidden_share(st, "behind", oracle) == 0.0
+    assert hidden_share(st, "behind", AnalyticOracle()) == 0.0
+
+
+def test_hidden_means_under_ten_percent_and_agrees_with_when_hidden():
+    log = events.log([_snap(0, 1.0), _snap(1, 0.07, hidden_by=[("wall", 0.93)])], {})
+    assert {"partly_occluded", "occluded", "hidden"} <= {e["event"] for e in log}
+    samples = [_snap(0, 1.0), _snap(1, 0.46, hidden_by=[("wall", 0.54)]), _snap(2, 1.0)]
+    assert any(e["event"] == "occluded" for e in events.log(samples, {}))
+    assert events.hidden_spans(samples, "lab") == [(1, 2)]

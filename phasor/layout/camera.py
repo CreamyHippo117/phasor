@@ -32,7 +32,7 @@ from phasor.core.constraints import Goal
 from phasor.core.issues import Issue
 from phasor.core.spatial import Camera, OrbitCameraParams, perspective_camera
 from phasor.core.state import SceneState
-from phasor.layout.geometry import is_backdrop
+from phasor.layout.geometry import is_backdrop, occludes
 from phasor.layout.plan import Plan, Rule
 from phasor.time.compile import Compiled, evaluate, sway
 from phasor.time.tracks import ResolvedTrack
@@ -186,7 +186,7 @@ class Problem:
         self.spheres = _spheres(state, ids)
         self.kept = [i for _, g in plan.goals if g.kind == "keep_visible" for i in g.ids]
         occluders = [o.id for o in state.objects if o.layer != "overlay"
-                     and o.params.opacity >= 0.5 and not is_backdrop(state, o)
+                     and occludes(o) and not is_backdrop(state, o)
                      and o.impl.semantics(state).get("kind") != "label"]  # fmt: skip
         self.occluders = _spheres(state, occluders)
         self.t = state.t

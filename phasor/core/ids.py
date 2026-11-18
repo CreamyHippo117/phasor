@@ -33,3 +33,14 @@ def split_path(path: str) -> tuple[str, str]:
     if not object_id or not is_valid_id(object_id) or not is_valid_name(param):
         raise ValueError(f"not a parameter path: {path!r} (expected <id>.<param>)")
     return object_id, param
+
+
+_UNSAFE = re.compile(r"[^A-Za-z0-9_.-]+")
+
+
+def file_stem(title: str) -> str:
+    """A scene title made safe to use as a file name: letters, digits, ``_ . -`` only, no
+    leading dots, never empty. Titles are free text; a file name made from one must never
+    climb out of its folder (``../x``) or become absolute (``/tmp/x``)."""
+    stem = _UNSAFE.sub("_", title).lstrip(".") or "scene"
+    return stem[:80]

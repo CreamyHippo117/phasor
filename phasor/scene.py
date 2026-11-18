@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from phasor.core import io
+from phasor.core.ids import file_stem
 from phasor.core.objects import ObjectBase
 from phasor.core.patch import (
     AddConstraint,
@@ -194,7 +195,7 @@ class Scene:
         """
         from phasor.voice import narrate
 
-        folder = self.engine.base_dir / f"{self.engine.document.meta.title}.narration"
+        folder = self.engine.base_dir / f"{file_stem(self.engine.document.meta.title)}.narration"
         theme = self.engine._snap.compiled.theme
         self._apply(SetNarration(narration=narrate(script, voice, folder, theme)))
 

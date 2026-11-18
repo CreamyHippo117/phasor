@@ -21,6 +21,7 @@ import numpy as np
 from phasor.core.spatial import region_name
 from phasor.core.state import ObjectState, SceneState
 from phasor.inspect.passes import PassRunner, inspect_size
+from phasor.layout.geometry import occludes
 
 DETAILS = ("brief", "standard", "full")
 BRIEF_MAX_LINES = 40
@@ -28,13 +29,6 @@ MAX_ZOOM_OUT = 8.0
 RELATION_TAG = "key"  # pairwise relations are reported against objects carrying this tag
 OCCLUDER_MIN_SHARE = 0.01
 TOO_SMALL = "too small or thin to measure at inspector resolution"
-
-
-def occludes(obj: ObjectState) -> bool:
-    """Whether the object writes to the id pass. Translucent objects (including glass
-    surfaces, whose material opacity is under one half) do not hide others."""
-    material = obj.style.get("material", 1.0)
-    return obj.params.opacity * (material if isinstance(material, float) else 1.0) >= 0.5
 
 
 def _r(x: float, n: int = 3) -> float:

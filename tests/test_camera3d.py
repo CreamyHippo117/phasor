@@ -215,3 +215,25 @@ def test_a_label_does_not_cut_a_box_out_of_glass_behind_it():
     darker = (labelled[box].mean(-1) < plain[box].mean(-1) - 20).mean()
     assert plain[box].mean() > 20  # there is glass behind the label to cut
     assert darker < 0.02
+
+
+@pytest.mark.parametrize("doc_pos", [(-5, -5, 0), (4, 3, 1), (8, 8, 0)])
+def test_baked_3d_label_lands_exactly_where_the_placer_put_it(doc_pos):
+    """The bake stores each label's screen offset from its anchor at every key time; reading
+    the bake back must reproduce it, whatever the label's own (irrelevant) document pos."""
+    from phasor.layout.geometry import screen_box, view_of
+
+    s = Scene("exact", passes=None)
+    s.use_camera("orbit", distance=8, elevation=30, azimuth=-50, drift=0)
+    s.add(Dot(id="d", pos=(4, 3, 1), r=0.1, tags=["key"]))
+    s.add(Text(id="d.label", text="label", pos=doc_pos))
+    s.constrain("label(d) near d")
+    e = s.engine
+    bake = e.layout
+    track = next(tr for tr in bake.tracks if tr.path == "d.label.pos")
+    for k in (0, len(bake.times) // 2, len(bake.times) - 1):
+        st = e.state_at(bake.times[k])
+        lab = view_of(st, st["d.label"]).point(st["d.label"].params.pos)
+        anchor = screen_box(st, st["d"]).center
+        off = (lab[0] - anchor[0], lab[1] - anchor[1])
+        assert off == pytest.approx(track.keys[k], abs=1e-6)

@@ -15,7 +15,7 @@
 - `animate`: Animate with a choreography verb starting at a marker (or seconds). Timing comes from the theme. Returns when it starts and ends so the next step can follow it. `orbit` swings the 3D camera `value` degrees (default 360), until marker `until` if given.
 - `narrate`: Set the narration. `[[name]]` puts a marker at the next word. Every animation anchored to a marker follows the voice. `pace` adds breathing room after busy sentences.
 - `checkpoint`: Remember the current document under `name` (to compare or return to later).
-- `restore`: Go back to a checkpoint. Undo history starts over (checkpoints are kept).
+- `restore`: Go back to a checkpoint, as one step (undo brings you back again).
 - `diff`: What changed from version `a` to version `b` ('current', 'saved' or a checkpoint).
 - `inspect`: What is on screen at `t`: `brief` (one line each), `standard` or `full`.
 - `lint`: Find visual problems (overlap, off-screen, contrast, tiny text, clutter, ...). `fix=True` applies the fixes that are certain, then reports what is left.

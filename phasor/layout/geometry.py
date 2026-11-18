@@ -90,6 +90,14 @@ class View:
         return abs(1.0 / self._sy)
 
 
+def occludes(obj: ObjectState) -> bool:
+    """Whether the object hides what is behind it. Translucent objects do not, and neither
+    do glass surfaces (material opacity under one half). The one rule every path uses: the
+    id pass, the inspector, the analytic oracle and the camera solver."""
+    material = obj.style.get("material", 1.0)
+    return obj.params.opacity * (material if isinstance(material, float) else 1.0) >= 0.5
+
+
 def is_backdrop(state: SceneState, obj: ObjectState) -> bool:
     """A backdrop (a domain-colored plane, a fractal) is something labels are meant to sit
     on. Layout does not avoid it; the linter judges readability on it by contrast."""

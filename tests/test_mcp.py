@@ -377,3 +377,49 @@ def test_exit_demo_an_ai_builds_and_fixes_a_scene_from_a_one_line_prompt(tmp_pat
         assert (tmp_path / "residue_ai.png").exists()
         assert by[-1]["images"] == 1  # the storyboard came back as an image
     assert first["frames"][0]["objects"]
+
+
+def test_animate_orbits_the_3d_camera(ws):
+    ws.scene_edit([{"op": "set_camera", "kind": "orbit", "params": {"azimuth": 0, "drift": 0}},
+                   POLE, LABEL])  # fmt: skip
+    ws.engine.apply({"op": "set_marker", "name": "stop", "t": 6.0}, origin="script")
+    a = ws.animate("orbit", 1.0, value=90, until="stop")
+    assert a["start"] == 1.0 and a["end"] == pytest.approx(6.0)
+    assert ws.engine.state_at(6.0).values["camera.azimuth"] == pytest.approx(90)
+    r = ws.animate("orbit_reveal", 6.0, ["pole"])
+    assert r["end"] > 6.0
+
+
+@pytest.mark.parametrize("title", ["/tmp/escaped", "../../escaped", "..", "a/b"])
+def test_a_title_cannot_write_outside_the_workspace(tmp_path, title):
+    from phasor.core.ids import file_stem
+
+    stem = file_stem(title)
+    assert "/" not in stem and not stem.startswith(".") and stem
+    w = Workspace(tmp_path / "root")
+    w.scene_new("ok")
+    assert w.scene_edit({"op": "set_meta", "field": "title", "value": title})["ok"]
+    if gl_available():  # really write one and see where it lands
+        path = Path(w.storyboard(times=[0.0])["image"]).resolve()
+        assert w.out_dir.resolve() in path.parents
+
+
+def test_narration_audio_must_stay_in_the_scene_folder(tmp_path):
+    from phasor.core.schema import Narration, NarrationBlock
+    from phasor.time.narration import mix_track
+
+    n = Narration(script="x", voice="estimate",
+                  blocks=(NarrationBlock(text="x", start=0, duration=1, audio="../secret.wav"),))  # fmt: skip
+    with pytest.raises(ValueError, match="outside the scene"):
+        mix_track(n, tmp_path, 1.0)
+
+
+def test_restore_is_one_undoable_step_and_versions_only_grow(ws):
+    ws.scene_edit(POLE)
+    ws.checkpoint("one")
+    ws.scene_edit(LABEL)
+    before = ws.engine.version
+    r = ws.restore("one")
+    assert r["version"] > before and list(ws.summary()["objects"]) == ["pole"]
+    ws.undo()
+    assert "pole.label" in ws.summary()["objects"]

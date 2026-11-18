@@ -92,8 +92,8 @@ Every object type implements the `SceneObject` protocol. A type missing any memb
 
 **6. Layer rules**
 
-- Allowed import direction: `core` ← `time` ← `layout` ← `inspect` ← `render` ← `domains` ← (`gui`, `mcp`, `cli`).
-- `core`, `time` and `layout` import no GPU library, so they test on any machine.
+- Allowed import direction: `core` ← `style` ← `time` ← `layout` ← `inspect` ← `render` ← `domains` ← `engine` ← `voice` ← `scene` ← (`gui`, `mcp`, `cli`, `sketch`), as placed by ADR 0001 (owner-approved 2026-11-18). The clients are siblings and never import each other.
+- `core`, `style`, `time` and `layout` import no GPU library, so they test on any machine.
 - Enforce with `import-linter` in CI from Milestone 0.
 
 **7. Layout is baked, then rendered**

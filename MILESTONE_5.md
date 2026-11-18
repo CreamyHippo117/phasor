@@ -48,7 +48,8 @@ Status: **built; gates green on Linux.** Not tried with a real MCP client app or
    object_types); `phasor mcp` registers through an entry point.
 2. No attach to a running GUI (Milestone 10); it always hosts its own headless Engine.
 3. `docs_search` is keyword scoring, not embeddings.
-4. `restore` rebuilds the engine, so undo history starts over (checkpoints survive).
+4. ~~`restore` rebuilds the engine~~ (fixed in the Milestone 6 boundary review: checkpoints
+   live in the Engine and a restore is one undoable step).
 5. The MCP SDK is v2 (`mcp>=2.0,<3`); the optional extra is `mcp`.
 
 ## Untested

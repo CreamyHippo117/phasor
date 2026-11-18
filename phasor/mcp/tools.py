@@ -17,9 +17,10 @@ from typing import Any
 
 from phasor.core import io
 from phasor.core.diff import diff_documents
+from phasor.core.ids import file_stem
 from phasor.core.issues import DocumentError, Issue
 from phasor.core.objects import registered_types
-from phasor.core.schema import Document, Meta, Overrides
+from phasor.core.schema import Document, Meta
 from phasor.engine import Engine
 from phasor.mcp import docs
 from phasor.scene import Scene, load
@@ -36,6 +37,8 @@ VERBS = (
     "focus_pull",
     "morph",
     "settle",
+    "orbit",
+    "orbit_reveal",
 )
 MAX_CHECKPOINTS = 32
 
@@ -80,7 +83,6 @@ class Workspace:
         self.allow_scripts = allow_scripts
         self._engine: Engine | None = None
         self.path: Path | None = None  # where the open scene was loaded from / last saved
-        self._checkpoints: dict[str, tuple[Document, Overrides]] = {}
 
     # ------------------------------------------------------------ plumbing
 
@@ -123,7 +125,7 @@ class Workspace:
             "markers": dict(sorted(d.timeline.markers.items(), key=lambda kv: kv[1])),
             "constraints": [f"{c.rule} ({c.priority})" for c in d.constraints],
             "narration": d.narration.script if d.narration else None,
-            "checkpoints": sorted(self._checkpoints),
+            "checkpoints": e.checkpoints(),
         }
 
     # ------------------------------------------------------------ scenes
@@ -138,7 +140,6 @@ class Workspace:
             meta = Meta(title=title, theme=theme, width=width, height=height, fps=fps)
             self._engine = Engine(Document(meta=meta), base_dir=self.root)
             self.path = None
-            self._checkpoints.clear()
 
         self._guard(go)
         return self.summary()
@@ -153,7 +154,6 @@ class Workspace:
             )
         self._engine = self._guard(lambda: load(p))
         self.path = p
-        self._checkpoints.clear()
         return self.summary()
 
     def scene_save(self, path: str | None = None) -> dict[str, Any]:
@@ -268,38 +268,39 @@ class Workspace:
             raise ToolError(
                 "checkpoint names are 1-40 letters, digits, _ . -  (not 'current'/'saved')"
             )
-        if name not in self._checkpoints and len(self._checkpoints) >= MAX_CHECKPOINTS:
-            raise ToolError(f"at most {MAX_CHECKPOINTS} checkpoints; reuse a name")
         e = self.engine
-        self._checkpoints[name] = (e.base, e.overrides)
-        return {"checkpoint": name, "version": e.version, "all": sorted(self._checkpoints)}
+        if name not in e.checkpoints() and len(e.checkpoints()) >= MAX_CHECKPOINTS:
+            raise ToolError(f"at most {MAX_CHECKPOINTS} checkpoints; reuse a name")
+        e.checkpoint(name)
+        return {"checkpoint": name, "version": e.version, "all": e.checkpoints()}
 
     def restore(self, name: str) -> dict[str, Any]:
-        """Go back to a checkpoint. Undo history starts over (checkpoints are kept)."""
-        if name not in self._checkpoints:
-            raise ToolError(f"no checkpoint {name!r}; have {sorted(self._checkpoints)}")
-        doc, ov = self._checkpoints[name]
-        keep = self.engine
-        self._engine = Engine(doc, overrides=ov, base_dir=keep.base_dir)
-        return self.summary()
+        """Go back to a checkpoint, as one step (undo brings you back again)."""
+        r = self._guard(lambda: self.engine.restore(name))
+        return {**self.summary(), "restored": name, "version": r.version}
 
     def _version_of(self, ref: str) -> Document:
         if ref == "current":
             return self.engine.document
         if ref == "saved":
-            if self.path is None or not self.path.exists():
+            path = self.path
+            if path is not None and path.suffix == ".py":  # a script's saved document
+                path = path.with_name(path.stem + io.DOC_SUFFIX)
+            if path is None or not path.exists():
                 raise ToolError("nothing saved yet")
-            return io.load_document(self.path)
-        if ref in self._checkpoints:
-            doc, ov = self._checkpoints[ref]
-            return Engine(doc, overrides=ov).document
+            # The saved document as it takes effect: base plus its overrides, like "current".
+            return self._guard(lambda: Engine.open(path, passes=None).document)
+        if ref in self.engine.checkpoints():
+            return self.engine.checkpoint_document(ref)
         raise ToolError(
-            f"no version {ref!r}; use 'current', 'saved' or {sorted(self._checkpoints)}"
+            f"no version {ref!r}; use 'current', 'saved' or {self.engine.checkpoints()}"
         )
 
     def diff(self, a: str = "saved", b: str = "current") -> dict[str, Any]:
         """What changed from version ``a`` to version ``b`` ('current', 'saved' or a checkpoint)."""
-        return {"a": a, "b": b, **diff_documents(self._version_of(a), self._version_of(b))}
+        return self._guard(
+            lambda: {"a": a, "b": b, **diff_documents(self._version_of(a), self._version_of(b))}
+        )
 
     # ------------------------------------------------------------ seeing
 
@@ -334,8 +335,7 @@ class Workspace:
 
         e = self.engine
         board = self._guard(lambda: e.storyboard(times, marks=marks, columns=columns))
-        name = f"{e.document.meta.title}.storyboard.v{e.version}.png"
-        out = self.out_dir / name
+        out = self.out_dir / f"{file_stem(e.document.meta.title)}.storyboard.v{e.version}.png"
         out.parent.mkdir(parents=True, exist_ok=True)
         save_png(out, board["image"])
         return {"image": str(out), "frames": board["frames"], "version": e.version}
@@ -414,7 +414,7 @@ class Workspace:
         if preset not in PRESETS:
             raise ToolError(f"preset is one of {sorted(PRESETS)}")
         e = self.engine
-        stem = e.document.meta.title
+        stem = file_stem(e.document.meta.title)
         default = self.out_dir / (f"{stem}.png" if frame is not None else f"{stem}.mp4")
         target = self._inside(out) if out else default
         target.parent.mkdir(parents=True, exist_ok=True)

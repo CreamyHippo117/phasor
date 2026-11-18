@@ -116,6 +116,7 @@ class Engine:
         self._snap = _build(base, overrides or Overrides())
         self._undo: list[_Snapshot] = []
         self._redo: list[_Snapshot] = []
+        self._checkpoints: dict[str, _Snapshot] = {}  # named points to go back to
         self._version = 0
         self._passes = passes
         # The folder that files the document refers to (narration audio) are relative to.
@@ -275,6 +276,29 @@ class Engine:
         old = self._snap
         self._undo.append(old)
         return self._switch(self._redo.pop(), old)
+
+    # Named checkpoints (SPEC "Safety rails"): like undo, they switch to a document this
+    # engine already validated; going back is one step that undo can reverse.
+
+    def checkpoint(self, name: str) -> None:
+        """Remember the current document under ``name``."""
+        self._checkpoints[name] = self._snap
+
+    def checkpoints(self) -> list[str]:
+        return sorted(self._checkpoints)
+
+    def checkpoint_document(self, name: str) -> Document:
+        return self._checkpoints[name].compiled.doc
+
+    def restore(self, name: str) -> PatchResult:
+        """Go back to checkpoint ``name``: one undoable step; the version keeps counting up."""
+        if name not in self._checkpoints:
+            raise KeyError(f"no checkpoint {name!r}; have {self.checkpoints()}")
+        old = self._snap
+        self._undo.append(old)
+        del self._undo[:-UNDO_LIMIT]
+        self._redo.clear()
+        return self._switch(self._checkpoints[name], old)
 
     def _switch(self, new: _Snapshot, old: _Snapshot) -> PatchResult:
         self._snap = new

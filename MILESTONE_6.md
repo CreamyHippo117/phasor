@@ -30,7 +30,7 @@ real GPU.
 
 ## Verification
 
-- `uv run pytest`: **460 passed, 16 skipped** (all need CUDA); ruff, ruff format and
+- `uv run pytest`: **474 passed, 16 skipped** (after the boundary review) (all need CUDA); ruff, ruff format and
   lint-imports clean; `phasor doctor` tier B. New: `test_camera3d.py`, `test_spatial.py`, `test_riemann_demo.py`
   (slow: the full 10 Hz event log with real pixels, about 3 minutes on llvmpipe).
 - **Exit demo**: the camera turns exactly 360 degrees between the `walk` and `home` markers;
@@ -78,6 +78,11 @@ real GPU.
 8. No `facing` field in the inspector: every label is a camera-facing billboard.
 9. No soft shadows or ambient occlusion yet (SPEC "Look"); lighting is the three-point
    rig plus fog.
+10. Under a perspective camera, `overlap` only compares labels with labels and points with
+    points. A label drawn *in front of* a key curve or surface is not flagged (a label
+    *behind* something is `occluded_label`). Revisit with the aesthetic rules (Milestone 7).
+11. A label placed against an object that is itself placed (chained refs) is rebuilt
+    against the unplaced ref in 3D; no scene uses chains yet.
 
 ## Untested
 
@@ -86,7 +91,26 @@ real GPU.
 - The camera solver on scenes with many goals and objects (speed: the demo's bake with
   stage 2 takes tens of seconds on llvmpipe).
 
-## Open
+## Boundary review (Milestones 2-6, 2026-11-18)
 
-- Fresh-eyes boundary review not run (Milestones 2-6).
+An independent reviewer that had not written the code audited the seven contracts and the
+3D code. Contracts held; it found these, all fixed with tests that fail without the fix:
+
+1. 3D labels were rebuilt from the bake at the wrong depth scale (up to ~70 px off, and
+   dependent on the label's irrelevant document position). `_to_world` now measures at
+   the depth it places the point; the leader tip uses the label's base.
+2. A scene title could make the MCP server write outside `--root` (`../x`, `/tmp/x`);
+   titles become file names only through `core.ids.file_stem`, and narration audio must
+   stay inside the scene's folder.
+3. Without OpenGL, glass hid things (the analytic oracle and the solver tested only
+   opacity). One `occludes` rule now lives in `layout/geometry` and every path uses it.
+4. MCP `animate` rejected `orbit` and `orbit_reveal` (an edit had silently missed).
+5. `restore` built a new Engine, resetting the version (storyboard files were overwritten).
+   Checkpoints now live in the Engine; a restore is one undoable step.
+6. Event thresholds fired 5% late (a 7% visible object was never "hidden"); they now fire
+   on crossing and re-arm 5% back.
+7. `diff` ignored layer, retired ids, the active camera and priority changes, compared a
+   saved base against the current effective document, and could crash on a `.py` scene.
+
+## Open
 - The exit demo takes about 3 minutes to check fully on a software renderer.
