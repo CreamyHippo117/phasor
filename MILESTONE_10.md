@@ -71,3 +71,11 @@ on a real GPU, and with a real display (every window test runs on Qt's offscreen
 
 - Windows, a real display, a real GPU. Frame rate on software GL is a few frames per second
   for busy scenes.
+
+## After the roadmap: the desktop app (owner's request, 2026-11-19)
+
+`phasor-gui` became a program: start screen, menus, recent files, several windows, unsaved
+prompts, Save As, export with progress (a separate process), settings, an icon, an
+applications-menu shortcut, and a PyInstaller build (`packaging/README.md`). Built and run on
+Linux (the packaged app renders, lints and opens its window); Windows and macOS builds are
+untested. Tests for it are to come on the owner's next request.

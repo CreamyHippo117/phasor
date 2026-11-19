@@ -1,0 +1,37 @@
+# PyInstaller recipe for the phasor desktop app (see packaging/README.md).
+#   uv sync --extra gl --extra encode --extra gui --extra mcp --group package
+#   uv run pyinstaller packaging/phasor.spec --noconfirm
+# Output: dist/phasor/ (a folder app; on macOS also dist/phasor.app).
+# Build on each platform for that platform: PyInstaller does not cross-compile.
+import sys
+from pathlib import Path
+
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
+
+ROOT = Path(SPECPATH).parent
+ICON = ROOT / "phasor" / "gui" / "assets" / ("icon.ico" if sys.platform == "win32" else "icon.png")
+
+# Entry points (CLI commands, editor tabs) are found through package metadata.
+datas = copy_metadata("phasor")
+datas += collect_data_files("phasor", include_py_files=False)  # themes, looks, icons
+datas += collect_data_files("matplotlib", subdir="mpl-data")  # mathtext fonts
+datas += [(str(ROOT / "docs" / "ai"), "phasor/_docs/docs/ai"),
+          (str(ROOT / "examples"), "examples")]
+hidden = collect_submodules("phasor") + ["moderngl", "glcontext", "av", "kiwisolver"]
+
+a = Analysis(
+    [str(ROOT / "packaging" / "entry.py")],
+    pathex=[str(ROOT)],
+    datas=datas,
+    hiddenimports=hidden,
+    excludes=["cupy", "tkinter", "IPython", "ipywidgets", "notebook", "pytest"],
+    noarchive=False,
+)
+pyz = PYZ(a.pure)
+exe = EXE(
+    pyz, a.scripts, [], exclude_binaries=True, name="phasor", icon=str(ICON),
+    console=False,  # no terminal window behind the app
+)
+coll = COLLECT(exe, a.binaries, a.datas, name="phasor")
+if sys.platform == "darwin":
+    app = BUNDLE(coll, name="phasor.app", icon=str(ICON), bundle_identifier="org.phasor.app")

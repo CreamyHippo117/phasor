@@ -45,6 +45,7 @@ class Editor:
         self._player: tuple[int, Any] | None = None  # (version, Player) for previews
         self._frame: tuple[tuple, np.ndarray] | None = None
         self._lint: tuple[int, list[dict[str, Any]]] | None = None
+        self.saved_version = self.version  # what is on disk (unsaved edits: ``dirty``)
 
     # ------------------------------------------------------------ the scene
 
@@ -99,7 +100,31 @@ class Editor:
 
     def save(self, path: str | None = None) -> dict[str, Any]:
         with self.lock:
-            return self.ws.scene_save(path)
+            r = self.ws.scene_save(path)
+            self.saved_version = self.version
+            return r
+
+    @property
+    def path(self) -> Path | None:
+        """Where the scene is saved (None until the first save)."""
+        return self.ws.path
+
+    @property
+    def dirty(self) -> bool:
+        """Whether there are edits not saved yet (yours or an attached AI's)."""
+        return self.version != self.saved_version
+
+    def save_as(self, path: str | Path) -> dict[str, Any]:
+        """Save to ``path`` anywhere the person chooses (a file dialog): the workspace
+        folder moves there, so an attached AI follows the scene. ``.phasor.json`` is added
+        when the name lacks it."""
+        p = Path(path).resolve()
+        if not p.name.endswith(".phasor.json"):
+            p = p.with_name(p.name.removesuffix(".json") + ".phasor.json")
+        with self.lock:
+            if p.parent != self.ws.root and self.ws.root not in p.parents:
+                self.ws.root = p.parent
+            return self.save(str(p))
 
     # ------------------------------------------------------------ time
 

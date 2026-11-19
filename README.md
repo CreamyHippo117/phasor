@@ -31,14 +31,19 @@ so the server refuses them unless you add `--allow-scripts`.
 
 ```bash
 uv sync --extra gl --extra encode --extra mcp --extra gui --extra notebook
-uv run phasor gui examples/basics_3d.py          # the desktop editor (also: phasor-gui)
+uv run phasor-gui                                # the desktop app: a start screen
+uv run phasor gui examples/basics_3d.py          # ... or straight into a scene
+uv run phasor-gui --install-shortcut             # add it to the applications menu
 uv run phasor gui examples/julia_explorer.py     # Sliders tab: move c, watch the Julia set change
 uv run phasor web examples/julia_explorer.py -o julia.html --steps 7   # one offline web page
 uv run phasor manim examples/manim_reverb.py -o reverb.phasor.json     # a Manim scene, imported
 uv run python examples/sketch_contour.py         # a drawn loop becomes a contour integral (pi)
 ```
 
-The editor shows the scene's picture, timeline, inspector, lint, looks, sliders, its code
+A packaged app (no Python needed to run it) is built with PyInstaller: see
+[packaging/README.md](packaging/README.md); built and run on Linux, untested on Windows
+and macOS. The editor has a start screen, menus, recent files, and File > Export for
+pictures, videos and web pages. It shows the scene's picture, timeline, inspector, lint, looks, sliders, its code
 (Python, runnable) and a Sketch tab: draw on the picture and strokes become proposals (a loop
 over a complex function becomes a traced contour with its integral; a scribble crosses
 objects out; handwriting is shown to an AI to read). While it is open, `phasor mcp --attach --root <its folder>` lets an AI edit

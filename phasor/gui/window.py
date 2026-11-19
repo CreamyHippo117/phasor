@@ -684,7 +684,9 @@ class EditorWindow(QMainWindow):
             tabs.addTab(widget, title)
         dock = QDockWidget("Who changed what", self)
         dock.setWidget(self.activity)
+        dock.setObjectName("activity")
         self.activity.setMaximumHeight(110)
+        dock.setMaximumHeight(140)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, dock)
         split = QSplitter(Qt.Orientation.Horizontal)
         split.addWidget(left)
@@ -713,17 +715,29 @@ class EditorWindow(QMainWindow):
         self.refresh_all()
 
     def _actions(self) -> None:
+        """The toolbar. Its actions are kept in ``self.actions`` so a menu bar can show the
+        same ones (one action per shortcut: Qt ignores a shortcut two actions share)."""
         bar = self.addToolBar("edit")
+        bar.setObjectName("edit")
+        self.actions: dict[str, QAction] = {}
         for text, key, fn in (
             ("Play", "Space", self.toggle_play),
             ("Undo", "Ctrl+Z", lambda: self._report(self.ed.undo())),
             ("Redo", "Ctrl+Shift+Z", lambda: self._report(self.ed.redo())),
-            ("Save", "Ctrl+S", lambda: self._report(self.ed.save())),
+            ("Save", "Ctrl+S", lambda: self.save_scene()),
         ):
             act = QAction(text, self)
             act.setShortcut(key)
             act.triggered.connect(fn)
             bar.addAction(act)
+            self.actions[text] = act
+
+    def save_scene(self) -> None:
+        """Ctrl+S. The desktop app asks where when the scene has never been saved."""
+        try:
+            self._report(self.ed.save())
+        except ToolError as e:
+            self.statusBar().showMessage(str(e), 8000)
 
     # ------------------------------------------------------------ events
 
@@ -817,21 +831,12 @@ QStatusBar { color: #8a93a8; }
 """  # the house look is dark, always (STYLE.md); Qt's default is light
 
 
-def open_editor(path: str | None, root: str | None = None, *, serve_ai: bool = True,
-                show: bool = True):  # fmt: skip
-    """Open the editor on ``path`` (a .phasor.json, or a .py builder script: the person at
-    the keyboard may open code; an attached AI still may not). Returns (app, window, server)."""
-    import threading
-
-    from PySide6.QtWidgets import QApplication
-
+def make_workspace(path: str | None, root: str | None = None):
+    """A workspace with ``path`` open (a .phasor.json, or a .py builder script: the person
+    at the keyboard may open code; an attached AI still may not), or a new scene."""
     from phasor.workspace import Workspace
-    from phasor.workspace.remote import RemoteServer
 
-    app = QApplication.instance() or QApplication([])
-    app.setStyleSheet(DARK)
     ws = Workspace(root or (Path(path).parent if path else Path.cwd()))
-    lock = threading.RLock()
     if path:
         ws.allow_scripts = True  # only for this one call, made by the person
         try:
@@ -840,12 +845,45 @@ def open_editor(path: str | None, root: str | None = None, *, serve_ai: bool = T
             ws.allow_scripts = False
     else:
         ws.scene_new("untitled")
+    return ws
+
+
+def start_ai_server(ws, lock):
+    """Let ``phasor mcp --attach --root <ws.root>`` edit this scene. Returns (server, hint)."""
+    from phasor.workspace.remote import RemoteServer
+
+    server = RemoteServer(ws, lock).start()
+    server.write_handoff()
+    return server, f"An AI can edit this scene: phasor mcp --attach --root {ws.root}"
+
+
+def qt_app():
+    """The one QApplication, in the house look."""
+    from PySide6.QtGui import QIcon
+    from PySide6.QtWidgets import QApplication
+
+    from phasor.gui.app import ICON
+
+    app = QApplication.instance() or QApplication([])
+    app.setStyleSheet(DARK)
+    app.setApplicationName("phasor")
+    if ICON.exists():
+        app.setWindowIcon(QIcon(str(ICON)))
+    return app
+
+
+def open_editor(path: str | None, root: str | None = None, *, serve_ai: bool = True,
+                show: bool = True):  # fmt: skip
+    """Open the editor on ``path`` (see ``make_workspace``). Returns (app, window, server)."""
+    import threading
+
+    app = qt_app()
+    ws = make_workspace(path, root)
+    lock = threading.RLock()
     editor = Editor(ws, lock)
     server, hint = None, ""
     if serve_ai:
-        server = RemoteServer(ws, lock).start()
-        server.write_handoff()
-        hint = f"An AI can edit this scene: phasor mcp --attach --root {ws.root}"
+        server, hint = start_ai_server(ws, lock)
     win = EditorWindow(editor, hint)
     if show:
         win.show()

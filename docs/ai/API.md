@@ -911,12 +911,40 @@ would notice) and `fix_hints`.
 | `phasor render SCENE [-o OUT] [--preset preview\|final\|4k] [--fps F] [--start S] [--end E] [--frame T]` | M3 | Video (`.mp4`; `.mov` is ProRes; a folder or `%05d.png` is a PNG sequence) or one PNG with `--frame` |
 | `phasor bench [--width W] [--height H]` | M3 | ms per frame per kernel and peak VRAM; saved in `benchmarks/` |
 | `phasor mcp [--root DIR] [--allow-scripts] [--attach]` | M5, M10 | MCP server; `--attach` edits the scene open in a running `phasor gui` |
-| `phasor gui [SCENE] [--root DIR] [--no-ai]` | M10 | The editor (needs `uv sync --extra gui`); also `phasor-gui`; a Manim script opens too |
+| `phasor gui [SCENE] [--root DIR] [--no-ai] [--install-shortcut]` | M10 | The desktop app (needs `uv sync --extra gui`): a start screen, or the editor on SCENE; also `phasor-gui`; a Manim script opens too |
 | `phasor web SCENE [-o PAGE.html] [--steps N]` | M12 | Bake a self-contained interactive web page from the scene's sliders |
 | `phasor manim SCRIPT [--scene NAME] [-o OUT] [--code]` | M13 | Import a Manim Community scene as a phasor scene |
 | `phasor sketch SCENE STROKES.json [--t T] [--accept [K ...]] [--text K=TEXT]` | M11 | Turn drawn strokes into proposals; `--accept` applies them |
 
 `SCENE` is a `.phasor.json` document or a `.py` script that defines exactly one `Scene`.
+
+## The desktop app (`phasor-gui`)
+
+`phasor-gui` (or `phasor gui`) with no scene opens a **start screen**: new scene (2D, 3D,
+a complex function), open a file, recent scenes, and the examples (double-click copies one
+to `Documents/phasor/examples` and opens the copy). Each scene gets its own window with a
+menu bar: **File** (New, Open, Open Example, Open Recent, Save, Save As, Export, Close,
+Quit), **Edit** (Undo, Redo), **View** (Play, back to the start), **Settings** (math
+typesetting: built-in, the default, or LaTeX; add phasor to the applications menu),
+**Help** (these docs, a hardware check, about). The title marks unsaved edits with `•`,
+and closing such a window asks first. **Export** makes a picture, a video or a web page
+with sliders, with a progress bar, in a separate process (it can be cancelled and the
+window keeps working). The packaged app is built with PyInstaller (`packaging/README.md`).
+
+The logic is plain Python in `phasor.gui.app` (no Qt): settings, templates, examples,
+exports and the shortcut.
+
+```python
+import tempfile
+from pathlib import Path
+
+from phasor.gui.app import EXPORTS, TEMPLATES, ExportJob, examples
+
+assert {"2D scene", "3D scene"} <= set(TEMPLATES) and set(EXPORTS) == {"picture", "video", "web"}
+assert any(e["name"] == "julia explorer" for e in examples())
+job = ExportJob(None, "web", Path(tempfile.mkdtemp()) / "page.html", scene_dir=".")
+assert job.command("s.phasor.json")[-5:] == ["s.phasor.json", "-o", str(job.out), "--steps", "5"]
+```
 
 ## The editor and the AI on one scene (`phasor gui`)
 

@@ -57,6 +57,8 @@ dev = [
     "ruff>=0.6",
     "import-linter>=2.1",
 ]
+# Building the desktop app (packaging/README.md).
+package = ["pyinstaller>=6.10"]
 
 [build-system]
 requires = ["hatchling"]
