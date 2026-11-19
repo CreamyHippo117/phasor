@@ -44,21 +44,39 @@ class _Sim:
 
 
 class Heat1D(_Sim):
-    """A rod of length ``length``, ends held at 0, started as sine modes ``modes`` (amplitudes
-    of sin(m pi x / L), m = 1, 2, ...) or a Gaussian ``bump`` when ``modes`` is empty."""
+    """A rod of length ``length`` started as modes ``modes`` or a Gaussian ``bump`` when
+    ``modes`` is empty.
 
-    def __init__(self, *, k=1.0, length=1.0, n=100, modes=(1.0,), dt=None) -> None:
+    ``boundary``: ``dirichlet`` holds both ends at 0 (modes are sin(m pi x / L), m = 1, 2...);
+    ``neumann`` insulates them, so no heat leaves (modes are cos(m pi x / L), m = 1, 2...).
+    ``method``: ``explicit`` finite differences (dt limited by dx^2 / 2k), or ``spectral``:
+    the profile's sine / cosine transform, each mode multiplied by its exact decay, which is
+    exact for any step.
+    """
+
+    def __init__(self, *, k=1.0, length=1.0, n=100, modes=(1.0,), dt=None,
+                 boundary="dirichlet", method="explicit") -> None:  # fmt: skip
         self.k, self.length, self.n = float(k), float(length), int(n)
         self.modes = tuple(float(m) for m in modes)
+        if boundary not in ("dirichlet", "neumann") or method not in ("explicit", "spectral"):
+            raise ValueError("boundary is dirichlet or neumann; method explicit or spectral")
+        self.boundary, self.method = boundary, method
         self.dx = self.length / self.n
         limit = 0.5 * self.dx**2 / self.k
-        self.dt = 0.8 * limit if dt is None else float(dt)
-        if self.dt > limit * (1 + 1e-12):
-            raise ValueError(f"unstable: dt = {self.dt:g} is above dx^2 / (2 k) = {limit:g}")
+        if method == "spectral":
+            self.dt = 1e-3 * self.length**2 / self.k if dt is None else float(dt)
+        else:
+            self.dt = 0.8 * limit if dt is None else float(dt)
+            if self.dt > limit * (1 + 1e-12):
+                raise ValueError(f"unstable: dt = {self.dt:g} is above dx^2 / (2 k) = {limit:g}")
         self.x = _grid(self.length, self.n)
 
     def initial(self) -> dict[str, Array]:
         return {"u": self.profile(0.0), "n": np.zeros(1)}
+
+    def _shape(self, m: int) -> Array:
+        w = m * math.pi / self.length
+        return np.sin(w * self.x) if self.boundary == "dirichlet" else np.cos(w * self.x)
 
     def profile(self, t: float) -> Array:
         """The exact solution at time t (for the mode initial condition)."""
@@ -67,7 +85,7 @@ class Heat1D(_Sim):
         u = np.zeros_like(self.x)
         for m, a in enumerate(self.modes, start=1):
             w = m * math.pi / self.length
-            u += a * np.sin(w * self.x) * math.exp(-self.k * w * w * t)
+            u += a * self._shape(m) * math.exp(-self.k * w * w * t)
         return u
 
     def exact(self, t: float) -> Array | None:
@@ -75,10 +93,51 @@ class Heat1D(_Sim):
 
     def step(self, s: dict[str, Array], dt: float) -> dict[str, Array]:
         u = s["u"]
+        if self.method == "spectral":
+            return {"u": self._spectral(u, dt), "n": s["n"] + 1}
+        r = self.k * dt / self.dx**2
         new = u.copy()
-        new[1:-1] = u[1:-1] + self.k * dt / self.dx**2 * (u[2:] - 2 * u[1:-1] + u[:-2])
-        new[0] = new[-1] = 0.0
+        new[1:-1] = u[1:-1] + r * (u[2:] - 2 * u[1:-1] + u[:-2])
+        if self.boundary == "dirichlet":
+            new[0] = new[-1] = 0.0
+        else:  # mirror (ghost) points: zero slope at the ends
+            new[0] = u[0] + 2 * r * (u[1] - u[0])
+            new[-1] = u[-1] + 2 * r * (u[-2] - u[-1])
         return {"u": new, "n": s["n"] + 1}
+
+    def _spectral(self, u: Array, dt: float) -> Array:
+        import scipy.fft as sf
+
+        if self.boundary == "dirichlet":  # DST-I of the interior: modes m = 1 .. n-1
+            m = np.arange(1, self.n)
+            c = sf.dst(u[1:-1], type=1)
+            c *= np.exp(-self.k * (m * math.pi / self.length) ** 2 * dt)
+            return np.concatenate([[0.0], sf.idst(c, type=1), [0.0]])
+        m = np.arange(self.n + 1)  # DCT-I of every point: modes m = 0 .. n
+        c = sf.dct(u, type=1)
+        c *= np.exp(-self.k * (m * math.pi / self.length) ** 2 * dt)
+        return sf.idct(c, type=1)
+
+
+def sine_modes(x: Array, u: Array, length: float, count: int) -> Array:
+    """b_m = 2/L * integral of u sin(m pi x / L), m = 1 .. count (Dirichlet modes)."""
+    return np.array([2 / length * np.trapezoid(u * np.sin(m * math.pi * x / length), x)
+                     for m in range(1, count + 1)])  # fmt: skip
+
+
+def cosine_modes(x: Array, u: Array, length: float, count: int) -> Array:
+    """a_0 (the mean), a_1 .. a_count: the Neumann (insulated) modes cos(m pi x / L)."""
+    out = [np.trapezoid(u, x) / length]
+    out += [2 / length * np.trapezoid(u * np.cos(m * math.pi * x / length), x)
+            for m in range(1, count + 1)]  # fmt: skip
+    return np.array(out)
+
+
+def mode_sum(x: Array, b: Array, length: float, *, cosine: bool = False) -> Array:
+    """The partial sum of modes ``b`` (as from ``sine_modes`` / ``cosine_modes``)."""
+    if cosine:
+        return b[0] + sum(c * np.cos(m * math.pi * x / length) for m, c in enumerate(b[1:], 1))
+    return sum(c * np.sin(m * math.pi * x / length) for m, c in enumerate(b, 1))
 
 
 class Heat2D(_Sim):
@@ -125,6 +184,55 @@ class Heat2D(_Sim):
         new[1:-1, 1:-1] = u[1:-1, 1:-1] + self.k * dt / self.dx**2 * lap
         new[0, :] = new[-1, :] = new[:, 0] = new[:, -1] = 0.0
         return {"u": new, "n": s["n"] + 1}
+
+
+class Heat3D(_Sim):
+    """A cube of side ``size``, faces held at 0: mode (l, m, n) starts as the product of three
+    sines; (0, 0, 0) as a hot spot off centre. Look inside with ``slice3d``."""
+
+    def __init__(self, *, k=1.0, size=1.0, n=24, mode=(1, 1, 1), dt=None) -> None:
+        self.k, self.size, self.n = float(k), float(size), int(n)
+        self.mode = tuple(int(v) for v in mode)
+        self.dx = self.size / self.n
+        limit = self.dx**2 / (6 * self.k)
+        self.dt = 0.8 * limit if dt is None else float(dt)
+        if self.dt > limit * (1 + 1e-12):
+            raise ValueError(f"unstable: dt = {self.dt:g} is above dx^2 / (6 k) = {limit:g}")
+        self.x = _grid(self.size, self.n)
+
+    def initial(self) -> dict[str, Array]:
+        return {"u": self.profile(0.0), "n": np.zeros(1)}
+
+    def profile(self, t: float) -> Array:
+        X, Y, Z = np.meshgrid(self.x, self.x, self.x, indexing="ij")
+        if self.mode == (0, 0, 0):
+            c = np.array([0.4, 0.55, 0.5]) * self.size
+            r2 = ((X - c[0]) ** 2 + (Y - c[1]) ** 2 + (Z - c[2]) ** 2) / (0.12 * self.size) ** 2
+            u = np.exp(-r2)
+            u[0], u[-1], u[:, 0], u[:, -1], u[:, :, 0], u[:, :, -1] = 0, 0, 0, 0, 0, 0
+            return u
+        w = [m * math.pi / self.size for m in self.mode]
+        lam = sum(v * v for v in w)
+        return np.sin(w[0] * X) * np.sin(w[1] * Y) * np.sin(w[2] * Z) * math.exp(-self.k * lam * t)
+
+    def exact(self, t: float) -> Array | None:
+        return self.profile(t) if self.mode != (0, 0, 0) else None
+
+    def step(self, s: dict[str, Array], dt: float) -> dict[str, Array]:
+        u = s["u"]
+        c = u[1:-1, 1:-1, 1:-1]
+        lap = (u[2:, 1:-1, 1:-1] + u[:-2, 1:-1, 1:-1] + u[1:-1, 2:, 1:-1] + u[1:-1, :-2, 1:-1]
+               + u[1:-1, 1:-1, 2:] + u[1:-1, 1:-1, :-2] - 6 * c)  # fmt: skip
+        new = np.zeros_like(u)
+        new[1:-1, 1:-1, 1:-1] = c + self.k * dt / self.dx**2 * lap
+        return {"u": new, "n": s["n"] + 1}
+
+
+def slice3d(u: Array, axis: str, at: float) -> Array:
+    """The plane of a cube grid at ``at`` (0..1 along ``axis``), nearest grid plane."""
+    k = "xyz".index(axis)
+    i = round(at * (u.shape[k] - 1))
+    return np.take(u, i, axis=k)
 
 
 # ---------------------------------------------------------------- waves

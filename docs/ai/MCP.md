@@ -94,8 +94,9 @@ Domain objects are added the same way (`object_types` lists their parameters and
 `epicycles`, `partial_sum`, `spectrum`, `spectrogram` (fourier); `transform_grid`, `arrow`,
 `eigen_lines`, `matrix` (linear algebra); `room`, `source`, `listener`, `wavefront`,
 `image_sources`, `impulse_response`, `pressure_slice` (acoustics); `pde_profile`, `pde_field`,
-`pde_surface`; `polygon`, `cayley_table`, `clock_diagram` (algebra); `graph`, `riemann_sum`, `taylor`,
-`vector_field` (calculus). A parameter may be an
+`pde_surface`, `pde_modes`, `pde_slice`; `polygon`, `cayley_table`, `clock_diagram`,
+`cayley_graph`, `homomorphism`, `subgroup_lattice`, `galois_diagram`, `permutation` (algebra);
+`graph`, `riemann_sum`, `taylor`, `vector_field`, `limit`, `loop_integral` (calculus). A parameter may be an
 expression, which is how a `matrix` object reads a grid's matrix: `"matrix": {"expr": "grid.matrix"}`.
 
 ```json patch

@@ -82,3 +82,88 @@ def test_verify_catches_a_table_that_is_not_a_group():
     bad = am.Group("bad", ((0, 1, 2), (1, 2, 0), (2, 0, 0)), ("a", "b", "c"))
     with pytest.raises(ValueError, match="inverse|associative"):
         bad.verify()
+
+
+# ---------------------------------------------------------------- the rest of the module table
+
+
+def test_cayley_graph_has_one_edge_per_element_and_generator_and_is_connected():
+    d = am.dihedral(4)
+    edges = am.cayley_edges(d, [1, 4])  # r and s
+    assert len(edges) == 2 * d.order
+    assert all(d.mul(x, g) == y for x, g, y in edges)
+    reach, frontier = {0}, [0]
+    while frontier:
+        x = frontier.pop()
+        for a, _, b in edges:
+            if a == x and b not in reach:
+                reach.add(b)
+                frontier.append(b)
+    assert reach == set(range(d.order))  # r and s generate D4: the graph is connected
+    with pytest.raises(ValueError, match="does not generate"):
+        am.cayley_edges(d, [1])  # rotations alone miss the flips
+
+
+def test_quotient_by_a_normal_subgroup_is_a_group_and_lagrange_holds():
+    d = am.dihedral(4)
+    rot = d.generated([1])  # the rotations: index 2, normal
+    q = am.quotient(d, rot)
+    q.verify()
+    assert q.order == 2 and q.order * len(rot) == d.order
+    center = d.generated([2])  # {e, r2}: the center, normal; D4 / Z(D4) is the Klein group
+    k = am.quotient(d, center)
+    k.verify()
+    assert k.order == 4 and k.is_abelian() and all(k.element_order(a) <= 2 for a in range(4))
+    with pytest.raises(ValueError, match="not normal"):
+        am.quotient(d, d.generated([4]))  # {e, s} is not normal
+
+
+def test_homomorphisms_between_clocks_obey_the_first_isomorphism_theorem():
+    for n, m, a in [(12, 4, 1), (6, 9, 3), (8, 8, 3), (12, 18, 3)]:
+        h = am.clock_hom(n, m, a)
+        assert am.is_homomorphism(am.cyclic(n), am.cyclic(m), h.images)
+        assert n == len(h.kernel) * len(h.image)  # |G| = |ker| |im|
+        assert all(h.images[k] == 0 for k in h.kernel)
+    with pytest.raises(ValueError, match="not a homomorphism"):
+        am.clock_hom(5, 3, 1)  # 5 * 1 is not 0 mod 3
+    assert not am.is_homomorphism(am.cyclic(4), am.cyclic(4), (0, 1, 1, 0))
+
+
+def test_subgroup_lattice_of_d4_has_ten_subgroups_and_covering_edges():
+    d = am.dihedral(4)
+    subs, edges = am.subgroup_lattice(d)
+    assert len(subs) == 10 and len(subs[0]) == 1 and len(subs[-1]) == 8
+    for lo, hi in edges:
+        assert subs[lo] < subs[hi]  # strictly contained
+        assert not any(subs[lo] < subs[k] < subs[hi] for k in range(len(subs)))  # covers
+    # every subgroup but the whole group sits under something
+    assert {lo for lo, _ in edges} == set(range(len(subs) - 1))
+
+
+def test_galois_correspondence_of_square_root_towers():
+    gal = am.galois_sqrt((2, 3))
+    assert gal.group.order == 4 and gal.group.is_abelian()  # the Klein four-group
+    assert len(gal.fields) == len(gal.subgroups) == 5
+    for f, h in zip(gal.fields, gal.subgroups, strict=True):
+        # the fundamental theorem: [L : F] = |H|, and H fixes exactly F's generators
+        assert gal.degree // f.degree == len(h)
+        for sigma in h:
+            assert all(gal.fixes(sigma, d) for d in f.radicands)
+    assert gal.degree == 4 and {f.name for f in gal.fields} >= {"Q", "Q(√2)", "Q(√6)", "Q(√2, √3)"}
+    # sympy agrees on the degrees
+    import sympy as sp
+
+    x = sp.Symbol("x")
+    assert sp.degree(sp.minimal_polynomial(sp.sqrt(2) + sp.sqrt(3) + sp.sqrt(5), x), x) == 8
+    assert am.galois_sqrt((2, 3, 5)).degree == 8
+    with pytest.raises(ValueError, match="square-free"):
+        am.galois_sqrt((2, 8))
+
+
+def test_permutations_cycles_sign_and_order():
+    p = (1, 2, 0, 4, 3)  # 0->1->2->0 and 3<->4
+    assert am.cycles(p) == [(0, 1, 2), (3, 4)]
+    assert am.sign(p) == -1 and am.perm_order(p) == 6
+    assert am.cycles((0, 1, 2)) == [] and am.sign((0, 1, 2)) == 1
+    with pytest.raises(ValueError, match="permutation"):
+        am.cycles((0, 0, 1))

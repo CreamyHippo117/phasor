@@ -127,6 +127,18 @@ def delta_for_epsilon(
     )
 
 
+def limit_at(f: RealFunction, a: float) -> float | None:
+    """The two-sided limit of f at a, symbolically (SymPy), or None when the sides disagree
+    or it is infinite."""
+    x = f.x
+    point = sp.nsimplify(a)
+    left = sp.limit(f.expr, x, point, dir="-")
+    right = sp.limit(f.expr, x, point, dir="+")
+    if left != right or not left.is_finite:
+        return None
+    return float(left)
+
+
 # ---------------------------------------------------------------- vector fields
 
 
@@ -180,13 +192,49 @@ class VectorField:
         return float(np.sum(p * dx + q * dy) * (2 * math.pi / n))
 
 
+def loop_integral(
+    f: VectorField, center, radius: float, measure: str, *, upto: float = 1.0, n: int = 4096
+) -> float:
+    """The line integral of F around the circle, counterclockwise, over the first ``upto``
+    share of the turn: ``circulation`` = integral of F . T ds (Green: = integral of the curl
+    over the disc), ``flux`` = integral of F . n ds with n outward (= integral of the
+    divergence). Midpoint rule in the angle, spectrally accurate for a whole turn."""
+    if measure not in ("flux", "circulation"):
+        raise ValueError(f"measure is flux or circulation, got {measure!r}")
+    span = 2 * math.pi * float(np.clip(upto, 0.0, 1.0))
+    if span == 0:
+        return 0.0
+    k = max(8, int(n * span / (2 * math.pi)))
+    t = (np.arange(k) + 0.5) * span / k
+    c, s = np.cos(t), np.sin(t)
+    p, q = f(center[0] + radius * c, center[1] + radius * s)
+    along = -p * s + q * c if measure == "circulation" else p * c + q * s
+    return float(np.sum(along) * radius * span / k)
+
+
+def disc_integral(f: VectorField, expr: sp.Expr, center, radius: float, n: int = 64) -> float:
+    """The integral of a scalar expression in x, y over a disc (Gauss-Legendre in r, the
+    trapezoid rule around), for checking Green's and the divergence theorem."""
+    X, Y = f._sym
+    fn = sp.lambdify((X, Y), expr, "numpy")
+    r, w = np.polynomial.legendre.leggauss(n)
+    r, w = (r + 1) * radius / 2, w * radius / 2
+    t = np.arange(2 * n) * math.pi / n
+    R, T = np.meshgrid(r, t, indexing="ij")
+    vals = np.broadcast_to(fn(center[0] + R * np.cos(T), center[1] + R * np.sin(T)), R.shape)
+    return float(np.sum(vals * R * w[:, None]) * math.pi / n)
+
+
 __all__ = [
     "RULES",
     "FunctionError",
     "RealFunction",
     "VectorField",
     "delta_for_epsilon",
+    "disc_integral",
     "exact_integral",
+    "limit_at",
+    "loop_integral",
     "riemann_sum",
     "taylor_coefficients",
     "taylor_polynomial",

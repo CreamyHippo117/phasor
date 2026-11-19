@@ -155,3 +155,176 @@ def action_matrix(n: int, element: int) -> np.ndarray:
     ang, flip = polygon_action(n, element)
     rot = np.array([[math.cos(ang), -math.sin(ang)], [math.sin(ang), math.cos(ang)]])
     return np.array([[-1.0, 0.0], [0.0, 1.0]]) @ rot if flip else rot
+
+
+# ---------------------------------------------------------------- Cayley graphs, quotients
+
+
+def cayley_edges(g: Group, gens) -> list[tuple[int, int, int]]:
+    """Edges (x, generator, x * generator) of the Cayley graph: one per element and
+    generator. The generators must generate the whole group (else the graph falls apart)."""
+    gens = list(gens)
+    if g.generated(gens) != frozenset(range(g.order)):
+        names = [g.labels[a] for a in gens]
+        raise ValueError(f"{names} does not generate {g.name}; add a generator")
+    return [(x, s, g.mul(x, s)) for s in gens for x in range(g.order)]
+
+
+def quotient(g: Group, normal) -> Group:
+    """G / N: the cosets of a normal subgroup, multiplied as sets. Element 0 is N itself."""
+    normal = frozenset(normal)
+    if not g.is_normal(normal):
+        raise ValueError(f"that subgroup of {g.name} is not normal: its cosets do not multiply")
+    cosets = sorted(g.left_cosets(normal), key=lambda c: (0 not in c, min(c)))
+    owner = {x: i for i, c in enumerate(cosets) for x in c}
+    table = tuple(tuple(owner[g.mul(min(a), min(b))] for b in cosets) for a in cosets)
+    labels = tuple(g.labels[min(c, key=lambda x: (len(g.labels[x]), x))] + "N" for c in cosets)
+    return Group(f"{g.name}/N", table, ("N", *labels[1:]))
+
+
+# ---------------------------------------------------------------- homomorphisms
+
+
+@dataclass(frozen=True)
+class Hom:
+    images: tuple[int, ...]  # images[k] = f(k)
+    kernel: frozenset[int]
+    image: frozenset[int]
+
+
+def is_homomorphism(g: Group, h: Group, images) -> bool:
+    images = tuple(images)
+    return len(images) == g.order and all(
+        images[g.mul(a, b)] == h.mul(images[a], images[b])
+        for a in range(g.order)
+        for b in range(g.order)
+    )
+
+
+def clock_hom(n: int, m: int, a: int) -> Hom:
+    """The map Z_n -> Z_m, k -> a k mod m. It is a homomorphism exactly when n a = 0 mod m."""
+    if (n * a) % m:
+        raise ValueError(f"k -> {a}k from Z{n} to Z{m} is not a homomorphism: {n}*{a} is not "
+                         f"0 mod {m}; pick a with {n}*a divisible by {m}")  # fmt: skip
+    images = tuple((a * k) % m for k in range(n))
+    return Hom(images, frozenset(k for k in range(n) if images[k] == 0), frozenset(images))
+
+
+# ---------------------------------------------------------------- lattices, Galois
+
+
+def subgroup_lattice(g: Group) -> tuple[list[frozenset[int]], list[tuple[int, int]]]:
+    """Every subgroup (smallest first) and the Hasse diagram's edges (lo, hi): hi covers lo."""
+    subs = g.subgroups()
+    edges = [
+        (i, j)
+        for i, lo in enumerate(subs)
+        for j, hi in enumerate(subs)
+        if lo < hi and not any(lo < mid < hi for mid in subs)
+    ]
+    return subs, edges
+
+
+@dataclass(frozen=True)
+class SqrtField:
+    radicands: tuple[int, ...]  # a basis: the field is Q(sqrt d for d in radicands)
+    degree: int
+    name: str
+
+
+@dataclass(frozen=True)
+class Galois:
+    primes: tuple[int, ...]
+    group: Group  # (Z2)^k: element bits say which square roots change sign
+    subgroups: tuple[frozenset[int], ...]
+    fields: tuple[SqrtField, ...]  # fields[i] is the fixed field of subgroups[i]
+
+    @property
+    def degree(self) -> int:
+        return 2 ** len(self.primes)
+
+    def fixes(self, sigma: int, d: int) -> bool:
+        """Whether the automorphism ``sigma`` leaves sqrt(d) alone (d a product of primes)."""
+        flips = sum(1 for i, p in enumerate(self.primes) if sigma >> i & 1 and d % p == 0)
+        return flips % 2 == 0
+
+
+def _is_prime(p: int) -> bool:
+    return p >= 2 and all(p % q for q in range(2, math.isqrt(p) + 1))
+
+
+def galois_sqrt(primes) -> Galois:
+    """The Galois correspondence of L = Q(sqrt p1, ..., sqrt pk), k <= 3: the group is
+    (Z2)^k (each automorphism flips the signs of some roots), and each subgroup H fixes the
+    field spanned by the sqrt(d) with d a product of primes that H flips an even number of."""
+    primes = tuple(int(p) for p in primes)
+    if (
+        not 1 <= len(primes) <= 3
+        or len(set(primes)) != len(primes)
+        or not all(map(_is_prime, primes))
+    ):
+        raise ValueError("give 1 to 3 distinct primes, e.g. (2, 3): square roots of "
+                         "square-free, coprime numbers keep every degree a power of 2")  # fmt: skip
+    k = len(primes)
+    n = 2**k
+    names = [
+        "e"
+        if b == 0
+        else "\u03c3(" + ",".join(str(p) for i, p in enumerate(primes) if b >> i & 1) + ")"
+        for b in range(n)
+    ]
+    group = Group("Gal(L/Q)", tuple(tuple(a ^ b for b in range(n)) for a in range(n)),
+                  tuple(names))  # fmt: skip
+
+    def radicand(s: int) -> int:
+        return math.prod(p for i, p in enumerate(primes) if s >> i & 1)
+
+    subs = tuple(group.subgroups())
+    fields = []
+    for h in subs:
+        span = [s for s in range(n) if all(bin(s & sig).count("1") % 2 == 0 for sig in h)]
+        basis: list[int] = []
+        reach = {0}
+        for s in sorted(span, key=lambda s: (bin(s).count("1"), radicand(s))):
+            if s not in reach:
+                basis.append(s)
+                reach |= {r ^ s for r in reach}
+        rads = tuple(radicand(s) for s in basis)
+        name = "Q" if not rads else "Q(" + ", ".join(f"√{d}" for d in rads) + ")"
+        fields.append(SqrtField(rads, len(span), name))
+    return Galois(primes, group, subs, tuple(fields))
+
+
+# ---------------------------------------------------------------- permutations
+
+
+def _check_perm(p) -> tuple[int, ...]:
+    p = tuple(int(x) for x in p)
+    if sorted(p) != list(range(len(p))):
+        raise ValueError(f"{p} is not a permutation of 0..{len(p) - 1}")
+    return p
+
+
+def cycles(p) -> list[tuple[int, ...]]:
+    """Disjoint cycles of length >= 2, each starting at its smallest entry: i -> p[i]."""
+    p = _check_perm(p)
+    seen, out = set(), []
+    for i in range(len(p)):
+        if i in seen or p[i] == i:
+            seen.add(i)
+            continue
+        c, j = [], i
+        while j not in seen:
+            seen.add(j)
+            c.append(j)
+            j = p[j]
+        out.append(tuple(c))
+    return out
+
+
+def sign(p) -> int:
+    return -1 if sum(len(c) - 1 for c in cycles(p)) % 2 else 1
+
+
+def perm_order(p) -> int:
+    return math.lcm(1, *(len(c) for c in cycles(p)))

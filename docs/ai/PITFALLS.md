@@ -258,3 +258,20 @@ below about 1e-10 per pixel (`precision` in the semantics says `f64`).
 
 `cx.Fractal(center=...)` takes `"re im"` as decimal text (`"-0.75 0.1"`, `"1e-30 0"`), not a
 tuple: floats would round the point to 16 digits and a deep view would land somewhere else.
+
+## My heat map's hottest spot is dark
+
+Fixed in Milestone 9: `ember`, `ocean` and `sequential` are cyclic (made for fractals) and come
+back to dark at their end. PDE heat maps and the spectrogram now use only the rising half (`core.color.ramp`). If you
+write your own object that maps a value onto a colormap, use `ramp` too.
+
+## `Limit` says "no finite limit"
+
+`calc.Limit` needs the two one-sided limits to agree and be finite (`1/x` at 0 has none). The
+limit is found symbolically, so write the function so SymPy can see it (`sin(x)/x`, not a
+piecewise trick).
+
+## `CayleyGraph` says "does not generate"
+
+The generators must reach every element, or the graph falls apart into pieces: `"r"` alone
+gives only the rotations of D4; use `"r s"`.

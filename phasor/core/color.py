@@ -73,3 +73,14 @@ def phase_lut(n: int = 256, lightness: float = 0.74, chroma: float = 0.125):
         axis=1,
     )
     return np.ascontiguousarray(np.clip(rgb, 0.0, 1.0), dtype=np.float32)
+
+
+def ramp(colormap, dtype=np.float64) -> np.ndarray:
+    """A colormap as a ramp for values 0..1. A cyclic one (ember, ocean: made for fractals,
+    they rise to their brightest and come back to dark) is cut at its brightest entry, so the
+    hottest value is the brightest color and not dark again."""
+    lut = np.asarray(colormap, dtype=np.float64)
+    if np.abs(lut[0] - lut[-1]).max() < 0.05:
+        lum = lut @ np.array([0.2126, 0.7152, 0.0722])
+        lut = lut[: int(np.argmax(lum)) + 1]
+    return lut.astype(dtype)

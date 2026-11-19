@@ -20,7 +20,9 @@ tested. Gates green on Linux (software OpenGL). Untested on Windows and a GPU.
 | Calculus objects: `Graph`, `RiemannSum`, `Taylor`, `VectorField` | `domains/calc.py` |
 | A safe expression parser in named variables (`x`, `y`) beside the complex one | `render/gpu/codegen.parse_expression` |
 | Deep zoom (9b): reference orbit in exact fixed point, perturbation kernel with rebasing (CUDA C + NumPy reference), `cx.Fractal` `center` / `zoom` / `steady` | `domains/fractal_math.py`, `render/gpu/kernels/fractal.py` (`deep`), `domains/cx.py` |
-| Docs, examples | `docs/ai/` (API, MCP, PITFALLS), `examples/heat_dihedral.py`, `examples/deep_zoom.py` |
+| The rest of the module tables: PDE boundary conditions (held / insulated, drawn), spectral 1D heat, `Modes`, `Heat3D` + `Slice`; `CayleyGraph`, cosets and quotients on `CayleyTable`, `Homomorphism`, `SubgroupLattice`, `GaloisDiagram`, `Permutation`; `Limit`, `LoopIntegral` (flux, Green) | `domains/pde*.py`, `domains/algebra*.py`, `domains/calc*.py` |
+| One stroke helper for arrows (moved from `linalg` to `strokes.arrow`) | `domains/strokes.py` |
+| Docs, examples | `docs/ai/` (API, MCP, PITFALLS), `examples/heat_dihedral.py`, `examples/deep_zoom.py`, `examples/more_wave2.py` |
 
 ## Verification
 
@@ -42,6 +44,17 @@ tested. Gates green on Linux (software OpenGL). Untested on Windows and a GPU.
   bit when compiled for the CPU; through the engine a 1e-30 frame is the kernels' picture; the
   example dives f32 -> f64 -> perturbation once each, only ever deeper, and lints clean; a
   software golden storyboard.
+- **The rest of the tables**: spectral heat equals the exact modes to 1e-12 at a step 30x
+  the explicit limit; insulated ends keep the heat (explicit and spectral) and match cos(pi x);
+  mode decomposition recovers the modes and its partial sums converge; Heat3D decays at the
+  exact rate; Cayley graphs have one edge per element and generator and refuse generators that
+  do not generate; D4/<r> and D4/Z(D4) are groups (order 2, and the Klein group) and a
+  non-normal subgroup is refused; clock homomorphisms obey |G| = |ker| |im|; the D4 lattice has
+  10 subgroups with covering edges only; the Galois correspondence holds ([L : F] = |H|, H fixes
+  F) and SymPy agrees on the degree 8 of Q(sqrt 2, sqrt 3, sqrt 5); permutations' cycles, sign,
+  order, and tokens land on their target slots; limits are found symbolically and refused where
+  the sides disagree; Green's and the divergence theorem hold around circles for four fields;
+  `examples/more_wave2.py` lints and critiques clean, with a software golden.
 - Other solvers against theory: standing wave frequency, drum modes, plucked string period,
   advection speed and mass, Schrodinger norm (unitary) and free-packet spreading, a harmonic
   well's period, Poisson to second order, Gray-Scott determinism by seed.
@@ -63,7 +76,12 @@ tested. Gates green on Linux (software OpenGL). Untested on Windows and a GPU.
    depth and a dive's background otherwise cycles light/dark about once a second.
 5. NumPy solvers only (no GPU solvers, no spectral PDE solvers); 2D fields and 3D surfaces,
    no volumes or slices of 3D PDEs.
-6. A reasonable subset of each module table (see SPEC "As built (Milestone 9)").
+6. Each module table is now covered except: GPU PDE solvers, spectral solvers beyond 1D heat,
+   volume rendering (3D PDEs show as slices), Stokes on 3D surfaces, rings beyond clocks, field
+   towers other than square roots of primes, cube/icosahedron symmetry groups, group orbits as
+   pictures (SPEC "As built (Milestone 9)").
+7. `steady` on `cx.Fractal`, `Slice.scale = 0` (auto) and `core.color.ramp` are additions the SPEC did
+   not name; each fixes something seen in a render (see Bugs).
 
 ## Bugs caught while building
 
@@ -78,11 +96,20 @@ tested. Gates green on Linux (software OpenGL). Untested on Windows and a GPU.
    the error is the reference rounded to float64, which every perturbation renderer shares.
    Rebasing halves it (2.4% -> 1%); the test pins both numbers.
 5. (9b) First draft of the dive flashed light/dark (colors indexed by a growing count): `steady`.
+6. **PDE heat maps drew their hottest spot dark** (found by looking at the 3D slice): `ember`,
+   `ocean` and `sequential` are cyclic fractal palettes that end dark, and `Field`, `Surface`
+   (since the first Milestone 9 commit) indexed all of them. They now use the rising half
+   (`core.color.ramp`); a test pins it. The Milestone 8 `Spectrogram` had the same bug (its loudest bins dark) and is fixed with it.
+7. The first Galois and lattice drawings overlapped their labels and lacked glyphs for the
+   square root and sigma (the font has neither): labels are ASCII (`sqrt2`, `sig(2)`) on screen,
+   Unicode in the semantics, and crowded levels put their outer labels sideways.
 
 ## Untested
 
 - Windows, NVIDIA GPU. Large 2D grids in NumPy are slow (default 48x48 is fast).
 - `Surface` and `VectorField` only through the inspector and one still, not goldens.
+- `Homomorphism` with many elements is a tangle of arrows (straight lines cross the source
+  ring); fine for teaching sizes (n <= 12), not beautiful beyond.
 
 ## Open
 

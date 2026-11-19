@@ -63,5 +63,22 @@ def circle(ctx: DrawContext, cam: Camera, center, radius: float, width, *, color
     polyline(ctx, cam, pts, width, color=color, glow=glow)
 
 
+def arrow(ctx: DrawContext, cam: Camera, a, b, width, color, glow: float = 1.0) -> None:
+    """A straight arrow from ``a`` to ``b``, ``width`` in world units, head scaled to it."""
+    a, b = np.asarray(a, dtype=np.float64), np.asarray(b, dtype=np.float64)
+    d = b - a
+    length = float(np.linalg.norm(d))
+    if length < 1e-9:
+        return
+    head = min(length * 0.3, width * 7)
+    unit = d / length
+    side = np.cross(cam.forward, unit)
+    side /= max(np.linalg.norm(side), 1e-9)
+    base = b - unit * head
+    polyline(ctx, cam, [a, base], width, color=color, glow=glow)
+    tri = np.array([b, base + side * head * 0.45, base - side * head * 0.45])
+    ctx.triangles(tri, np.array([[0, 1, 2]]), color=color, glow=glow)
+
+
 def with_alpha(color, opacity: float):
     return (color[0], color[1], color[2], color[3] * opacity)

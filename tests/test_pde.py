@@ -193,3 +193,62 @@ def test_poisson_with_a_source_matches_the_known_solution():
     assert np.abs(u2 - e2).max() < np.abs(u - exact).max() / 3.5  # halving h quarters the error
     with pytest.raises(ValueError, match="same shape"):
         pm.solve_poisson(np.zeros((5, 5)), 0.1, np.zeros((4, 4)))
+
+
+# ---------------------------------------------------------------- the rest of the module table
+
+
+def test_spectral_heat_is_exact_for_sine_modes_at_any_step():
+    sim = pm.Heat1D(k=0.5, length=2.0, n=64, modes=(1.0, 0.3, 0.1), method="spectral", dt=0.05)
+    s = sim.initial()
+    for _ in range(40):
+        s = sim.step(s, sim.dt)
+    np.testing.assert_allclose(s["u"], sim.exact(40 * sim.dt), atol=1e-12)
+    # explicit with that step would be unstable; spectral has no such limit
+    with pytest.raises(ValueError, match="unstable"):
+        pm.Heat1D(k=0.5, length=2.0, n=64, dt=0.05)
+
+
+def test_insulated_ends_keep_the_heat_and_flatten_to_the_mean():
+    for method in ("explicit", "spectral"):
+        sim = pm.Heat1D(k=1.0, length=1.0, n=80, modes=(), boundary="neumann", method=method)
+        s = sim.initial()
+        total0 = np.trapezoid(s["u"], sim.x)
+        steps = int(0.5 / sim.dt)
+        for _ in range(steps):
+            s = sim.step(s, sim.dt)
+        assert np.trapezoid(s["u"], sim.x) == pytest.approx(total0, rel=1e-3), method
+        assert np.ptp(s["u"]) < 1e-2  # nearly flat at the mean
+    cos = pm.Heat1D(k=1.0, length=1.0, n=100, modes=(1.0,), boundary="neumann")
+    s = cos.initial()
+    for _ in range(200):
+        s = cos.step(s, cos.dt)
+    np.testing.assert_allclose(s["u"], cos.exact(200 * cos.dt), atol=3e-3)  # cos(pi x)
+
+
+def test_mode_decomposition_recovers_the_modes_and_their_decay():
+    sim = pm.Heat1D(k=0.5, length=2.0, n=200, modes=(1.0, 0.0, 0.4))
+    b = pm.sine_modes(sim.x, sim.initial()["u"], 2.0, 5)
+    np.testing.assert_allclose(b, [1.0, 0.0, 0.4, 0.0, 0.0], atol=1e-4)
+    bump = pm.Heat1D(k=0.5, length=2.0, n=400, modes=())
+    u = bump.initial()["u"]
+    errs = [np.abs(pm.mode_sum(bump.x, pm.sine_modes(bump.x, u, 2.0, m), 2.0) - u).max()
+            for m in (3, 9, 27)]  # fmt: skip
+    assert errs[0] > errs[1] > errs[2] and errs[2] < 1e-3  # partial sums converge
+    a = pm.cosine_modes(bump.x, u, 2.0, 3)
+    assert a[0] == pytest.approx(np.trapezoid(u, bump.x) / 2.0)  # a_0 is the mean
+
+
+def test_heat3d_mode_decays_at_the_exact_rate_and_slices_match():
+    sim = pm.Heat3D(k=0.2, size=1.0, n=16, mode=(1, 1, 1))
+    s = sim.initial()
+    steps = 60
+    for _ in range(steps):
+        s = sim.step(s, sim.dt)
+    ex = sim.exact(steps * sim.dt)
+    assert np.abs(s["u"] - ex).max() < 0.02 * np.abs(ex).max()
+    sl = pm.slice3d(s["u"], "z", 0.5)
+    assert sl.shape == (17, 17)
+    np.testing.assert_allclose(sl, s["u"][:, :, 8])
+    with pytest.raises(ValueError, match="unstable"):
+        pm.Heat3D(k=1.0, size=1.0, n=16, dt=1.0)

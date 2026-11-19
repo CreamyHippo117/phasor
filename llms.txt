@@ -37,23 +37,31 @@
 ## Object types (use these names in add_object)
 
 - `arrow`: start, end
-- `cayley_table`: group, pos, cell, reveal
+- `cayley_graph`: group, generators, pos, r, draw
+- `cayley_table`: group, pos, cell, reveal, subgroup, cosets
 - `clock_diagram`: n, step, pos, r, cosets
 - `domain_coloring`: function, pos, size, contour, softness, hue
 - `dot`: pos, r
 - `eigen_lines`: matrix, pos, length
 - `epicycles`: points, terms, phase, trace
 - `fractal`: kind, c, pos, size, max_iter, density, hue, center, zoom, steady
+- `galois_diagram`: primes, pos, width, height, gap
 - `graph`: function, xmin, xmax, pos
+- `homomorphism`: n, m, a, pos, r, gap, progress
 - `image_sources`: size, source, order, material, absorption, r
 - `impulse_response`: size, source, listener, order, material, absorption, pos, extent, duration, reveal, show_rt60
+- `limit`: function, a, epsilon, xmin, xmax, pos, bands
 - `line`: points, progress
 - `listener`: pos, r
+- `loop_integral`: p, q, measure, center, radius, pos, progress, arrows
 - `matrix`: matrix, pos, digits
 - `partial_sum`: kind, terms, pos, extent, reveal
 - `pde_field`: kind, time, pos, size, n, diffusivity, speed, mode, feed, kill, seed, scale
-- `pde_profile`: kind, time, pos, extent, length, n, diffusivity, speed, modes, potential, dt, exact, ymax
+- `pde_modes`: time, pos, extent, length, diffusivity, modes, count, boundary, components, ymax
+- `pde_profile`: kind, time, pos, extent, length, n, diffusivity, speed, modes, potential, dt, exact, ymax, boundary, method
+- `pde_slice`: time, pos, side, cube, n, diffusivity, mode, axis, at, scale
 - `pde_surface`: kind, time, pos, size, n, diffusivity, speed, mode, feed, kill, seed, scale, height
+- `permutation`: perm, pos, spacing, progress
 - `polygon`: n, pos, r, rotation, flip, fill
 - `pressure_slice`: size, origin, source, z, time, dx, material, absorption, frequency, gain, seed
 - `riemann_sum`: function, a, b, n, rule, pos
@@ -62,6 +70,7 @@
 - `source`: pos, r
 - `spectrogram`: f0, f1, duration, fs, nwin, pos, size
 - `spectrum`: frequencies, amplitudes, window, samples, fs, pos, extent, bins
+- `subgroup_lattice`: group, pos, width, height
 - `taylor`: function, center, order, xmin, xmax, ymax, pos
 - `text`: text, pos, anchor, leader, leader_on
 - `transform_grid`: matrix, pos, extent, spacing, square, basis

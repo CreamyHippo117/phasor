@@ -101,3 +101,39 @@ def test_vector_fields_divergence_curl_and_greens_theorem():
     assert mixed.circulation(0.5, center=(1.0, 1.0)) == pytest.approx(
         math.pi * 0.25 * mixed.evaluate(mixed.curl(), 1.0, 1.0), rel=0.03
     )  # small disc: curl * area
+
+
+# ---------------------------------------------------------------- limits, flux, Green
+
+
+def test_limits_are_found_symbolically():
+    assert cm.limit_at(cm.RealFunction.parse("sin(x)/x"), 0.0) == pytest.approx(1.0)
+    assert cm.limit_at(cm.RealFunction.parse("(x**2 - 1)/(x - 1)"), 1.0) == pytest.approx(2.0)
+    assert cm.limit_at(cm.RealFunction.parse("1/x"), 0.0) is None  # the sides disagree
+    assert cm.limit_at(cm.RealFunction.parse("abs(x)/x"), 0.0) is None
+
+
+@pytest.mark.parametrize(
+    ("p", "q", "center", "radius"),
+    [("-y", "x", (0.0, 0.0), 1.5), ("x", "y", (0.5, -0.2), 1.0),
+     ("x**2 - y", "x*y + sin(y)", (0.3, 0.4), 0.8), ("exp(x) * y", "y**3 - x", (-0.5, 0.0), 1.2)],
+)  # fmt: skip
+def test_green_and_the_divergence_theorem_hold_around_circles(p, q, center, radius):
+    f = cm.VectorField.parse(p, q)
+    circ = cm.loop_integral(f, center, radius, "circulation")
+    flux = cm.loop_integral(f, center, radius, "flux")
+    assert circ == pytest.approx(cm.disc_integral(f, f.curl(), center, radius), abs=1e-6)
+    assert flux == pytest.approx(cm.disc_integral(f, f.divergence(), center, radius), abs=1e-6)
+    assert circ == pytest.approx(f.circulation(radius, center), abs=1e-6)
+
+
+def test_a_running_loop_integral_accumulates_along_the_curve():
+    f = cm.VectorField.parse("-y", "x")  # tangent to every circle: constant |F| r per angle
+    whole = cm.loop_integral(f, (0.0, 0.0), 1.0, "circulation")
+    assert whole == pytest.approx(2 * math.pi)
+    assert cm.loop_integral(f, (0.0, 0.0), 1.0, "circulation", upto=0.25) == pytest.approx(
+        math.pi / 2
+    )
+    assert cm.loop_integral(f, (0.0, 0.0), 1.0, "flux") == pytest.approx(0.0, abs=1e-12)
+    with pytest.raises(ValueError, match="flux or circulation"):
+        cm.loop_integral(f, (0.0, 0.0), 1.0, "work")

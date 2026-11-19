@@ -6,7 +6,7 @@ compounding. If this file and SPEC.md disagree, stop and ask.
 ## Where we are
 
 - Owner approved ADR 0001, ADR 0002 and id tombstones on 2026-11-18.
-- Current milestone: **2-6 built; boundary review of 2-6 done 2026-11-18 (see `MILESTONE_6.md`). 7, 8 built; 9 built except the deep zoom (`MILESTONE_9.md`; the zoom is 9b, strongest model); boundary reviews of 7, 8 and 9 still open. Windows and CUDA untested**. See `MILESTONE_*.md` for what is built and deferred.
+- Current milestone: **2-6 built; boundary review of 2-6 done 2026-11-18 (see `MILESTONE_6.md`). 7, 8, 9 built (9b deep zoom included, `MILESTONE_9.md`); boundary reviews of 7, 8 and 9 still open. Windows and CUDA untested**. See `MILESTONE_*.md` for what is built and deferred.
 - One milestone per branch. No work on milestone N+1 until N's exit demo and tests pass.
 - Before declaring a milestone done, run the `phasor-milestone-gate` skill.
 

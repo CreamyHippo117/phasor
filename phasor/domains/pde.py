@@ -21,12 +21,13 @@ import numpy as np
 from pydantic import Field as PField
 from pydantic import model_validator
 
+from phasor.core.color import ramp
 from phasor.core.objects import Bounds, DrawContext, ObjectBase, ParamsBase, Pass, register
 from phasor.core.simulation import runner_for
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
 from phasor.domains import pde_math as pm
-from phasor.domains.strokes import polyline, with_alpha
+from phasor.domains.strokes import disc, polyline, with_alpha
 
 CHECKPOINT_EVERY = 100
 MAX_STEPS = 400_000  # a frame further into the simulation than this is refused
@@ -36,7 +37,10 @@ MAX_STEPS = 400_000  # a frame further into the simulation than this is refused
 def _sim(kind: str, key: tuple):
     a = dict(key)
     if kind == "heat1d":
-        return pm.Heat1D(k=a["diffusivity"], length=a["length"], n=a["n"], modes=a["modes"])
+        return pm.Heat1D(k=a["diffusivity"], length=a["length"], n=a["n"], modes=a["modes"],
+                         boundary=a["boundary"], method=a["method"])  # fmt: skip
+    if kind == "heat3d":
+        return pm.Heat3D(k=a["diffusivity"], size=a["cube"], n=a["n"], mode=a["mode"])
     if kind == "wave1d":
         return pm.Wave1D(
             c=a["speed"], length=a["length"], n=a["n"], mode=a["modes"][0] if a["modes"] else 0
@@ -95,6 +99,10 @@ class Profile(ObjectBase):
         dt: float = PField(0.01, gt=0)  # quantum solver step
         exact: float = PField(1.0, ge=0, le=1)
         ymax: float = PField(1.2, gt=0)  # the y range shown is [-ymax, ymax] (0 to ymax: density)
+        # heat only: ends held at 0 (dirichlet) or insulated (neumann); solver explicit or
+        # spectral (exact per mode, any step). The ends are drawn: a pin at 0 or a wall.
+        boundary: Literal["dirichlet", "neumann"] = "dirichlet"
+        method: Literal["explicit", "spectral"] = "explicit"
 
         @model_validator(mode="after")
         def _stable(self):
@@ -153,6 +161,12 @@ class Profile(ObjectBase):
             out["norm"] = round(float(u.sum() * sim.dx), 9)
         if p.kind == "heat":
             out["total_heat"] = round(float(np.trapezoid(u, x)), 6)
+            out["boundary"] = _BOUNDARY_TEXT[p.boundary]
+            out["method"] = p.method
+        elif p.kind in ("wave", "schrodinger"):
+            out["boundary"] = _BOUNDARY_TEXT["dirichlet"]
+        else:
+            out["boundary"] = "periodic: what leaves one end enters the other"
         return out
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
@@ -187,6 +201,15 @@ class Profile(ObjectBase):
             color=with_alpha(me.style["color"], p.opacity),
             glow=me.style["glow"],
         )
+        if p.kind != "advection":  # the boundary conditions, visible at both ends
+            muted = with_alpha(me.style["exact"], p.opacity)
+            neumann = p.kind == "heat" and p.boundary == "neumann"
+            for xe in (x0, x0 + p.extent[0]):
+                if neumann:  # an insulating wall: nothing crosses it
+                    polyline(ctx, cam, [(xe, y0, z0), (xe, y0 + p.extent[1], z0)], w * 2.2,
+                             color=muted)  # fmt: skip
+                else:  # a pin holding u at 0
+                    disc(ctx, cam, (xe, axis_y, z0), w * 2.2, color=muted)
 
 
 def _key(p) -> tuple:
@@ -203,8 +226,17 @@ def _key(p) -> tuple:
         "feed",
         "kill",
         "seed",
+        "boundary",
+        "method",
+        "cube",
     )
     return tuple(sorted((k, getattr(p, k)) for k in names if hasattr(p, k)))
+
+
+_BOUNDARY_TEXT = {
+    "dirichlet": "u = 0 at both ends (held)",
+    "neumann": "no flux at both ends (insulated)",
+}
 
 
 def _runner_steps(sim, t: float) -> int:
@@ -251,8 +283,33 @@ class _Plate(ObjectBase):
         return out
 
 
-def _plate_params(cls):
-    return cls
+def _heatmap(v: np.ndarray, lut: np.ndarray, size: tuple[float, float]):
+    """``ctx.field`` pixels for a grid of values in 0..1 (v[i, j] at x_i, y_j) spanning a
+    ``size`` rectangle: bilinear in the grid, then the colormap."""
+    nx, ny = v.shape
+    sx, sy = size
+
+    def pixels(pw: int, ph: int, center: tuple[float, float], height: float) -> np.ndarray:
+        half_w = height * pw / ph / 2
+        xs = center[0] + (np.arange(pw) + 0.5) / pw * 2 * half_w - half_w
+        ys = center[1] + (0.5 - (np.arange(ph) + 0.5) / ph) * height
+        gx = np.clip(xs / sx * (nx - 1), 0, nx - 1)
+        gy = np.clip(ys / sy * (ny - 1), 0, ny - 1)
+        x0, y0 = np.floor(gx).astype(int), np.floor(gy).astype(int)
+        x1, y1 = np.minimum(x0 + 1, nx - 1), np.minimum(y0 + 1, ny - 1)
+        fx, fy = (gx - x0)[None, :], (gy - y0)[:, None]
+        val = (
+            v[x0][:, y0].T * (1 - fx) * (1 - fy)
+            + v[x1][:, y0].T * fx * (1 - fy)
+            + v[x0][:, y1].T * (1 - fx) * fy
+            + v[x1][:, y1].T * fx * fy
+        )
+        idx = np.clip((val * (len(lut) - 1)).astype(int), 0, len(lut) - 1)
+        out = np.ones((ph, pw, 4), dtype=np.float32)
+        out[..., :3] = lut[idx]
+        return out
+
+    return pixels
 
 
 @register
@@ -307,31 +364,11 @@ class Field(_Plate):
         me = self.me(state)
         p = me.params
         _, u = self._grid(state)
-        lut = np.asarray(me.style["colormap"], dtype=np.float32)
+        lut = ramp(me.style["colormap"], np.float32)
         v = np.clip(u / p.scale, 0, 1) if p.kind != "wave" else 0.5 + 0.5 * np.tanh(u / p.scale)
-        nx, ny = v.shape
         corner, right, up = self._rect(p)
-        sx, sy = p.size
 
-        def pixels(pw: int, ph: int, center: tuple[float, float], height: float) -> np.ndarray:
-            half_w = height * pw / ph / 2
-            xs = center[0] + (np.arange(pw) + 0.5) / pw * 2 * half_w - half_w
-            ys = center[1] + (0.5 - (np.arange(ph) + 0.5) / ph) * height
-            gx = np.clip(xs / sx * (nx - 1), 0, nx - 1)
-            gy = np.clip(ys / sy * (ny - 1), 0, ny - 1)
-            x0, y0 = np.floor(gx).astype(int), np.floor(gy).astype(int)
-            x1, y1 = np.minimum(x0 + 1, nx - 1), np.minimum(y0 + 1, ny - 1)
-            fx, fy = (gx - x0)[None, :], (gy - y0)[:, None]
-            val = (
-                v[x0][:, y0].T * (1 - fx) * (1 - fy)
-                + v[x1][:, y0].T * fx * (1 - fy)
-                + v[x0][:, y1].T * (1 - fx) * fy
-                + v[x1][:, y1].T * fx * fy
-            )
-            idx = np.clip((val * (len(lut) - 1)).astype(int), 0, len(lut) - 1)
-            out = np.ones((ph, pw, 4), dtype=np.float32)
-            out[..., :3] = lut[idx]
-            return out
+        pixels = _heatmap(v, lut, p.size)
 
         ctx.field(corner, right, up, pixels=pixels, opacity=p.opacity)
 
@@ -395,7 +432,7 @@ class Surface(_Plate):
         du, dv = np.gradient(pts, axis=0), np.gradient(pts, axis=1)
         normals = np.cross(du, dv)
         normals /= np.maximum(np.linalg.norm(normals, axis=-1, keepdims=True), 1e-12)
-        lut = np.asarray(me.style["colormap"], dtype=np.float64)
+        lut = ramp(me.style["colormap"], np.float64)
         v = np.clip(u / p.scale, 0, 1) if p.kind != "wave" else 0.5 + 0.5 * np.tanh(u / p.scale)
         rgb = lut[np.clip((v * (len(lut) - 1)).astype(int), 0, len(lut) - 1)]
         colors = np.concatenate([rgb, np.ones((*rgb.shape[:-1], 1))], axis=-1)
@@ -411,3 +448,202 @@ class Surface(_Plate):
             material=me.roles["material"],
             opacity=me.params.opacity * float(me.style["material"]),
         )
+
+
+# ---------------------------------------------------------------- Modes (separation of variables)
+
+
+@register
+class Modes(ObjectBase):
+    """Separation of variables for a heating rod: the profile u(x, t) written as a sum of
+    modes, each drawn faintly in its own color and decaying at its own rate exp(-k w^2 t)
+    (high modes die first, so the profile smooths), with their partial sum drawn bright."""
+
+    type: ClassVar[str] = "pde_modes"
+    Style: ClassVar = {
+        "color": ("emphasis", "highlight"),
+        "colormap": ("colormap", "sequential"),
+        "axis": ("emphasis", "muted"),
+        "stroke": ("stroke", "regular"),
+        "glow": ("glow", "none"),
+    }
+
+    class Params(ParamsBase):
+        time: float = PField(0.0, ge=0)
+        pos: Vec3 = (0.0, 0.0, 0.0)  # lower-left corner of the plot
+        extent: tuple[float, float] = (6.0, 2.5)
+        length: float = PField(1.0, gt=0)
+        diffusivity: float = PField(1.0, gt=0)
+        modes: tuple[float, ...] = ()  # sine amplitudes; empty: a bump, decomposed numerically
+        count: int = PField(7, ge=1, le=40)  # modes drawn and summed
+        boundary: Literal["dirichlet", "neumann"] = "dirichlet"
+        components: float = PField(0.6, ge=0, le=1)  # opacity of the single modes
+        ymax: float = PField(1.2, gt=0)
+
+    def _setup(self, p):
+        sim = pm.Heat1D(k=p.diffusivity, length=p.length, n=400, modes=p.modes,
+                        boundary=p.boundary)  # fmt: skip
+        u0 = sim.profile(0.0)
+        cosine = p.boundary == "neumann"
+        coef0 = (pm.cosine_modes if cosine else pm.sine_modes)(sim.x, u0, p.length, p.count)
+        first = 0 if cosine else 1
+        m = np.arange(first, first + len(coef0))
+        decay = np.exp(-p.diffusivity * (m * np.pi / p.length) ** 2 * p.time)
+        return sim, coef0 * decay, m, cosine
+
+    def _xy(self, p, x, y):
+        w, h = p.extent
+        sx = p.pos[0] + x / p.length * w
+        return np.stack([sx, p.pos[1] + h / 2 + y / p.ymax * h / 2, np.full_like(sx, p.pos[2])], 1)
+
+    def world_bounds(self, state: SceneState) -> Bounds:
+        p = self.me(state).params
+        x, y, z = p.pos
+        return Bounds((x, y, z), (x + p.extent[0], y + p.extent[1], z))
+
+    def features(self, state: SceneState) -> dict[str, np.ndarray]:
+        p = self.me(state).params
+        sim, c, _m, cos = self._setup(p)
+        return {"sum": self._xy(p, sim.x, pm.mode_sum(sim.x, c, p.length, cosine=cos))}
+
+    def semantics(self, state: SceneState) -> dict[str, Any]:
+        p = self.me(state).params
+        sim, c, m, cos = self._setup(p)
+        truth = sim.exact(p.time)
+        out: dict[str, Any] = {
+            "kind": "pde_modes",
+            "time": round(p.time, 6),
+            "basis": "cos(m pi x / L)" if cos else "sin(m pi x / L)",
+            "modes": [int(k) for k in m],
+            "amplitudes": [round(float(a), 6) for a in c],
+            "decay_rates": [round(p.diffusivity * (k * np.pi / p.length) ** 2, 6) for k in m],
+        }
+        if truth is not None:
+            err = np.abs(pm.mode_sum(sim.x, c, p.length, cosine=cos) - truth).max()
+            out["partial_sum_error"] = round(float(err), 6)
+        return out
+
+    def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
+        me = self.me(state)
+        p = me.params
+        cam = state.camera_for(me)
+        sim, c, m, cos = self._setup(p)
+        x = sim.x
+        w = me.style["stroke"] * float(cam.units_per_height())
+        x0, y0, z0 = p.pos
+        mid = y0 + p.extent[1] / 2
+        polyline(ctx, cam, [(x0, mid, z0), (x0 + p.extent[0], mid, z0)], w * 0.7,
+                 color=with_alpha(me.style["axis"], 0.5 * p.opacity))  # fmt: skip
+        lut = np.asarray(me.style["colormap"], dtype=np.float64)
+        if p.components > 0:
+            for i, (k, a) in enumerate(zip(m, c, strict=True)):
+                if abs(a) < 1e-6:
+                    continue
+                shape = (
+                    np.cos(k * np.pi * x / p.length) if cos else np.sin(k * np.pi * x / p.length)
+                )
+                rgb = lut[int((0.25 + 0.7 * i / max(len(m) - 1, 1)) * (len(lut) - 1))]
+                polyline(ctx, cam, self._xy(p, x, a * shape), w * 0.6,
+                         color=(*rgb, p.opacity * p.components))  # fmt: skip
+        total = pm.mode_sum(x, c, p.length, cosine=cos)
+        polyline(ctx, cam, self._xy(p, x, total), w, color=with_alpha(me.style["color"], p.opacity),
+                 glow=me.style["glow"])  # fmt: skip
+
+
+# ---------------------------------------------------------------- Slice (3D)
+
+
+@register
+class Slice(ObjectBase):
+    """Inside a heating cube: the plane ``axis`` = ``at`` (0..1) of a 3D heat solution, drawn
+    as a color plane where it sits in the cube, inside the cube's outline. Animate ``at`` to
+    sweep through the volume; give the scene an orbit camera to see it in 3D."""
+
+    type: ClassVar[str] = "pde_slice"
+    Style: ClassVar = {
+        "colormap": ("colormap", "ember"),
+        "edge": ("emphasis", "muted"),
+        "stroke": ("stroke", "hairline"),
+    }
+
+    class Params(ParamsBase):
+        time: float = PField(0.0, ge=0)
+        pos: Vec3 = (0.0, 0.0, 0.0)  # centre of the cube
+        side: float = PField(4.0, gt=0)  # world size of the cube
+        cube: float = PField(1.0, gt=0)  # the cube's size in the equation
+        n: int = PField(24, ge=4, le=64)
+        diffusivity: float = PField(0.1, gt=0)
+        mode: tuple[int, int, int] = (0, 0, 0)  # (0, 0, 0): a hot spot
+        axis: Literal["x", "y", "z"] = "z"
+        at: float = PField(0.5, ge=0, le=1)
+        scale: float = PField(0.0, ge=0)  # value shown at full color; 0: the cube's hottest now
+
+        @model_validator(mode="after")
+        def _stable(self):
+            _sim("heat3d", _key(self))
+            return self
+
+    def _u(self, p):
+        sim = _sim("heat3d", _key(p))
+        return sim, np.asarray(_state(sim, p.time)["u"], dtype=np.float64)
+
+    def _plane(self, p):
+        """(corner, right, up) of the slice in world space."""
+        k = "xyz".index(p.axis)
+        a, b = [i for i in range(3) if i != k]
+        e = np.eye(3) * p.side
+        corner = np.asarray(p.pos, dtype=np.float64) - p.side / 2 + e[k] * p.at
+        return corner, e[a], e[b]
+
+    def world_bounds(self, state: SceneState) -> Bounds:
+        p = self.me(state).params
+        c = np.asarray(p.pos, dtype=np.float64)
+        return Bounds(tuple(c - p.side / 2), tuple(c + p.side / 2))
+
+    def features(self, state: SceneState) -> dict[str, np.ndarray]:
+        corner, r, u = self._plane(self.me(state).params)
+        return {
+            "slice_center": corner + (r + u) / 2,
+            "center": np.asarray(self.me(state).params.pos),
+        }
+
+    def semantics(self, state: SceneState) -> dict[str, Any]:
+        p = self.me(state).params
+        sim, u = self._u(p)
+        sl = pm.slice3d(u, p.axis, p.at)
+        out: dict[str, Any] = {
+            "kind": "pde_slice",
+            "equation": "heat",
+            "time": round(p.time, 6),
+            "plane": f"{p.axis} = {p.at:g} of the cube",
+            "slice_max": round(float(sl.max()), 6),
+            "max": round(float(u.max()), 6),
+            "total_heat": round(float(u.sum() * sim.dx**3), 6),
+            "grid": list(u.shape),
+            "steps": _runner_steps(sim, p.time),
+        }
+        ex = sim.exact(p.time)
+        if ex is not None:
+            out["max_error_vs_exact"] = round(float(np.abs(u - ex).max()), 6)
+        return out
+
+    def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
+        me = self.me(state)
+        p = me.params
+        cam = state.camera_for(me)
+        _, u = self._u(p)
+        top = p.scale or max(float(u.max()), 1e-12)
+        v = np.clip(pm.slice3d(u, p.axis, p.at) / top, 0, 1)
+        lut = ramp(me.style["colormap"], np.float32)
+        corner, r, up = self._plane(p)
+        ctx.field(corner, r, up, pixels=_heatmap(v, lut, (p.side, p.side)), opacity=p.opacity)
+        c = np.asarray(p.pos, dtype=np.float64) - p.side / 2
+        w = me.style["stroke"] * float(cam.units_per_height(np.asarray(p.pos)))
+        e = np.eye(3) * p.side
+        col = with_alpha(me.style["edge"], p.opacity * 0.7)
+        for i in range(3):  # the twelve edges of the cube
+            j, k = [a for a in range(3) if a != i]
+            for s1 in (0, 1):
+                for s2 in (0, 1):
+                    a = c + s1 * e[j] + s2 * e[k]
+                    polyline(ctx, cam, [a, a + e[i]], w, color=col)

@@ -564,6 +564,40 @@ assert (
 )  # more pieces, smaller error
 ```
 
+**More of each module.** `pde.Profile(kind="heat", boundary="neumann", method="spectral")`:
+insulated ends (drawn as walls; held ends are drawn as pins) and a spectral solver that is
+exact per mode at any step. `pde.Modes(modes=(1, 0, 0.5), count=7, time=...)`: separation of
+variables, each mode drawn faintly and decaying at its own rate, their sum bright (semantics:
+`amplitudes`, `decay_rates`). `pde.Slice(axis="z", at=0.5, time=...)`: one plane through a
+heating cube (`Heat3D`), inside its outline; animate `at` to sweep (orbit camera for 3D).
+`algebra.CayleyGraph(group="D4", generators="r s")`, `CayleyTable(subgroup="r", cosets=1)`
+(rows in coset order, colored by coset; semantics give the quotient table when the subgroup is
+normal), `Homomorphism(n=12, m=4, a=1)` (Z_n -> Z_m, kernel highlighted), `SubgroupLattice`
+(Hasse diagram, normal subgroups highlighted), `GaloisDiagram(primes=(2, 3))` (fields of
+Q(sqrt 2, sqrt 3) beside the subgroups that fix them), `Permutation(perm=(1, 2, 0), progress=...)`
+(tokens travel; semantics: cycles, sign, order). `calc.Limit(function="sin(x)/x", a=0,
+epsilon=...)` (the epsilon band and the delta it forces; `holds`), `calc.LoopIntegral(p=, q=,
+measure="flux"|"circulation", progress=...)` (the running line integral around a circle, equal at
+the end to the integral of the divergence or curl inside: `theorem_holds`).
+
+```python
+from phasor import Scene, algebra, calc, expr, pde
+
+more = Scene("more", passes=None)
+more.add(pde.Modes(id="modes", modes=(1.0, 0.0, 0.5), count=5, time=expr("t / 4")))
+more.add(algebra.CayleyTable(id="cosets", group="D4", subgroup="r2", cosets=1.0, pos=(8, 0, 0)))
+more.add(calc.LoopIntegral(id="green", p="-y", q="x", measure="circulation", pos=(0, 6, 0)))
+
+
+def info(oid, t=0.0):
+    return more.engine.inspect(t, id=oid)["objects"][0]["semantic"]
+
+
+assert info("modes", 2.0)["amplitudes"][2] < info("modes", 0.0)["amplitudes"][2] / 2
+assert info("cosets")["normal"] and info("cosets")["quotient"]["order"] == 4
+assert info("green")["theorem_holds"]
+```
+
 ## 3D: orbit camera, surfaces, camera goals
 
 `use_camera("orbit")` makes the scene 3D: a perspective camera on a sphere around

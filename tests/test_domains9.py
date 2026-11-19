@@ -14,7 +14,8 @@ from phasor.domains import algebra_math as am
 from tests.conftest import gl_available
 
 NEW = {"pde_profile", "pde_field", "pde_surface", "polygon", "cayley_table", "clock_diagram",
-       "graph", "riemann_sum", "taylor", "vector_field"}  # fmt: skip
+       "graph", "riemann_sum", "taylor", "vector_field", "cayley_graph", "homomorphism",
+       "subgroup_lattice", "galois_diagram", "permutation", "pde_modes", "pde_slice", "limit", "loop_integral"}  # fmt: skip
 
 
 @pytest.fixture(autouse=True)
@@ -248,3 +249,181 @@ def test_everything_draws():
     img = s.engine.still(0.0, (480, 270))
     assert img.std() > 8
     assert not [i for i in s.engine.lint() if i.severity == "error"]
+
+
+# ---------------------------------------------------------------- algebra, the rest of the table
+
+
+def test_cayley_graph_and_cosets_and_quotient_through_the_engine():
+    s = Scene("alg", passes=None)
+    s.add(algebra.CayleyGraph(id="g", group="D4", generators="r s"))
+    s.add(algebra.CayleyTable(id="t", group="D4", subgroup="r", cosets=1.0, pos=(6, 0, 0)))
+    s.add(algebra.CayleyTable(id="u", group="D4", subgroup="s", pos=(-6, 0, 0)))
+    e = s.engine
+    g = sem(e, "g")
+    assert g["edges"] == 16 and g["generators"] == ["r", "s"] and g["relations"] == {"r": 4, "s": 2}
+    t = sem(e, "t")
+    assert t["index"] == 2 and t["normal"] and t["quotient"]["order"] == 2
+    assert t["cosets"][0] == ["e", "r", "r2", "r3"]  # the subgroup itself comes first
+    u = sem(e, "u")
+    assert not u["normal"] and "quotient" not in u and u["index"] == 4
+    with pytest.raises(Exception, match="does not generate"):
+        Scene("x", passes=None).add(algebra.CayleyGraph(id="g", group="D4", generators="r"))
+    with pytest.raises(Exception, match="no element"):
+        Scene("x", passes=None).add(algebra.CayleyTable(id="t", group="D4", subgroup="q"))
+
+
+def test_homomorphism_lattice_galois_and_permutation_semantics():
+    s = Scene("alg", passes=None)
+    s.add(algebra.Homomorphism(id="h", n=12, m=4, a=1))
+    s.add(algebra.SubgroupLattice(id="l", group="D4", pos=(0, -5, 0)))
+    s.add(algebra.GaloisDiagram(id="gal", primes=(2, 3), pos=(0, 5, 0)))
+    s.add(algebra.Permutation(id="p", perm=(1, 2, 0, 4, 3), progress=expr("t / 2"),
+                              pos=(8, 0, 0)))  # fmt: skip
+    e = s.engine
+    h = sem(e, "h")
+    assert h["kernel"] == [0, 4, 8] and h["surjective"] and not h["injective"]
+    lat = sem(e, "l")
+    assert len(lat["subgroups"]) == 10
+    normal = {x["name"] for x in lat["subgroups"] if x["normal"]}
+    assert {"{e}", "<r>", "<r2>", "D4"} <= normal and "<s>" not in normal
+    gal = sem(e, "gal")
+    assert gal["degree"] == 4 and len(gal["pairs"]) == 5
+    assert all(4 // x["degree"] == x["subgroup_order"] for x in gal["pairs"])
+    p0, p1 = sem(e, "p", 0.0), sem(e, "p", 2.0)
+    assert p0["cycles"] == "(1 2 3)(4 5)" and p0["order"] == 6 and p0["parity"] == "odd"
+    assert not p0["done"] and p1["done"]
+    with pytest.raises(Exception, match="not a homomorphism"):
+        Scene("x", passes=None).add(algebra.Homomorphism(id="h", n=5, m=3, a=1))
+
+
+def test_permutation_tokens_land_in_their_target_slots():
+    from phasor.domains.algebra import Permutation
+
+    perm = (1, 2, 0, 4, 3)
+    obj = Permutation(id="p", perm=perm)
+    done = obj.Params(perm=perm, progress=1.0)
+    start = obj.Params(perm=perm, progress=0.0)
+    slots = obj._slots(done)
+    np.testing.assert_allclose(obj._where(start), slots, atol=1e-12)
+    np.testing.assert_allclose(obj._where(done), slots[list(perm)], atol=1e-12)
+
+
+# ---------------------------------------------------------------- pde, the rest of the table
+
+
+def test_boundary_conditions_are_visible_and_reported():
+    s = Scene("bc", passes=None)
+    s.add(pde.Profile(id="held", kind="heat", modes=(), time=0.05))
+    s.add(pde.Profile(id="wall", kind="heat", modes=(), time=0.05, boundary="neumann",
+                      method="spectral", pos=(0, 4, 0)))  # fmt: skip
+    e = s.engine
+    held, wall = sem(e, "held"), sem(e, "wall")
+    assert held["boundary"].startswith("u = 0") and wall["boundary"].startswith("no flux")
+    assert wall["method"] == "spectral"
+    s0 = Scene("bc0", passes=None)
+    s0.add(pde.Profile(id="wall", kind="heat", modes=(), boundary="neumann", method="spectral"))
+    # insulated: the heat stays; held at 0: it leaves
+    assert wall["total_heat"] == pytest.approx(sem(s0.engine, "wall")["total_heat"], rel=1e-6)
+    assert held["total_heat"] < sem(s0.engine, "wall")["total_heat"]
+
+
+def test_modes_show_separation_of_variables():
+    s = Scene("modes", passes=None)
+    s.add(pde.Modes(id="m", modes=(1.0, 0.0, 0.5), count=5, diffusivity=0.5, length=2.0,
+                    time=expr("t / 4")))  # fmt: skip
+    s.add(pde.Modes(id="bump", count=15, time=0.0, pos=(0, 4, 0)))
+    e = s.engine
+    a0, a1 = sem(e, "m", 0.0), sem(e, "m", 2.0)
+    assert a0["amplitudes"][:3] == pytest.approx([1.0, 0.0, 0.5], abs=1e-4)
+    k = 0.5 * (np.pi / 2.0) ** 2  # mode 1 decays like exp(-k t)
+    assert a1["amplitudes"][0] == pytest.approx(math.exp(-k * 0.5), rel=1e-4)
+    # mode 3 decays 9 times faster: the high modes go first
+    assert a1["amplitudes"][2] / a0["amplitudes"][2] == pytest.approx(
+        math.exp(-9 * k * 0.5), rel=1e-3
+    )
+    assert a1["partial_sum_error"] < 1e-3
+    b = sem(e, "bump")
+    assert b["amplitudes"][1] == pytest.approx(0.0, abs=1e-9)  # a centred bump is even
+
+
+def test_slice_sweeps_through_a_heating_cube():
+    s = Scene("cube", passes=None)
+    s.add(pde.Slice(id="c", mode=(1, 1, 1), n=12, diffusivity=0.1, time=0.2, at=expr("t / 4")))
+    e = s.engine
+    edge, mid = sem(e, "c", 0.0), sem(e, "c", 2.0)
+    assert edge["slice_max"] == pytest.approx(0.0, abs=1e-12)  # the face is held at 0
+    assert mid["slice_max"] == pytest.approx(mid["max"], rel=1e-9)  # the middle has the peak
+    assert mid["max_error_vs_exact"] < 0.02
+    far = Scene("x", passes=None)
+    far.add(pde.Slice(id="c", n=64, diffusivity=1.0, time=50.0))
+    with pytest.raises(Exception, match="steps in"):
+        sem(far.engine, "c")  # the step is chosen stable; too many of them is refused
+
+
+def test_the_hottest_value_is_the_brightest_color():
+    """Bug found by looking: ember is cyclic (back to dark at its end), so heat fields drew
+    their hottest spot dark (and the M8 spectrogram its loudest bins). Heat maps run on ``ramp``."""
+    from phasor.core.color import ramp
+    from phasor.style.theme import load_theme
+
+    lum = np.array([0.2126, 0.7152, 0.0722])
+    for name in ("ember", "ocean", "sequential"):
+        lut = np.asarray(load_theme("midnight_glow").values["colormap"][name])
+        assert (lut[-1] @ lum) < 0.2 * (lut @ lum).max()  # the raw map ends dark
+        r = ramp(lut)
+        assert np.argmax(r @ lum) == len(r) - 1  # the ramp ends on its brightest
+        assert (r[0] @ lum) < 0.05
+
+
+# ---------------------------------------------------------------- calc, the rest of the table
+
+
+def test_limit_shrinks_delta_with_epsilon():
+    s = Scene("lim", passes=None)
+    s.add(calc.Limit(id="l", function="sin(x)/x", a=0.0, epsilon=expr("0.4 / (1 + t)")))
+    e = s.engine
+    wide, narrow = sem(e, "l", 0.0), sem(e, "l", 3.0)
+    assert wide["limit"] == pytest.approx(1.0) and wide["holds"] and narrow["holds"]
+    assert narrow["epsilon"] < wide["epsilon"] and 0 < narrow["delta"] < wide["delta"]
+    assert wide["worst_inside"] < wide["epsilon"]
+    with pytest.raises(Exception, match="no finite limit"):
+        Scene("x", passes=None).add(calc.Limit(id="l", function="1/x", a=0.0))
+
+
+def test_loop_integral_shows_flux_and_greens_theorem():
+    s = Scene("green", passes=None)
+    s.add(calc.LoopIntegral(id="out", p="x", q="y", radius=1.0, progress=expr("t / 4")))
+    s.add(calc.LoopIntegral(id="spin", p="x**2 - y", q="x*y", measure="circulation",
+                            center=(0.3, 0.2), radius=0.9, pos=(5, 0, 0)))  # fmt: skip
+    e = s.engine
+    half = sem(e, "out", 2.0)
+    assert half["so_far"] == pytest.approx(math.pi) and half["total"] == pytest.approx(2 * math.pi)
+    assert half["inside"] == "2" and half["theorem_holds"]
+    spin = sem(e, "spin")
+    assert spin["theorem_holds"] and spin["total"] == pytest.approx(spin["area_integral"], abs=1e-6)
+
+
+@pytest.mark.gl
+@pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
+def test_the_rest_of_the_tables_example_lints_clean_and_matches_its_golden():
+    import os
+    import runpy
+    from pathlib import Path
+
+    from PIL import Image
+
+    from phasor.render.output import save_png
+    from tests.ssim import ssim
+    from tests.test_render import GOLDEN
+
+    root = Path(__file__).parents[1]
+    e = runpy.run_path(str(root / "examples" / "more_wave2.py"), run_name="x")["s"].engine
+    assert e.lint() == [] and e.critique()["issues"] == []
+    path = GOLDEN / e.pass_runner().renderer_class() / "more_wave2.png"
+    sheet = e.storyboard([0.0, 4.0], size=(480, 270))["image"]
+    if os.environ.get("PHASOR_UPDATE_GOLDEN"):
+        save_png(path, sheet)
+    if not path.exists():
+        pytest.skip(f"no {path.parent.name} golden yet; create with PHASOR_UPDATE_GOLDEN=1")
+    assert ssim(sheet, np.asarray(Image.open(path).convert("RGB"))) >= 0.98

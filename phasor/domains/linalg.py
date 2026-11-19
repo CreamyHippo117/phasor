@@ -24,7 +24,7 @@ from phasor.core.objects import Bounds, DrawContext, ObjectBase, ParamsBase, Pas
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
 from phasor.domains import linalg_math as lm
-from phasor.domains.strokes import polyline, with_alpha
+from phasor.domains.strokes import arrow, polyline, with_alpha
 
 Matrix3 = tuple[tuple[float, ...], ...]
 
@@ -32,22 +32,6 @@ Matrix3 = tuple[tuple[float, ...], ...]
 def _check_matrix(v):
     lm.matrix(v)
     return v
-
-
-def _arrow(ctx, cam, a, b, width, color, glow=1.0):
-    a, b = np.asarray(a, dtype=np.float64), np.asarray(b, dtype=np.float64)
-    d = b - a
-    length = float(np.linalg.norm(d))
-    if length < 1e-9:
-        return
-    head = min(length * 0.3, width * 7)
-    unit = d / length
-    side = np.cross(cam.forward, unit)
-    side /= max(np.linalg.norm(side), 1e-9)
-    base = b - unit * head
-    polyline(ctx, cam, [a, base], width, color=color, glow=glow)
-    tri = np.array([b, base + side * head * 0.45, base - side * head * 0.45])
-    ctx.triangles(tri, np.array([[0, 1, 2]]), color=color, glow=glow)
 
 
 # ---------------------------------------------------------------- TransformGrid
@@ -185,7 +169,7 @@ class TransformGrid(ObjectBase):
             o = self._map(state, np.zeros(d))[0]
             for k, role in enumerate(("i", "j", "color")[:d]):
                 tip = self._map(state, np.eye(d)[k])[0]
-                _arrow(ctx, cam, o, tip, w * 3, with_alpha(me.style[role], p.opacity * p.basis))
+                arrow(ctx, cam, o, tip, w * 3, with_alpha(me.style[role], p.opacity * p.basis))
 
 
 # ---------------------------------------------------------------- Arrow
@@ -232,9 +216,7 @@ class Arrow(ObjectBase):
         cam = state.camera_for(me)
         a, b = self._pts(state)
         w = me.style["stroke"] * float(cam.units_per_height((a + b) / 2))
-        _arrow(
-            ctx, cam, a, b, w, with_alpha(me.style["color"], me.params.opacity), me.style["glow"]
-        )
+        arrow(ctx, cam, a, b, w, with_alpha(me.style["color"], me.params.opacity), me.style["glow"])
 
 
 # ---------------------------------------------------------------- EigenLines

@@ -21,6 +21,7 @@ from typing import Any, ClassVar, Literal
 import numpy as np
 from pydantic import Field, field_validator
 
+from phasor.core.color import ramp
 from phasor.core.objects import Bounds, DrawContext, ObjectBase, ParamsBase, Pass, register
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
@@ -348,7 +349,7 @@ class Spectrogram(ObjectBase):
         p = me.params
         sg = _sg(p.f0, p.f1, p.duration, p.fs, p.nwin)
         mag = sg["mag"] / max(float(sg["mag"].max()), 1e-12)
-        lut = np.asarray(me.style["colormap"], dtype=np.float32)
+        lut = ramp(me.style["colormap"], np.float32)  # strongest = brightest (ocean is cyclic)
         nf, nt = mag.shape
         corner, right, up = self._rect(p)
 
@@ -359,9 +360,9 @@ class Spectrogram(ObjectBase):
             ti = np.clip((u / p.size[0] * nt).astype(int), 0, nt - 1)
             fi = np.clip((v / p.size[1] * nf).astype(int), 0, nf - 1)
             val = mag[fi][:, ti]
-            idx = np.clip((np.sqrt(val) * (len(lut) - 1) * 0.5 + 0).astype(int), 0, len(lut) - 1)
+            idx = np.clip((np.sqrt(val) * (len(lut) - 1)).astype(int), 0, len(lut) - 1)
             out = np.ones((ph, pw, 4), dtype=np.float32)
-            out[..., :3] = lut[np.clip(idx * 2, 0, len(lut) - 1)]
+            out[..., :3] = lut[idx]
             return out
 
         ctx.field(corner, right, up, pixels=pixels, opacity=p.opacity)
