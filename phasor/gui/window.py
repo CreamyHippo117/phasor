@@ -166,6 +166,21 @@ class Viewport(QLabel):
             self.refresh()
 
 
+def _extra_panels(window) -> list[tuple[str, QWidget]]:
+    """Tabs other clients add (the ``phasor.panels`` entry point, e.g. Sketch): each entry
+    is ``make(window) -> (title, widget)``. Looked up by name, so the editor never imports
+    a sibling client; one that fails to load is reported and left out."""
+    from importlib.metadata import entry_points
+
+    out = []
+    for ep in sorted(entry_points(group="phasor.panels"), key=lambda e: e.name):
+        try:
+            out.append(ep.load()(window))
+        except Exception as e:  # a broken add-on must not stop the editor
+            print(f"phasor gui: the {ep.name!r} tab did not load: {e}")
+    return out
+
+
 class Timeline(QWidget):
     """Narration (with its waveform), markers, the animated spans of every parameter (one
     lane each) and the playhead. Click or drag to scrub; drag a marker to move it; drag a span
@@ -664,6 +679,9 @@ class EditorWindow(QMainWindow):
         tabs.addTab(self.looks, "Looks")
         tabs.addTab(self.controls, "Sliders")
         tabs.addTab(self.code, "Code")
+        self.panels = _extra_panels(self)
+        for title, widget in self.panels:
+            tabs.addTab(widget, title)
         dock = QDockWidget("Who changed what", self)
         dock.setWidget(self.activity)
         self.activity.setMaximumHeight(110)

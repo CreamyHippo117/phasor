@@ -335,12 +335,7 @@ class Editor:
     def screen_to_world(self, u: float, v: float, size: tuple[int, int], z: float = 0.0):
         """The world point under a viewport pixel, on the plane at height ``z`` (2D: z = 0)."""
         cam = self.engine.state_at(self.t).camera
-        ndc = np.array([2 * u / size[0] - 1, 1 - 2 * v / size[1]])
-        inv = np.linalg.inv(cam.view_proj)
-        a, b = (inv @ np.array([*ndc, d, 1.0]) for d in (-1.0, 1.0))
-        a, b = a[:3] / a[3], b[:3] / b[3]
-        k = 0.0 if abs(b[2] - a[2]) < 1e-12 else (z - a[2]) / (b[2] - a[2])
-        p = a + k * (b - a)
+        p = cam.from_screen([(u, v)], size[0], size[1], z)[0]
         return float(p[0]), float(p[1]), float(z)
 
     def drag_to(self, object_id: str, u: float, v: float, size: tuple[int, int]):

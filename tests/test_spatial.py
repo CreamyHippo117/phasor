@@ -290,3 +290,23 @@ def test_hidden_means_under_ten_percent_and_agrees_with_when_hidden():
     samples = [_snap(0, 1.0), _snap(1, 0.46, hidden_by=[("wall", 0.54)]), _snap(2, 1.0)]
     assert any(e["event"] == "occluded" for e in events.log(samples, {}))
     assert events.hidden_spans(samples, "lab") == [(1, 2)]
+
+
+def test_from_screen_inverts_to_screen_on_a_plane_in_2d_and_3d():
+    from phasor.core.spatial import (
+        OrbitCameraParams,
+        OrthoCameraParams,
+        ortho_camera,
+        perspective_camera,
+    )
+
+    pts = np.array([[0.3, -1.2, 0.0], [2.0, 1.0, 0.0], [-3.0, 0.5, 0.0]])
+    for cam in (
+        ortho_camera(OrthoCameraParams(height=6.0), 16 / 9),
+        perspective_camera(OrbitCameraParams(azimuth=-40.0, elevation=30.0), 16 / 9),
+    ):
+        px = cam.to_screen(pts, 1920, 1080)
+        assert np.allclose(cam.from_screen(px, 1920, 1080), pts, atol=1e-9)
+        lifted = pts + np.array([0.0, 0.0, 1.5])  # a plane above z = 0
+        back = cam.from_screen(cam.to_screen(lifted, 1920, 1080), 1920, 1080, z=1.5)
+        assert np.allclose(back, lifted, atol=1e-9)

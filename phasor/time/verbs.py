@@ -21,7 +21,7 @@ from typing import Any
 
 from phasor.core.schema import ExprSpec, MarkerRef, TimeRef
 from phasor.core.state import SceneState
-from phasor.time.compile import Compiled
+from phasor.time.compile import Compiled, evaluate
 from phasor.time.tracks import ResolvedTrack
 
 FOCUS_MARGIN = 0.15  # focus_pull leaves this share of the frame around the object
@@ -73,6 +73,11 @@ class Verbs:
         if isinstance(value, ExprSpec):
             raise VerbError(f"{path} is an expression; animate what it reads instead")
         return value
+
+    def _written(self, path: str) -> float:
+        """The document's own value of ``path`` at the anchor, without the bake: a turn is
+        written relative to it, so a camera the solver aims turns by the same angle."""
+        return float(evaluate(self.c, self.t).values[path])
 
     def _starts_hidden(self, path: str) -> bool:
         """True when nothing animates ``path`` before the anchor, so a verb may set the
@@ -251,7 +256,7 @@ class Verbs:
         asked for at every angle."""
         cam = self._orbit_camera("orbit")
         path = f"{cam}.azimuth"
-        start = float(self.state.values[path])
+        start = self._written(path)
         spec = self.motion["orbit"]
         if until is None:
             seg, _ = self._segment(path, start + degrees, "orbit", 0.0)
@@ -279,5 +284,5 @@ class Verbs:
         shown = self.reveal(*ids, verb="orbit_reveal")
         path = f"{cam}.azimuth"
         swing = self.motion["orbit_swing"]
-        seg, done = self._segment(path, float(self.state.values[path]) + swing, "orbit_reveal", 0.0)
+        seg, done = self._segment(path, self._written(path) + swing, "orbit_reveal", 0.0)
         return Motion((*shown.ops, seg), max(shown.end, done))

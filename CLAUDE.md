@@ -6,10 +6,10 @@ compounding. If this file and SPEC.md disagree, stop and ask.
 ## Where we are
 
 - Owner approved ADR 0001, ADR 0002 and id tombstones on 2026-11-18.
-- Current milestone: **10, 12, 13 built (`MILESTONE_10.md`, `MILESTONE_12.md`, `MILESTONE_13.md`; the roadmap is complete); 2-6 built; boundary review of 2-6 done 2026-11-18 (see `MILESTONE_6.md`). 7, 8, 9 built (9b deep zoom included, `MILESTONE_9.md`); boundary review of 7-9 done 2026-11-19 by the authoring model, not independent (`MILESTONE_9.md`). Windows and CUDA untested**. See `MILESTONE_*.md` for what is built and deferred.
-- Roadmap (owner, 2026-11-19): Milestone 11 (Sketch) is dropped (its `sketch` client slot in
-  the layer rule stays empty); Milestone 13 (Manim import) was dropped, then reinstated. 10, 12
-  and 13 are built; nothing is left on the roadmap.
+- Current milestone: **all of 0-13 built (`MILESTONE_*.md`; 11 Sketch in `MILESTONE_11.md`, reinstated 2026-11-19); the roadmap is complete; boundary reviews of 2-6 (2026-11-18) and 7-9 (2026-11-19, by the authoring model, not independent) done; 10-13 await the owner's final reviews. Windows and CUDA untested**. See `MILESTONE_*.md` for what is built and deferred.
+- Roadmap (owner, 2026-11-19): Milestones 11 (Sketch) and 13 (Manim import) were dropped,
+  then both reinstated. The owner approved the three layers between the engine and the
+  clients (`interactive`, `importers`, `workspace`) on 2026-11-19.
 - One milestone per branch. No work on milestone N+1 until N's exit demo and tests pass.
 - Before declaring a milestone done, run the `phasor-milestone-gate` skill.
 
@@ -34,7 +34,8 @@ compounding. If this file and SPEC.md disagree, stop and ask.
 5. **Object contract.** Every type implements `Params`, `world_bounds`, `features`,
    `semantics`, `draw(ctx, state, pass_)` for passes `color`/`id`/`solo`. Missing any member
    fails registration.
-6. **Layers.** `core ← style ← time ← layout ← inspect ← render ← domains ← engine ← (cli|gui|mcp|sketch)`.
+6. **Layers.** `core ← style ← time ← layout ← inspect ← render ← domains ← engine ← interactive ← voice ← scene ← importers ← workspace ← (cli|gui|mcp|sketch)`
+   (`interactive`, `importers`, `workspace` approved by the owner 2026-11-19).
    `core`, `style`, `time`, `layout` import no GPU/GL/video library. Lower layers that need
    render output define a protocol; `render` implements it; `Engine` injects it
    (`docs/decisions/0001-layers.md`). Enforced by `lint-imports` and `tests/test_layers.py`.

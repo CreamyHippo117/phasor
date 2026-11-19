@@ -27,7 +27,7 @@ Claude Desktop, Claude Code's client or on Windows. Give the AI `skills/phasor/S
 (or `llms.txt`) and it knows the loop: build, `review`, fix, repeat. `.py` scenes are code,
 so the server refuses them unless you add `--allow-scripts`.
 
-## The editor, sliders, and Manim scenes
+## The editor, sliders, sketching and Manim scenes
 
 ```bash
 uv sync --extra gl --extra encode --extra mcp --extra gui --extra notebook
@@ -35,9 +35,14 @@ uv run phasor gui examples/basics_3d.py          # the desktop editor (also: pha
 uv run phasor gui examples/julia_explorer.py     # Sliders tab: move c, watch the Julia set change
 uv run phasor web examples/julia_explorer.py -o julia.html --steps 7   # one offline web page
 uv run phasor manim examples/manim_reverb.py -o reverb.phasor.json     # a Manim scene, imported
+uv run python examples/sketch_contour.py         # a drawn loop becomes a contour integral (pi)
 ```
 
-The editor shows the scene's picture, timeline, inspector, lint, looks, sliders and its code
-(Python, runnable). While it is open, `phasor mcp --attach --root <its folder>` lets an AI edit
+The editor shows the scene's picture, timeline, inspector, lint, looks, sliders, its code
+(Python, runnable) and a Sketch tab: draw on the picture and strokes become proposals (a loop
+over a complex function becomes a traced contour with its integral; a scribble crosses
+objects out; handwriting is shown to an AI to read). While it is open, `phasor mcp --attach --root <its folder>` lets an AI edit
 the same live scene. Math text (`$...$`) is typeset by default with a built-in engine; set
-`PHASOR_MATH=latex` to use a real TeX (`latex` and `dvipng` on the PATH).
+`PHASOR_MATH=latex` to use a real TeX (`latex` and `dvipng` on the PATH). Write maths in
+either form: `phasor.to_latex` and `phasor.to_mathtext` convert both ways, and each engine
+gets the form it needs.

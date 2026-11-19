@@ -249,6 +249,12 @@ def sway(theme: Theme, params: OrbitCameraParams, t: float) -> float:
     return amp * math.sin(2 * math.pi * t / period) if amp and period > 0 else 0.0
 
 
+@functools.cache
+def _int_fields(model: type[BaseModel]) -> tuple[str, ...]:
+    """Parameters declared as whole numbers (``terms: int``)."""
+    return tuple(n for n, f in model.model_fields.items() if f.annotation is int)
+
+
 def evaluate(c: Compiled, t: float, replace: Mapping[str, Any] | None = None) -> SceneState:
     """Pure: depends only on (compiled document, t).
 
@@ -279,6 +285,9 @@ def evaluate(c: Compiled, t: float, replace: Mapping[str, Any] | None = None) ->
     def build(target: str, model: type[BaseModel], tags: tuple[str, ...] = (), style=None,
               channels: frozenset[str] = frozenset()):  # fmt: skip
         values = {n: env[f"{target}.{n}"] for n in model.model_fields}
+        for n in _int_fields(model):  # an integer parameter animates in whole steps
+            if isinstance(values[n], float) and math.isfinite(values[n]):
+                values[n] = round(values[n])
         if "dim" in values and "opacity" in values:  # what is drawn is opacity x dim
             values["opacity"] = values["opacity"] * values["dim"]
         if style is not None:  # objects live (cameras do not): see core/life.py

@@ -95,6 +95,21 @@ class Camera:
         ndc = self.project(points)
         return np.c_[(ndc[:, 0] + 1) * 0.5 * width, (1 - ndc[:, 1]) * 0.5 * height]
 
+    def from_screen(self, pixels, width: int, height: int, z: float = 0.0) -> np.ndarray:
+        """Pixels (N, 2), origin top-left -> the world points (N, 3) under them on the plane
+        at height ``z`` (in 2D, the plane itself). The inverse of ``to_screen`` there."""
+        px = np.atleast_2d(np.asarray(pixels, dtype=np.float64))
+        ndc = np.c_[2 * px[:, 0] / width - 1, 1 - 2 * px[:, 1] / height]
+        inv = np.linalg.inv(self.view_proj)
+        near = np.c_[ndc, -np.ones(len(ndc)), np.ones(len(ndc))] @ inv.T
+        far = np.c_[ndc, np.ones(len(ndc)), np.ones(len(ndc))] @ inv.T
+        a, b = near[:, :3] / near[:, 3:4], far[:, :3] / far[:, 3:4]
+        dz = b[:, 2] - a[:, 2]
+        k = np.where(np.abs(dz) < 1e-12, 0.0, (z - a[:, 2]) / np.where(dz == 0, 1, dz))
+        out = a + k[:, None] * (b - a)
+        out[:, 2] = z
+        return out
+
     def depth(self, points) -> np.ndarray:
         """Distance from the camera along its viewing direction."""
         p = np.atleast_2d(np.asarray(points, dtype=np.float64))

@@ -345,6 +345,8 @@ def run(
                     continue
                 if persp and not (both(a, b, "label") or both(a, b, "point")):
                     continue  # depth decides in 3D: see occluded_label
+                if a["semantic"].get("backdrop") or b["semantic"].get("backdrop"):
+                    continue  # labels are meant to sit on a backdrop (a plane, a fractal)
                 if _is_label(a) and not _is_label(b):
                     share = fr.covered(a["id"], b["id"])
                 elif _is_label(b) and not _is_label(a):

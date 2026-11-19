@@ -14,6 +14,7 @@ from phasor.core.constraints import Goal, Guard, Relation, parse_rule
 from phasor.core.issues import DocumentError, Issue
 from phasor.core.schema import ConstraintSpec
 from phasor.time.compile import Compiled, CompiledExpr
+from phasor.time.tracks import ResolvedTrack
 
 MOVE_PARAM = "pos"  # layout moves an object by writing this parameter
 LEADER_PARAMS = ("leader", "leader_on")
@@ -43,6 +44,9 @@ class Plan:
     # leaves at their defaults (neither set nor animated).
     goals: tuple[tuple[Rule, Goal], ...] = ()
     camera_free: tuple[str, ...] = ()
+    # Animated but never set (a focus_pull or orbit at a marker): the solver owns them until
+    # their first motion starts, and that motion starts from where the solver had them.
+    camera_handoff: tuple[str, ...] = ()
 
     @property
     def moving(self) -> frozenset[str]:
@@ -130,6 +134,7 @@ def compile_plan(compiled: Compiled) -> Plan:
                 fix_hint="keep one: 'near' lets the placer choose; above/below/... fix the side",
             ))  # fmt: skip
     free: tuple[str, ...] = ()
+    handoff: tuple[str, ...] = ()
     if goals:
         cam = compiled.doc.camera(compiled.doc.timeline.camera)
         if cam.kind != "orbit":
@@ -141,10 +146,20 @@ def compile_plan(compiled: Compiled) -> Plan:
             tracked = {p.rsplit(".", 1)[1] for p in compiled.doc.timeline.tracks
                        if p.startswith(f"{cam.id}.")}  # fmt: skip
             free = tuple(p for p in CAMERA_FREE if p not in cam.params and p not in tracked)
+            handoff = tuple(p for p in CAMERA_FREE if p not in cam.params and p in tracked
+                            and _starts_late(compiled, f"{cam.id}.{p}"))  # fmt: skip
     if issues:
         raise DocumentError(issues)
     leaders = frozenset(
         i for i in placed
         if all(p in objects[i].params_model.model_fields for p in LEADER_PARAMS)
     )  # fmt: skip
-    return Plan(tuple(rules), frozenset(solved), tuple(placed), leaders, tuple(goals), free)
+    return Plan(
+        tuple(rules), frozenset(solved), tuple(placed), leaders, tuple(goals), free, handoff
+    )
+
+
+def _starts_late(compiled: Compiled, path: str) -> bool:
+    """Whether the track at ``path`` first moves after the scene starts."""
+    node = compiled.nodes.get(path)
+    return isinstance(node, ResolvedTrack) and bool(node.segments) and node.segments[0].t0 > 1e-9

@@ -16,6 +16,7 @@ from pydantic import Field, field_validator
 from phasor.core import text as text_metrics
 from phasor.core.objects import Bounds, DrawContext, ObjectBase, ParamsBase, Pass, register
 from phasor.core.state import SceneState
+from phasor.core.texconv import join_latex, to_latex
 from phasor.core.values import Vec3
 from phasor.domains.strokes import polyline
 
@@ -206,6 +207,7 @@ class Text(ObjectBase):
         out: dict[str, Any] = {"kind": "label", "text": text}
         if text_metrics.is_math(text):
             out["math"] = True
+            out["latex"] = to_latex(text)  # the same maths as LaTeX source, to show or export
         return out
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
@@ -352,6 +354,7 @@ class Equation(ObjectBase):
             "text": "".join(p.parts),
             "parts": list(p.parts),
             "colors": [p.colors[i] if i < len(p.colors) else None for i in range(len(p.parts))],
+            "latex": join_latex(list(p.parts)),
         }
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:

@@ -147,7 +147,7 @@ assert s4.engine.lint(strict=True) == []
 | `dim_others(*keep)` | dim everything but the object (or objects) you keep, to the theme's `dim_level` (backdrops stay) |
 | `undim()` | bring dimmed objects back |
 | `focus_pull(id, margin=0.15)` | move the camera onto an object |
-| `morph(path, value)` | change any parameter smoothly |
+| `morph(path, value)` | change any parameter smoothly (a whole-number one, such as `terms`, in whole steps) |
 | `settle(path, value)` | move like a released spring (overshoot, then rest) |
 
 Durations, easing and stagger come from the theme's `[motion]` table. Chain with `then()`:
@@ -439,6 +439,28 @@ be taller than a line (sums, fractions) and layout sees the real size. Bad TeX i
 the object is added. For terms in different colors, `Equation(parts=(...), colors=(...))` sets
 parts side by side on one baseline (a relation at a part's edge gets TeX's thick space). A
 color inside a fraction is not possible: split where a part can end.
+
+**Typeset and LaTeX, both ways.** Write maths in either dialect; it renders on either
+engine, because every math string passes through `to_mathtext` (mathtext, the default) or
+`to_latex` (real TeX) first. `to_mathtext` maps what mathtext lacks to its nearest form
+(`\tfrac`, `\le`, `\lvert`, `\textbf`, `\big(`, `\pmod{n}`, `\xrightarrow{f}`) and drops,
+keeping the content, what it cannot show (`\color`, `\boxed`, `\underbrace`; listed by
+`texconv.mathtext_losses`); environments (`cases`, `pmatrix`) have no mathtext form and are
+refused when added. `to_latex` turns Unicode (`π`, `≤`, `ℝ`) and mathtext-only commands
+into LaTeX and escapes the text around the maths. Text and Equation report the LaTeX form
+as `semantic["latex"]`.
+
+```python
+from phasor import Scene, Text, to_latex, to_mathtext
+
+assert to_mathtext(r"$\tfrac{1}{2} \le \lvert z \rvert$") == r"$\frac{1}{2} \leq | z |$"
+assert to_latex("50% of $2π r$") == r"50\% of $2\pi r$"
+s = Scene("both")
+s.add(Text(id="half", text=r"$\tfrac{1}{2} \le x$"))  # LaTeX-only commands, typeset by mathtext
+assert (
+    s.engine.inspect(0.0, id="half")["objects"][0]["semantic"]["latex"] == r"$\tfrac{1}{2} \le x$"
+)
+```
 
 **The prism look** (`look="prism"`, the owner's reference style): near-black stage, curves
 glowing with a hue running along them (`Line(hue_along=...)`, the `spectrum` colormap) and
@@ -774,6 +796,49 @@ assert state(2.0)["circle_1"].params.progress == 1.0
 assert abs(state(3.5)["circle_1"].params.points[0][0] - 3.0) < 1e-9  # moved 2 to the right
 ```
 
+## Sketch: draw on the scene (Milestone 11)
+
+Draw on the picture (the editor's **Sketch** tab, or strokes as JSON for `phasor sketch`)
+and each stroke becomes a **proposal**: a summary, the patch ops that make it, verbs to run
+after them, and what was worked out. Nothing changes until it is accepted (`accept`, one
+`Engine.apply` plus the verbs; undo takes it back). Strokes are output pixels (row 0 at the
+top), classified by fitting, not by a learned model: `dot`, `line`, `arrow` (a hook at the
+end, or a V drawn at the tip), `circle`, `closed`, `scribble`, `curve` (`wavy`), and
+`handwriting` (small strokes close together).
+
+| Drawn | Over | Becomes |
+| --- | --- | --- |
+| a loop | a domain coloring | a glowing contour, traced from the playhead, with its integral of f dz: numeric along the drawn path and exact as 2πi Σ winding × residue (rational f); a label with the value. The direction you draw counts |
+| a loop | other objects | they are emphasized (the `highlight` color role) |
+| a loop, line, curve | nothing | a Line (a circle is the fitted circle) |
+| a dot | a pole or zero (within 14 px) | a Dot snapped onto it |
+| an arrow | an object with `pos` | the object moves to the tip; elsewhere, an Arrow |
+| a scribble | objects | they are removed (cross it out) |
+| handwriting | anywhere | a picture of it (`proposal.image`, PNG) for an AI or the person to read; `transcribe(p, text)` makes the Text. There is no offline handwriting recognizer |
+
+Sketch edits plain scenes. On a scene built by a script, only parameter and style
+proposals (move, emphasize) apply; the script's own code can apply the rest with
+`engine.apply(p.ops, origin="script")` (see `examples/sketch_contour.py`).
+
+```python
+import math
+
+import numpy as np
+
+from phasor import Scene, cx
+from phasor.sketch.propose import Sketch
+
+s = Scene("draw")
+s.add(cx.DomainColoring(id="plane", function="1/(z**2+1)", size=(8.0, 4.5)))
+sk = Sketch(s.engine, t=0.0)
+c = sk.to_pixels([[0.0, 1.0, 0.0]])[0]  # the pole at i, in pixels
+a = np.linspace(0, 2 * math.pi, 60)
+loop = np.stack([c[0] + 80 * np.cos(a), c[1] - 80 * np.sin(a)], axis=1)  # counterclockwise
+(p,) = sk.propose([loop])
+assert p.kind == "contour" and abs(p.data["exact"] - math.pi) < 1e-9
+assert abs(p.data["integral"] - math.pi) < 0.01 and p.data["latex"] == r"\pi"
+```
+
 ## 3D: orbit camera, surfaces, camera goals
 
 `use_camera("orbit")` makes the scene 3D: a perspective camera on a sphere around
@@ -811,6 +876,10 @@ assert sheet["on_screen_fraction"] == 1.0 and sheet["semantic"]["sheets"] == 2
 - `orbit(degrees, until=None)` turns the camera (theme `[motion.orbit]` time per turn, or
   until a marker); `orbit_reveal(*ids)` reveals while swinging a little.
 - `focus_pull(id)` in 3D aims at the object and comes close enough to fill the frame.
+- With camera goals, a camera parameter that is animated but never set is the solver's
+  until its first motion: a `focus_pull` or `orbit` at a marker starts from wherever the
+  solver had the camera (an orbit turns by its angle from there; a pull glides in), so the
+  goals hold before it and nothing jumps when it starts.
 - A label (`near` rule) lives at its anchor's depth, nudged toward the camera, and is moved
   only sideways; it avoids only what is **in front** of it, so it may sit on a surface
   behind it. Lint: `occluded_label` when something in front hides it; `visible_in_3d(a)`
@@ -845,6 +914,7 @@ would notice) and `fix_hints`.
 | `phasor gui [SCENE] [--root DIR] [--no-ai]` | M10 | The editor (needs `uv sync --extra gui`); also `phasor-gui`; a Manim script opens too |
 | `phasor web SCENE [-o PAGE.html] [--steps N]` | M12 | Bake a self-contained interactive web page from the scene's sliders |
 | `phasor manim SCRIPT [--scene NAME] [-o OUT] [--code]` | M13 | Import a Manim Community scene as a phasor scene |
+| `phasor sketch SCENE STROKES.json [--t T] [--accept [K ...]] [--text K=TEXT]` | M11 | Turn drawn strokes into proposals; `--accept` applies them |
 
 `SCENE` is a `.phasor.json` document or a `.py` script that defines exactly one `Scene`.
 

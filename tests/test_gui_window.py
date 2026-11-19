@@ -227,3 +227,61 @@ def test_the_activity_dock_lists_your_edits_and_the_ais(window):
         t.startswith("AI:") for t in items
     )
     remote.close()
+
+
+# ---------------------------------------------------------------- Milestone 11: the Sketch tab
+
+
+def test_the_sketch_tab_turns_a_drawn_loop_into_a_traced_contour(tmp_path):
+    """Draw on the viewport with the Sketch tab's pen; the loop around i becomes a contour
+    with its integral. The tab comes from the sketch client through an entry point."""
+    import json
+    import math
+
+    import numpy as np
+    from PySide6.QtWidgets import QApplication
+
+    scene = {
+        "schema_version": 6,
+        "meta": {"title": "sketch"},
+        "objects": [{"id": "plane", "type": "domain_coloring",
+                     "params": {"function": "1/(z**2+1)", "size": [8.0, 4.5]}}],
+        "timeline": {"markers": {"end": 2.0}},
+    }  # fmt: skip
+    (tmp_path / "s.phasor.json").write_text(json.dumps(scene))
+    _app, win, server = open_editor(str(tmp_path / "s.phasor.json"), show=False)
+    try:
+        titles = [t for t, _ in win.panels]
+        assert "Sketch" in titles
+        panel = dict(win.panels)["Sketch"]
+        win.viewport.resize(640, 360)
+        win.viewport.refresh()
+        st = win.ed.engine.state_at(0.0)
+        meta = win.ed.engine.document.meta
+        ndc = st.camera.project(np.array([[0.0, 1.0, 0.0], [0.6, 1.0, 0.0]]))
+        c = np.array([(ndc[0, 0] + 1) / 2 * meta.width, (1 - ndc[0, 1]) / 2 * meta.height])
+        r = (ndc[1, 0] - ndc[0, 0]) / 2 * meta.width
+        a = np.linspace(0, 2 * math.pi, 80)
+        pts = np.stack([c[0] + r * np.cos(a), c[1] - r * np.sin(a)], axis=1)
+        if win.viewport._size[0]:  # with OpenGL: draw through the viewport's mouse events
+            panel.draw.setChecked(True)
+            fw, fh = win.viewport._size
+            ox, oy = (win.viewport.width() - fw) / 2, (win.viewport.height() - fh) / 2
+            for k, (x, y) in enumerate(pts):
+                q = QPointF(x * fw / meta.width + ox, y * fh / meta.height + oy)
+                kind = QMouseEvent.Type.MouseButtonPress if k == 0 else QMouseEvent.Type.MouseMove
+                ev = QMouseEvent(kind, q, q, Qt.MouseButton.LeftButton,
+                                 Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)  # fmt: skip
+                QApplication.sendEvent(win.viewport, ev)
+            assert win.ed.selected is None  # the pen drew; it did not select or turn anything
+        else:  # no OpenGL: hand the panel the stroke
+            panel.strokes = [[tuple(p) for p in pts]]
+        (p,) = panel.propose()
+        assert p.kind == "contour" and p.data["exact"] == pytest.approx(math.pi)
+        (r_,) = panel.apply()
+        assert r_["ok"]
+        assert win.ed.engine.document.object("contour").type == "line"
+    finally:
+        win.timer.stop()
+        server.stop()
+        win.close()

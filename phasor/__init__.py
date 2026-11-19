@@ -20,6 +20,8 @@ _LAZY = {
     "Line": "phasor.domains.basic",
     "Text": "phasor.domains.basic",
     "Equation": "phasor.domains.basic",
+    "to_latex": "phasor.core.texconv",
+    "to_mathtext": "phasor.core.texconv",
 }
 _MODULES = {  # domain modules: ``from phasor import cx``
     "cx": "phasor.domains.cx",

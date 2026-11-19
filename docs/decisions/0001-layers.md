@@ -26,7 +26,11 @@ Layer order enforced by import-linter (`pyproject.toml`):
 
 ```
 cli | gui | mcp | sketch      (independent of each other)
+workspace                     (tools shared by the clients; Milestone 10)
+importers                     (foreign scripts, e.g. Manim; Milestone 13)
 scene                         (the Python authoring API; added in Milestone 1)
+voice                         (narration, Milestone 4)
+interactive                   (sliders on Engine.fork; Milestone 12)
 engine
 domains
 render
@@ -53,3 +57,8 @@ Import direction from contract 6 is kept exactly; nothing in a lower layer impor
 - Tests for the label placer and camera solver use fake oracles, so they are fast and exact.
 - Tier C needs an analytic inspector mode. The spec says tier C keeps "inspector" working,
   which is only true in this degraded sense. See MILESTONE_0.md, contradiction 3.
+
+## Amendment (owner-approved 2026-11-19)
+
+`interactive`, `importers` and `workspace` sit between `engine` and the clients, in the
+order above. They changed no existing import; the owner approved all three on 2026-11-19.

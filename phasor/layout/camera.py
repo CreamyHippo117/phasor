@@ -3,8 +3,10 @@
 The document states goals (``camera keep_visible(surf, bp)``, ``center``, ``thirds``,
 ``avoid_occlusion``, ``min_size``); the solver chooses the camera parameters the document
 leaves unset (``plan.camera_free``: azimuth, elevation, distance, target). Anything the
-author set or animated, such as an orbit's azimuth, stays as written and the solver works
-around it.
+author set stays as written and the solver works around it. A parameter that is animated
+but never set (``plan.camera_handoff``: a ``focus_pull`` or ``orbit`` at a marker) is the
+solver's until its first motion starts; that motion then starts from the solved value (an
+``orbit`` turns by its angle from there; anything else arrives where it was written).
 
 - **Stage 1**: an analytic cost from projected bounding spheres, minimized with
   ``scipy.optimize`` (L-BFGS-B) from several starts at the first key and warm-started from
@@ -261,6 +263,51 @@ class Problem:
         return self.group_cost(cam) + sum(self.goal_cost(cam, r, g) for r, g in self.plan.goals)
 
 
+class _Handoff:
+    """Parameters the solver owns until their first motion (``plan.camera_handoff``).
+
+    Before the motion starts they are solved like free ones; from then on they follow the
+    document's track, started from the solved value instead of the default: an ``orbit``
+    keeps the offset (it turns by its angle), anything else eases it away over the first
+    motion, with that motion's own easing.
+    """
+
+    def __init__(self, c: Compiled, plan: Plan) -> None:
+        cam = c.doc.timeline.camera
+        self.tracks: dict[str, tuple[ResolvedTrack, bool]] = {}
+        for n in plan.camera_handoff:
+            node = c.nodes[f"{cam}.{n}"]
+            first = c.doc.timeline.tracks[f"{cam}.{n}"][0]
+            self.tracks[n] = (node, getattr(first, "verb", None) == "orbit")
+        self.start: dict[str, object] = {}
+
+    def reached(self, t: float, solved: Callable[[], OrbitCameraParams]) -> None:
+        """Record the solved values of parameters whose motion starts at ``t``."""
+        todo = [n for n, (tr, _) in self.tracks.items()
+                if n not in self.start and t >= tr.segments[0].t0 - 1e-9]  # fmt: skip
+        if todo:
+            p = solved()
+            for n in todo:
+                self.start[n] = getattr(p, n)
+
+    def pin(self, p: OrbitCameraParams, t: float) -> OrbitCameraParams:
+        upd: dict = {}
+        for n, (tr, keep) in self.tracks.items():
+            s = tr.segments[0]
+            if t < s.t0 - 1e-9 or n not in self.start:
+                continue
+            start = np.asarray(self.start[n], dtype=np.float64)
+            init = np.asarray(tr.initial, dtype=np.float64)
+            w = (
+                1.0
+                if keep or t <= s.t0
+                else 1.0 - (s.ease(min((t - s.t0) / max(s.t1 - s.t0, 1e-9), 1.0)))
+            )
+            v = np.asarray(tr.value_at(t), dtype=np.float64) + (start - init) * w
+            upd[n] = tuple(float(a) for a in v) if v.ndim else float(v)
+        return OrbitCameraParams(**{**p.model_dump(), **upd}) if upd else p
+
+
 def _base(c: Compiled, state: SceneState) -> OrbitCameraParams:
     cam = c.doc.timeline.camera
     return OrbitCameraParams(**{n: state.values[f"{cam}.{n}"]
@@ -326,7 +373,9 @@ def solve(
     center = np.mean([sp.center for sp in allsph], axis=0)
     radius = max(float(np.linalg.norm(sp.center - center)) + sp.radius for sp in allsph)
     th = c.theme.camera
-    vars_ = _Vars(plan.camera_free, center, radius, (th["min_elevation"], th["max_elevation"]))
+    chosen = plan.camera_free + plan.camera_handoff
+    vars_ = _Vars(chosen, center, radius, (th["min_elevation"], th["max_elevation"]))
+    hand = _Handoff(c, plan)
     prior = vars_.encode(OrbitCameraParams(**{**_defaults(), "target": tuple(vars_.center)}))
     angles = np.array([n in ("azimuth", "elevation") for n in vars_.names], dtype=float)
 
@@ -340,7 +389,9 @@ def solve(
             return x0
 
         def f(x):
-            cost = prob.cost(vars_.decode(x, base)) + W_PRIOR * float(((x - prior) ** 2).sum())
+            cost = prob.cost(hand.pin(vars_.decode(x, base), t)) + W_PRIOR * float(
+                ((x - prior) ** 2).sum()
+            )
             if near is not None:
                 cost += prob.smooth_w * float(((x - near) ** 2).sum())
             if last is not None:  # angles only: the target may follow a moving object freely
@@ -351,14 +402,14 @@ def solve(
         best = min((minimize(f, s0, method="L-BFGS-B", bounds=vars_.bounds()) for s0 in starts),
                    key=lambda r: r.fun)  # fmt: skip
         x = best.x
-        if near is not None and _check(c, plan, t, vars_.decode(x, base), None):
+        if near is not None and _check(c, plan, t, hand.pin(vars_.decode(x, base), t), None):
             # Warm start was not enough (something moved fast): search from several starts.
             again = min((minimize(f, s0, method="L-BFGS-B", bounds=vars_.bounds())
                          for s0 in _starts(x, vars_.names)), key=lambda r: r.fun)  # fmt: skip
             if again.fun < best.fun:
                 x = again.x
         if hidden is not None and occl:
-            x = _stage2(c, f, x, vars_, base, occl, t, hidden)
+            x = _stage2(c, f, x, vars_, hand.pin, base, occl, t, hidden)
         return x
 
     # Smoothness penalizes jerks, not motion: each key is pulled toward the straight-line
@@ -374,6 +425,7 @@ def solve(
             near = xb + (xb - xa) * ((t - tb) / (tb - ta)) if tb > ta else xb
         solved[t] = solve_at(t, near, hist[-1][1] if hist else None)
         hist.append((t, solved[t]))
+        hand.reached(t, lambda t=t: vars_.decode(solved[t], _base(c, evaluate(c, t))))
 
     def curve() -> np.ndarray:
         ks = sorted(solved)
@@ -386,9 +438,12 @@ def solve(
     # passing in front), solve there too and join again.
     at = curve()
     for _ in range(REFINE_ROUNDS):
-        bad = [t for t, x in zip(times, at, strict=True)
-               if t not in solved and _check(c, plan, t, vars_.decode(x, _base(c, evaluate(c, t))),
-                                             hidden)]  # fmt: skip
+        bad = [
+            t
+            for t, x in zip(times, at, strict=True)
+            if t not in solved
+            and _check(c, plan, t, hand.pin(vars_.decode(x, _base(c, evaluate(c, t))), t), hidden)
+        ]
         if not bad or not vars_.names:
             break
         for t, x in zip(times, at, strict=True):
@@ -396,11 +451,11 @@ def solve(
                 solved[t] = solve_at(t, x)
         at = curve()
 
-    values: dict[str, list] = {f"{cam_id}.{p}": [] for p in plan.camera_free}
+    values: dict[str, list] = {f"{cam_id}.{p}": [] for p in chosen}
     failures: dict[tuple[int, str], tuple[tuple[str, ...], list[float]]] = {}
     for t, x in zip(times, at, strict=True):
-        p = vars_.decode(x, _base(c, evaluate(c, t)))
-        for name in plan.camera_free:
+        p = hand.pin(vars_.decode(x, _base(c, evaluate(c, t))), t)
+        for name in chosen:
             v = getattr(p, name)
             values[f"{cam_id}.{name}"].append(tuple(v) if isinstance(v, tuple) else float(v))
         for index, why, ids in _check(c, plan, t, p, hidden):
@@ -419,12 +474,12 @@ def solve(
     return Solution(tuple(times), {k: tuple(v) for k, v in values.items()}, tuple(issues))
 
 
-def _stage2(c, f, x, vars_, base, occl, t, hidden) -> np.ndarray:
+def _stage2(c, f, x, vars_, pin, base, occl, t, hidden) -> np.ndarray:
     """Check avoid_occlusion on the depth buffer; if hidden, try nearby cameras."""
     cam_id = c.doc.timeline.camera
 
     def measured(y) -> float:
-        p = vars_.decode(y, base)
+        p = pin(vars_.decode(y, base), t)
         state = evaluate(c, t, {f"{cam_id}.{n}": getattr(p, n) for n in vars_.free})
         return sum(PRIORITY[r.spec.priority] * hidden(state, i) ** 2
                    for r, g in occl for i in g.ids)  # fmt: skip
@@ -479,8 +534,14 @@ def _check(c, plan, t, p, hidden) -> list[tuple[int, str, tuple[str, ...]]]:
                 why = f"it is smaller than {g.value:g} of the frame"
             elif g.kind == "avoid_occlusion" and hidden is not None:
                 if state is None:
-                    state = evaluate(c, t, {f"{cam_id}.{n}": getattr(p, n)
-                                            for n in plan.camera_free})  # fmt: skip
+                    state = evaluate(
+                        c,
+                        t,
+                        {
+                            f"{cam_id}.{n}": getattr(p, n)
+                            for n in plan.camera_free + plan.camera_handoff
+                        },
+                    )
                 if hidden(state, i) > HIDDEN_OK:
                     bad.append(i)
                     why = "it is hidden behind something in front of it"

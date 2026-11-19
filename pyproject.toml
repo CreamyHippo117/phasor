@@ -46,6 +46,10 @@ phasor-gui = "phasor.gui.cli:main"
 mcp = "phasor.mcp.cli:register"
 gui = "phasor.gui.cli:register"
 manim = "phasor.importers.cli:register"
+sketch = "phasor.sketch.cli:register"
+
+[project.entry-points."phasor.panels"]
+sketch = "phasor.sketch.panel:make"
 
 [dependency-groups]
 dev = [
@@ -80,6 +84,9 @@ select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
 "tests/*" = ["E501", "RUF043"]
 # Written exactly as a Manim script is (the point of the Manim import): a star import.
 "examples/manim_reverb.py" = ["F403", "F405"]
+# The maths converter maps Unicode letters and symbols (π, ≤, ℝ) to LaTeX on purpose.
+"phasor/core/texconv.py" = ["RUF001"]
+"tests/test_texconv.py" = ["RUF001"]
 
 # ---------------------------------------------------------------- pytest
 [tool.pytest.ini_options]

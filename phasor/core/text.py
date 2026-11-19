@@ -10,6 +10,10 @@ mathtext in Computer Modern (its own bundled fonts, so also identical everywhere
 occupies can be taller (a sum, a fraction) and is what ``quad`` reports, so layout sees the
 real size. No TeX install is needed (SPEC
 planned "a local TeX install or MathJax"; mathtext covers the common subset).
+
+Either dialect works on either engine: every math string passes through
+``texconv.to_mathtext`` or ``texconv.to_latex`` first (``\\tfrac`` and ``\\le`` work on
+mathtext; Unicode ``π`` and ``50%`` work on LaTeX).
 """
 
 from __future__ import annotations
@@ -25,6 +29,8 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+
+from phasor.core.texconv import to_latex, to_mathtext
 
 _REF = 64
 MATH_EM = 0.8  # a math string's em, as a share of the line height of text with the same role
@@ -112,7 +118,7 @@ def _latex(text: str, em_px: int):
 def _math(text: str, em_px: int, engine: str | None = None):
     """(coverage uint8 (h, w), depth in px) of a math string at ``em_px`` pixels per em."""
     if (engine or math_engine()) == "latex":
-        return _latex(text, em_px)
+        return _latex(to_latex(text), em_px)
     import matplotlib
 
     matplotlib.use("Agg", force=False)
@@ -122,7 +128,8 @@ def _math(text: str, em_px: int, engine: str | None = None):
 
     with rc_context({"mathtext.fontset": "cm"}):
         try:
-            r = MathTextParser("agg").parse(text, dpi=72, prop=FontProperties(size=em_px))
+            r = MathTextParser("agg").parse(to_mathtext(text), dpi=72,
+                                            prop=FontProperties(size=em_px))  # fmt: skip
         except ValueError as e:
             raise ValueError(f"cannot typeset {text!r}: {str(e).splitlines()[-1]}") from None
     img = np.asarray(r.image, dtype=np.uint8)
