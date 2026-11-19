@@ -23,6 +23,9 @@ that folder to share it, or run `dist/phasor/phasor` directly.
 | macOS | **untested**: the recipe also makes `dist/phasor.app` |
 | NVIDIA / CUDA | **untested**: CuPy is left out of the app (it is large and needs a matching driver); kernels run on NumPy. Add `--extra gpu` and drop `"cupy"` from `excludes` in the spec to try |
 
+To check a build: `PHASOR_TEST_PACKAGE=1 uv run pytest tests/test_packaging.py` builds the
+app and runs every command, a render with typeset maths, and the window.
+
 Without building, a shortcut in the applications menu works too:
 
 ```bash

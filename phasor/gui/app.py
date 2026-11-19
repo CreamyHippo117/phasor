@@ -210,19 +210,25 @@ class ExportJob:
         return cli_command("web", scene, "-o", str(self.out), "--steps", str(self.steps))
 
     def start(self) -> None:
+        """Snapshot the scene and start the process. Raises ``OSError`` (leaving nothing
+        behind) when the output folder cannot be made or the process cannot start."""
+        self.out.parent.mkdir(parents=True, exist_ok=True)  # before anything is written
         fd, name = tempfile.mkstemp(prefix=".phasor-export-", suffix=".phasor.json",
                                     dir=self.scene_dir)  # fmt: skip
         os.close(fd)
         self._snapshot = Path(name)
-        self.engine.save(self._snapshot)
-        # Kept open for the life of the job (the process writes to it); closed in _cleanup.
-        self._log = tempfile.TemporaryFile(mode="w+", encoding="utf-8")  # noqa: SIM115
-        self.out.parent.mkdir(parents=True, exist_ok=True)
-        flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-        self.proc = subprocess.Popen(
-            self.command(str(self._snapshot)), stdout=self._log, stderr=self._log,
-            cwd=self.scene_dir, creationflags=flags,
-        )  # fmt: skip
+        try:
+            self.engine.save(self._snapshot)
+            # Kept open for the life of the job (the process writes to it); closed in _cleanup.
+            self._log = tempfile.TemporaryFile(mode="w+", encoding="utf-8")  # noqa: SIM115
+            flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+            self.proc = subprocess.Popen(
+                self.command(str(self._snapshot)), stdout=self._log, stderr=self._log,
+                cwd=self.scene_dir, creationflags=flags,
+            )  # fmt: skip
+        except BaseException:
+            self._cleanup()
+            raise
 
     def _read(self) -> str:
         self._log.seek(0)

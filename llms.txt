@@ -79,8 +79,8 @@
 - `taylor`: function, center, order, xmin, xmax, ymax, pos
 - `text`: text, pos, anchor, leader, leader_on
 - `transform_grid`: matrix, pos, extent, spacing, square, basis
-- `vector_field`: p, q, pos, extent, spacing, color_by_size
-- `vector_field_3d`: fp, fq, fr, pos, extent, counts, color_by_size
+- `vector_field`: p, q, pos, extent, spacing, color_by_size, length_by
+- `vector_field_3d`: fp, fq, fr, pos, extent, counts, spacing, color_by_size, length_by
 - `wavefront`: center, radius, rings
 
 ## Docs

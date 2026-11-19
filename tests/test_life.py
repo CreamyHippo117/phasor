@@ -179,7 +179,7 @@ def test_object_presets_and_precedence():
 def test_varied_palettes_exist_and_domain_coloring_keeps_its_rainbow_by_default():
     th = load_theme("midnight_glow")
     assert set(th.values["colormap"]) == {"phase", "soft_phase", "sequential", "ember", "ocean",
-                                          "spectrum"}  # fmt: skip
+                                          "spectrum", "magnitude"}  # fmt: skip
     assert cx.DomainColoring.Style["colormap"] == ("colormap", "phase")  # hue means phase
     wheel = np.array(th.values["colormap"]["phase"])
     soft = np.array(th.values["colormap"]["soft_phase"])

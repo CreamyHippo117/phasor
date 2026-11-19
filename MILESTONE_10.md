@@ -78,4 +78,9 @@ on a real GPU, and with a real display (every window test runs on Qt's offscreen
 prompts, Save As, export with progress (a separate process), settings, an icon, an
 applications-menu shortcut, and a PyInstaller build (`packaging/README.md`). Built and run on
 Linux (the packaged app renders, lints and opens its window); Windows and macOS builds are
-untested. Tests for it are to come on the owner's next request.
+untested. Tests: `tests/test_desktop.py` (settings, unsaved changes, exports with progress,
+cancel and narration audio, the start screen, templates, examples opened as copies, closing
+prompts, quit, shortcuts, the math setting, menus, the export dialog, launch commands) and
+`tests/test_packaging.py` (the build itself is opt-in: `PHASOR_TEST_PACKAGE=1`; it builds the
+app and runs every command, a render with typeset maths, and the window). Bug they caught: an
+export to a folder that cannot be made left a hidden copy of the scene behind.
