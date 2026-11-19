@@ -39,11 +39,18 @@ def _v4_to_v5(raw: dict[str, Any]) -> dict[str, Any]:
     return raw
 
 
+def _v5_to_v6(raw: dict[str, Any]) -> dict[str, Any]:
+    """Version 6 added ``controls`` (sliders). Older documents have none."""
+    raw.setdefault("controls", [])
+    return raw
+
+
 MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {
     1: _v1_to_v2,
     2: _v2_to_v3,
     3: _v3_to_v4,
     4: _v4_to_v5,
+    5: _v5_to_v6,
 }
 
 

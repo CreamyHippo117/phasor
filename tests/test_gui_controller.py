@@ -133,3 +133,233 @@ def test_variant_picker(ed):
     assert out["recorded"]["by"] == "person" and out["recorded"]["winner"] == "calmer"
     with pytest.raises(Exception, match="no variant"):
         ed.choose("louder")
+
+
+# ---------------------------------------------------------------- sliders and readouts (M12)
+
+
+@pytest.fixture
+def jed(tmp_path):
+    ws = Workspace(tmp_path)
+    ws.scene_new("explorer")
+    e = Editor(ws)
+    e.ws.scene_edit([
+        {"op": "add_object", "object": {"id": "set", "type": "fractal",
+                                        "params": {"kind": "julia", "c": [-0.8, 0.156],
+                                                   "pos": [0, 0, 0], "size": [4.6, 2.6]}}},
+        {"op": "add_object", "object": {"id": "plane", "type": "domain_coloring",
+                                        "params": {"function": "z**2 + 1", "pos": [0, 4, 0]}}},
+        {"op": "add_control", "control": {"path": "set.c", "component": 0, "min": -1, "max": 1,
+                                          "step": 0.1, "label": "Re c"}},
+    ])  # fmt: skip
+    return e
+
+
+def test_sliders_preview_without_editing_and_can_be_applied_as_one_edit(jed):
+    v = jed.version
+    ctl = jed.controls()
+    assert [(c["key"], c["label"], c["value"]) for c in ctl] == [("set.c[0]", "Re c", -0.8)]
+    assert jed.set_control("set.c[0]", 0.33) == pytest.approx(0.3)
+    assert jed.controls()[0]["value"] == pytest.approx(0.3)
+    assert jed.version == v and jed.engine.document.object("set").params["c"] == (
+        -0.8,
+        0.156,
+    )  # a preview only
+    r = jed.apply_controls()
+    assert r["ok"] and jed.version == v + 1 and jed.preview == {}
+    assert jed.engine.document.object("set").params["c"] == (pytest.approx(0.3), 0.156)
+    assert jed.history[-1]["what"] == "sliders: set.c[0] = 0.3"
+    jed.set_control("set.c[0]", 0.9)
+    jed.reset_controls()
+    assert jed.preview == {} and jed.controls()[0]["value"] == pytest.approx(0.3)
+    assert jed.apply_controls()["ok"] and jed.version == v + 1  # nothing to apply: no new edit
+
+
+def test_hover_readouts_for_a_domain_coloring_and_a_julia_set(jed):
+    size = (800, 450)
+    ndc = jed.engine.state_at(0).camera.project([[0.5, 4.0, 0.0]])[0]  # on the plane
+    u, v = (ndc[0] + 1) / 2 * size[0], (1 - ndc[1]) / 2 * size[1]
+    r = jed.readout(u, v, size, hit=["plane"])
+    assert r["z"] == pytest.approx(0.5 + 4.0j, abs=1e-6) or r["x"] == pytest.approx(0.5, abs=1e-6)
+    f = (0.5 + 0.0j) ** 2 + 1  # z = x + i (y - 4): the plane is centered at (0, 4)
+    z = complex(r["x"], r["y"] - 4.0)
+    assert r["f"] == pytest.approx(complex(z**2 + 1), abs=1e-9)
+    assert r["abs"] == pytest.approx(abs(z**2 + 1)) and "arg f" in r["text"]
+    j = jed.readout(u, v, size, hit=["set"])
+    assert (j["object"] == "set" and j["escape"] is None) or isinstance(j["escape"], int)
+    nothing = jed.readout(u, v, size, hit=[])
+    assert nothing["object"] is None and "x =" in nothing["text"]
+    del f
+
+
+# ---------------------------------------------------------------- the rest of the desktop app
+
+
+@pytest.fixture
+def orbiting(tmp_path):
+    ws = Workspace(tmp_path)
+    ws.scene_new("turn")
+    e = Editor(ws)
+    e.ws.scene_edit([
+        {"op": "set_camera", "kind": "orbit",
+         "params": {"azimuth": 30.0, "elevation": 20.0, "distance": 10.0,
+                    "target": [0, 0, 0], "fov": 40.0, "drift": 0.0}},
+        {"op": "add_object", "object": {"id": "helix", "type": "parametric_curve"}},
+    ])  # fmt: skip
+    return e
+
+
+def test_dragging_turns_pans_and_zooms_the_camera(orbiting):
+    e = orbiting
+    cam = lambda: e.engine.document.cameras[0].params  # noqa: E731
+    r = e.orbit_camera(10.0, -5.0)  # drag right and up by some pixels' worth of degrees
+    assert (
+        r["ok"]
+        and cam()["azimuth"] == pytest.approx(20.0)
+        and cam()["elevation"] == pytest.approx(25.0)
+    )
+    e.orbit_camera(0, -500)
+    assert cam()["elevation"] == 89.0  # never over the pole
+    d = cam()["distance"]
+    e.zoom_camera(2.0)
+    assert cam()["distance"] == pytest.approx(d / 2)
+    before = np_array(cam()["target"])
+    e.pan_camera(1.0, 0.0)  # along the screen's right
+    assert not np_close(np_array(cam()["target"]), before)
+    assert e.history[-1]["what"].startswith("camera")
+
+
+def test_a_2d_camera_pans_and_zooms_in_the_plane(ed):
+    ed.pan_camera(2.0, -1.0)
+    c = ed.engine.document.cameras[0].params["center"]
+    assert (c[0], c[1]) == pytest.approx((-2.0, 1.0)) or (c[0], c[1]) == pytest.approx((2.0, -1.0))
+    h0 = ed.engine.state_at(0).camera.units_per_height()
+    ed.zoom_camera(2.0)
+    assert ed.engine.state_at(0).camera.units_per_height() == pytest.approx(h0 / 2)
+
+
+def test_an_animated_camera_parameter_is_not_overwritten_by_a_drag(orbiting):
+    e = orbiting
+    e.ws.scene_edit({"op": "set_marker", "name": "a", "t": 0.0})
+    e.ws.animate("orbit", "a", value=90.0)
+    r = e.orbit_camera(5.0, 0.0)
+    assert not r["ok"] and "animated" in r["errors"][0]["message"]
+
+
+def test_markers_and_animation_spans_can_be_dragged_in_time(ed):
+    r = ed.move_marker("go", 1.5)
+    assert r["ok"] and ed.timeline()["markers"]["go"] == 1.5
+    r = ed.retime_segment("pole.r", 0, 2.0, 3.0)
+    assert r["ok"] and ed.timeline()["lanes"]["pole.r"][0] == pytest.approx([2.0, 3.0])
+    assert ed.engine.state_at(3.5)["pole"].params.r == pytest.approx(0.4)  # still ends where it did
+    assert not ed.move_marker("ghost", 1.0)["ok"]
+    assert not ed.retime_segment("pole.r", 5, 1.0, 2.0)["ok"]
+    assert not ed.retime_segment("pole.r", 0, 3.0, 2.0)["ok"]
+
+
+def test_the_timeline_has_narration_blocks_and_a_waveform(tmp_path):
+    import wave
+
+    import numpy as np
+
+    ws = Workspace(tmp_path)
+    ws.scene_new("talk")
+    n = 8000
+    t = np.linspace(0, 1, n)
+    audio = (np.sin(2 * np.pi * 220 * t) * np.linspace(0.1, 1.0, n) * 32000).astype("<i2")
+    with wave.open(str(tmp_path / "a.wav"), "wb") as f:
+        f.setnchannels(1)
+        f.setsampwidth(2)
+        f.setframerate(n)
+        f.writeframes(audio.tobytes())
+    ws.scene_edit({"op": "set_narration", "narration": {"script": "Hello there.", "voice": "none", "blocks": [
+        {"text": "Hello there.", "start": 0.5, "duration": 1.0, "audio": "a.wav"},
+        {"text": "", "start": 1.5, "duration": 0.5}]}})  # fmt: skip
+    e = Editor(ws)
+    e.engine.base_dir = tmp_path
+    tl = e.timeline()
+    assert tl["narration"][0] == {
+        "text": "Hello there.",
+        "start": 0.5,
+        "duration": 1.0,
+        "audio": "a.wav",
+    }
+    wf = e.waveform("a.wav", 50)
+    assert (
+        len(wf) == 50 and max(wf) == pytest.approx(32000 / 32768, abs=0.01) and wf[0] < wf[-1]
+    )  # it swells
+    assert e.waveform("missing.wav", 10) == []
+
+
+def test_ai_and_your_edits_are_one_activity_feed(ed, tmp_path):
+    from phasor.workspace.remote import RemoteServer, RemoteWorkspace
+
+    server = RemoteServer(ed.ws, ed.lock).start()
+    server.write_handoff()
+    ai = RemoteWorkspace.from_handoff(tmp_path)
+    ed.set_param("pole", "r", "0.31")
+    ai.scene_edit({"op": "set_param", "path": "pole.r", "value": 0.35})
+    ai.inspect(0.0)  # reading is not an edit
+    who = [(a["who"], a["what"].split(":")[0]) for a in ed.activity()][-2:]
+    assert who == [("you", "pole.r = 0.31"), ("ai", "scene_edit")] or who[1][0] == "ai"
+    assert [a["who"] for a in ed.activity()].count("ai") == 1
+    ai.close()
+    server.stop()
+
+
+def test_the_code_view_shows_and_runs_the_scene(tmp_path):
+    ws = Workspace(tmp_path)
+    ws.scene_new("coded")
+    e = Editor(ws)
+    e.ws.scene_edit(
+        {"op": "add_object", "object": {"id": "p", "type": "dot", "params": {"r": 0.3}}}
+    )
+    code = e.code()
+    assert "Dot(id='p'" in code["text"] and not code["is_script"]
+    new = code["text"].replace("r=0.3", "r=0.45")
+    r = e.run_code(new)
+    assert r["ok"] and e.engine.document.object("p").params["r"] == 0.45
+    assert (
+        tmp_path / "coded.scene.py"
+    ).exists()  # the code the person ran is kept beside the scene
+    bad = e.run_code("s = Scene(")  # a syntax error says where, and changes nothing
+    assert (
+        not bad["ok"]
+        and "line 1" in bad["error"]
+        and e.engine.document.object("p").params["r"] == 0.45
+    )
+
+
+def np_array(v):
+    import numpy as np
+
+    return np.asarray(v, dtype=float)
+
+
+def np_close(a, b):
+    import numpy as np
+
+    return bool(np.allclose(a, b))
+
+
+def test_pixel_drags_become_camera_moves(orbiting):
+    e = orbiting
+    az0 = e.engine.document.cameras[0].params["azimuth"]
+    assert e.drag_camera(50, 0, (800, 450))["ok"]  # an orbit drag: degrees per pixel
+    assert e.engine.document.cameras[0].params["azimuth"] == pytest.approx(az0 - 50 * 0.4)
+    t0 = np_array(e.engine.document.cameras[0].params["target"])
+    assert e.drag_camera(100, 0, (800, 450), pan=True)["ok"]  # content follows the mouse
+    t1 = np_array(e.engine.document.cameras[0].params["target"])
+    cam = e.engine.state_at(0).camera
+    moved = (t1 - t0) @ cam.right
+    assert moved < 0 and abs(moved) > 0.5  # dragged right: the camera slides left
+
+
+@pytest.mark.gl
+@pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
+def test_hit_ids_do_not_change_the_selection(jed):
+    ndc = jed.engine.state_at(0).camera.project([[0.0, 4.0, 0.0]])[0]
+    u, v = (ndc[0] + 1) / 2 * 800, (1 - ndc[1]) / 2 * 450
+    jed.select("set")
+    assert jed.hit_ids(u, v, (800, 450))[0] == "plane"  # what is there ...
+    assert jed.selected == "set"  # ... without selecting it

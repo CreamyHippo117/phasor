@@ -37,6 +37,7 @@
 ## Object types (use these names in add_object)
 
 - `arrow`: start, end
+- `axes`: dims, x_range, y_range, z_range, pos, scale, tick, labels
 - `cayley_graph`: group, generators, pos, r, draw
 - `cayley_table`: group, pos, cell, reveal, subgroup, cosets
 - `clock_diagram`: n, step, pos, r, cosets
@@ -45,10 +46,10 @@
 - `eigen_lines`: matrix, pos, length
 - `epicycles`: points, terms, phase, trace
 - `equation`: parts, colors, pos
+- `flow_lines`: fp, fq, fr, pos, extent, seeds, steps, length, both, progress
 - `fractal`: kind, c, pos, size, max_iter, density, hue, center, zoom, steady
 - `galois_diagram`: primes, pos, width, height, gap
 - `graph`: function, xmin, xmax, pos
-- `haze`: pos, size, shafts, intensity, softness, seed, drift
 - `homomorphism`: n, m, a, pos, r, gap, progress
 - `image_sources`: size, source, order, material, absorption, r
 - `impulse_response`: size, source, listener, order, material, absorption, pos, extent, duration, reveal, show_rt60
@@ -57,6 +58,8 @@
 - `listener`: pos, r
 - `loop_integral`: p, q, measure, center, radius, pos, progress, arrows
 - `matrix`: matrix, pos, digits
+- `parametric_curve`: fx, fy, fz, t_range, samples, pos, scale, progress, color_by, hue
+- `parametric_surface`: fx, fy, fz, u_range, v_range, res, pos, scale, color_by, color_expr, with_map, domain_pos, domain_size, morph
 - `partial_sum`: kind, terms, pos, extent, reveal
 - `pde_field`: kind, time, pos, size, n, diffusivity, speed, mode, feed, kill, seed, scale
 - `pde_modes`: time, pos, extent, length, diffusivity, modes, count, boundary, components, ymax
@@ -76,7 +79,8 @@
 - `taylor`: function, center, order, xmin, xmax, ymax, pos
 - `text`: text, pos, anchor, leader, leader_on
 - `transform_grid`: matrix, pos, extent, spacing, square, basis
-- `vector_field`: p, q, pos, extent, spacing
+- `vector_field`: p, q, pos, extent, spacing, color_by_size
+- `vector_field_3d`: fp, fq, fr, pos, extent, counts, color_by_size
 - `wavefront`: center, radius, rings
 
 ## Docs

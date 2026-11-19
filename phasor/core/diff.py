@@ -71,6 +71,16 @@ def diff_documents(a: Document, b: Document) -> dict[str, Any]:
     for rule in sorted(ac.keys() & bc.keys()):
         if ac[rule] != bc[rule]:
             out.append({"kind": "priority_changed", "rule": rule, "from": ac[rule], "to": bc[rule]})
+    akeys, bkeys = {c.key: c for c in a.controls}, {c.key: c for c in b.controls}
+    for k in sorted(bkeys.keys() - akeys.keys()):
+        out.append(
+            {"kind": "control_added", "control": k, "min": bkeys[k].min, "max": bkeys[k].max}
+        )
+    for k in sorted(akeys.keys() - bkeys.keys()):
+        out.append({"kind": "control_removed", "control": k})
+    for k in sorted(akeys.keys() & bkeys.keys()):
+        if akeys[k] != bkeys[k]:
+            out.append({"kind": "control_changed", "control": k})
     for i in sorted(set(b.retired_ids) - set(a.retired_ids)):
         out.append({"kind": "id_retired", "id": i})
     if a.timeline.camera != b.timeline.camera:

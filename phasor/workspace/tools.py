@@ -86,6 +86,8 @@ class Workspace:
         self._variants: dict[str, list[dict[str, Any]]] = {}
         self._variant_beat = ""
         self.path: Path | None = None  # where the open scene was loaded from / last saved
+        # Who changed the scene, in order: the editor's person ("you") and an attached AI ("ai").
+        self.activity: list[dict[str, Any]] = []
 
     # ------------------------------------------------------------ plumbing
 

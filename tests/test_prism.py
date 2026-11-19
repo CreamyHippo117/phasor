@@ -1,5 +1,5 @@
 """The prism look (owner's reference style, 2026-11-19): typeset math, equations in colored
-parts, a hue running along a curve, warm/cool fringes on the glow, a vignette, soft haze, and
+parts, a hue running along a curve, warm/cool fringes on the glow, a vignette, and
 equations that drift. Each piece is tested on its own, then the demo as a whole."""
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from phasor import Equation, Haze, Line, Scene, Text
+from phasor import Equation, Line, Scene, Text
 from phasor.core import text as tm
 from phasor.render.passes import _Collector
 from tests.conftest import gl_available
@@ -112,39 +112,18 @@ def test_a_hue_runs_along_a_line_only_when_asked():
 # ---------------------------------------------------------------- life: float, drift, hue
 
 
-def test_life_floats_equations_sways_haze_and_flows_hue():
+def test_life_floats_equations_and_flows_hue():
     s = Scene("live", passes=None, life="lively")
     s.add(Equation(id="e", parts=("$x$",)))
     s.add(Equation(id="still", parts=("$y$",), tags=("exact",)))
-    s.add(Haze(id="h"))
     s.add(Line(id="l", points=[(0, 0, 0), (1, 1, 0)], hue_along=1.0))
     e = s.engine
     a, b = e.state_at(1.0), e.state_at(4.0)
     assert a["e"].params.pos != b["e"].params.pos
     assert max(abs(v) for v in a["e"].params.pos) < 0.2  # a drift, not a journey
     assert a["still"].params.pos == b["still"].params.pos == (0.0, 0.0, 0.0)
-    assert a["h"].params.drift != b["h"].params.drift
     assert a["l"].params.hue != b["l"].params.hue
     assert e.state_at(1.0)["e"].params.pos == a["e"].params.pos  # pure in t
-
-
-def test_haze_is_seeded_and_faint():
-    s = Scene("hz", passes=None)
-    s.add(Haze(id="a"))
-    s.add(Haze(id="b", seed=1))
-    st = s.engine.state_at(0.0)
-
-    def pixels(oid):
-        ((_, c),) = _draw(s, oid)
-        return c["pixels"](160, 90, (8.0, 4.5), 9.0)
-
-    one, again, other = pixels("a"), pixels("a"), pixels("b")
-    np.testing.assert_array_equal(one, again)
-    assert np.abs(one - other).max() > 0.01  # another seed, other shafts
-    bg = np.asarray(st.background[:3])
-    assert (one[..., :3] - bg).max() < 0.5  # atmosphere, not a subject
-    assert (one[..., :3] - bg).min() >= -1e-6  # it only adds light
-    assert one[80, :, :3].mean() > one[5, :, :3].mean()  # brighter low in the frame
 
 
 # ---------------------------------------------------------------- the look and the lens

@@ -4,7 +4,8 @@ version = "0.0.1"
 description = "GPU-rendered math animations that an AI can see, check and fix."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "TBD" }
+license = { text = "MIT" }
+license-files = ["LICENSE"]
 dependencies = [
     "kiwisolver>=1.5.1",
     "matplotlib>=3.8",
@@ -23,9 +24,11 @@ gl = ["moderngl>=5.12"]
 gpu = ["cupy-cuda12x[ctk]>=13.3"]
 # Video encoding (NVENC when the driver supports it, libx264 otherwise).
 encode = ["av>=14"]
-all = ["phasor[gl,gpu,encode,mcp,gui]"]
+all = ["phasor[gl,gpu,encode,mcp,gui,notebook]"]
 # The MCP server an AI client connects to (`phasor mcp`).
 mcp = ["mcp>=2.0,<3"]
+# Jupyter widgets for interactive scenes (`phasor.interactive.notebook`).
+notebook = ["ipywidgets>=8"]
 # The editor window (`phasor gui`): Qt widgets only, no web engine.
 gui = [
     "pyside6-essentials>=6.7",
@@ -33,6 +36,10 @@ gui = [
 
 [project.scripts]
 phasor = "phasor.cli:main"
+
+# The editor as a program of its own: no console window on Windows, a launcher elsewhere.
+[project.gui-scripts]
+phasor-gui = "phasor.gui.cli:main"
 
 # Sibling clients add their own commands (`phasor mcp`) without `cli` importing them.
 [project.entry-points."phasor.commands"]
@@ -96,6 +103,7 @@ layers = [
     "phasor.workspace",
     "phasor.scene",
     "phasor.voice",
+    "phasor.interactive",
     "phasor.engine",
     "phasor.domains",
     "phasor.render",

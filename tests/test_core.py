@@ -115,7 +115,7 @@ def test_canonical_file_roundtrip_is_byte_stable(tmp_path):
 def test_migrate_rejects_missing_and_future_versions():
     with pytest.raises(DocumentError, match="schema_version"):
         io.parse_document({"meta": {"title": "t"}})
-    with pytest.raises(DocumentError, match="reads up to 5"):
+    with pytest.raises(DocumentError, match="reads up to 6"):
         io.parse_document({"schema_version": 999, "meta": {"title": "t"}})
 
 
@@ -222,4 +222,4 @@ def test_rasterized_text_never_cuts_off_its_last_glyph(px):
 
 def test_v4_documents_migrate_with_life_off():
     doc = io.parse_document({"schema_version": 4, "meta": {"title": "old"}})
-    assert doc.schema_version == 5 and doc.meta.life == "off" and doc.meta.seed == 0
+    assert doc.schema_version == 6 and doc.meta.life == "off" and doc.meta.seed == 0

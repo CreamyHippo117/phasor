@@ -37,7 +37,6 @@ s.set("camera.height", 6)  # world units visible top to bottom
 | `cx.RiemannSurface` | `kind` (`sqrt`/`cbrt`/`log`), `pos` (branch point), `radius`, `height` (`re`/`im`), `scale`, `rings`, `segments` | `colormap` (colormap, phase), `material` (surface, solid) |
 | `Text` | `text` (`$...$` is typeset math), `pos`, `anchor` (`center`/`left`/`right`), `leader`, `leader_on` (set by layout) | `color` (emphasis, primary), `size` (text, label), `leader` (stroke, hairline) |
 | `Equation` | `parts` (math or text, set on one baseline), `colors` (an emphasis role per part), `pos` | `color` (emphasis, primary), `size` (text, math), `glow` (glow, none) |
-| `Haze` | `pos`, `size`, `shafts`, `intensity`, `softness`, `seed`, `drift` | `color` (emphasis, secondary) |
 
 Every type also has `opacity` (0-1; below 0.5 it stops hiding things behind it), `dim`
 (0-1, owned by `dim_others`; what is drawn is `opacity` x `dim`) and
@@ -442,14 +441,13 @@ color inside a fraction is not possible: split where a part can end.
 **The prism look** (`look="prism"`, the owner's reference style): near-black stage, curves
 glowing with a hue running along them (`Line(hue_along=...)`, the `spectrum` colormap) and
 warm/cool fringes on the glow (theme `[bloom] fringe`), a vignette (`[bloom] vignette`),
-typeset equations that float (life `float`), and `Haze`, faint out-of-focus light behind.
+and typeset equations that float (life `float`).
 No axes unless the scene adds them. `examples/prism_primes.py` is the reference scene.
 
 ```python
-from phasor import Equation, Haze, Line, Scene
+from phasor import Equation, Line, Scene
 
 p = Scene("prism", look="prism", passes=None)
-p.add(Haze(id="haze"))
 p.add(Line(id="wave", points=[(x / 4, (x % 3) / 3, 0) for x in range(-12, 13)]))
 p.add(
     Equation(

@@ -339,6 +339,7 @@ class VectorField(ObjectBase):
         "color": ("emphasis", "secondary"),
         "stroke": ("stroke", "hairline"),
         "glow": ("glow", "none"),
+        "colormap": ("colormap", "sequential"),
     }
 
     class Params(ParamsBase):
@@ -347,6 +348,7 @@ class VectorField(ObjectBase):
         pos: Vec3 = (0.0, 0.0, 0.0)  # centre
         extent: tuple[float, float] = (8.0, 5.0)
         spacing: float = Field(0.8, gt=0.1)
+        color_by_size: bool = False  # color each arrow by its size through the colormap
 
         @field_validator("p", "q")
         @classmethod
@@ -411,7 +413,13 @@ class VectorField(ObjectBase):
                 continue
             a = o + np.array([x - u * scale / 2, y - v * scale / 2, 0.0])
             b = o + np.array([x + u * scale / 2, y + v * scale / 2, 0.0])
-            arrow(ctx, cam, a, b, w, col, me.style["glow"])
+            c = col
+            if p.color_by_size:
+                from phasor.core.color import ramp
+                from phasor.domains.geometry_math import sample_ramp
+
+                c = (*sample_ramp(ramp(me.style["colormap"]), math.hypot(u, v) / top), p.opacity)
+            arrow(ctx, cam, a, b, w, c, me.style["glow"])
 
 
 # ---------------------------------------------------------------- Limit (epsilon-delta)

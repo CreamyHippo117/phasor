@@ -127,6 +127,12 @@ class Engine:
         # The folder that files the document refers to (narration audio) are relative to.
         self.base_dir = Path(base_dir) if base_dir is not None else Path.cwd()
 
+    def fork(self) -> Engine:
+        """A private copy of this engine's current scene (document and overrides) with its own
+        history: edit it freely (a player moving sliders) and this one never changes."""
+        return Engine(self._snap.base, overrides=self._snap.overrides, passes=self._passes,
+                      base_dir=self.base_dir)  # fmt: skip
+
     # ------------------------------------------------------------ files
 
     @classmethod
@@ -249,7 +255,8 @@ class Engine:
                 self.pass_runner(),
                 step=step,
             )
-            snap.lint[step] = (*snap.orphans, *self._bake(snap).issues, *visual)
+            snap.lint[step] = (*snap.orphans, *self._bake(snap).issues,
+                               *lint_rules.control_rules(snap.compiled), *visual)  # fmt: skip
         return snap.lint[step]
 
     def _oracle(self) -> PassOracle | None:
@@ -519,8 +526,9 @@ class Engine:
         return finish(picture, self._snap.compiled.theme, emission)
 
     def timeline(self) -> dict[str, Any]:
-        """What a timeline panel shows: the duration, the markers, and for every animated
-        parameter its spans in resolved seconds (``{"d.pos": [[1.0, 2.0], ...]}``)."""
+        """What a timeline panel shows: the duration, the markers, for every animated
+        parameter its spans in resolved seconds (``{"d.pos": [[1.0, 2.0], ...]}``) and the
+        spoken narration blocks (text, start, duration, audio file)."""
         c = self._snap.compiled
         lanes = {
             path: [[seg.t0, seg.t1] for seg in node.segments]
@@ -528,7 +536,10 @@ class Engine:
             if isinstance(node, ResolvedTrack) and node.segments
         }
         markers = dict(sorted(c.time_map.markers.items(), key=lambda kv: kv[1]))
-        return {"duration": c.duration, "markers": markers, "lanes": lanes}
+        nar = self._snap.compiled.doc.narration
+        blocks = [{"text": b.text, "start": b.start, "duration": b.duration, "audio": b.audio}
+                  for b in (nar.blocks if nar else ()) if b.text]  # fmt: skip
+        return {"duration": c.duration, "markers": markers, "lanes": lanes, "narration": blocks}
 
     def is_moving(self, t0: float, t1: float) -> bool:
         """Whether anything animated by the document runs between ``t0`` and ``t1``: a

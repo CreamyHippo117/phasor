@@ -104,14 +104,12 @@ color welcome. Built as `look="prism"` (theme `prism`):
 | `Equation`: parts in different color roles on one baseline, relation spacing | `domains/basic.py` |
 | Hue along a curve: per-vertex colors through `DrawContext.triangles(colors=)`, `Line(hue_along, hue)`, colormap `spectrum` in every theme | `render/passes.py`, `domains/strokes.py`, `domains/basic.py` |
 | Lens: `fringe` (warm/cool rims on the glow only) and `vignette` kernels, theme `[bloom]` keys, 0 = off | `render/gpu/kernels/post.py`, `render/post.py` |
-| `Haze`: faint out-of-focus light shafts, seeded by `rng(id, seed)` | `domains/basic.py` |
-| Life channels `float` (equations drift) and `drift` (haze sways); lines' hue flows | `core/life.py` |
+| Life channel `float` (equations drift); lines' hue flows | `core/life.py` |
 | The look, the theme (darker stage, amber and cyan terms, lint knobs for this style) | `style/looks/prism.toml`, `style/themes/prism.toml` |
 | Reference scene: E(x) = psi(x) - x + ln 2 pi rebuilt from 1, 5, 20, 60 zeta zeros | `examples/prism_primes.py` |
 
 Verification: `tests/test_prism.py` (math metrics and bitmap/quad agreement, bad TeX refused,
-one baseline and relation spacing, per-vertex hue, life float/drift/hue and `exact`, haze
-seeding and faintness, paint in the middle untouched by the lens and the halo split warm/cool,
+one baseline and relation spacing, per-vertex hue, life float/hue and `exact`, paint in the middle untouched by the lens and the halo split warm/cool,
 the demo's mathematics converging with more zeros, demo lint and critique clean, a software
 golden); the two kernels in `test_kernels.py` three ways. The test of life channels caught an
 edit that had silently not applied (the `float` channel was missing).
@@ -123,3 +121,5 @@ hue running along thin curves on black is the point of this look.
 Untested: Windows, CUDA (the two new kernels ran as NumPy references and compiled for the
 CPU only). The GUI look picker comes with Milestone 10.
 
+
+Correction (2026-11-19, owner): the vertical light shafts (`Haze`) copied a Fourier picture's artifact, not a design element. Removed from the look, the demo and the library; the prism look is near-black with no backdrop.

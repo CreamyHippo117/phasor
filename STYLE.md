@@ -17,7 +17,8 @@ The owner pointed at videos on the explicit formula for primes (Fourier over the
 - **A graph is not apparent unless needed**: no axes, ticks or frames by default.
 - **Nothing is static**: the equations are LaTeX, but they drift; colors flow along curves.
 - Color is welcome: amber and cyan terms in white equations, rainbow-running curves.
-- Behind everything, soft out-of-focus light. `look="prism"` is all of this;
+- Behind everything: nothing. (The light-blue streaks in the Fourier picture were that
+  picture's own artifact, not part of the style.) `look="prism"` is all of this;
   `examples/prism_primes.py` is the reference scene.
 
 ## Alive, not rigid

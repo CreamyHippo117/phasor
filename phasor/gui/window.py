@@ -13,14 +13,28 @@ issue to jump to it) and looks (switch look, pick among variants of a beat).
 from __future__ import annotations
 
 import json
+import keyword
+import re
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QFont, QImage, QPainter, QPen, QPixmap
+from PySide6.QtGui import (
+    QAction,
+    QColor,
+    QFont,
+    QImage,
+    QPainter,
+    QPen,
+    QPixmap,
+    QSyntaxHighlighter,
+    QTextCharFormat,
+    QTextOption,
+)
 from PySide6.QtWidgets import (
     QComboBox,
+    QDockWidget,
     QFormLayout,
     QHBoxLayout,
     QLabel,
@@ -31,6 +45,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSlider,
     QSplitter,
     QTabWidget,
     QVBoxLayout,
@@ -57,12 +72,16 @@ class Viewport(QLabel):
 
     picked = Signal(object)  # the id under a click, or None
     dragged = Signal(str, float, float, tuple)  # id, x, y, viewport size
+    turned = Signal(float, float, tuple, bool)  # pixels dx, dy, viewport size, pan
+    zoomed = Signal(float)  # factor: > 1 moves in
+    hovered = Signal(float, float, tuple)  # viewport point and size
 
     def __init__(self, editor: Editor) -> None:
         super().__init__()
         self.ed = editor
         self.setMinimumSize(320, 180)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setMouseTracking(True)
         self.setStyleSheet("background: #050608; color: #8a93a8;")
         self._press: QPointF | None = None
         self._size = (0, 0)
@@ -113,17 +132,33 @@ class Viewport(QLabel):
 
     def mousePressEvent(self, ev) -> None:
         self._press = ev.position()
+        self._shift = bool(ev.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+
+    def mouseMoveEvent(self, ev) -> None:
+        if self._size[0] and not ev.buttons():
+            self.hovered.emit(*self._local(ev.position()), self._size)
 
     def mouseReleaseEvent(self, ev) -> None:
         if self._press is None or not self._size[0]:
             return
         moved = (ev.position() - self._press).manhattanLength()
         u, v = self._local(ev.position())
-        if moved >= DRAG_PX and self.ed.selected:
-            self.dragged.emit(self.ed.selected, u, v, self._size)
+        if moved >= DRAG_PX:
+            on_selected = False
+            if self.ed.selected:
+                hit = self.ed.hit_ids(*self._local(self._press), self._size)
+                on_selected = bool(hit) and hit[0] == self.ed.selected
+            if on_selected:  # a drag that starts on the selected object moves it
+                self.dragged.emit(self.ed.selected, u, v, self._size)
+            else:  # a drag over anything else moves the camera (shift: slide it)
+                d = ev.position() - self._press
+                self.turned.emit(d.x(), d.y(), self._size, self._shift)
         else:
             self.picked.emit(self.ed.select_at(*self._local(self._press), self._size))
         self._press = None
+
+    def wheelEvent(self, ev) -> None:
+        self.zoomed.emit(1.1 ** (ev.angleDelta().y() / 120))
 
     def resizeEvent(self, ev) -> None:
         super().resizeEvent(ev)
@@ -132,24 +167,36 @@ class Viewport(QLabel):
 
 
 class Timeline(QWidget):
-    """Markers, the animated spans of every parameter (one lane each) and the playhead."""
+    """Narration (with its waveform), markers, the animated spans of every parameter (one
+    lane each) and the playhead. Click or drag to scrub; drag a marker to move it; drag a span
+    to slide it, or its ends to stretch it."""
 
     scrubbed = Signal(float)
+    edited = Signal(object)  # a patch result
 
     LANE = 14
     LABELS = 130  # pixels of lane names on the left
+    NARRATION = 34  # height of the narration lane, when there is narration
+    EDGE = 5  # pixels: grab a span's end within this
 
     def __init__(self, editor: Editor) -> None:
         super().__init__()
         self.ed = editor
         self.setMinimumHeight(70)
-        self.data: dict[str, Any] = {"duration": 0.0, "markers": {}, "lanes": {}}
+        self.setMouseTracking(True)
+        self.data: dict[str, Any] = {"duration": 0.0, "markers": {}, "lanes": {}, "narration": []}
+        self._hits: list[tuple[QRectF, str, tuple]] = []
+        self._drag: tuple | None = None  # (kind, key..., original, current)
+        self._waves: dict[tuple[str, int], list[float]] = {}
 
     def refresh(self) -> None:
         self.data = self.ed.timeline()
         lanes = len(self.data["lanes"])
-        self.setMinimumHeight(min(40 + self.LANE * max(lanes, 1), 320))
+        self.setMinimumHeight(min(40 + self._top() + self.LANE * max(lanes, 1), 340))
         self.update()
+
+    def _top(self) -> int:
+        return self.NARRATION if self.data.get("narration") else 0
 
     def _x(self, t: float) -> float:
         d = max(self.data["duration"], 1e-6)
@@ -159,37 +206,118 @@ class Timeline(QWidget):
         d = max(self.data["duration"], 1e-6)
         return (x - self.LABELS) / max(self.width() - self.LABELS - 8, 1) * d
 
+    def _wave(self, audio: str, bins: int) -> list[float]:
+        key = (audio, bins)
+        if key not in self._waves:
+            self._waves[key] = self.ed.waveform(audio, bins)
+        return self._waves[key]
+
     def paintEvent(self, ev) -> None:
         p = QPainter(self)
         p.fillRect(self.rect(), QColor("#0b0d12"))
         p.setFont(QFont("Sans", 8))
+        self._hits = []
+        top = self._top()
+        for b in self.data.get("narration", []):  # spoken blocks, with their loudness
+            x0, x1 = self._x(b["start"]), self._x(b["start"] + b["duration"])
+            box = QRectF(x0, 16, max(x1 - x0, 3), self.NARRATION - 18)
+            p.fillRect(box, QColor(80, 120, 90, 90))
+            if b.get("audio"):
+                bins = max(int(box.width() / 2), 2)
+                wave = self._wave(b["audio"], bins)
+                p.setPen(QPen(QColor("#7fcf9a"), 1))
+                for k, a in enumerate(wave):
+                    h = a * box.height() / 2
+                    x = box.left() + (k + 0.5) / len(wave) * box.width()
+                    p.drawLine(QPointF(x, box.center().y() - h), QPointF(x, box.center().y() + h))
+            p.setPen(QColor("#b8e0c4"))
+            p.drawText(box.adjusted(2, 0, -2, 0), Qt.AlignmentFlag.AlignVCenter,
+                       p.fontMetrics().elidedText(b["text"], Qt.TextElideMode.ElideRight,
+                                                  int(box.width()) - 4))  # fmt: skip
+        p.fillRect(QRectF(0, 0, self.LABELS - 4, self.height()), QColor("#07080b"))
+        for k, (path, spans) in enumerate(self.data["lanes"].items()):
+            y = 20 + top + k * self.LANE
+            p.setPen(QColor("#6c7891"))
+            p.drawText(QRectF(6, y, self.LABELS - 12, self.LANE), Qt.AlignmentFlag.AlignVCenter,
+                       p.fontMetrics().elidedText(path, Qt.TextElideMode.ElideMiddle,
+                                                  self.LABELS - 12))  # fmt: skip
+            for i, (t0, t1) in enumerate(spans):
+                if self._drag and self._drag[0] == "span" and self._drag[1:3] == (path, i):
+                    t0, t1 = self._drag[-1]
+                r = QRectF(self._x(t0), y + 2, max(self._x(t1) - self._x(t0), 2), self.LANE - 4)
+                p.fillRect(r, QColor(122, 162, 247, 150))
+                self._hits.append((r, "span", (path, i, t0, t1)))
         for name, t in self.data["markers"].items():
+            if self._drag and self._drag[0] == "marker" and self._drag[1] == name:
+                t = self._drag[-1]
             x = self._x(t)
             p.setPen(QPen(QColor("#5a6478"), 1))
             p.drawLine(QPointF(x, 0), QPointF(x, self.height()))
             p.setPen(QColor("#aab3c5"))
             p.drawText(QPointF(x + 3, 12), name)
-        p.fillRect(QRectF(0, 0, self.LABELS - 4, self.height()), QColor("#07080b"))
-        for k, (path, spans) in enumerate(self.data["lanes"].items()):
-            y = 20 + k * self.LANE
-            p.setPen(QColor("#6c7891"))
-            p.drawText(QRectF(6, y, self.LABELS - 12, self.LANE), Qt.AlignmentFlag.AlignVCenter,
-                       p.fontMetrics().elidedText(path, Qt.TextElideMode.ElideMiddle,
-                                                  self.LABELS - 12))  # fmt: skip
-            for t0, t1 in spans:
-                p.fillRect(QRectF(self._x(t0), y + 2, max(self._x(t1) - self._x(t0), 2),
-                                  self.LANE - 4), QColor(122, 162, 247, 150))  # fmt: skip
+            self._hits.append((QRectF(x - self.EDGE, 0, 2 * self.EDGE, self.height()), "marker",
+                               (name, t)))  # fmt: skip
         x = self._x(self.ed.t)
         p.setPen(QPen(QColor("#ffb454"), 2))
         p.drawLine(QPointF(x, 0), QPointF(x, self.height()))
         p.end()
 
+    def _hit(self, pos: QPointF):
+        for rect, kind, data in self._hits:  # markers first (thin, on top of spans)
+            if kind == "marker" and rect.contains(pos):
+                return kind, data
+        for rect, kind, data in self._hits:
+            if kind == "span" and rect.adjusted(-self.EDGE // 2, 0, self.EDGE // 2, 0).contains(
+                pos
+            ):
+                return kind, data
+        return None
+
     def mousePressEvent(self, ev) -> None:
-        self.scrubbed.emit(self._t(ev.position().x()))
+        hit = self._hit(ev.position())
+        if hit and hit[0] == "marker":
+            name, t = hit[1]
+            self._drag = ("marker", name, t, t)
+        elif hit:
+            path, i, t0, t1 = hit[1]
+            x = ev.position().x()
+            mode = ("start" if abs(x - self._x(t0)) <= self.EDGE
+                    else "end" if abs(x - self._x(t1)) <= self.EDGE else "move")  # fmt: skip
+            self._drag = ("span", path, i, mode, self._t(x), (t0, t1), (t0, t1))
+        else:
+            self._drag = None
+            self.scrubbed.emit(self._t(ev.position().x()))
 
     def mouseMoveEvent(self, ev) -> None:
-        if ev.buttons():
-            self.scrubbed.emit(self._t(ev.position().x()))
+        d = self._drag
+        if d is None:
+            if ev.buttons():
+                self.scrubbed.emit(self._t(ev.position().x()))
+            else:
+                hit = self._hit(ev.position())
+                self.setCursor(Qt.CursorShape.SizeHorCursor if hit else Qt.CursorShape.ArrowCursor)
+            return
+        t = max(0.0, self._t(ev.position().x()))
+        if d[0] == "marker":
+            self._drag = ("marker", d[1], d[2], t)
+        else:
+            _, path, i, mode, grab, (o0, o1), _cur = d
+            dt = t - grab
+            new = ((max(0.0, o0 + dt), o1 + dt) if mode == "move"
+                   else (min(t, o1 - 0.05), o1) if mode == "start"
+                   else (o0, max(t, o0 + 0.05)))  # fmt: skip
+            self._drag = ("span", path, i, mode, grab, (o0, o1), new)
+        self.update()
+
+    def mouseReleaseEvent(self, ev) -> None:
+        d, self._drag = self._drag, None
+        if d is None:
+            return
+        if d[0] == "marker" and abs(d[3] - d[2]) > 1e-3:
+            self.edited.emit(self.ed.move_marker(d[1], d[3]))
+        elif d[0] == "span" and max(abs(d[6][0] - d[5][0]), abs(d[6][1] - d[5][1])) > 1e-3:
+            self.edited.emit(self.ed.retime_segment(d[1], d[2], *d[6]))
+        self.update()
 
 
 class Inspector(QWidget):
@@ -334,6 +462,177 @@ class LooksPanel(QWidget):
             self.buttons.addWidget(b)
 
 
+class ControlsPanel(QWidget):
+    """The scene's sliders: moving one previews it in the viewport; Apply makes the values
+    part of the scene (one undo step); Reset drops the preview."""
+
+    moved = Signal()
+    applied = Signal(object)
+
+    RES = 1000
+
+    def __init__(self, editor: Editor) -> None:
+        super().__init__()
+        self.ed = editor
+        self.form = QFormLayout()
+        holder = QWidget()
+        holder.setLayout(self.form)
+        self.note = QLabel("")
+        self.note.setWordWrap(True)
+        apply = QPushButton("Apply to scene")
+        apply.clicked.connect(lambda: self.applied.emit(self.ed.apply_controls()))
+        reset = QPushButton("Reset")
+        reset.clicked.connect(self._reset)
+        row = QHBoxLayout()
+        row.addWidget(apply)
+        row.addWidget(reset)
+        lay = QVBoxLayout(self)
+        lay.addWidget(self.note)
+        lay.addWidget(holder)
+        lay.addLayout(row)
+        lay.addStretch(1)
+        self.sliders: dict[str, QSlider] = {}
+        self.reads: dict[str, QLabel] = {}
+
+    def refresh(self) -> None:
+        while self.form.rowCount():
+            self.form.removeRow(0)
+        self.sliders, self.reads = {}, {}
+        controls = self.ed.controls()
+        self.note.setText("" if controls else "This scene has no sliders. Add one in code: "
+                          "s.control('object.param', min=0, max=1).")  # fmt: skip
+        for c in controls:
+            s = QSlider(Qt.Orientation.Horizontal)
+            s.setRange(0, self.RES)
+            s.setValue(round((c["value"] - c["min"]) / (c["max"] - c["min"]) * self.RES))
+            read = QLabel(f"{c['value']:.4g}")
+            s.valueChanged.connect(lambda v, c=c, read=read: self._moved(c, v, read))
+            box = QHBoxLayout()
+            box.addWidget(s, 1)
+            box.addWidget(read)
+            self.form.addRow(c["label"], box)
+            self.sliders[c["key"]] = s
+            self.reads[c["key"]] = read
+
+    def _moved(self, c: dict, v: int, read: QLabel) -> None:
+        value = self.ed.set_control(c["key"], c["min"] + v / self.RES * (c["max"] - c["min"]))
+        read.setText(f"{value:.4g}")
+        self.moved.emit()
+
+    def _reset(self) -> None:
+        self.ed.reset_controls()
+        self.refresh()
+        self.moved.emit()
+
+
+class PythonHighlighter(QSyntaxHighlighter):
+    """Colors for the code view: keywords, strings, numbers, comments, decorators and the
+    names a scene script uses (Scene, expr, the object classes)."""
+
+    def __init__(self, document) -> None:
+        super().__init__(document)
+
+        def fmt(color: str, bold: bool = False, italic: bool = False) -> QTextCharFormat:
+            f = QTextCharFormat()
+            f.setForeground(QColor(color))
+            if bold:
+                f.setFontWeight(QFont.Weight.Bold)
+            f.setFontItalic(italic)
+            return f
+
+        kw = "|".join(keyword.kwlist)
+        self.rules = [
+            (re.compile(rf"\b({kw})\b"), fmt("#c792ea", bold=True)),
+            (
+                re.compile(r"\b(Scene|expr|geo|cx|pde|calc|algebra|fourier|linalg|ac)\b"),
+                fmt("#7aa2f7"),
+            ),
+            (re.compile(r"\b\d+(\.\d+)?([eE][-+]?\d+)?\b"), fmt("#f78c6c")),
+            (re.compile(r"@\w+"), fmt("#ffcb6b")),
+            (re.compile(r"(\"[^\"\\]*(\\.[^\"\\]*)*\")|('[^'\\]*(\\.[^'\\]*)*')"), fmt("#c3e88d")),
+            (re.compile(r"#[^\n]*"), fmt("#5c6783", italic=True)),
+        ]
+
+    def highlightBlock(self, text: str) -> None:
+        for pattern, f in self.rules:
+            for m in pattern.finditer(text):
+                self.setFormat(m.start(), m.end() - m.start(), f)
+
+
+class CodePanel(QWidget):
+    """The scene as Python. Edit it and press Run (Ctrl+Enter): it becomes the scene. For a
+    script scene this is the script itself (saved on Run); otherwise it is generated from the
+    document and kept beside it as ``name.scene.py``."""
+
+    ran = Signal(object)
+
+    def __init__(self, editor: Editor) -> None:
+        super().__init__()
+        self.ed = editor
+        self.text = QPlainTextEdit()
+        self.text.setFont(QFont("Monospace", 9))
+        self.text.setWordWrapMode(QTextOption.WrapMode.NoWrap)
+        self.highlighter = PythonHighlighter(self.text.document())
+        self.status = QLabel("")
+        run = QPushButton("Run")
+        run.setShortcut("Ctrl+Return")
+        run.clicked.connect(self.run)
+        self.edited = False
+        self._loading = False
+        self._note = ""  # the result of the last Run, kept across refreshes
+        self.text.textChanged.connect(self._changed)
+        lay = QVBoxLayout(self)
+        row = QHBoxLayout()
+        row.addWidget(run)
+        row.addWidget(self.status, 1)
+        lay.addLayout(row)
+        lay.addWidget(self.text)
+
+    def _changed(self) -> None:
+        if not self._loading:
+            self.edited = True
+
+    def refresh(self, force: bool = False) -> None:
+        """Show the scene's code (unless the person has unsaved edits in the box)."""
+        if self.edited and not force:
+            self.status.setText("edited: Run to use it")
+            return
+        code = self.ed.code()
+        self._loading = True
+        self.text.setPlainText(code["text"])
+        self._loading = False
+        self.edited = False
+        where = ("script: " if code["is_script"] else "generated: ") + code["path"]
+        self.status.setText(f"{self._note}   ({where})" if self._note else where)
+
+    def run(self) -> None:
+        r = self.ed.run_code(self.text.toPlainText())
+        if r["ok"]:
+            self._note = "ran: the scene was rebuilt from this code"
+            self.refresh(force=True)
+        else:
+            self._note = ""
+            self.status.setText("not run: " + r["error"])
+        self.ran.emit(r)
+
+
+class ActivityDock(QListWidget):
+    """Who changed the scene, newest last: your edits and an attached AI's."""
+
+    def __init__(self, editor: Editor) -> None:
+        super().__init__()
+        self.ed = editor
+
+    def refresh(self) -> None:
+        self.clear()
+        for a in self.ed.activity():
+            who = "AI" if a["who"] == "ai" else "you"
+            item = QListWidgetItem(f"{who}: {a['what']}")
+            item.setForeground(QColor("#7fb8ff" if who == "AI" else "#d8dee9"))
+            self.addItem(item)
+        self.scrollToBottom()
+
+
 class EditorWindow(QMainWindow):
     def __init__(self, editor: Editor, attach_hint: str = "") -> None:
         super().__init__()
@@ -346,6 +645,14 @@ class EditorWindow(QMainWindow):
         self.inspector = Inspector(editor)
         self.lint = LintPanel(editor)
         self.looks = LooksPanel(editor)
+        self.controls = ControlsPanel(editor)
+        self.code = CodePanel(editor)
+        self.activity = ActivityDock(editor)
+        self.readout = QLabel("")
+        self.statusBar().addPermanentWidget(self.readout)
+        self._hover: tuple | None = None
+        self._hover_done: tuple | None = None
+        self._preview_dirty = False
         left = QSplitter(Qt.Orientation.Vertical)
         left.addWidget(self.viewport)
         left.addWidget(self.timeline)
@@ -355,6 +662,12 @@ class EditorWindow(QMainWindow):
         tabs.addTab(self.inspector, "Inspector")
         tabs.addTab(self.lint, "Lint")
         tabs.addTab(self.looks, "Looks")
+        tabs.addTab(self.controls, "Sliders")
+        tabs.addTab(self.code, "Code")
+        dock = QDockWidget("Who changed what", self)
+        dock.setWidget(self.activity)
+        self.activity.setMaximumHeight(110)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, dock)
         split = QSplitter(Qt.Orientation.Horizontal)
         split.addWidget(left)
         split.addWidget(tabs)
@@ -364,7 +677,14 @@ class EditorWindow(QMainWindow):
         self._actions()
         self.viewport.picked.connect(lambda _: self._after_selection())
         self.viewport.dragged.connect(self._drag)
+        self.viewport.turned.connect(self._turn)
+        self.viewport.zoomed.connect(lambda f: self._report(self.ed.zoom_camera(f)))
+        self.viewport.hovered.connect(lambda u, v, size: setattr(self, "_hover", (u, v, size)))
         self.timeline.scrubbed.connect(self._scrub)
+        self.timeline.edited.connect(self._report)
+        self.controls.moved.connect(lambda: setattr(self, "_preview_dirty", True))
+        self.controls.applied.connect(self._report)
+        self.code.ran.connect(self._ran)
         self.inspector.edited.connect(self._report)
         self.lint.picked.connect(self._jump)
         self.looks.changed.connect(self._report)
@@ -394,7 +714,29 @@ class EditorWindow(QMainWindow):
         if self.playing and self.ed.t >= self.ed.engine.duration:
             self.ed.set_time(0.0)
 
+    def _turn(self, dx: float, dy: float, size: tuple, pan: bool) -> None:
+        self._report(self.ed.drag_camera(dx, dy, size, pan))
+
+    def _ran(self, result: dict) -> None:
+        if result["ok"]:
+            self.setWindowTitle(f"phasor: {self.ed.engine.document.meta.title}")
+            self.refresh_all()
+
+    def _show_readout(self) -> None:
+        """The value under the pointer (f(z), escape count, coordinates) in the status bar."""
+        if self._hover is None or self._hover == self._hover_done:
+            return
+        self._hover_done = self._hover
+        try:
+            self.readout.setText(self.ed.readout(*self._hover)["text"])
+        except Exception:
+            self.readout.setText("")
+
     def tick(self) -> None:
+        self._show_readout()
+        if self._preview_dirty:
+            self._preview_dirty = False
+            self.viewport.refresh()
         if self.playing:
             self.playing = self.ed.play_step(TICK_MS / 1000)
             self.viewport.refresh()
@@ -435,6 +777,9 @@ class EditorWindow(QMainWindow):
         self.inspector.refresh()
         self.lint.refresh()
         self.looks.refresh()
+        self.controls.refresh()
+        self.code.refresh()
+        self.activity.refresh()
 
     def closeEvent(self, ev) -> None:
         self.timer.stop()

@@ -147,8 +147,6 @@ shimmer_period = 3.5
 subtle = 0.5
 float = 0.08  # prism: equations drift this far (world units)
 float_period = 9.0
-drift = 0.03  # prism: the haze sways this share of its width
-drift_period = 20.0
 
 # Choreography verbs: how long each takes (seconds) and how it eases. `stagger` delays each
 # further object when a verb moves several; `dim_level` is the opacity dim_others leaves.

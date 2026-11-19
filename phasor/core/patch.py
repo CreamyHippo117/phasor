@@ -13,10 +13,12 @@ from pydantic import Field, TypeAdapter, ValidationError
 from phasor.core.constraints import normalize_rule, rule_ids
 from phasor.core.ids import split_path
 from phasor.core.issues import DocumentError, Issue
+from phasor.core.objects import get_type
 from phasor.core.schema import (
     CameraSpec,
     ConstraintSpec,
     ConstValue,
+    Control,
     Document,
     ExprSpec,
     Meta,
@@ -124,6 +126,19 @@ class RemoveConstraint(Model):
     rule: str
 
 
+class AddControl(Model):
+    """Make a numeric parameter a slider. Replaces a control on the same parameter."""
+
+    op: Literal["add_control"] = "add_control"
+    control: Control
+
+
+class RemoveControl(Model):
+    op: Literal["remove_control"] = "remove_control"
+    path: str
+    component: int | None = None
+
+
 Op = Annotated[
     AddObject
     | RemoveObject
@@ -138,7 +153,9 @@ Op = Annotated[
     | AddConstraint
     | SetNarration
     | SetCamera
-    | RemoveConstraint,
+    | RemoveConstraint
+    | AddControl
+    | RemoveControl,
     Field(discriminator="op"),
 ]
 
@@ -188,6 +205,45 @@ def _set_param(doc: Document, path: str, value: Any) -> Document:
                 new = item.model_copy(update={"params": {**item.params, param: value}})
                 return doc.model_copy(update={field: (*items[:i], new, *items[i + 1 :])})
     raise _fail("unknown_id", f"no object or camera {target!r}", ids=(target,), path=path)
+
+
+def param_value(doc: Document, path: str) -> Any:
+    """The raw value of parameter ``path`` as the document holds it (``KeyError`` if none)."""
+    target, param = split_path(path)
+    for item in (*doc.objects, *doc.cameras):
+        if item.id == target:
+            if param in item.params:
+                return item.params[param]
+            cls = get_type(item.type) if hasattr(item, "type") else None
+            field = cls.Params.model_fields.get(param) if cls is not None else None
+            if field is not None:  # not set in the document: the type's own default
+                return field.get_default(call_default_factory=True)
+            raise KeyError(path)
+    raise KeyError(path)
+
+
+def _check_controllable(doc: Document, c: Control) -> None:
+    """A control needs a constant numeric parameter (or entry of a vector): not an expression,
+    not something animated by a track."""
+    try:
+        value = param_value(doc, c.path)
+    except KeyError:
+        raise _fail("bad_control", f"no parameter {c.path!r} to control", path=c.path) from None
+    if c.path in doc.timeline.tracks:
+        raise _fail("bad_control", f"{c.path} is animated by a track; a slider cannot drive it",
+                    path=c.path)  # fmt: skip
+    if isinstance(value, dict | str) or value is None:
+        raise _fail("bad_control", f"{c.path} is not a number (or a vector of numbers)",
+                    path=c.path)  # fmt: skip
+    if isinstance(value, list | tuple):
+        if c.component is None or c.component >= len(value):
+            raise _fail("bad_control", f"{c.path} is a vector of {len(value)}: name a component "
+                        f"(0 to {len(value) - 1})", path=c.path)  # fmt: skip
+        if isinstance(value[c.component], dict | str | bool):
+            raise _fail("bad_control", f"{c.path}[{c.component}] is not a number", path=c.path)
+    elif c.component is not None or isinstance(value, bool):
+        raise _fail("bad_control", f"{c.path} is a single number: leave component out",
+                    path=c.path)  # fmt: skip
 
 
 def _replace_object(doc: Document, object_id: str, **update: Any) -> Document:
@@ -277,6 +333,17 @@ def _apply_op(doc: Document, op: Any) -> Document:
                             f"{[c.id for c in cams]}", ids=(op.id,))  # fmt: skip
             return doc.model_copy(
                 update={"cameras": tuple(new if c.id == op.id else c for c in cams)}
+            )
+        case AddControl():
+            _check_controllable(doc, op.control)
+            kept = tuple(c for c in doc.controls if c.key != op.control.key)
+            return doc.model_copy(update={"controls": (*kept, op.control)})
+        case RemoveControl():
+            key = op.path if op.component is None else f"{op.path}[{op.component}]"
+            if all(c.key != key for c in doc.controls):
+                raise _fail("unknown_control", f"no control {key!r}")
+            return doc.model_copy(
+                update={"controls": tuple(c for c in doc.controls if c.key != key)}
             )
         case RemoveConstraint():
             rule = normalize_rule(op.rule)
@@ -370,6 +437,7 @@ def record_tweaks(overrides: Overrides, patch: Patch) -> Overrides:
 
 __all__ = [
     "AddConstraint",
+    "AddControl",
     "AddObject",
     "AddSegment",
     "ClearTrack",
@@ -377,6 +445,7 @@ __all__ = [
     "Op",
     "Patch",
     "RemoveConstraint",
+    "RemoveControl",
     "RemoveMarker",
     "RemoveObject",
     "SetMarker",

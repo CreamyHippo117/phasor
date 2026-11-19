@@ -16,6 +16,12 @@ from __future__ import annotations
 
 import functools
 import math
+import os
+import re
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -30,9 +36,83 @@ def is_math(text: str) -> bool:
     return text.replace("\\$", "").count("$") >= 2
 
 
+ENGINES = ("mathtext", "latex", "auto")
+_engine = os.environ.get("PHASOR_MATH", "mathtext")
+
+
+def set_math_engine(name: str) -> None:
+    """How ``$...$`` is typeset: ``mathtext`` (built in, the default: identical on every
+    machine), ``latex`` (a real TeX: ``latex`` and ``dvipng`` on the PATH, e.g. MiKTeX or TeX
+    Live; an error when they are missing) or ``auto`` (latex when present, else mathtext).
+    Also set by the environment variable ``PHASOR_MATH``. Pictures differ between engines, so
+    keep the same one for a project's golden frames."""
+    global _engine
+    if name not in ENGINES:
+        raise ValueError(f"math engine must be one of {ENGINES}, got {name!r}")
+    _engine = name
+    aspect.cache_clear()
+    math_box.cache_clear()
+    rasterize.cache_clear()
+
+
+def math_engine() -> str:
+    """The engine in effect: ``mathtext`` or ``latex``."""
+    if _engine == "mathtext":
+        return "mathtext"
+    if _engine == "auto":
+        return "latex" if latex_available() else "mathtext"
+    if not latex_available():
+        raise ValueError(
+            "math engine 'latex' needs `latex` and `dvipng` on the PATH (install MiKTeX or "
+            "TeX Live), or use set_math_engine('mathtext') / PHASOR_MATH=mathtext"
+        )
+    return "latex"
+
+
+def latex_available() -> bool:
+    return shutil.which("latex") is not None and shutil.which("dvipng") is not None
+
+
+_TEX_DOC = (
+    "\\documentclass[10pt]{article}\\usepackage{amsmath,amssymb}\\pagestyle{empty}\n"
+    "\\begin{document}%s\\end{document}\n"
+)
+
+
+def _latex(text: str, em_px: int):
+    """(coverage uint8 (h, w), depth in px) of a math string through TeX: ``latex`` makes a
+    DVI, ``dvipng`` draws it white on transparent at ``em_px`` pixels per (10 pt) em."""
+    from PIL import Image as _Image
+
+    dpi = max(8.0, em_px * 72.27 / 10.0)
+    with tempfile.TemporaryDirectory(prefix="phasor_tex_") as d:
+        work = Path(d)
+        (work / "m.tex").write_text(_TEX_DOC % text, encoding="utf-8")
+        run = subprocess.run(
+            ["latex", "-interaction=nonstopmode", "-halt-on-error", "m.tex"],
+            cwd=work, capture_output=True, text=True, timeout=60,
+        )  # fmt: skip
+        if run.returncode != 0 or not (work / "m.dvi").exists():
+            tail = [ln for ln in run.stdout.splitlines() if ln.startswith("!")][:1]
+            raise ValueError(f"cannot typeset {text!r}: {tail[0] if tail else 'latex failed'}")
+        png = subprocess.run(
+            ["dvipng", "-q", "-T", "tight", "--depth", "-bg", "Transparent", "-fg",
+             "rgb 1.0 1.0 1.0", "-D", f"{dpi:.2f}", "-o", "m.png", "m.dvi"],
+            cwd=work, capture_output=True, text=True, timeout=60,
+        )  # fmt: skip
+        if png.returncode != 0 or not (work / "m.png").exists():
+            raise ValueError(f"cannot typeset {text!r}: dvipng failed")
+        found = re.search(r"depth=(-?\d+)", png.stdout)
+        depth = float(found.group(1)) if found else 0.0
+        img = np.asarray(_Image.open(work / "m.png").convert("RGBA"))[..., 3].copy()
+    return img, depth
+
+
 @functools.lru_cache(maxsize=1024)
-def _math(text: str, em_px: int):
+def _math(text: str, em_px: int, engine: str | None = None):
     """(coverage uint8 (h, w), depth in px) of a math string at ``em_px`` pixels per em."""
+    if (engine or math_engine()) == "latex":
+        return _latex(text, em_px)
     import matplotlib
 
     matplotlib.use("Agg", force=False)
@@ -52,13 +132,13 @@ def _math(text: str, em_px: int):
 def check_math(text: str) -> None:
     """Raise ``ValueError`` (naming the problem) when a math string cannot be typeset."""
     if is_math(text):
-        _math(text, 16)
+        _math(text, 16, math_engine())
 
 
 @functools.lru_cache(maxsize=4096)
 def math_box(text: str) -> tuple[float, float, float]:
     """(width, box height, depth below the baseline), each in ems, of a math string."""
-    img, depth = _math(text, _MATH_REF)
+    img, depth = _math(text, _MATH_REF, math_engine())
     h, w = img.shape
     return w / _MATH_REF, h / _MATH_REF, depth / _MATH_REF
 
@@ -91,7 +171,7 @@ def rasterize(text: str, px_height: int) -> np.ndarray:
     px_height = max(int(px_height), 2)
     if is_math(text):  # ``px_height`` is the role's line height; the bitmap is the whole box
         em = max(2, round(px_height * MATH_EM))
-        img = Image.fromarray(_math(text, em)[0])
+        img = Image.fromarray(_math(text, em, math_engine())[0])
         w = max(1, math.ceil(aspect(text) * px_height))
         h = max(1, math.ceil(box(text) * px_height))
         if img.size != (w, h):

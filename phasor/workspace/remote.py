@@ -82,6 +82,7 @@ class RemoteServer:
         if method not in allowed or not isinstance(params, dict):
             return {"ok": False, "error": f"no tool {method!r}", "issues": []}
         with self.lock:
+            before = self._version()
             try:
                 result = getattr(self.workspace, method)(**params)
             except ToolError as e:
@@ -89,7 +90,16 @@ class RemoteServer:
             except TypeError as e:
                 return {"ok": False, "error": f"{method}: {e}", "issues": []}
             self.calls += 1
+            after = self._version()
+            if after != before:  # it changed the scene: the editor shows who did what
+                self.workspace.activity.append({"who": "ai", "what": method, "version": after})
         return {"ok": True, "result": result}
+
+    def _version(self) -> int:
+        try:
+            return self.workspace.engine.version
+        except ToolError:
+            return -1
 
     def start(self) -> RemoteServer:
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True,

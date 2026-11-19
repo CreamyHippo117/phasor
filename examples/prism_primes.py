@@ -4,7 +4,7 @@ Chebyshev's psi(x) adds ln p at every prime power, so E(x) = psi(x) - x + ln 2 p
 error that jumps at each prime. The explicit formula rebuilds it from the zeros of the zeta
 function: each zero 1/2 + i gamma_n contributes one wave, and with more zeros the waves add
 up to the jumps. The true error glows with a hue running along it; the sum over the first
-N zeros (1, 5, 20, then 60) sharpens toward it; the equations drift in front of faint light.
+N zeros (1, 5, 20, then 60) sharpens toward it; the equations drift.
 
 Run:  uv run python examples/prism_primes.py      (prints how close each sum gets)
 """
@@ -14,7 +14,7 @@ import math
 
 import numpy as np
 
-from phasor import Equation, Haze, Line, Scene
+from phasor import Equation, Line, Scene
 
 X0, X1 = 2.0, 50.0  # the stretch of x shown
 SAMPLES = 1400
@@ -68,7 +68,6 @@ def curve(y: np.ndarray, lift: float) -> list[tuple[float, float, float]]:
 s = Scene("prism_primes", look="prism")
 s.set("camera.center", (0.0, 0.0, 0.0))
 s.set("camera.height", 9.0)
-s.add(Haze(id="haze", size=(17.0, 9.6)))
 s.add(Line(id="truth", points=curve(error, -1.6), style={"color": "highlight"}))
 for n in COUNTS:
     s.add(Line(id=f"zeros_{n}", points=curve(-explicit_sum(x, n), -1.6), hue_along=0.0,

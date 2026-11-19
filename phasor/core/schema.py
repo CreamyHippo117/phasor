@@ -15,8 +15,8 @@ from phasor.core.constraints import PRIORITIES, RuleError, normalize_rule, parse
 from phasor.core.ids import is_valid_id, is_valid_name, parent_of, split_path
 from phasor.core.values import normalize
 
-SCHEMA_VERSION = 5  # 2: `constraints` (M2); 3: `retired_ids`; 4: `narration`, `Segment.verb` (M4);
-# 5: `meta.life`, `meta.seed`, `meta.look` (M7)
+SCHEMA_VERSION = 6  # 2: `constraints` (M2); 3: `retired_ids`; 4: `narration`, `Segment.verb` (M4);
+# 5: `meta.life`, `meta.seed`, `meta.look` (M7); 6: `controls` (M12)
 OVERRIDES_VERSION = 1
 
 
@@ -163,11 +163,37 @@ class Meta(Model):
     source: Literal["document", "script"] = "document"
 
 
+class Control(Model):
+    """A slider (SPEC "Interactivity and outputs"): a number a viewer may change. ``path`` is a
+    parameter (``julia.c``); for a vector parameter, ``component`` says which entry (0 is Re
+    of a complex ``c``). The player, the editor, the notebook and the web export all build
+    their sliders from the document's controls."""
+
+    path: str
+    component: int | None = Field(None, ge=0)
+    label: str = ""
+    min: float
+    max: float
+    step: float = Field(0.01, gt=0)
+
+    @model_validator(mode="after")
+    def _shape(self) -> Control:
+        split_path(self.path)
+        if self.max <= self.min:
+            raise ValueError(f"control {self.path!r}: max must be above min")
+        return self
+
+    @property
+    def key(self) -> str:
+        return self.path if self.component is None else f"{self.path}[{self.component}]"
+
+
 class Document(Model):
-    schema_version: Literal[5] = SCHEMA_VERSION
+    schema_version: Literal[6] = SCHEMA_VERSION
     meta: Meta
     objects: tuple[ObjectSpec, ...] = ()
     constraints: tuple[ConstraintSpec, ...] = ()
+    controls: tuple[Control, ...] = ()  # sliders a viewer may move (M12)
     # Ids of removed objects. They may never be used again (SPEC contract 2).
     retired_ids: tuple[str, ...] = ()
     narration: Narration | None = None
@@ -196,6 +222,11 @@ class Document(Model):
         for path in self.timeline.tracks:
             split_path(path)
         _check_unique_rules(self.constraints)
+        keys = [c.key for c in self.controls]
+        if len(keys) != len(set(keys)):
+            raise ValueError(
+                f"duplicate controls: {sorted({k for k in keys if keys.count(k) > 1})}"
+            )
         if self.narration is not None:
             for name, t in self.narration.markers().items():
                 if self.timeline.markers.get(name) != t:

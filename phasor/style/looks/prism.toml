@@ -19,9 +19,6 @@ glow = "soft"
 [defaults.text.style]
 color = "primary"
 
-[defaults.haze.params]
-intensity = 0.14
-
 [defaults.domain_coloring.params]
 softness = 0.7
 

@@ -224,6 +224,38 @@ def _near_fix(c: Compiled, plan: Plan, label_id: str) -> tuple[dict[str, Any], .
     return ({"op": "add_constraint", "rule": f"label({owner}) near {owner}"},)
 
 
+def control_rules(c: Compiled) -> list[Issue]:
+    """A slider whose parameter has gone, or is no longer a plain number, is a lint error."""
+    from phasor.core.patch import param_value
+
+    out = []
+    for ctl in c.doc.controls:
+        try:
+            value = param_value(c.doc, ctl.path)
+        except KeyError:
+            out.append(
+                Issue(
+                    "orphan_control",
+                    f"slider {ctl.key!r} targets a parameter that no longer exists",
+                    path=ctl.path,
+                    fix_hint=f"remove_control {ctl.key} or restore the parameter",
+                )
+            )
+            continue
+        animated = ctl.path in c.doc.timeline.tracks
+        if animated or isinstance(value, dict | str):
+            why = "animated by a track" if animated else "no longer a constant number"
+            out.append(
+                Issue(
+                    "orphan_control",
+                    f"slider {ctl.key!r}: {ctl.path} is {why}",
+                    path=ctl.path,
+                    fix_hint=f"remove_control {ctl.key}",
+                )
+            )
+    return out
+
+
 def strict_rules(c: Compiled) -> list[Issue]:
     """Rules for finished scenes only. ``raw_motion``: transitions written with raw ``to()``
     instead of a choreography verb (their timing is not the theme's)."""

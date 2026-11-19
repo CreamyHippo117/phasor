@@ -20,7 +20,6 @@ _LAZY = {
     "Line": "phasor.domains.basic",
     "Text": "phasor.domains.basic",
     "Equation": "phasor.domains.basic",
-    "Haze": "phasor.domains.basic",
 }
 _MODULES = {  # domain modules: ``from phasor import cx``
     "cx": "phasor.domains.cx",
@@ -30,6 +29,7 @@ _MODULES = {  # domain modules: ``from phasor import cx``
     "pde": "phasor.domains.pde",
     "algebra": "phasor.domains.algebra",
     "calc": "phasor.domains.calc",
+    "geo": "phasor.domains.geometry",
 }
 
 __all__ = ["__version__", *_LAZY, *_MODULES]

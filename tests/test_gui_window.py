@@ -4,6 +4,7 @@ tested in ``test_gui_controller.py``; here: the widgets show it and forward inpu
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
 
@@ -18,7 +19,7 @@ from phasor.workspace.remote import RemoteWorkspace  # noqa: E402
 from tests.conftest import gl_available  # noqa: E402
 
 SCENE = {
-    "schema_version": 5,
+    "schema_version": 6,
     "meta": {"title": "window test"},
     "objects": [
         {"id": "pole", "type": "dot", "params": {"pos": [1.0, 0.5, 0.0], "r": 0.25}},
@@ -122,3 +123,105 @@ def test_the_viewport_shows_the_picture_and_selects_by_click(window):
          else win.viewport.mouseReleaseEvent)(ev)  # fmt: skip
     assert win.ed.selected == "pole"
     assert win.inspector.title.text().startswith("pole")
+
+
+# ---------------------------------------------------------------- the rest of the desktop app
+
+
+@pytest.fixture
+def julia_window(tmp_path):
+    import shutil
+
+    shutil.copy(Path(__file__).parents[1] / "examples" / "julia_explorer.py", tmp_path / "j.py")
+    app, win, server = open_editor(str(tmp_path / "j.py"), show=False)
+    win.resize(1100, 700)
+    yield app, win, server, tmp_path
+    win.timer.stop()
+    server.stop()
+    win.close()
+
+
+def test_the_sliders_tab_previews_and_applies(julia_window):
+    _app, win, _server, _root = julia_window
+    assert set(win.controls.sliders) == {"set.c[0]", "set.c[1]", "set.max_iter"}
+    v = win.ed.version
+    s = win.controls.sliders["set.c[0]"]
+    s.setValue(s.maximum())  # all the way right
+    assert win.ed.preview["set.c[0]"] == pytest.approx(1.2)
+    assert win.controls.reads["set.c[0]"].text() == "1.2"
+    assert win.ed.version == v and win._preview_dirty  # a preview: the scene is untouched
+    win.controls.applied.emit(win.ed.apply_controls())
+    assert win.ed.version == v + 1 and win.ed.engine.document.object("set").params["c"][0] == 1.2
+    win.refresh_all()  # rebuilt from the scene: the slider sits where the value now is
+    assert win.controls.sliders["set.c[0]"].value() == win.controls.RES
+
+
+def test_the_code_tab_runs_edited_code(julia_window):
+    _app, win, _server, root = julia_window
+    assert win.code.text.toPlainText().startswith('"""Milestone 12 exit demo')
+    text = win.code.text.toPlainText().replace("max_iter=120", "max_iter=90")
+    win.code.text.setPlainText(text)
+    assert win.code.edited
+    win.code.run()
+    assert "ran:" in win.code.status.text()
+    assert win.ed.engine.document.object("set").params["max_iter"] == 90
+    assert "max_iter=90" in (root / "j.py").read_text()  # the script on disk is the code
+    win.code.text.setPlainText("s = Scene(")
+    win.code.run()
+    assert win.code.status.text().startswith("not run: line 1")
+    assert win.ed.engine.document.object("set").params["max_iter"] == 90  # nothing changed
+
+
+def test_dragging_the_timeline_moves_markers_and_spans(window):
+    _app, win, _server, _root = window
+    win.ed.ws.scene_edit({"op": "add_object", "object": {"id": "x", "type": "dot"}})
+    win.ed.ws.scene_edit({"op": "set_marker", "name": "mid", "t": 1.4})
+    win.ed.ws.animate("morph", "mid", path="x.r", value=0.5)
+    win.refresh_all()
+    tl = win.timeline
+    tl.resize(900, 200)
+    tl.grab()  # paint once, so the timeline knows where its markers and spans are
+    # the marker line "mid": press on it and drag right by 100 px
+    x = tl._x(1.4)
+    def ev(kind, px):
+        return QMouseEvent(
+            kind,
+            QPointF(px, 40),
+            QPointF(px, 40),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+    tl.mousePressEvent(ev(QMouseEvent.Type.MouseButtonPress, x))
+    tl.mouseMoveEvent(ev(QMouseEvent.Type.MouseMove, x + 100))
+    tl.mouseReleaseEvent(ev(QMouseEvent.Type.MouseButtonRelease, x + 100))
+    t = win.ed.timeline()["markers"]["mid"]
+    assert t == pytest.approx(tl._t(x + 100), abs=1e-6) and t > 1.4
+
+
+def test_camera_drag_and_hover_readout_in_the_window(window):
+    _app, win, _server, _root = window
+    win.viewport.resize(640, 360)
+    win.viewport.refresh()
+    size = win.viewport._size
+    if size[0]:
+        c0 = win.ed.engine.document.cameras[0].params.get("center", (0.0, 0.0, 0.0))
+        win.viewport.turned.emit(30.0, 0.0, size, False)  # in 2D a drag slides the picture
+        assert win.ed.engine.document.cameras[0].params["center"] != c0
+        win.viewport.zoomed.emit(2.0)
+    win._hover = (10.0, 10.0, (640, 360))
+    win._show_readout()
+    assert win.readout.text().startswith("x = ")
+
+
+def test_the_activity_dock_lists_your_edits_and_the_ais(window):
+    _app, win, _server, root = window
+    win.ed.set_param("pole", "r", "0.3")
+    remote = RemoteWorkspace.from_handoff(root)
+    remote.scene_edit({"op": "set_param", "path": "pole.r", "value": 0.31})
+    win.tick()
+    items = [win.activity.item(i).text() for i in range(win.activity.count())]
+    assert any(t.startswith("you: pole.r") for t in items) and any(
+        t.startswith("AI:") for t in items
+    )
+    remote.close()

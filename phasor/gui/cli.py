@@ -30,3 +30,13 @@ def _run(args: argparse.Namespace) -> int:
     finally:
         if server is not None:
             server.stop()
+
+
+def main(argv: list[str] | None = None) -> int:
+    """``phasor-gui [SCENE]``: the editor as a program of its own (a Start-menu or desktop
+    shortcut), without the rest of the command line."""
+    p = argparse.ArgumentParser(prog="phasor-gui", description="the phasor editor")
+    p.add_argument("scene", nargs="?", help="a .phasor.json or a .py builder script")
+    p.add_argument("--root", help="the folder an attached AI may read and write")
+    p.add_argument("--no-ai", action="store_true", help="do not let `phasor mcp --attach` in")
+    return _run(p.parse_args(argv))

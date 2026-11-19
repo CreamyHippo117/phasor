@@ -22,6 +22,7 @@ from phasor.core.ids import file_stem
 from phasor.core.objects import ObjectBase
 from phasor.core.patch import (
     AddConstraint,
+    AddControl,
     AddObject,
     AddSegment,
     SetCamera,
@@ -29,11 +30,13 @@ from phasor.core.patch import (
     SetNarration,
     SetParam,
 )
-from phasor.core.schema import Document, ExprSpec, MarkerRef, Meta, ObjectSpec, Segment
+from phasor.core.schema import Control, Document, ExprSpec, MarkerRef, Meta, ObjectSpec, Segment
 from phasor.engine import Engine
 from phasor.style.looks import DEFAULT_THEME, load_look
 from phasor.time import verbs as _verbs
 from phasor.time.narration import block_of, repace
+
+TimeArg = float | tuple[str, float] | str  # seconds, ("marker", offset) or "marker"
 
 
 def expr(source: str) -> ExprSpec:
@@ -199,6 +202,14 @@ class Scene:
         """Set a parameter (objects and cameras): ``s.set("camera.height", 6)``."""
         self._apply(SetParam(path=path, value=value))
 
+    def control(self, path: str, *, min: float, max: float, step: float = 0.01, label: str = "",
+                component: int | None = None) -> None:  # fmt: skip
+        """Make a parameter a slider (``interactive``): the player, the editor, a notebook and
+        the web export let a viewer move it between ``min`` and ``max``. For a vector
+        parameter (a complex ``c``), ``component`` picks the entry: 0 is Re, 1 is Im."""
+        self._apply(AddControl(control=Control(path=path, component=component, label=label,
+                                               min=min, max=max, step=step)))  # fmt: skip
+
     def constrain(self, rule: str, *, priority: str = "strong") -> None:
         """Add a layout rule: ``s.constrain("label(pole) near pole")``. The engine solves it
         at every key time; a rule it cannot satisfy shows up in ``engine.lint()``."""
@@ -237,6 +248,23 @@ class Scene:
         extra = [min(len(busy.get(k, ())) * n["pause_per_change"], n["pause_max"])
                  for k in range(len(doc.narration.blocks))]  # fmt: skip
         self._apply(SetNarration(narration=repace(doc.narration, extra, n["gap"], n["lead"])))
+
+    def segment(self, path: str, t0: TimeArg, t1: TimeArg, to: Any, *,
+                ease: str = "smooth") -> None:  # fmt: skip
+        """A raw transition between two times, each seconds or a marker (``"go"`` or
+        ``("go", 0.5)``: the marker plus an offset): for spans that start and end at
+        different markers. Prefer a verb or ``s.at(...).to(...)`` when one marker is enough."""
+
+        def ref(t):
+            if isinstance(t, str):
+                return MarkerRef(marker=t)
+            if isinstance(t, tuple):
+                return MarkerRef(marker=t[0], offset=float(t[1]))
+            return float(t)
+
+        self._apply(
+            AddSegment(path=path, segment=Segment(t0=ref(t0), t1=ref(t1), to=to, ease=ease))
+        )
 
     def marker(self, name: str, t: float) -> None:
         """Place a narration marker at ``t`` seconds."""
