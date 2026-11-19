@@ -432,7 +432,9 @@ assert calm.engine.state_at(2.0)["pole"].params.pos != calm.engine.state_at(0.0)
 ```
 
 **Math.** Any text written as `$...$` is typeset (TeX math through matplotlib's mathtext,
-Computer Modern, no TeX install): `Text(text=r"$\psi(x) \approx x - \ln 2\pi$")`. Its box can
+Computer Modern, no TeX install; for a real TeX set `PHASOR_MATH=latex`, or `auto`, with `latex`
+and `dvipng` on the PATH (MiKTeX, TeX Live); `mathtext` stays the default so pictures match
+across machines): `Text(text=r"$\psi(x) \approx x - \ln 2\pi$")`. Its box can
 be taller than a line (sums, fractions) and layout sees the real size. Bad TeX is refused when
 the object is added. For terms in different colors, `Equation(parts=(...), colors=(...))` sets
 parts side by side on one baseline (a relation at a part's edge gets TeX's thick space). A
@@ -632,6 +634,146 @@ assert info("cosets")["normal"] and info("cosets")["quotient"]["order"] == 4
 assert info("green")["theorem_holds"]
 ```
 
+## Space: axes, curves, surfaces and fields (`geo`)
+
+`from phasor import geo`. Give the scene an orbit camera (`s.use_camera("orbit")`) to turn
+around them: the `orbit` verb, or drag in the editor. Formulas are text in `t` (curves) or `u`,
+`v` (surfaces) or `x`, `y`, `z` (fields), read by the whitelist parser, never run as Python.
+
+- `geo.Axes(dims=3, x_range=(-3, 3, 1), z_range=..., labels=("x", "y", "z"))`: axes with ticks
+  (ranges are (min, max, tick step); `scale` is world units per unit).
+- `geo.ParametricCurve(fx="cos(t)", fy="sin(t)", fz="0.2*t", t_range=(0, 37.7),
+  color_by="t")`: a curve; `color_by` is `none`, `t`, `speed`, `x`, `y` or `z` (through the
+  `colormap`); `progress` traces it. Semantics: length, closed, color range.
+- `geo.ParametricSurface(fx=..., fy=..., fz=..., u_range, v_range, res, color_by="height")`:
+  a surface; `color_by` is `height`, `u`, `v`, `radius`, or `expr` with `color_expr` (a formula
+  in `u v x y z`). **Mapping input to output:** `with_map=True` draws the flat (u, v) input
+  rectangle at `domain_pos` as a faint grid and `morph` (0 to 1, animate it) carries the
+  surface from that flat input to its true shape. Semantics give the `area` (a half sphere of
+  radius r reports 2 pi r^2).
+- `geo.VectorField3D(fp="-y", fq="x", fr="0", extent=(4, 4, 4), counts=(5, 5, 3))`: arrows
+  colored by size; semantics give divergence and curl. `calc.VectorField(color_by_size=True)`
+  does the same in a plane.
+- `geo.FlowLines(fp=..., fq=..., fr=..., seeds=(5, 5, 1), length=3.0, progress=...)`: where a
+  particle dropped at each seed would travel, colored by the field's size along the line.
+
+```python
+import math
+
+from phasor import Scene, expr, geo
+
+s = Scene("space", passes=None)
+s.use_camera("orbit", azimuth=40.0, elevation=25.0, distance=14.0, drift=0.0)
+s.add(geo.Axes(id="axes", labels=("x", "y", "z")))
+s.add(
+    geo.ParametricCurve(
+        id="helix", fx="cos(t)", fy="sin(t)", fz="0.2*t", t_range=(0.0, 6 * math.pi), color_by="t"
+    )
+)
+s.add(
+    geo.ParametricSurface(
+        id="ball",
+        fx="2*sin(u)*cos(v)",
+        fy="2*sin(u)*sin(v)",
+        fz="2*cos(u)",
+        u_range=(0.0, math.pi / 2),
+        v_range=(0.0, 2 * math.pi),
+        color_by="height",
+        with_map=True,
+        morph=expr("t / 4"),
+        pos=(4, 0, 0),
+        domain_pos=(-4, 0, 0),
+    )
+)
+e = s.engine
+assert abs(e.inspect(4.0, id="ball")["objects"][0]["semantic"]["area"] - 2 * math.pi * 4) < 0.1
+assert e.inspect(0, id="axes")["objects"][0]["semantic"]["axes"]["x"]["ticks"] == 6
+```
+
+## Interactive scenes: sliders, the notebook, a web page
+
+A scene marks numbers a viewer may change: `scene.control("set.c", component=0, min=-1.2,
+max=1.2, step=0.05, label="Re c")` (a vector parameter needs its `component`; a parameter
+animated by a track cannot be a slider; the document keeps the controls, so they travel with
+the scene and show in `diff`). Everything interactive builds on `phasor.interactive.Player`,
+which moves sliders on a private copy of the scene (the scene itself never changes):
+
+- the **editor**'s Sliders tab previews them in the viewport ("Apply to scene" makes the
+  values part of the scene as one undo step); hovering shows f(z), |f| and arg f over a
+  domain coloring, and the escape count over a Julia or Mandelbrot set;
+- **Jupyter**: `from phasor.interactive import notebook; notebook(scene.engine)` returns
+  widgets (needs `uv sync --extra notebook`);
+- **a web page**: `phasor web scene.py -o page.html --steps 7` or `export_web(engine, path)`
+  bakes a picture for every combination of slider positions into one self-contained HTML file
+  (no server, no network; dragging on the picture moves the first two sliders). It refuses
+  more than 600 pictures: use fewer `steps`.
+
+`examples/julia_explorer.py` is the exit demo: a Julia set with sliders for Re c, Im c and the
+iteration depth.
+
+```python
+from phasor import Scene, cx
+from phasor.interactive import Player, export_web
+
+s = Scene("explorer", passes=None)
+s.add(cx.Fractal(id="set", kind="julia", c=(-0.8, 0.156), max_iter=60))
+s.control("set.c", component=0, min=-1.2, max=1.2, step=0.05, label="Re c")
+s.control("set.c", component=1, min=-1.2, max=1.2, step=0.05, label="Im c")
+
+player = Player(s.engine)
+assert player.set("set.c[0]", 0.33) == 0.35  # clamped to the range, rounded to the step
+assert player.state_at(0.0)["set"].params.c[0] == 0.35
+assert s.engine.document.object("set").params["c"] == (-0.8, 0.156)  # the scene is untouched
+```
+
+## Manim import
+
+`phasor manim lecture.py -o lecture.phasor.json` (or opening the `.py` in `phasor gui`, or
+`scene_open` on a server that allows scripts) runs a Manim Community script *unchanged*
+against a stand-in for the `manim` module and records the scene it builds: `self.add` and
+`self.play` become objects and transitions at Manim's own times (`run_time`, `wait`), in
+Manim's frame (8 units tall, y up). The result is a plain phasor scene you can edit, lint and
+render. It runs your code: only import scripts you trust.
+
+| Carries over | How |
+| --- | --- |
+| `Scene`, `MovingCameraScene`, `ThreeDScene` (`set_camera_orientation`, ambient rotation) | `construct` runs; 3D uses the orbit camera |
+| `Dot`, `Circle`, `Square`, `Rectangle`, `Triangle`, `Polygon`, `RegularPolygon`, `Line`, `Arrow`, `Vector`, `ParametricFunction` | `dot`, `line` (closed outlines), `arrow` |
+| `Text`, `Tex`, `MathTex` | `text`; math is typeset (`$...$`); `font_size` picks the nearest text role |
+| `Axes`, `NumberPlane`, `axes.plot`, `c2p` | `axes` and a sampled `line` |
+| `VGroup` and `shift`, `move_to`, `next_to`, `to_edge`, `to_corner`, `scale`, `rotate`, `arrange`, `align_to` | positions are computed as Manim would |
+| `Create`, `Uncreate`, `Write`, `FadeIn`, `FadeOut`, `GrowFromCenter`, `Transform`, `ReplacementTransform`, `Rotate`, `Indicate`, `MoveToTarget`, `AnimationGroup`, `LaggedStart`, `Succession`, `.animate` | tracks on `progress`, `opacity`, `pos`, `r`, `points` |
+| Colors (`RED`, `"#58C4DD"`) | the nearest style role (`primary`, `secondary`, `muted`, `highlight`, `danger`) |
+
+What does not: fills (drawn as outlines), updaters and `always_redraw` (baked at their first
+look), `ValueTracker` animations, arbitrary colors (roles only), font sizes (roles), `Transform`
+between different shapes (a crossfade). Each is listed in `ManimImport.warnings` (printed by
+the command); a Manim name phasor lacks raises an error that says so.
+
+```python
+import tempfile
+from pathlib import Path
+
+from phasor.importers import import_manim
+
+path = Path(tempfile.mkdtemp()) / "demo.py"
+path.write_text(
+    "from manim import *\n"
+    "class Demo(Scene):\n"
+    "    def construct(self):\n"
+    "        c = Circle(radius=1, color=BLUE)\n"
+    "        self.play(Create(c), run_time=2)\n"
+    "        self.play(c.animate.shift(RIGHT * 2), run_time=1)\n"
+    "        self.wait(1)\n"
+)
+result = import_manim(path)
+assert result.duration == 4.0 and len(result.scene.engine.document.objects) == 1
+state = result.scene.engine.state_at
+assert state(0.0)["circle_1"].params.progress == 0.0
+assert state(2.0)["circle_1"].params.progress == 1.0
+assert abs(state(3.5)["circle_1"].params.points[0][0] - 3.0) < 1e-9  # moved 2 to the right
+```
+
 ## 3D: orbit camera, surfaces, camera goals
 
 `use_camera("orbit")` makes the scene 3D: a perspective camera on a sphere around
@@ -700,7 +842,9 @@ would notice) and `fix_hints`.
 | `phasor render SCENE [-o OUT] [--preset preview\|final\|4k] [--fps F] [--start S] [--end E] [--frame T]` | M3 | Video (`.mp4`; `.mov` is ProRes; a folder or `%05d.png` is a PNG sequence) or one PNG with `--frame` |
 | `phasor bench [--width W] [--height H]` | M3 | ms per frame per kernel and peak VRAM; saved in `benchmarks/` |
 | `phasor mcp [--root DIR] [--allow-scripts] [--attach]` | M5, M10 | MCP server; `--attach` edits the scene open in a running `phasor gui` |
-| `phasor gui [SCENE] [--root DIR] [--no-ai]` | M10 | The editor (needs `uv sync --extra gui`) |
+| `phasor gui [SCENE] [--root DIR] [--no-ai]` | M10 | The editor (needs `uv sync --extra gui`); also `phasor-gui`; a Manim script opens too |
+| `phasor web SCENE [-o PAGE.html] [--steps N]` | M12 | Bake a self-contained interactive web page from the scene's sliders |
+| `phasor manim SCRIPT [--scene NAME] [-o OUT] [--code]` | M13 | Import a Manim Community scene as a phasor scene |
 
 `SCENE` is a `.phasor.json` document or a `.py` script that defines exactly one `Scene`.
 
@@ -713,7 +857,13 @@ or text and press Enter; style roles as menus; what the inspector reads), **lint
 issue to jump to its object and time) and **looks** (switch the whole scene to a look; show
 the variants of a beat and pick one: recorded in `style/choices.jsonl` as the person's
 choice). Ctrl+Z / Ctrl+Shift+Z / Ctrl+S undo, redo, save. Every edit is one
-`Engine.apply`, so a script scene keeps them as overrides.
+`Engine.apply`, so a script scene keeps them as overrides. Also: drag empty space to turn the 3D
+camera (shift-drag or a 2D scene: slide it), the wheel zooms; the **Sliders** tab previews the
+scene's controls; the **Code** tab shows the scene as Python (the script itself, or one
+generated from the document) with highlighting: edit and Run (Ctrl+Enter) to rebuild the scene;
+the timeline shows narration with its waveform, and lets you drag markers and animation spans
+(or their ends) to retime them; the **Who changed what** dock lists your edits and an attached
+AI's; hovering shows values under the pointer. `phasor-gui` starts the editor as a program.
 
 While it is open, `phasor mcp --attach --root <same folder>` serves the editor's own live
 scene to an AI: its edits show up in the window, the window's edits are what it inspects.

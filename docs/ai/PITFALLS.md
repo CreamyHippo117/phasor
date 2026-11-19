@@ -291,3 +291,27 @@ own).
 
 `hue_along` is the look's default for lines. Give a line that should be one color
 `hue_along=0` (and a `color` role); keep the rainbow for the curve that is the subject.
+
+## A Manim script imports but looks different
+
+Phasor's import records the scene a script builds; it does not reimplement Manim. Fills are
+outlines, colors are the nearest style *role*, updaters and `always_redraw` keep their first
+look, and `Transform` between different shapes crossfades. `phasor manim` prints each of these
+as a `note:`. If a name is missing the error says `X is not supported ... yet`: replace it in
+the script, or add the equivalent phasor object after importing.
+
+## `add_control` says "name a component"
+
+A vector parameter (`c`, `pos`) needs `component`: 0 is the first entry. A parameter that an
+animation track drives, or that holds an expression, cannot be a slider.
+
+## The web page is coarse
+
+`phasor web` bakes pictures in advance: each slider has `--steps` positions (5 by default) and
+the page shows the nearest. More steps means a bigger file (the limit is 600 pictures in all).
+Time can be a slider too: `--time-steps 12`.
+
+## Math looks different on another machine
+
+Only with `PHASOR_MATH=latex` or `auto`: a real TeX draws with its own fonts and spacing. The
+default `mathtext` is built in and identical everywhere; keep one engine per project.

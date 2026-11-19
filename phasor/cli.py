@@ -118,6 +118,29 @@ def _cmd_storyboard(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_web(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from phasor.core.issues import DocumentError
+    from phasor.interactive import export_web
+    from phasor.scene import load
+
+    try:
+        engine = load(args.scene)
+        if not engine.document.controls:
+            print("phasor web: the scene has no sliders (add some with scene.control(...)); "
+                  "writing a page with only the picture", file=sys.stderr)  # fmt: skip
+        out = Path(args.out or Path(args.scene).name.split(".")[0] + ".html")
+        info = export_web(engine, out, size=(args.width, args.height), steps=args.steps,
+                          time_steps=args.time_steps)  # fmt: skip
+    except (DocumentError, OSError, ValueError, RuntimeError) as e:
+        print(f"phasor web: {e}", file=sys.stderr)
+        return 1
+    axes = ", ".join(f"{a['label']} x{a['steps']}" for a in info["axes"]) or "no sliders"
+    print(f"wrote {info['path']}: {info['frames']} pictures ({axes}), {info['bytes'] // 1024} KB")
+    return 0
+
+
 def _cmd_render(args: argparse.Namespace) -> int:
     from pathlib import Path
 
@@ -268,6 +291,15 @@ def build_parser() -> argparse.ArgumentParser:
     st.add_argument("--min", type=int, default=3, help="appearances needed to call a favorite")
     st.add_argument("--json", action="store_true", help="machine-readable output")
     st.set_defaults(func=_cmd_style)
+
+    w = sub.add_parser("web", help="bake an interactive web page (sliders) from a scene")
+    w.add_argument("scene", help="a .phasor.json or .py scene with controls")
+    w.add_argument("-o", "--out", help="the HTML file (default: <scene>.html)")
+    w.add_argument("--steps", type=int, default=5, help="positions per slider (default 5)")
+    w.add_argument("--time-steps", type=int, default=1, help="also bake this many moments of time")
+    w.add_argument("--width", type=int, default=320)
+    w.add_argument("--height", type=int, default=180)
+    w.set_defaults(func=_cmd_web)
 
     b = sub.add_parser("bench", help="ms per frame per kernel and peak VRAM")
     b.add_argument("--width", type=int, default=1920)

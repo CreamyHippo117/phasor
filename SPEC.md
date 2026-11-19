@@ -92,7 +92,7 @@ Every object type implements the `SceneObject` protocol. A type missing any memb
 
 **6. Layer rules**
 
-- Allowed import direction: `core` ← `style` ← `time` ← `layout` ← `inspect` ← `render` ← `domains` ← `engine` ← `voice` ← `scene` ← (`gui`, `mcp`, `cli`, `sketch`), as placed by ADR 0001 (owner-approved 2026-11-18). The clients are siblings and never import each other.
+- Allowed import direction: `core` ← `style` ← `time` ← `layout` ← `inspect` ← `render` ← `domains` ← `engine` ← `interactive` ← `voice` ← `scene` ← `importers` ← `workspace` ← (`gui`, `mcp`, `cli`, `sketch`), as placed by ADR 0001 (owner-approved 2026-11-18; `interactive`, `importers` and `workspace` are new layers added in Milestones 10 to 13 between the engine and the clients, which changes no existing import). The clients are siblings and never import each other.
 - `core`, `style`, `time` and `layout` import no GPU library, so they test on any machine.
 - Enforce with `import-linter` in CI from Milestone 0.
 
@@ -492,10 +492,16 @@ One scene exports to several outputs without rewriting it.
 
 - **Video**: MP4/H.264/H.265 (NVENC), ProRes, PNG/EXR sequences, GIF/WebM loops; vertical presets for shorts.
 - **Stills**: high-res PNG/EXR posters, SVG for 2D vector content.
-- **Interactive desktop player**: the live window with sliders bound to state variables (e.g. `julia.c`, `room.absorption`), drag handles on objects (move a contour, a source, a wall), hover readouts (f(z), |f|, arg f, winding number, pressure).
+- **Interactive desktop player** (as built, Milestone 12): the live window with sliders bound to state variables (e.g. `julia.c`, `room.absorption`), drag handles on objects (move a contour, a source, a wall), hover readouts (f(z), |f|, arg f, winding number, pressure).
 - **Interactive web export** (later milestone): WebGPU/WebGL build of the scene with the same sliders; GPU kernels transpiled to WGSL where possible, prebaked textures otherwise.
 - **Notebook widget**: inline player in Jupyter for exploration.
 - Parameters marked `interactive=True` become sliders automatically; constraints and linter keep running live.
+
+**As built (Milestone 12).** Sliders are document **controls** (schema v6: `Control(path, component, label, min, max, step)`; ops `add_control`/`remove_control`; `Scene.control`; lint `orphan_control`; diff entries), declared by the scene instead of an `interactive=True` flag on each parameter. `phasor.interactive.Player` moves them on a private `Engine.fork()` (the scene never changes); the editor's Sliders tab previews them (Apply is one undo step), `notebook(engine)` returns ipywidgets (extra `notebook`), and `export_web` / `phasor web` bake one picture per combination of slider positions (and optional time steps) into a single offline HTML file with the same sliders, refusing more than 600 pictures. Not built, by decision: WebGPU/WGSL kernels (baked pictures work everywhere with no server, at the cost of a coarse grid), drag handles that edit through sliders, hover readouts beyond f(z)/|f|/arg f and the escape count (no winding number or pressure yet).
+
+**As built (Milestone 13, Manim import).** `phasor/importers/manim.py` runs a Manim Community script unchanged with a stand-in `manim` module on the import path and records the phasor scene it builds at Manim's own times (see `docs/ai/API.md` "Manim import" for the table). It runs the script: only import scripts you trust. Colors become style roles, fills outlines, updaters and `always_redraw` are baked, `Transform` between different shapes crossfades; each is a warning. `phasor manim`, and `scene_open` / `phasor gui` on a script that imports `manim`; the result is a plain (not script-locked) scene.
+
+**As built (space and math, 2026-11-19).** `phasor.geo`: `Axes`, `ParametricCurve`, `ParametricSurface` (colored by an output; `with_map` carries a flat input square onto the output shape), `VectorField3D`, `FlowLines`; `calc.VectorField(color_by_size)`. The vertical light shafts (`Haze`) of the first prism look were removed at the owner's request (the Fourier picture's own artifact, not a style element). The editor gained a code tab (the scene as Python: the script, or one generated from the document; Run rebuilds the scene), 3D orbit/pan/zoom by dragging, a narration lane with waveform, draggable markers and spans, a who-changed-what dock and hover readouts; `phasor-gui` starts it as a program. LICENSE: MIT.
 
 ## Sketch-driven authoring
 
@@ -680,8 +686,8 @@ Build the AI-visible core first, then beauty, then breadth. Each milestone ends 
 | 9 | Domains wave 2 | `pde`, `algebra`, `calc`, perturbation deep zoom | Heat equation, dihedral group and a 1e-30 zoom | Sonnet; strong for perturbation |
 | 10 | GUI editor | Viewport, timeline, inspector, lint panel, MCP attach, variant picker | Edit a scene by hand and by AI in one session (built on the prism scene: the reverb scene was skipped) | Sonnet |
 | 11 | ~~Sketch~~ | **Dropped by the owner (2026-11-19).** Was: stroke capture, classification, fitting, handwriting to LaTeX, paint-over | — | — |
-| 12 | Interactive export | Desktop sliders, notebook widget, then web export | Julia explorer with a c slider | Sonnet |
-| 13 | ~~Manim import~~ | **Dropped by the owner (2026-11-19).** Was: a converter for common Manim CE scenes | — | — |
+| 12 | Interactive export | Desktop sliders, notebook widget, then web export | Julia explorer with a c slider (built; web export is baked pictures, not WebGPU) | Sonnet |
+| 13 | Manim import | **Reinstated by the owner (2026-11-19).** Runs Manim CE scripts unchanged against a stand-in module and records the phasor scene they build | An old Manim reverb scene runs in phasor (built: `examples/manim_reverb.py`) | Sonnet |
 
 ## Build plan and kickoff prompt
 
@@ -734,5 +740,5 @@ Rules for every milestone:
 - [ ] Graphics backend long-term: stay on ModernGL or move to wgpu-py for WebGPU export.
 - [ ] TTS provider default (local vs cloud), or your own voice only.
 - [ ] Which GPU you have (VRAM sets FDTD grid sizes and tile sizes).
-- [ ] TeX backend: MiKTeX + dvisvgm vs MathJax to SVG.
+- [x] TeX backend: both, by choice: matplotlib mathtext built in (default, identical everywhere) and a real TeX (`latex` + `dvipng`, MiKTeX or TeX Live) via `PHASOR_MATH=latex|auto` (Milestone 13 session, 2026-11-19).
 - [x] License: MIT (owner's lean, chosen 2026-11-19; `LICENSE`). Whether to publish it is still open.

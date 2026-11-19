@@ -88,6 +88,7 @@ class Workspace:
         self.path: Path | None = None  # where the open scene was loaded from / last saved
         # Who changed the scene, in order: the editor's person ("you") and an attached AI ("ai").
         self.activity: list[dict[str, Any]] = []
+        self.import_notes: list[str] = []  # what the last Manim import could not carry over
 
     # ------------------------------------------------------------ plumbing
 
@@ -157,13 +158,25 @@ class Workspace:
         return self.summary()
 
     def scene_open(self, path: str) -> dict[str, Any]:
-        """Open ``name.phasor.json`` (or a ``.py`` script when the server allows scripts)."""
+        """Open ``name.phasor.json`` (or a ``.py`` script when the server allows scripts; a
+        script that imports ``manim`` is run through phasor's Manim stand-in and opens as a
+        plain scene, with ``notes`` on what could not be carried over)."""
         p = self._inside(path, must_exist=True)
         if p.suffix == ".py" and not self.allow_scripts:
             raise ToolError(
                 "this server does not run scripts (a .py scene is code). Open the saved "
                 ".phasor.json instead, or start the server with --allow-scripts"
             )
+        from phasor.importers import import_manim, looks_like_manim
+
+        if p.suffix == ".py" and looks_like_manim(p):
+            # A Manim script: run through the stand-in module; the result is a plain scene
+            # (saved beside the script as name.phasor.json), free to edit.
+            result = self._guard(lambda: import_manim(p))
+            self._engine = Engine(result.document(), base_dir=p.parent)
+            self.path = p.with_suffix(io.DOC_SUFFIX)
+            self.import_notes = result.warnings
+            return {**self.summary(), "imported_from": "manim", "notes": result.warnings}
         self._engine = self._guard(lambda: load(p))
         self.path = p
         return self.summary()

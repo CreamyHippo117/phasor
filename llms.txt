@@ -7,7 +7,7 @@
 ## Tools
 
 - `scene_new`: Start an empty scene (replaces the open one; save first if it matters). The theme is dark (`midnight_glow`) unless a `look` ("calm", "glow", "chalk") or `theme` says otherwise; `life` ("off", "subtle", "lively") is the living motion.
-- `scene_open`: Open `name.phasor.json` (or a `.py` script when the server allows scripts).
+- `scene_open`: Open `name.phasor.json` (or a `.py` script when the server allows scripts; a script that imports `manim` is run through phasor's Manim stand-in and opens as a plain scene, with `notes` on what could not be carried over).
 - `scene_save`: Save the document (`name.phasor.json`); tweaks to a script scene go to its overrides file beside it.
 - `scene_edit`: Apply a patch (one op, a list of ops, or `{"ops": [...]}`). Atomic: if any op is invalid nothing changes. Returns the result and the lint issues it added or fixed. An `add_object` may name a `preset` (see `object_types`); the scene's look fills in what is left unset, and explicit values always win.
 - `undo`: Revert the last edit (each patch, verb or narration is one step).

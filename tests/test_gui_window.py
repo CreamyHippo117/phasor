@@ -183,6 +183,7 @@ def test_dragging_the_timeline_moves_markers_and_spans(window):
     tl.grab()  # paint once, so the timeline knows where its markers and spans are
     # the marker line "mid": press on it and drag right by 100 px
     x = tl._x(1.4)
+
     def ev(kind, px):
         return QMouseEvent(
             kind,
@@ -192,6 +193,7 @@ def test_dragging_the_timeline_moves_markers_and_spans(window):
             Qt.MouseButton.LeftButton,
             Qt.KeyboardModifier.NoModifier,
         )
+
     tl.mousePressEvent(ev(QMouseEvent.Type.MouseButtonPress, x))
     tl.mouseMoveEvent(ev(QMouseEvent.Type.MouseMove, x + 100))
     tl.mouseReleaseEvent(ev(QMouseEvent.Type.MouseButtonRelease, x + 100))

@@ -6,10 +6,10 @@ compounding. If this file and SPEC.md disagree, stop and ask.
 ## Where we are
 
 - Owner approved ADR 0001, ADR 0002 and id tombstones on 2026-11-18.
-- Current milestone: **10 built (`MILESTONE_10.md`); 2-6 built; boundary review of 2-6 done 2026-11-18 (see `MILESTONE_6.md`). 7, 8, 9 built (9b deep zoom included, `MILESTONE_9.md`); boundary review of 7-9 done 2026-11-19 by the authoring model, not independent (`MILESTONE_9.md`). Windows and CUDA untested**. See `MILESTONE_*.md` for what is built and deferred.
-- Roadmap (owner, 2026-11-19): Milestones 11 (Sketch) and 13 (Manim import) are dropped;
-  10 (GUI editor) and 12 (interactive export) remain. The `sketch` client slot in the layer
-  rule stays empty.
+- Current milestone: **10, 12, 13 built (`MILESTONE_10.md`, `MILESTONE_12.md`, `MILESTONE_13.md`; the roadmap is complete); 2-6 built; boundary review of 2-6 done 2026-11-18 (see `MILESTONE_6.md`). 7, 8, 9 built (9b deep zoom included, `MILESTONE_9.md`); boundary review of 7-9 done 2026-11-19 by the authoring model, not independent (`MILESTONE_9.md`). Windows and CUDA untested**. See `MILESTONE_*.md` for what is built and deferred.
+- Roadmap (owner, 2026-11-19): Milestone 11 (Sketch) is dropped (its `sketch` client slot in
+  the layer rule stays empty); Milestone 13 (Manim import) was dropped, then reinstated. 10, 12
+  and 13 are built; nothing is left on the roadmap.
 - One milestone per branch. No work on milestone N+1 until N's exit demo and tests pass.
 - Before declaring a milestone done, run the `phasor-milestone-gate` skill.
 
@@ -90,6 +90,9 @@ compounding. If this file and SPEC.md disagree, stop and ask.
 - GUI: all logic in `gui/controller.py` (`Editor`, no Qt, tested directly); `gui/window.py`
   only draws it and forwards input. Window tests run on Qt's `offscreen` platform. Every
   edit goes through the `Workspace` under the shared lock.
+- Importers (`phasor/importers/`) run foreign scripts only on the person's request; a stand-in
+  module never leaks past the import (it is removed from `sys.modules`). Interactive features
+  (`phasor/interactive.py`) work on `Engine.fork()`, never on the open scene.
 - Client commands register through the `phasor.commands` entry point; `cli` never imports a
   sibling client. Tools that return a picture use `structured_output=False`.
 - A ```json patch / ```json calls block in `docs/ai/MCP.md` runs in CI like a python block.

@@ -45,6 +45,7 @@ phasor-gui = "phasor.gui.cli:main"
 [project.entry-points."phasor.commands"]
 mcp = "phasor.mcp.cli:register"
 gui = "phasor.gui.cli:register"
+manim = "phasor.importers.cli:register"
 
 [dependency-groups]
 dev = [
@@ -77,6 +78,8 @@ select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
 [tool.ruff.lint.per-file-ignores]
 # Tests hold dense tables of cases; long lines and literal match strings are fine there.
 "tests/*" = ["E501", "RUF043"]
+# Written exactly as a Manim script is (the point of the Manim import): a star import.
+"examples/manim_reverb.py" = ["F403", "F405"]
 
 # ---------------------------------------------------------------- pytest
 [tool.pytest.ini_options]
@@ -101,6 +104,7 @@ type = "layers"
 layers = [
     "phasor.cli | phasor.gui | phasor.mcp | phasor.sketch",
     "phasor.workspace",
+    "phasor.importers",
     "phasor.scene",
     "phasor.voice",
     "phasor.interactive",

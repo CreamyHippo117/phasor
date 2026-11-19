@@ -79,6 +79,18 @@ Rules: `a above b gap N`, `label(x) near x`, `a outside b`, `a tangent_to b`,
 an arrow's `tip`), `align_x(a, b)`, `align_y(a, b)`, `inside(a, b)`, `on_screen(a, margin)`, `no_overlap(a, b)`, `min_size_px(a, N)`,
 `readable(a)`; join with `and`; priorities `required`, `strong`, `medium`, `weak`.
 
+Sliders (`add_control` / `remove_control`) make a number something a viewer can move in the
+editor, a notebook or a web page (`phasor web`); a vector parameter needs its `component`:
+
+```json patch
+[
+  {"op": "add_object", "object": {"id": "set", "type": "fractal",
+    "params": {"kind": "julia", "c": [-0.8, 0.156]}}},
+  {"op": "add_control", "control": {"path": "set.c", "component": 0, "min": -1.2, "max": 1.2,
+    "step": 0.05, "label": "Re c"}}
+]
+```
+
 Change things later with `set_param`, `set_style`, `set_tags`, `remove_object`,
 `remove_constraint`:
 
@@ -204,7 +216,9 @@ tool then works on the scene in their window, and they watch your edits land. Th
 are parameter and style changes: `inspect(detail="full")` shows every object's `params` as
 the document sets them, and `diff` compares with the saved file. Undo is one shared history, so
 `undo` takes back the most recent edit, whoever made it: check `diff` before undoing. You
-cannot open a `.py` scene through the editor (only the person can).
+cannot open a `.py` scene through the editor (only the person can); a Manim script
+(`from manim import ...`) opens as a plain scene, with `notes` on what could not be carried
+over, on a server started with `--allow-scripts`.
 
 ## Traps this loop has already hit
 
