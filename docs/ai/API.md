@@ -145,7 +145,7 @@ assert s4.engine.lint(strict=True) == []
 | `exit(*ids)` | fade out |
 | `trace(*ids)` | draw a `Line` from start to end (`progress` 0 to 1); nothing drawn before |
 | `bloom_in(*ids)` | fade in and grow from a point with a small overshoot (objects with `r`) |
-| `dim_others(*keep)` | dim everything else to the theme's `dim_level` (backdrops stay) |
+| `dim_others(*keep)` | dim everything but the object (or objects) you keep, to the theme's `dim_level` (backdrops stay) |
 | `undim()` | bring dimmed objects back |
 | `focus_pull(id, margin=0.15)` | move the camera onto an object |
 | `morph(path, value)` | change any parameter smoothly |
@@ -701,11 +701,49 @@ would notice) and `fix_hints`.
 | `phasor storyboard SCENE [-o PNG] [--t T]... [--marks] [--json]` | M2 | Keyframe contact sheet plus what the inspector sees |
 | `phasor render SCENE [-o OUT] [--preset preview\|final\|4k] [--fps F] [--start S] [--end E] [--frame T]` | M3 | Video (`.mp4`; `.mov` is ProRes; a folder or `%05d.png` is a PNG sequence) or one PNG with `--frame` |
 | `phasor bench [--width W] [--height H]` | M3 | ms per frame per kernel and peak VRAM; saved in `benchmarks/` |
-| `phasor mcp` | M5 | MCP server |
-| `phasor gui` | M10 | Editor |
+| `phasor mcp [--root DIR] [--allow-scripts] [--attach]` | M5, M10 | MCP server; `--attach` edits the scene open in a running `phasor gui` |
+| `phasor gui [SCENE] [--root DIR] [--no-ai]` | M10 | The editor (needs `uv sync --extra gui`) |
 
 `SCENE` is a `.phasor.json` document or a `.py` script that defines exactly one `Scene`.
-Unimplemented commands exit with code 2 and name their milestone.
+
+## The editor and the AI on one scene (`phasor gui`)
+
+`phasor gui scene.py` opens the editor: the viewport (click selects; drag the selected
+object to move it), the timeline (markers, one lane per animated parameter, click or drag to
+scrub, Space plays), and tabs for the **inspector** (every parameter as a field: type JSON
+or text and press Enter; style roles as menus; what the inspector reads), **lint** (click an
+issue to jump to its object and time) and **looks** (switch the whole scene to a look; show
+the variants of a beat and pick one: recorded in `style/choices.jsonl` as the person's
+choice). Ctrl+Z / Ctrl+Shift+Z / Ctrl+S undo, redo, save. Every edit is one
+`Engine.apply`, so a script scene keeps them as overrides.
+
+While it is open, `phasor mcp --attach --root <same folder>` serves the editor's own live
+scene to an AI: its edits show up in the window, the window's edits are what it inspects.
+The editor writes `<root>/.phasor/gui.json` (host, port, a token; readable only by you)
+and removes it on close; `--no-ai` keeps the AI out. The logic is `phasor.gui.controller.Editor`
+(no Qt in it), and the shared tools are `phasor.workspace`:
+
+```python
+import tempfile
+
+from phasor.gui.controller import Editor
+from phasor.workspace import Workspace
+from phasor.workspace.remote import RemoteServer, RemoteWorkspace
+
+root = tempfile.mkdtemp()
+ws = Workspace(root)
+ws.scene_new("together")
+ed = Editor(ws)
+server = RemoteServer(ws, ed.lock).start()
+server.write_handoff()
+ai = RemoteWorkspace.from_handoff(root)  # what `phasor mcp --attach` uses
+ai.scene_edit({"op": "add_object", "object": {"id": "p", "type": "dot"}})
+assert ed.changed()  # the editor sees the AI's edit
+assert ed.set_param("p", "r", "0.3")["ok"]  # and the AI sees the person's
+assert ai.inspect(0.0, id="p")["objects"][0]["id"] == "p"
+ai.close()
+server.stop()
+```
 
 ## Hardware check
 

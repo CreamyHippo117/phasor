@@ -36,7 +36,7 @@ def test_mcp_doc_examples_run_in_order(tmp_path):
     in docs/ai/MCP.md runs, in order, against one scene."""
     import json
 
-    from phasor.mcp.tools import Workspace
+    from phasor.workspace.tools import Workspace
 
     ws = Workspace(tmp_path)
     ws.scene_new("doc")

@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from phasor.mcp.tools import ToolError, Workspace
+from phasor.workspace.tools import ToolError, Workspace
 from tests.conftest import gl_available
 
 POLE = {"op": "add_object", "object": {"id": "pole", "type": "dot", "params": {"pos": [1, 1]},

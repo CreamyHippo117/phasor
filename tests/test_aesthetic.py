@@ -162,7 +162,7 @@ def test_glow_clip_and_its_fix():
 
 def test_the_cli_and_mcp_expose_the_aesthetic_pass(tmp_path):
     from phasor.cli import main
-    from phasor.mcp.tools import Workspace
+    from phasor.workspace.tools import Workspace
 
     s = _base(None)
     s.add(Dot(id="a", pos=(0, 0), r=0.05))

@@ -11,7 +11,7 @@ import inspect
 from pathlib import Path
 
 from phasor.mcp.server import TOOL_NAMES
-from phasor.mcp.tools import Workspace
+from phasor.workspace.tools import Workspace
 
 PATH = Path(__file__).resolve().parents[2] / "llms.txt"
 

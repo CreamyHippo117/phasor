@@ -17,7 +17,7 @@
 - `checkpoint`: Remember the current document under `name` (to compare or return to later).
 - `restore`: Go back to a checkpoint, as one step (undo brings you back again).
 - `diff`: What changed from version `a` to version `b` ('current', 'saved' or a checkpoint).
-- `inspect`: What is on screen at `t`: `brief` (one line each), `standard` or `full`.
+- `inspect`: What is on screen at `t`: `brief` (one line each), `standard` or `full`. `full` also gives each object's `params` as the document sets them (expressions stay expressions): how you see what a person changed in the editor.
 - `lint`: Find visual problems (overlap, off-screen, contrast, tiny text, clutter, ...). `fix=True` applies the fixes that are certain, then reports what is left. `aesthetic=True` also judges taste: focal point, color restraint, glow clipping, density, motion rhythm, margins, stroke weights.
 - `storyboard`: Render keyframes on one contact sheet (a PNG) with what the inspector sees in each. `marks` draws every object's box and id so you can tie picture to ids. `compare` puts each frame beside the three nearest frames in the project's `gallery/` (frames you love), with your notes on why they work.
 - `review`: One call for the self-review loop: lint, what is on screen at every marker, and a storyboard. Fix what `issues` lists, then call again until `clean`. Pass `aesthetic=True` for the beauty pass (taste rules on top of the correctness ones).

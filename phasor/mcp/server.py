@@ -15,8 +15,8 @@ from typing import Any
 from mcp.server.mcpserver import Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError as ClientError
 
-from phasor.mcp import docs
-from phasor.mcp.tools import ToolError, Workspace
+from phasor.workspace import docs
+from phasor.workspace.tools import ToolError, Workspace
 
 INSTRUCTIONS = """\
 phasor makes math animations you can see, check and fix. Work in this loop:
@@ -118,5 +118,12 @@ def build_server(workspace: Workspace | None = None) -> MCPServer:
 
 
 def serve(root: str | Path | None = None, out: str | Path | None = None,
-          allow_scripts: bool = False) -> None:  # fmt: skip
+          allow_scripts: bool = False, attach: bool = False) -> None:  # fmt: skip
+    """Serve over stdio. ``attach``: edit the scene a running ``phasor gui`` has open (found
+    through ``<root>/.phasor/gui.json``) instead of hosting a headless engine."""
+    if attach:
+        from phasor.workspace.remote import RemoteWorkspace
+
+        build_server(RemoteWorkspace.from_handoff(root)).run("stdio")  # type: ignore[arg-type]
+        return
     build_server(Workspace(root, out, allow_scripts=allow_scripts)).run("stdio")

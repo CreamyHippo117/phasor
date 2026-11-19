@@ -6,7 +6,7 @@ compounding. If this file and SPEC.md disagree, stop and ask.
 ## Where we are
 
 - Owner approved ADR 0001, ADR 0002 and id tombstones on 2026-11-18.
-- Current milestone: **2-6 built; boundary review of 2-6 done 2026-11-18 (see `MILESTONE_6.md`). 7, 8, 9 built (9b deep zoom included, `MILESTONE_9.md`); boundary review of 7-9 done 2026-11-19 by the authoring model, not independent (`MILESTONE_9.md`). Windows and CUDA untested**. See `MILESTONE_*.md` for what is built and deferred.
+- Current milestone: **10 built (`MILESTONE_10.md`); 2-6 built; boundary review of 2-6 done 2026-11-18 (see `MILESTONE_6.md`). 7, 8, 9 built (9b deep zoom included, `MILESTONE_9.md`); boundary review of 7-9 done 2026-11-19 by the authoring model, not independent (`MILESTONE_9.md`). Windows and CUDA untested**. See `MILESTONE_*.md` for what is built and deferred.
 - Roadmap (owner, 2026-11-19): Milestones 11 (Sketch) and 13 (Manim import) are dropped;
   10 (GUI editor) and 12 (interactive export) remain. The `sketch` client slot in the layer
   rule stays empty.
@@ -82,9 +82,14 @@ compounding. If this file and SPEC.md disagree, stop and ask.
 - When a test and the code disagree, work out which one is wrong before changing either.
   In Milestone 1 it was the test about as often as the code.
 
-- MCP tools are methods of `mcp/tools.py` `Workspace` (plain data in and out, tested without
-  the protocol); `mcp/server.py` only names them. Add a tool there, to `TOOL_NAMES`, to
+- MCP tools are methods of `workspace/tools.py` `Workspace` (plain data in and out, tested
+  without the protocol; shared by the MCP server and the GUI, which may not import each
+  other); `mcp/server.py` only names them, `workspace/remote.py` carries them to an
+  attached `phasor mcp --attach`. Add a tool there, to `TOOL_NAMES`, to
   `docs/ai/MCP.md` and regenerate `llms.txt` (`uv run python -m phasor.mcp.llms`).
+- GUI: all logic in `gui/controller.py` (`Editor`, no Qt, tested directly); `gui/window.py`
+  only draws it and forwards input. Window tests run on Qt's `offscreen` platform. Every
+  edit goes through the `Workspace` under the shared lock.
 - Client commands register through the `phasor.commands` entry point; `cli` never imports a
   sibling client. Tools that return a picture use `structured_output=False`.
 - A ```json patch / ```json calls block in `docs/ai/MCP.md` runs in CI like a python block.

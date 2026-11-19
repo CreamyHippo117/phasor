@@ -15,6 +15,12 @@ def register(sub: argparse._SubParsersAction) -> None:
         action="store_true",
         help="let the AI open .py scenes (they are code: only for scenes you trust)",
     )
+    m.add_argument(
+        "--attach",
+        action="store_true",
+        help="edit the scene open in a running `phasor gui` (same --root) instead of a "
+        "headless one: the human and the AI work on one live scene",
+    )
     m.set_defaults(func=_run)
 
 
@@ -24,5 +30,5 @@ def _run(args: argparse.Namespace) -> int:
     except ModuleNotFoundError as e:
         print(f"phasor mcp: {e}. Install it with: uv sync --extra mcp", file=sys.stderr)
         return 1
-    serve(args.root, args.out, args.allow_scripts)
+    serve(args.root, args.out, args.allow_scripts, args.attach)
     return 0

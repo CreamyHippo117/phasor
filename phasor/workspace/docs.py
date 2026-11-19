@@ -58,14 +58,24 @@ def _words(s: str) -> list[str]:
 
 
 def search(query: str, limit: int = 5) -> list[dict[str, Any]]:
+    """Sections ranked for ``query``: each query word counts by how rare it is across the
+    docs (a rare word like ``dim`` says more than ``one`` or ``object``), a word repeated
+    many times counts only a little more than once, and a word in the heading counts most.
+    So long sections that merely repeat common words do not bury the precise answer."""
+    import math
+
     q = set(_words(query))
     if not q:
         return []
+    secs = sections()
+    bodies = [_words(sec["text"]) for sec in secs]
+    df = {w: sum(1 for b in bodies if w in b) for w in q}
+    idf = {w: math.log(1 + len(secs) / (1 + df[w])) for w in q}
     hits = []
-    for sec in sections():
-        head, body = set(_words(sec["heading"])), _words(sec["text"])
-        score = 3.0 * len(q & head) + sum(1 for w in body if w in q) ** 0.5 * 1.0
-        score += 2.0 * len(q & set(body)) / max(len(q), 1)
+    for sec, body in zip(secs, bodies, strict=True):
+        head = set(_words(sec["heading"]))
+        counts = {w: body.count(w) for w in q}
+        score = sum(idf[w] * (3.0 * (w in head) + math.sqrt(min(counts[w], 4))) for w in q)
         if score > 0:
             hits.append((score, sec))
     hits.sort(key=lambda h: -h[0])

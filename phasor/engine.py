@@ -518,6 +518,18 @@ class Engine:
         picture, emission = runner.color_and_emission(self.state_at(t), size)
         return finish(picture, self._snap.compiled.theme, emission)
 
+    def timeline(self) -> dict[str, Any]:
+        """What a timeline panel shows: the duration, the markers, and for every animated
+        parameter its spans in resolved seconds (``{"d.pos": [[1.0, 2.0], ...]}``)."""
+        c = self._snap.compiled
+        lanes = {
+            path: [[seg.t0, seg.t1] for seg in node.segments]
+            for path, node in sorted(c.nodes.items())
+            if isinstance(node, ResolvedTrack) and node.segments
+        }
+        markers = dict(sorted(c.time_map.markers.items(), key=lambda kv: kv[1]))
+        return {"duration": c.duration, "markers": markers, "lanes": lanes}
+
     def is_moving(self, t0: float, t1: float) -> bool:
         """Whether anything animated by the document runs between ``t0`` and ``t1``: a
         transition, or an expression of ``t`` (``expr("t / 10")``; counted as moving whenever

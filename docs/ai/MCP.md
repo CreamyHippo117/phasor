@@ -197,6 +197,15 @@ Start scenes from a look: `scene_new` with `look: "calm"` (soft edges, gentle li
 type's `presets`; in a patch, `{"preset": "soft_phase"}` inside an `add_object`. Explicit
 values win, then the preset, then the look. The default theme is dark.
 
+## Working beside a person (`--attach`)
+
+If the person has `phasor gui` open, run `phasor mcp --attach --root <their folder>`: every
+tool then works on the scene in their window, and they watch your edits land. Their edits
+are parameter and style changes: `inspect(detail="full")` shows every object's `params` as
+the document sets them, and `diff` compares with the saved file. Undo is one shared history, so
+`undo` takes back the most recent edit, whoever made it: check `diff` before undoing. You
+cannot open a `.py` scene through the editor (only the person can).
+
 ## Traps this loop has already hit
 
 - **Overlay positions are in frame heights**, not pixels or world units: `[0, 0]` is the

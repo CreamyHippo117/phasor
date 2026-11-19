@@ -23,9 +23,13 @@ gl = ["moderngl>=5.12"]
 gpu = ["cupy-cuda12x[ctk]>=13.3"]
 # Video encoding (NVENC when the driver supports it, libx264 otherwise).
 encode = ["av>=14"]
-all = ["phasor[gl,gpu,encode,mcp]"]
+all = ["phasor[gl,gpu,encode,mcp,gui]"]
 # The MCP server an AI client connects to (`phasor mcp`).
 mcp = ["mcp>=2.0,<3"]
+# The editor window (`phasor gui`): Qt widgets only, no web engine.
+gui = [
+    "pyside6-essentials>=6.7",
+]
 
 [project.scripts]
 phasor = "phasor.cli:main"
@@ -33,6 +37,7 @@ phasor = "phasor.cli:main"
 # Sibling clients add their own commands (`phasor mcp`) without `cli` importing them.
 [project.entry-points."phasor.commands"]
 mcp = "phasor.mcp.cli:register"
+gui = "phasor.gui.cli:register"
 
 [dependency-groups]
 dev = [
@@ -88,6 +93,7 @@ name = "Layer order (SPEC contract 6, ADR 0001)"
 type = "layers"
 layers = [
     "phasor.cli | phasor.gui | phasor.mcp | phasor.sketch",
+    "phasor.workspace",
     "phasor.scene",
     "phasor.voice",
     "phasor.engine",

@@ -13,3 +13,4 @@ examples/out/
 
 # Narration clips are regenerated from the script by the voice (cached per sentence).
 *.narration/
+.phasor/

@@ -12,9 +12,7 @@ import json
 import sys
 
 # command -> (milestone, help)
-PLANNED = {
-    "gui": (10, "editor app"),
-}
+PLANNED: dict[str, tuple[int, str]] = {}  # nothing planned left: gui arrived in Milestone 10
 
 EXIT_NOT_IMPLEMENTED = 2
 EXIT_TIER_TOO_LOW = 1
@@ -278,7 +276,7 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--dir", default="benchmarks", help="where results are saved")
     b.set_defaults(func=_cmd_bench)
 
-    # Client commands (mcp, later gui) register themselves through the "phasor.commands"
+    # Client commands (mcp, gui) register themselves through the "phasor.commands"
     # entry-point group, so this module never imports a sibling client (contract 6).
     from importlib.metadata import entry_points
 

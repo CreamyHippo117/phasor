@@ -528,7 +528,7 @@ Any AI should be able to author, inspect, critique and repair scenes through too
 | `render` | Final render with preset; returns progress and output path |
 | `docs_search` | Search the API reference and examples |
 
-**As built (Milestone 5).** The table above is the minimum; the server also has `scene_new`, `animate` (the choreography verbs), `narrate`, `review` (the self-review loop below in one call: lint, inspector lines at every marker, storyboard image), `undo`/`redo`, `checkpoint`/`restore`, and `object_types` (type names, parameters, style roles). Tool logic is plain Python in `phasor/mcp/tools.py` (`Workspace`), served by `phasor/mcp/server.py`. Safety: paths stay inside `--root`; `.py` scenes are code and are refused unless `--allow-scripts`; a failed patch changes nothing. `phasor mcp` registers itself with the CLI through the `phasor.commands` entry-point group, because sibling clients may not import each other (contract 6). Attaching to a running GUI waits for Milestone 10: today `phasor mcp` always hosts its own headless Engine.
+**As built (Milestone 5).** The table above is the minimum; the server also has `scene_new`, `animate` (the choreography verbs), `narrate`, `review` (the self-review loop below in one call: lint, inspector lines at every marker, storyboard image), `undo`/`redo`, `checkpoint`/`restore`, and `object_types` (type names, parameters, style roles). Tool logic is plain Python in `phasor/mcp/tools.py` (`Workspace`), served by `phasor/mcp/server.py`. Safety: paths stay inside `--root`; `.py` scenes are code and are refused unless `--allow-scripts`; a failed patch changes nothing. `phasor mcp` registers itself with the CLI through the `phasor.commands` entry-point group, because sibling clients may not import each other (contract 6). Milestone 10 moved the tool logic to `phasor/workspace/` (both clients share it) and added `phasor mcp --attach`, which edits the scene open in `phasor gui`.
 
 **Self-review loop (built in)**
 
@@ -565,6 +565,8 @@ The GUI is a third editor on the same scene document, so human tweaks and AI edi
 - **AI chat dock**: talk to an agent connected via MCP; it sees the current selection, time and lint state.
 - **Code view**: the generated Python/scene file, two-way synced (edit code or GUI).
 - Tech: Dear PyGui or Qt (PySide6) hosting the ModernGL viewport; decide in Milestone 4.
+
+**As built (Milestone 10).** Qt (PySide6-Essentials, the `gui` extra): it runs headless on Qt's `offscreen` platform, so the window is tested in CI, and it is mature on Windows. The viewport shows the engine's own frames (`Engine.still`) as an image rather than embedding a GL widget, so the editor sees exactly the final look. All logic is `phasor.gui.controller.Editor` (no Qt; every edit through the shared `Workspace` and so `Engine.apply`); `gui/window.py` draws it. Built: viewport (click to select, drag the selected object in its plane; a dashed box from the inspector's bounds), timeline (markers, one lane per animated parameter from `Engine.timeline()`, click or drag to scrub, play), inspector (each parameter as a JSON/text field, style roles as menus, constraints, semantics; animated parameters show their value at the playhead), lint panel (click to jump to object and time), looks tab (apply a look to the whole scene as one undo step; variants of a beat, a pick recorded as the person's), MCP attach (`Workspace` moved to `phasor.workspace`, shared by both clients; `workspace/remote.py` serves it on 127.0.0.1 with a token in `<root>/.phasor/gui.json`, mode 600; `phasor mcp --attach` builds the same MCP server on a proxy with identical tool signatures; calls share the editor's lock). Not built: 3D gizmos and orbit/pan of the view (the camera is a document object: edit it in the inspector), audio waveform and narration text in the timeline, dragging spans to retime, the AI chat dock (an MCP client such as Claude attaches instead), the two-way code view, the sketch layer (Milestone 11 dropped). The exit demo uses the prism scene, since the reverb scene was skipped in Milestone 8.
 
 ## Tech stack, Windows, repo layout
 
@@ -676,7 +678,7 @@ Build the AI-visible core first, then beauty, then breadth. Each milestone ends 
 | 7 | Beauty system | Aesthetic lint rules, gallery compare, art-director pass, variants, `choices.jsonl`, two more themes (dark stays the default), living motion (`life`), softened edges, varied palettes (rainbow only where hue carries meaning), look and object presets | Critic pass measurably improves a rough scene in 3 rounds | Sonnet |
 | 8 | Domains wave 1 | `fourier`, `linalg`, `acoustics`, `Simulation` checkpoints | 3D reverb scene (section above) | Sonnet |
 | 9 | Domains wave 2 | `pde`, `algebra`, `calc`, perturbation deep zoom | Heat equation, dihedral group and a 1e-30 zoom | Sonnet; strong for perturbation |
-| 10 | GUI editor | Viewport, timeline, inspector, lint panel, MCP attach, variant picker | Edit the reverb scene by hand and by AI in one session | Sonnet |
+| 10 | GUI editor | Viewport, timeline, inspector, lint panel, MCP attach, variant picker | Edit a scene by hand and by AI in one session (built on the prism scene: the reverb scene was skipped) | Sonnet |
 | 11 | ~~Sketch~~ | **Dropped by the owner (2026-11-19).** Was: stroke capture, classification, fitting, handwriting to LaTeX, paint-over | — | — |
 | 12 | Interactive export | Desktop sliders, notebook widget, then web export | Julia explorer with a c slider | Sonnet |
 | 13 | ~~Manim import~~ | **Dropped by the owner (2026-11-19).** Was: a converter for common Manim CE scenes | — | — |
@@ -728,7 +730,7 @@ Rules for every milestone:
 ## Open questions
 
 - [ ] Final name ("phasor" is a placeholder; check PyPI availability).
-- [ ] GUI toolkit: Dear PyGui vs PySide6 (decide at Milestone 10).
+- [x] GUI toolkit: PySide6 (Milestone 10; testable headless, solid on Windows).
 - [ ] Graphics backend long-term: stay on ModernGL or move to wgpu-py for WebGPU export.
 - [ ] TTS provider default (local vs cloud), or your own voice only.
 - [ ] Which GPU you have (VRAM sets FDTD grid sizes and tile sizes).

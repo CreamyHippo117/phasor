@@ -22,11 +22,11 @@ from phasor.core.issues import DocumentError, Issue
 from phasor.core.objects import get_type, registered_types
 from phasor.core.schema import Document, Meta
 from phasor.engine import Engine
-from phasor.mcp import docs
 from phasor.scene import Scene, load
 from phasor.style.looks import DEFAULT_THEME, available_looks, load_look
 from phasor.style.theme import ROLE_GROUPS, available_themes
 from phasor.time import verbs as _verbs
+from phasor.workspace import docs
 
 VERBS = (
     "reveal",
@@ -348,10 +348,19 @@ class Workspace:
     # ------------------------------------------------------------ seeing
 
     def inspect(self, t: float = 0.0, id: str | None = None, detail: str = "standard") -> Any:
-        """What is on screen at ``t``: ``brief`` (one line each), ``standard`` or ``full``."""
+        """What is on screen at ``t``: ``brief`` (one line each), ``standard`` or ``full``.
+        ``full`` also gives each object's ``params`` as the document sets them (expressions
+        stay expressions): how you see what a person changed in the editor."""
         if detail not in ("brief", "standard", "full"):
             raise ToolError("detail is brief, standard or full")
-        return self._guard(lambda: self.engine.inspect(t, id=id, detail=detail))
+        out = self._guard(lambda: self.engine.inspect(t, id=id, detail=detail))
+        if detail == "full" and isinstance(out, dict):
+            doc = self.engine.document
+            for o in out.get("objects", []):
+                spec = doc.object(o["id"])
+                if spec is not None:
+                    o["params"] = _jsonable(dict(spec.params))
+        return out
 
     def lint(
         self, fix: bool = False, strict: bool = False, step: float = 0.5, aesthetic: bool = False
