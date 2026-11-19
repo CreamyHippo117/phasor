@@ -69,7 +69,9 @@ actual handwriting.
 
 ## Verification
 
-- See the commit for the full run; ruff, ruff format and lint-imports clean.
+- `uv run pytest`: **1069 passed, 25 skipped** (22 need CUDA, 1 needs a TeX install, 1 a CUDA
+  device for the doctor, 1 an empty parametrization); ruff, ruff format and lint-imports clean;
+  `phasor doctor` tier B (OpenGL, no CUDA).
 - The milestone gate's contract audit was done by the authoring model, not an independent
   reviewer (no subagent was asked for).
 
