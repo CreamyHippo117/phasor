@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 
 from phasor.core.color import luminance, phase_lut
+from phasor.domains import fractal_math as fm
 from phasor.render import gpu
 from phasor.render.gpu import ComplexFunction, FunctionError, KernelError, Tile, plan_tiles
 from phasor.render.gpu.kernels.fractal import precision_for
@@ -32,6 +33,13 @@ def _rgba(seed=0, shape=(24, 32)):
 IMAGE = _rgba()
 IMAGE_TILE = Tile.full(32, 24)
 
+# Reference orbits for the perturbation kernel: one at the spiral of test_deep_zoom.py (lasts
+# every step) and one that escapes after 19, so pixels must rebase onto its start.
+DEEP_ORBIT = fm.reference_orbit(fm.parse_point(
+    "-0.7756837680090537974694835039347410457282 0.1364673682946901247332744096178487651978"),
+    128, 2000)  # fmt: skip
+EARLY_ORBIT = fm.reference_orbit(fm.parse_point("-0.75 0.2"), 64, 300)
+
 # name -> list of (tile, params) cases every backend must agree on
 CASES = {
     "escape": [
@@ -39,6 +47,12 @@ CASES = {
         (OFFSET, {"center": (-0.5, 0.0), "height": 2.5, "max_iter": 64, "precision": "f64"}),
         (OFFSET, {"center": (0.0, 0.0), "height": 3.0, "julia": (-0.8, 0.156)}),
         (FULL, {"center": (-0.75, 0.1), "height": 1e-6, "max_iter": 400}),
+    ],
+    "deep": [
+        (FULL, {"center": (0.0, 0.0), "height": 1e-20, "orbit": DEEP_ORBIT, "max_iter": 2000}),
+        (OFFSET, {"center": (3e-21, -1e-21), "height": 1e-20, "orbit": DEEP_ORBIT,
+                  "max_iter": 2000, "rebase": False}),
+        (FULL, {"center": (0.0, -0.1), "height": 0.05, "orbit": EARLY_ORBIT, "max_iter": 300}),
     ],
     "domain": [
         (FULL, {"function": F, "center": (0.0, 0.0), "height": 4.0}),
@@ -90,7 +104,16 @@ def _close(name: str, got: np.ndarray, want: np.ndarray, *, strict: bool) -> Non
 def test_every_kernel_has_a_reference_and_a_signature():
     ks = registered()
     assert sorted(ks) == sorted(CASES)
-    assert sorted(ks) == ["bright", "domain", "escape", "gauss", "palette", "resize", "tonemap"]
+    assert sorted(ks) == [
+        "bright",
+        "deep",
+        "domain",
+        "escape",
+        "gauss",
+        "palette",
+        "resize",
+        "tonemap",
+    ]
     assert all(callable(k.reference) and "->" in k.signature for k in ks.values())
 
 

@@ -14,6 +14,7 @@ poles) is reported through ``features()``, projected analytically.
 from __future__ import annotations
 
 import functools
+from fractions import Fraction
 from typing import Any, ClassVar, Literal
 
 import numpy as np
@@ -22,6 +23,7 @@ from pydantic import Field, field_validator
 from phasor.core.objects import Bounds, DrawContext, ObjectBase, ParamsBase, Pass, register
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
+from phasor.domains import fractal_math as fm
 
 F64_BELOW = 1e-4  # view heights under this render domain coloring in float64
 SUPERSAMPLE = 2  # kernel pixels per output pixel, per side, for clean contour edges
@@ -163,10 +165,61 @@ class DomainColoring(_Plane):
         ctx.field(corner, r, u, pixels=pixels, opacity=p.opacity)
 
 
+@functools.lru_cache(maxsize=64)
+def _point(text: str) -> fm.Point:
+    return fm.parse_point(text)
+
+
+@functools.lru_cache(maxsize=8)
+def _orbit(c: fm.Point, bits: int, max_iter: int) -> np.ndarray:
+    """The reference orbit, computed once per (point, precision, steps): a steady dive
+    recomputes it only when the precision steps up (every 32 bits, about 10 digits)."""
+    orbit = fm.reference_orbit(c, bits, max_iter)
+    orbit.setflags(write=False)
+    return orbit
+
+
+STEADY_ROWS = 18  # the coarse sample of the whole rectangle that ``steady`` reads
+
+
+def _escape_field(p, c: fm.Point, k: float, pw: int, ph: int, center, height) -> np.ndarray:
+    """The escape field of a ``pw`` x ``ph`` view of a Fractal whose rectangle-relative
+    ``center`` and ``height`` are world units; ``c`` and ``k`` from ``Fractal._view``."""
+    from phasor.render import gpu
+
+    w, h = p.size
+    off, fh = ((center[0] - w / 2) * k, (center[1] - h / 2) * k), height * k  # from c
+    if _precision(p.kind, fh, ph) == "perturbation":
+        orbit = _orbit(c, fm.bits_for(fh / ph), p.max_iter)
+        return gpu.render("deep", pw, ph, center=off, height=fh, orbit=orbit,
+                          max_iter=p.max_iter)  # fmt: skip
+    return gpu.render(
+        "escape", pw, ph, center=(float(c[0]) + off[0], float(c[1]) + off[1]), height=fh,
+        max_iter=p.max_iter, julia=p.c if p.kind == "julia" else None,
+    )  # fmt: skip
+
+
+def _precision(kind: str, height: float, rows: int) -> str:
+    """f32, f64 or perturbation for a view ``height`` plane units tall in ``rows`` pixels.
+    Julia sets have no perturbation path here; past that they stay float64 (blocky)."""
+    from phasor.render.gpu.kernels.fractal import precision_for
+
+    if kind == "mandelbrot" and height / rows < fm.DEEP_BELOW:
+        return "perturbation"
+    return precision_for(height)
+
+
 @register
 class Fractal(_Plane):
     """The Mandelbrot set, or the Julia set of ``c``, colored by escape time. Points in the
-    set take the theme's background color; deeper zooms switch to float64 by themselves."""
+    set take the theme's background color.
+
+    The rectangle shows the plane around ``center`` (exact decimal text, ``"re im"``; empty:
+    the rectangle's own position), magnified ``10**zoom`` times. Precision follows the pixel
+    size (SPEC "Precision policy"): float32, then float64 under 1e-5, then perturbation
+    against an arbitrary-precision reference orbit under 1e-10 per pixel (Mandelbrot only),
+    good to a zoom of about 1e280. For a dive, animate ``zoom`` and set ``steady=True``.
+    """
 
     type: ClassVar[str] = "fractal"
     Style: ClassVar = {"colormap": ("colormap", "sequential")}
@@ -184,16 +237,40 @@ class Fractal(_Plane):
         max_iter: int = Field(256, ge=1, le=100_000)
         density: float = Field(0.35, gt=0)  # color bands per sqrt(iteration)
         hue: float = 0.0  # shifts colors along the ramp (share of a cycle); life adds a little
+        center: str = ""  # the plane point at the middle, exact: "-0.7756837680090537974 0.13"
+        zoom: float = Field(0.0, ge=-3, le=280)  # magnification 10**zoom about ``center``
+        # Keep the outermost color fixed as counts grow (a dive's colors then stay put while
+        # the structure flows); off: colors cycle with the escape count itself.
+        steady: bool = False
+
+        @field_validator("center")
+        @classmethod
+        def _point(cls, v: str) -> str:
+            if v.strip():
+                fm.parse_point(v)  # ValueError names the format
+            return v
+
+    def _view(self, p) -> tuple[fm.Point, float]:
+        """(the exact plane point at the rectangle's middle, plane units per world unit)."""
+        c = _point(p.center) if p.center.strip() else (Fraction(p.pos[0]), Fraction(p.pos[1]))
+        return c, 10.0**-p.zoom
 
     def features(self, state: SceneState) -> dict[str, np.ndarray]:
         return {"center": np.asarray(self.me(state).params.pos)}
 
     def semantics(self, state: SceneState) -> dict[str, Any]:
         p = self.me(state).params
+        c, k = self._view(p)
         out: dict[str, Any] = {"kind": "fractal", "backdrop": True, "set": p.kind,
                                "max_iter": p.max_iter}  # fmt: skip
         if p.kind == "julia":
             out["c"] = list(p.c)
+        if p.center.strip() or p.zoom:
+            out["center"] = fm.format_point(c)
+            out["zoom"] = p.zoom
+            out["view_height"] = p.size[1] * k
+            # at a 1080-row render of the whole rectangle
+            out["precision"] = _precision(p.kind, p.size[1] * k, 1080)
         return out
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
@@ -203,16 +280,22 @@ class Fractal(_Plane):
         lut = np.asarray(me.style["colormap"], dtype=np.float32)
         inside = tuple(state.background[:3])
 
+        c, k = self._view(p)
+
         def pixels(pw: int, ph: int, center: tuple[float, float], height: float) -> np.ndarray:
             from phasor.render import gpu
             from phasor.render.gpu.bridge import to_host
 
-            field = gpu.render(
-                "escape", pw, ph, center=(corner[0] + center[0], corner[1] + center[1]),
-                height=height, max_iter=p.max_iter, julia=p.c if p.kind == "julia" else None,
-            )  # fmt: skip
+            field = _escape_field(p, c, k, pw, ph, center, height)
+            offset = p.hue
+            if p.steady:  # hold the color of the rectangle's outermost (lowest) count
+                w, h = p.size
+                coarse = _escape_field(p, c, k, STEADY_ROWS * 16 // 9, STEADY_ROWS,
+                                       (w / 2, h / 2), h)  # fmt: skip
+                out_ = coarse[coarse >= 0]
+                offset -= p.density * float(np.sqrt(out_.min())) if out_.size else 0.0
             out = gpu.run("palette", gpu.Tile.full(pw, ph), field=field, lut=lut,
-                          density=p.density, offset=p.hue, inside=inside)  # fmt: skip
+                          density=p.density, offset=offset, inside=inside)  # fmt: skip
             return to_host(out)
 
         ctx.field(corner, r, u, pixels=pixels, opacity=p.opacity)

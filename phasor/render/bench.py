@@ -23,7 +23,15 @@ def _cases(w: int, h: int) -> dict[str, dict[str, Any]]:
     field = gpu.run("escape", Tile.full(w, h), center=(-0.6, 0.0), height=2.6, max_iter=256,
                     backend="reference")  # fmt: skip
     f = ComplexFunction.parse("1/(z**2 + 1)")
+    # a 1e-20 view near a spiral of the Mandelbrot set: the perturbation path of a deep zoom
+    # (for timing, a float64 orbit of the reference point is close enough)
+    z, orbit = 0j, [0j]
+    for _ in range(1000):
+        z = z * z + complex(-0.7756837680090538, 0.1364673682946901)
+        orbit.append(z)
+    orbit = np.c_[np.real(orbit), np.imag(orbit)]
     return {
+        "deep": {"center": (0.0, 0.0), "height": 1e-20, "orbit": orbit, "max_iter": 1000},
         "domain": {"function": f, "center": (0.0, 0.0), "height": 4.5},
         "escape": {"center": (-0.6, 0.0), "height": 2.6, "max_iter": 256},
         "palette": {"field": field, "lut": phase_lut()},

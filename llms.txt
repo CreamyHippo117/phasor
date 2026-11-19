@@ -43,7 +43,7 @@
 - `dot`: pos, r
 - `eigen_lines`: matrix, pos, length
 - `epicycles`: points, terms, phase, trace
-- `fractal`: kind, c, pos, size, max_iter, density, hue
+- `fractal`: kind, c, pos, size, max_iter, density, hue, center, zoom, steady
 - `graph`: function, xmin, xmax, pos
 - `image_sources`: size, source, order, material, absorption, r
 - `impulse_response`: size, source, listener, order, material, absorption, pos, extent, duration, reveal, show_rt60

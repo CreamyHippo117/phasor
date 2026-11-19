@@ -33,7 +33,7 @@ s.set("camera.height", 6)  # world units visible top to bottom
 | `Dot` | `pos`, `r` (world radius, default 0.1) | `color` (emphasis, primary), `glow` (glow, none) |
 | `Line` | `points` (2 or more) | `color` (emphasis, primary), `stroke` (stroke, regular), `glow` (glow, none) |
 | `cx.DomainColoring` | `function` (e.g. `"1/(z**2 + 1)"`), `pos` (center), `size` (w, h), `contour` (0-1), `softness` (0-1, edge feathering), `hue` (turns the wheel) | `colormap` (colormap, phase) |
-| `cx.Fractal` | `kind` (`mandelbrot`/`julia`), `c` (Julia constant), `pos`, `size`, `max_iter`, `density`, `hue` | `colormap` (colormap, sequential) |
+| `cx.Fractal` | `kind` (`mandelbrot`/`julia`), `c` (Julia constant), `pos`, `size`, `max_iter`, `density`, `hue`, `center` (exact text `"re im"`), `zoom` (powers of ten, to 280), `steady` (hold the outer color in a dive) | `colormap` (colormap, sequential) |
 | `cx.RiemannSurface` | `kind` (`sqrt`/`cbrt`/`log`), `pos` (branch point), `radius`, `height` (`re`/`im`), `scale`, `rings`, `segments` | `colormap` (colormap, phase), `material` (surface, solid) |
 | `Text` | `text`, `pos`, `anchor` (`center`/`left`/`right`), `leader`, `leader_on` (set by layout) | `color` (emphasis, primary), `size` (text, label), `leader` (stroke, hairline) |
 
@@ -66,6 +66,32 @@ s3.add(
 )
 plane = s3.engine.inspect(0, id="plane")["objects"][0]["semantic"]
 assert sorted(map(tuple, plane["poles"])) == [(0.0, -1.0), (0.0, 1.0)]
+```
+
+**Deep zooms.** `cx.Fractal` shows the plane around `center` magnified `10**zoom` times.
+`center` is text, because a float holds 16 digits and a 1e-30 view needs more. Precision
+follows the pixel size by itself: float32, float64 under a 1e-5 view, then (Mandelbrot only)
+perturbation under 1e-10 per pixel: one orbit computed exactly, every pixel as a float64
+difference from it. Semantics report `zoom`, `view_height` and `precision`. Deep views need
+`max_iter` in the thousands; `steady=True` keeps a dive's colors from cycling.
+
+```python
+from phasor import Scene, cx
+
+dive = Scene("dive")
+dive.add(
+    cx.Fractal(
+        id="set",
+        center="-0.77568376800905379746948350393474104 0.13646736829469012473327440961784876",
+        pos=(0, 0, 0),
+        size=(8, 4.5),
+        max_iter=3000,
+        steady=True,
+    )
+)
+dive.at(1.0).to("set.zoom", 30.0, duration=10.0)
+sem = dive.engine.inspect(11.0, id="set")["objects"][0]["semantic"]
+assert sem["precision"] == "perturbation" and sem["view_height"] < 1e-29
 ```
 
 `glow` makes a curve emit light: the renderer writes that light to a second target and the

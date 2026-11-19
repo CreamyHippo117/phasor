@@ -69,7 +69,10 @@ class EmuGpu:
         cargs, argtypes = [], []
         for a in args:
             if isinstance(a, np.ndarray):
-                assert a.flags.c_contiguous and a.dtype == np.float32, (a.dtype, a.flags)
+                assert a.flags.c_contiguous and a.dtype in (np.float32, np.float64), (
+                    a.dtype,
+                    a.flags,
+                )
                 cargs.append(a.ctypes.data_as(ctypes.c_void_p))
                 argtypes.append(ctypes.c_void_p)
             else:

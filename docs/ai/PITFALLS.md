@@ -241,3 +241,20 @@ multiple of `360 / n` and `flip` exactly 0 or 1. Mid-animation it is `None` on p
 ## `Taylor` and `RiemannSum` numbers are floats
 
 `order` and `n` are numbers so they can be animated; they are rounded when used.
+
+## A deep zoom is all one color
+
+The view is inside the set because `max_iter` is too small for the depth: escape counts grow
+with the zoom (about 1700 at 1e-30 on the spiral in `examples/deep_zoom.py`). Raise
+`max_iter` to a few thousand. If the colors flash light and dark during a dive, set
+`steady=True`.
+
+## A deep Julia zoom turns into blocks
+
+Only the Mandelbrot set has the perturbation path. A Julia set stays float64 and goes blocky
+below about 1e-10 per pixel (`precision` in the semantics says `f64`).
+
+## `center` must be text
+
+`cx.Fractal(center=...)` takes `"re im"` as decimal text (`"-0.75 0.1"`, `"1e-30 0"`), not a
+tuple: floats would round the point to 16 digits and a deep view would land somewhere else.

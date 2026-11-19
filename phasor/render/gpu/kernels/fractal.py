@@ -111,6 +111,105 @@ def escape(
     return out
 
 
+DEEP = (
+    """
+extern "C" __global__ void phasor_deep("""
+    + VIEW_PARAMS
+    + """, const double* orbit, int orbit_n, int max_iter, int rebase, float* out)
+{"""
+    + VIEW_BODY
+    + """
+    // x, y are this pixel's offset dc from the reference point; z = Z_m + dz.
+    double dcr = (double)x, dci = (double)y, dzr = 0.0, dzi = 0.0, r2 = 0.0;
+    int m = 0, k = 0;
+    while (k < max_iter) {
+        double ar = 2.0 * orbit[2 * m] + dzr, ai = 2.0 * orbit[2 * m + 1] + dzi;
+        double nr = ar * dzr - ai * dzi + dcr;
+        double ni = ar * dzi + ai * dzr + dci;
+        dzr = nr; dzi = ni; m++; k++;
+        double zr = orbit[2 * m] + dzr, zi = orbit[2 * m + 1] + dzi;
+        r2 = zr * zr + zi * zi;
+        if (r2 > 65536.0) break;
+        // Rebase onto the start of the reference when z is nearer 0 than dz (the reference
+        // has stopped describing this pixel: a glitch) or when the reference has run out.
+        if (m == orbit_n - 1 || (rebase && r2 < dzr * dzr + dzi * dzi)) {
+            dzr = zr; dzi = zi; m = 0;
+        }
+    }
+    if (r2 <= 65536.0) { out[i] = -1.0f; return; }
+    out[i] = (float)((double)k + 1.0 - log2(0.5 * log(r2)));
+}
+"""
+)
+
+
+def _orbit(orbit) -> np.ndarray:
+    o = np.ascontiguousarray(orbit, dtype=np.float64)
+    if o.ndim != 2 or o.shape[1] != 2 or len(o) < 2 or o[0, 0] != 0 or o[0, 1] != 0:
+        raise ValueError("orbit must be (L + 1, 2) float64 starting at Z_0 = 0, with L >= 1")
+    return o
+
+
+def deep_reference(
+    tile: Tile,
+    center: tuple[float, float],
+    height: float,
+    orbit: np.ndarray,
+    max_iter: int = 1000,
+    rebase: bool = True,
+) -> np.ndarray:
+    o = _orbit(orbit)
+    x, y = plane(tile, center, height)
+    dcr, dci = x.ravel().copy(), y.ravel().copy()
+    n = dcr.size
+    dzr, dzi, r2 = np.zeros(n), np.zeros(n), np.zeros(n)
+    m = np.zeros(n, dtype=np.int64)
+    k = np.zeros(n, dtype=np.int64)
+    live = np.arange(n)
+    last = len(o) - 1
+    zr_all, zi_all = o[:, 0], o[:, 1]
+    for _ in range(max_iter):
+        if live.size == 0:
+            break
+        ml = m[live]
+        a, b = dzr[live], dzi[live]
+        ar, ai = 2.0 * zr_all[ml] + a, 2.0 * zi_all[ml] + b
+        nr = ar * a - ai * b + dcr[live]
+        ni = ar * b + ai * a + dci[live]
+        ml = ml + 1
+        zr, zi = zr_all[ml] + nr, zi_all[ml] + ni
+        rr = zr * zr + zi * zi
+        k[live] += 1
+        r2[live] = rr
+        go = rr <= BAILOUT
+        back = (ml == last) | (rebase & (rr < nr * nr + ni * ni))
+        nr, ni = np.where(back, zr, nr), np.where(back, zi, ni)
+        dzr[live], dzi[live], m[live] = nr, ni, np.where(back, 0, ml)
+        live = live[go]
+    with np.errstate(all="ignore"):
+        smooth = k + 1.0 - np.log2(0.5 * np.log(r2))
+    return np.where(r2 > BAILOUT, smooth, -1.0).astype(np.float32).reshape(tile.h, tile.w)
+
+
+@kernel(
+    "deep",
+    "(tile, center, height, orbit, max_iter=1000, rebase=True) -> float32[h, w]",
+    reference=deep_reference,
+)
+def deep(gpu, tile: Tile, center, height, orbit, max_iter=1000, rebase=True):
+    """Perturbation (SPEC "Precision policy"): the escape field of the Mandelbrot set
+    around a reference point whose orbit ``Z_0..Z_L`` (float64, from
+    ``domains/fractal_math.reference_orbit``) is given. ``center`` and ``height`` are offsets
+    from that point, so a 1e-30 view is ordinary float64. Same output as ``escape``."""
+    o = _orbit(orbit)
+    compiled = gpu.compile(DEEP, "phasor_deep", "f64")
+    out = gpu.cp.empty((tile.h, tile.w), dtype=gpu.cp.float32)
+    args = (*view_args(tile, center, height), gpu.cp.asarray(o.ravel()), np.int32(len(o)),
+            np.int32(max_iter), np.int32(bool(rebase)), out)  # fmt: skip
+    gpu.launch(compiled, tile.n, args)
+    return out
+
+
 PALETTE = """
 extern "C" __global__ void phasor_palette(int n, const float* field, const float* lut, int lut_n,
                                           float density, float offset, const float* inside,
