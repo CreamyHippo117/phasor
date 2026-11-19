@@ -44,14 +44,16 @@
 - `dot`: pos, r
 - `eigen_lines`: matrix, pos, length
 - `epicycles`: points, terms, phase, trace
+- `equation`: parts, colors, pos
 - `fractal`: kind, c, pos, size, max_iter, density, hue, center, zoom, steady
 - `galois_diagram`: primes, pos, width, height, gap
 - `graph`: function, xmin, xmax, pos
+- `haze`: pos, size, shafts, intensity, softness, seed, drift
 - `homomorphism`: n, m, a, pos, r, gap, progress
 - `image_sources`: size, source, order, material, absorption, r
 - `impulse_response`: size, source, listener, order, material, absorption, pos, extent, duration, reveal, show_rt60
 - `limit`: function, a, epsilon, xmin, xmax, pos, bands
-- `line`: points, progress
+- `line`: points, progress, hue_along, hue
 - `listener`: pos, r
 - `loop_integral`: p, q, measure, center, radius, pos, progress, arrows
 - `matrix`: matrix, pos, digits

@@ -1,7 +1,11 @@
 """The final look (SPEC "Look"): bloom from HDR light, then the tone map, once.
 
     emission (or light above threshold) -> halve, halve, ... -> blur each level
-                     -> enlarge and sum -> tonemap(frame + strength * bloom) -> display range
+                     -> enlarge and sum -> [fringe] -> tonemap(frame + strength * bloom)
+                     -> [vignette] -> display range
+
+``fringe`` and ``vignette`` (theme ``[bloom]``, both optional, 0 = off) are the lens: warm
+and cool rims on the glow, darker corners. Paint is never fringed.
 
 The tone curve is identity below the theme's knee, so paint colors look exactly as the
 theme defines them; only glow is compressed (MILESTONE_3.md, deviation 5).
@@ -71,7 +75,11 @@ def finish(
     if emission is not None:
         source, threshold = np.ascontiguousarray(emission, dtype=np.float32), 0.0
     glow = bloom(source, threshold, int(b["levels"]), backend) if b["strength"] > 0 else None
+    if glow is not None and b.get("fringe", 0.0) > 0:  # warm and cool rims on the glow only
+        glow = run("fringe", _whole(image), image=glow, amount=b["fringe"], backend=backend)
     out = run("tonemap", _whole(image), image=image, exposure=b["exposure"], bloom=glow,
               bloom_strength=b["strength"] / max(int(b["levels"]), 1), knee=b["knee"],
               backend=backend)  # fmt: skip
+    if b.get("vignette", 0.0) > 0:
+        out = run("vignette", _whole(image), image=out, strength=b["vignette"], backend=backend)
     return to_host(out)

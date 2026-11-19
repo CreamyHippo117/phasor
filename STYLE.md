@@ -10,6 +10,16 @@ that judges the storyboard, so write it as you would brief a person.
   look) are opt-in, only when a scene asks.
 - Glow should feel like light, not paint: soft halos, never a flat white blob (`glow_clip`).
 
+## The reference look: `prism` (2026-11-19)
+The owner pointed at videos on the explicit formula for primes (Fourier over the zeta zeros):
+- Near-black stage; functions glow with **faint different-colored halos** that stand out from
+  the background (warm and cool fringes on the glow, a hue running along the curve).
+- **A graph is not apparent unless needed**: no axes, ticks or frames by default.
+- **Nothing is static**: the equations are LaTeX, but they drift; colors flow along curves.
+- Color is welcome: amber and cyan terms in white equations, rainbow-running curves.
+- Behind everything, soft out-of-focus light. `look="prism"` is all of this;
+  `examples/prism_primes.py` is the reference scene.
+
 ## Alive, not rigid
 - Nothing sits perfectly still: glow breathes, points drift a hair, color fields turn slowly.
   That is the `life` setting (`off`, `subtle`, `lively`); everything must also work with it

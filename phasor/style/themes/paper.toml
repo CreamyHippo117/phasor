@@ -44,6 +44,7 @@ soft_phase = ["#6f8fd6", "#8f86d6", "#b58bd0"]
 sequential = ["#f3eee2", "#cfd9ee", "#7aa2e0", "#2f5fb3", "#d9622b", "#8a2f4d", "#f3eee2"]
 ember = ["#f3eee2", "#f1d3b5", "#e49a63", "#b5502a", "#5a2418", "#b5502a"]
 ocean = ["#f3eee2", "#cfe6e8", "#7fb8c4", "#2f7d92", "#123d52", "#2f7d92"]
+spectrum = "oklch 0.55 0.13"
 
 # Final look: the light that glow roles add blooms (`threshold` applies only when there is
 # no emission target, e.g. to a raw HDR image); `strength` is how bright the halo is; `levels` is how many

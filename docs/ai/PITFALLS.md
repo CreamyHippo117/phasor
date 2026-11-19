@@ -275,3 +275,19 @@ piecewise trick).
 
 The generators must reach every element, or the graph falls apart into pieces: `"r"` alone
 gives only the rotations of D4; use `"r s"`.
+
+## Math shows as plain text with dollar signs
+
+Only strings with a *pair* of unescaped `$` are typeset. In Python write raw strings
+(`r"$\psi$"`) or double the backslashes. A lone `\$` is a dollar sign.
+
+## I want one term of an equation in another color
+
+Use `Equation(parts=(...), colors=(...))`, splitting the TeX where a part can stand alone. A
+term inside a fraction or a root cannot be colored separately (each part is typeset on its
+own).
+
+## The prism look clutters my scene with rainbows
+
+`hue_along` is the look's default for lines. Give a line that should be one color
+`hue_along=0` (and a `color` role); keep the rainbow for the curve that is the subject.

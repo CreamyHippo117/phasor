@@ -19,6 +19,8 @@ _LAZY = {
     "Dot": "phasor.domains.basic",
     "Line": "phasor.domains.basic",
     "Text": "phasor.domains.basic",
+    "Equation": "phasor.domains.basic",
+    "Haze": "phasor.domains.basic",
 }
 _MODULES = {  # domain modules: ``from phasor import cx``
     "cx": "phasor.domains.cx",

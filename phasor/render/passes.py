@@ -40,12 +40,19 @@ in vec3 in_pos;
 in vec2 in_uv;
 out vec2 v_uv;
 #endif
+#ifdef VCOLOR
+in vec4 in_color;
+out vec4 v_color;
+#endif
 void main() {
     gl_Position = u_vp * vec4(in_pos, 1.0);
     gl_Position.xy *= u_zoom;
     gl_Position.z -= u_bias * gl_Position.w;
 #ifdef TEXTURED
     v_uv = in_uv;
+#endif
+#ifdef VCOLOR
+    v_color = in_color;
 #endif
 }
 """
@@ -58,10 +65,18 @@ uniform float u_glow;
 uniform sampler2D u_tex;
 in vec2 v_uv;
 #endif
+#ifdef VCOLOR
+in vec4 v_color;
+#endif
 layout(location = 0) out vec4 frag;
 layout(location = 1) out vec4 emit;  // only the light above plain paint: the bloom source
 void main() {
     float a = u_color.a;
+    vec3 rgb = u_color.rgb;
+#ifdef VCOLOR
+    a *= v_color.a;   // a color per vertex (a hue running along a curve), times opacity
+    rgb = v_color.rgb;
+#endif
 #ifdef IMAGE
     frag = vec4(texture(u_tex, v_uv).rgb * a, a);  // kernel pixels, premultiplied
     emit = vec4(0.0, 0.0, 0.0, a);                 // they emit nothing, and hide what does
@@ -73,8 +88,8 @@ void main() {
     // later is cut out behind the whole rectangle of a label.
     if (a < 0.004) discard;
 #endif
-    frag = vec4(u_color.rgb * u_glow * a, a);  // premultiplied; glow > 1 is HDR light
-    emit = vec4(u_color.rgb * max(u_glow - 1.0, 0.0) * a, a);
+    frag = vec4(rgb * u_glow * a, a);  // premultiplied; glow > 1 is HDR light
+    emit = vec4(rgb * max(u_glow - 1.0, 0.0) * a, a);
 }
 """,
     "id": """
@@ -209,9 +224,11 @@ def _light_dirs(cam, light) -> list[tuple[float, float, float]]:
 
 
 def _define(src: str, kind: str) -> str:
-    """``kind``: ``mesh`` (flat color), ``text`` (coverage bitmap) or ``image`` (RGBA)."""
+    """``kind``: ``mesh`` (flat color), ``vmesh`` (a color per vertex, color pass only),
+    ``text`` (coverage bitmap) or ``image`` (RGBA)."""
     head, _, rest = src.strip().partition("\n")
-    defines = {"mesh": "", "text": "#define TEXTURED", "image": "#define TEXTURED\n#define IMAGE"}
+    defines = {"mesh": "", "vmesh": "#define VCOLOR", "text": "#define TEXTURED",
+               "image": "#define TEXTURED\n#define IMAGE"}  # fmt: skip
     return f"{head}\n{defines[kind]}\n{rest}"
 
 
@@ -221,10 +238,11 @@ class _Collector:
     def __init__(self) -> None:
         self.commands: list[tuple[str, dict[str, Any]]] = []
 
-    def triangles(self, positions, indices=None, *, color, glow=1.0) -> None:
+    def triangles(self, positions, indices=None, *, color, glow=1.0, colors=None) -> None:
         self.commands.append(
-            ("mesh", {"positions": positions, "indices": indices, "color": color, "glow": glow})
-        )
+            ("mesh", {"positions": positions, "indices": indices, "color": color, "glow": glow,
+                      "colors": colors})
+        )  # fmt: skip
 
     def field(self, corner, right, up, *, pixels, opacity=1.0) -> None:
         self.commands.append(
@@ -243,10 +261,10 @@ class _Collector:
                          "opacity": float(opacity), "glow": float(glow)})
         )  # fmt: skip
 
-    def text(self, text, origin, height, *, color, anchor="center") -> None:
+    def text(self, text, origin, height, *, color, anchor="center", glow=1.0) -> None:
         self.commands.append(
             ("text", {"text": text, "origin": origin, "height": height, "color": color,
-                      "anchor": anchor})
+                      "anchor": anchor, "glow": glow})
         )  # fmt: skip
 
 
@@ -343,6 +361,8 @@ class GLRenderer:
                     "color": (0, 0, 0, 1),
                 }
                 kind = "mesh"
+            if kind == "mesh" and pass_ == "color" and c.get("colors") is not None:
+                kind = "vmesh"
             prog = self._program(pass_, kind)
             prog["u_vp"].write(cam.view_proj.astype("f4").T.tobytes())
             prog["u_bias"].value = order * DEPTH_BIAS
@@ -390,7 +410,13 @@ class GLRenderer:
                 if c["indices"] is not None:
                     ibo = ctx.buffer(np.ascontiguousarray(c["indices"], dtype="i4").tobytes())
                     buffers.append(ibo)
-                vao = ctx.vertex_array(prog, [(vbo, "3f", "in_pos")], index_buffer=ibo)
+                if kind == "vmesh":
+                    cbo = ctx.buffer(np.ascontiguousarray(c["colors"], dtype="f4").tobytes())
+                    buffers.append(cbo)
+                    vao = ctx.vertex_array(prog, [(vbo, "3f", "in_pos"), (cbo, "4f", "in_color")],
+                                           index_buffer=ibo)  # fmt: skip
+                else:
+                    vao = ctx.vertex_array(prog, [(vbo, "3f", "in_pos")], index_buffer=ibo)
             vao.render()
             vao.release()
             for b in buffers:

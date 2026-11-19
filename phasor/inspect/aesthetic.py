@@ -77,6 +77,8 @@ def hues_on_screen(state: SceneState, shown: set[str]) -> set[int]:
         if obj.id not in shown or obj.params.opacity < 0.1:
             continue
         cm = obj.style.get("colormap")
+        if getattr(obj.params, "hue_along", None) == 0:
+            cm = None  # a line that does not run a hue along itself shows its paint color
         if cm is not None:
             if obj.roles.get("colormap") != "phase":
                 hues |= _lut_hues(cm)

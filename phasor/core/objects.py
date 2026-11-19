@@ -73,6 +73,8 @@ class DrawContext(Protocol):
         *,
         color: tuple[float, float, float, float],  # linear RGBA, not premultiplied
         glow: float = 1.0,  # emission: the color pass multiplies rgb by this (theme glow role)
+        colors: np.ndarray | None = None,  # (N, 4) per vertex, replacing color's rgb (its alpha
+        # still multiplies): a hue running along a curve. Only the color pass uses it.
     ) -> None: ...
 
     def field(
@@ -116,6 +118,7 @@ class DrawContext(Protocol):
         *,
         color: tuple[float, float, float, float],
         anchor: str = "center",  # "center" | "left" | "right"
+        glow: float = 1.0,  # as for triangles: above 1 the text emits light
     ) -> None: ...
 
 

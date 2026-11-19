@@ -90,3 +90,36 @@ built on Sonnet, so the review is open (see below).
 - **Boundary review of Milestone 7** (and the M6 review's follow-ups) to be run on the
   strongest model.
 - Fill in `STYLE.md` (negative space, motion rhythm, typography) and `gallery/`.
+
+## Addendum: the prism look (2026-11-19)
+
+The owner showed frames from a video on the explicit formula for primes (Fourier over the
+zeta zeros) and asked for that style as a preset: faint differently colored glows that stand
+out from the background, no visible graph unless needed, equations that are LaTeX but move,
+color welcome. Built as `look="prism"` (theme `prism`):
+
+| Piece | Where |
+| --- | --- |
+| Typeset math: `$...$` in any text (mathtext, Computer Modern, no TeX install) | `core/text.py` |
+| `Equation`: parts in different color roles on one baseline, relation spacing | `domains/basic.py` |
+| Hue along a curve: per-vertex colors through `DrawContext.triangles(colors=)`, `Line(hue_along, hue)`, colormap `spectrum` in every theme | `render/passes.py`, `domains/strokes.py`, `domains/basic.py` |
+| Lens: `fringe` (warm/cool rims on the glow only) and `vignette` kernels, theme `[bloom]` keys, 0 = off | `render/gpu/kernels/post.py`, `render/post.py` |
+| `Haze`: faint out-of-focus light shafts, seeded by `rng(id, seed)` | `domains/basic.py` |
+| Life channels `float` (equations drift) and `drift` (haze sways); lines' hue flows | `core/life.py` |
+| The look, the theme (darker stage, amber and cyan terms, lint knobs for this style) | `style/looks/prism.toml`, `style/themes/prism.toml` |
+| Reference scene: E(x) = psi(x) - x + ln 2 pi rebuilt from 1, 5, 20, 60 zeta zeros | `examples/prism_primes.py` |
+
+Verification: `tests/test_prism.py` (math metrics and bitmap/quad agreement, bad TeX refused,
+one baseline and relation spacing, per-vertex hue, life float/drift/hue and `exact`, haze
+seeding and faintness, paint in the middle untouched by the lens and the halo split warm/cool,
+the demo's mathematics converging with more zeros, demo lint and critique clean, a software
+golden); the two kernels in `test_kernels.py` three ways. The test of life channels caught an
+edit that had silently not applied (the `float` channel was missing).
+
+Deviations: mathtext instead of TeX/MathJax (SPEC updated); a term inside a fraction cannot
+take its own color; the prism theme relaxes `hues` (7) and `density_min` (0.8%), because a
+hue running along thin curves on black is the point of this look.
+
+Untested: Windows, CUDA (the two new kernels ran as NumPy references and compiled for the
+CPU only). The GUI look picker comes with Milestone 10.
+

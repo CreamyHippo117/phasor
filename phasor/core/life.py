@@ -11,7 +11,9 @@ What moves (amplitudes live in the theme's ``[life]``; the scene's ``life`` is `
 - types that declare ``"wander"`` in ``Life`` (dots) drift a fraction of their radius ``r``;
 - glowing objects breathe: their glow swells and fades a little (strokes shimmer faster);
 - types that declare ``"hue"`` (color fields) turn their colors a few percent of the wheel (a
-  field's geometry never moves: a pole stays at its computed place).
+  field's geometry never moves: a pole stays at its computed place);
+- ``"float"`` (equations) drift their ``pos`` slowly by ``[life] float`` world units, and
+  ``"drift"`` (backdrops such as ``Haze``) sways a ``drift`` parameter (theme keys optional).
 
 Each type says what may happen to it (``ObjectBase.Life``, glow only by default): guessing
 from parameter names once made polygons, clocks and acoustic sources drift.
@@ -85,6 +87,16 @@ def adjust(
             x + d * noise(object_id, seed, "x", t, th["point_period"]),
             y + d * noise(object_id, seed, "y", t, th["point_period"]),
             z,
+        )
+    if "float" in channels and "pos" in fields:  # an equation drifts slowly, a little
+        d = amp * float(th.get("float", 0.06))
+        x, y, z = values["pos"]
+        period = float(th.get("float_period", 9.0))
+        values["pos"] = (x + d * noise(object_id, seed, "fx", t, period),
+                         y + d * noise(object_id, seed, "fy", t, period * 1.3), z)  # fmt: skip
+    if "drift" in channels and "drift" in fields:  # a backdrop sways
+        values["drift"] = values["drift"] + amp * float(th.get("drift", 0.08)) * noise(
+            object_id, seed, "drift", t, float(th.get("drift_period", 14.0))
         )
     if (
         "hue" in channels and "hue" in fields

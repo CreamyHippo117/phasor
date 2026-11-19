@@ -262,3 +262,127 @@ def resize(gpu, tile: Tile, image):
             np.int32(tile.w), np.int32(tile.h), src, out)  # fmt: skip
     gpu.launch(compiled, tile.n, args)
     return out
+
+
+# ---------------------------------------------------------------- lens: fringe and vignette
+
+LENS = """
+__device__ float phasor_sample(const float* img, int w, int h, float x, float y, int c)
+{
+    x = x < 0.0f ? 0.0f : (x > (float)(w - 1) ? (float)(w - 1) : x);
+    y = y < 0.0f ? 0.0f : (y > (float)(h - 1) ? (float)(h - 1) : y);
+    int x0 = (int)x, y0 = (int)y;
+    int x1 = x0 + 1 < w ? x0 + 1 : x0, y1 = y0 + 1 < h ? y0 + 1 : y0;
+    float fx = x - (float)x0, fy = y - (float)y0;
+    float a = img[4 * ((long long)y0 * w + x0) + c], b = img[4 * ((long long)y0 * w + x1) + c];
+    float d = img[4 * ((long long)y1 * w + x0) + c], e = img[4 * ((long long)y1 * w + x1) + c];
+    float top = a + (b - a) * fx, bottom = d + (e - d) * fx;
+    return top + (bottom - top) * fy;
+}
+
+extern "C" __global__ void phasor_fringe(int n, int w, int h, float amount, const float* in,
+                                         float* out)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    float px = (float)(i % w), py = (float)(i / w);
+    float cx = 0.5f * (float)(w - 1), cy = 0.5f * (float)(h - 1);
+    // Red is sampled from further out and blue from further in (a lens's lateral color),
+    // plus a small fixed diagonal shift so a glow in the middle of the frame splits too.
+    float sx = amount * ((px - cx) + 0.25f * (float)h);
+    float sy = amount * ((py - cy) - 0.25f * (float)h);
+    float* o = out + 4 * (long long)i;
+    o[0] = phasor_sample(in, w, h, px - sx, py - sy, 0);
+    o[1] = in[4 * (long long)i + 1];
+    o[2] = phasor_sample(in, w, h, px + sx, py + sy, 2);
+    o[3] = in[4 * (long long)i + 3];
+}
+
+extern "C" __global__ void phasor_vignette(int n, int w, int h, float strength, const float* in,
+                                           float* out)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    float u = ((float)(i % w) + 0.5f) / (float)w - 0.5f;
+    float v = ((float)(i / w) + 0.5f) / (float)h - 0.5f;
+    float r2 = (u * u + v * v) * 2.0f;  // 0 in the middle, 1 in the corners
+    float k = 1.0f - strength * r2 * r2;
+    k = k < 0.0f ? 0.0f : k;
+    for (int c = 0; c < 3; c++) out[4 * (long long)i + c] = in[4 * (long long)i + c] * k;
+    out[4 * (long long)i + 3] = in[4 * (long long)i + 3];
+}
+"""
+
+
+def _bilinear(img: np.ndarray, x: np.ndarray, y: np.ndarray, c: int) -> np.ndarray:
+    h, w = img.shape[:2]
+    x = np.clip(x, 0, w - 1).astype(np.float32)
+    y = np.clip(y, 0, h - 1).astype(np.float32)
+    x0, y0 = x.astype(np.int64), y.astype(np.int64)
+    x1, y1 = np.minimum(x0 + 1, w - 1), np.minimum(y0 + 1, h - 1)
+    fx, fy = x - x0.astype(np.float32), y - y0.astype(np.float32)
+    ch = img[..., c]
+    top = ch[y0, x0] + (ch[y0, x1] - ch[y0, x0]) * fx
+    bottom = ch[y1, x0] + (ch[y1, x1] - ch[y1, x0]) * fx
+    return (top + (bottom - top) * fy).astype(np.float32)
+
+
+def fringe_reference(tile: Tile, image: np.ndarray, amount: float = 0.004) -> np.ndarray:
+    _check(tile, image)
+    h, w = image.shape[:2]
+    py, px = np.mgrid[0:h, 0:w].astype(np.float32)
+    a = np.float32(amount)
+    cx, cy = np.float32(0.5) * np.float32(w - 1), np.float32(0.5) * np.float32(h - 1)
+    sx = a * ((px - cx) + np.float32(0.25) * np.float32(h))
+    sy = a * ((py - cy) - np.float32(0.25) * np.float32(h))
+    out = image.copy()
+    out[..., 0] = _bilinear(image, px - sx, py - sy, 0)
+    out[..., 2] = _bilinear(image, px + sx, py + sy, 2)
+    return out
+
+
+@kernel(
+    "fringe",
+    "(tile, image, amount=0.004) -> float32[h, w, 4]; red out, blue in: a lens's color fringe",
+    reference=fringe_reference,
+)
+def fringe(gpu, tile: Tile, image, amount: float = 0.004):
+    """Lateral color on the glow (theme ``[bloom] fringe``): red is pulled outward and blue
+    inward by ``amount`` of the distance from the center (plus a small fixed diagonal), so
+    halos split into warm and cool rims. Applied to the bloom only: paint stays exact."""
+    _check(tile, image)
+    src = gpu.cp.ascontiguousarray(image)
+    out = gpu.cp.empty_like(src)
+    compiled = gpu.compile(LENS, "phasor_fringe")
+    gpu.launch(compiled, tile.n, (np.int32(tile.n), np.int32(tile.w), np.int32(tile.h),
+                                  np.float32(amount), src, out))  # fmt: skip
+    return out
+
+
+def vignette_reference(tile: Tile, image: np.ndarray, strength: float = 0.3) -> np.ndarray:
+    _check(tile, image)
+    h, w = image.shape[:2]
+    u = (np.arange(w, dtype=np.float32) + np.float32(0.5)) / np.float32(w) - np.float32(0.5)
+    v = (np.arange(h, dtype=np.float32) + np.float32(0.5)) / np.float32(h) - np.float32(0.5)
+    r2 = (u[None, :] * u[None, :] + v[:, None] * v[:, None]) * np.float32(2)
+    k = np.maximum(np.float32(1) - np.float32(strength) * r2 * r2, np.float32(0))
+    out = image.copy()
+    out[..., :3] = image[..., :3] * k[..., None]
+    return out.astype(np.float32)
+
+
+@kernel(
+    "vignette",
+    "(tile, image, strength=0.3) -> float32[h, w, 4]; corners darkened by strength",
+    reference=vignette_reference,
+)
+def vignette(gpu, tile: Tile, image, strength: float = 0.3):
+    """Darken toward the corners (theme ``[bloom] vignette``): 1 - strength r^4, r = 1 at a
+    corner. After the tone map; the middle of the frame is left exactly as it was."""
+    _check(tile, image)
+    src = gpu.cp.ascontiguousarray(image)
+    out = gpu.cp.empty_like(src)
+    compiled = gpu.compile(LENS, "phasor_vignette")
+    gpu.launch(compiled, tile.n, (np.int32(tile.n), np.int32(tile.w), np.int32(tile.h),
+                                  np.float32(strength), src, out))  # fmt: skip
+    return out

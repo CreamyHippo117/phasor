@@ -44,6 +44,7 @@ soft_phase = ["#3b5bdb", "#7048a8", "#b5586f"]
 sequential = ["#0b0e14", "#1f2a4d", "#7aa2f7", "#c0caf5", "#ffb454", "#f7768e", "#3b1f3a"]
 ember = ["#0b0e14", "#3a1f1a", "#a8442a", "#ffb454", "#fff1d6", "#a8442a"]
 ocean = ["#0b0e14", "#12284a", "#1f6f8b", "#7fd1c7", "#e8fbf5", "#1f6f8b"]
+spectrum = "oklch 0.8 0.13"  # an even, bright hue wheel for color running along a curve
 
 # Final look: the light that glow roles add blooms (`threshold` applies only when there is
 # no emission target, e.g. to a raw HDR image); `strength` is how bright the halo is; `levels` is how many

@@ -36,6 +36,8 @@ def _cases(w: int, h: int) -> dict[str, dict[str, Any]]:
         "escape": {"center": (-0.6, 0.0), "height": 2.6, "max_iter": 256},
         "palette": {"field": field, "lut": phase_lut()},
         "bright": {"image": image, "threshold": 1.0},
+        "fringe": {"image": image, "amount": 0.004},
+        "vignette": {"image": image, "strength": 0.3},
         "gauss": {"image": image, "sigma": 1.5, "axis": 0},
         "resize": {"image": image},
         "tonemap": {"image": image, "bloom": image},

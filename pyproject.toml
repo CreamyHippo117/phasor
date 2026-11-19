@@ -7,6 +7,7 @@ requires-python = ">=3.11"
 license = { text = "TBD" }
 dependencies = [
     "kiwisolver>=1.5.1",
+    "matplotlib>=3.8",
     "numpy>=1.26",
     "pillow>=13.0.0",
     "pydantic>=2.7",

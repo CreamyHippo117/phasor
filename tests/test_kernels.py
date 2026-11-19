@@ -75,6 +75,9 @@ CASES = {
                              "lut": phase_lut(), "density": 0.4, "offset": 0.2,
                              "inside": (0.05, 0.1, 0.2)}),
     ],
+    "fringe": [(IMAGE_TILE, {"image": IMAGE, "amount": 0.01}),
+               (IMAGE_TILE, {"image": IMAGE, "amount": 0.0})],
+    "vignette": [(IMAGE_TILE, {"image": IMAGE, "strength": 0.6})],
     "gauss": [
         (IMAGE_TILE, {"image": IMAGE, "sigma": 1.5, "axis": 0}),
         (IMAGE_TILE, {"image": IMAGE, "sigma": 2.2, "axis": 1}),
@@ -109,10 +112,12 @@ def test_every_kernel_has_a_reference_and_a_signature():
         "deep",
         "domain",
         "escape",
+        "fringe",
         "gauss",
         "palette",
         "resize",
         "tonemap",
+        "vignette",
     ]
     assert all(callable(k.reference) and "->" in k.signature for k in ks.values())
 
@@ -451,3 +456,27 @@ def test_soft_contours_remove_the_jump_and_keep_the_bands():
     assert abs(shade(just_below, 0.0) - shade(just_above, 0.0)) > 0.4  # hard: a step
     assert abs(shade(just_below, 0.8) - shade(just_above, 0.8)) < 1e-3  # feathered: continuous
     assert shade(1.2, 0.8) == pytest.approx(shade(1.2, 0.0))  # the rest of the band is untouched
+
+
+# ---------------------------------------------------------------- lens (the prism look)
+
+
+def test_fringe_splits_a_glow_into_warm_and_cool_rims_and_keeps_its_light():
+    img = np.zeros((60, 80, 4), dtype=np.float32)
+    img[28:32, 38:42, :3] = 4.0  # a white light in the middle
+    img[..., 3] = 1
+    out = get("fringe").reference(Tile.full(80, 60), img, 0.02)
+    np.testing.assert_array_equal(out[..., 1], img[..., 1])  # green stays
+    ry, rx = np.unravel_index(np.argmax(out[..., 0]), out.shape[:2])
+    by, bx = np.unravel_index(np.argmax(out[..., 2]), out.shape[:2])
+    assert (rx, ry) != (bx, by)  # red and blue land in different places
+    assert out[..., 0].sum() == pytest.approx(img[..., 0].sum(), rel=0.05)  # moved, not lost
+    np.testing.assert_array_equal(get("fringe").reference(Tile.full(80, 60), img, 0.0), img)
+
+
+def test_vignette_leaves_the_middle_and_darkens_the_corners():
+    img = np.ones((40, 60, 4), dtype=np.float32)
+    out = get("vignette").reference(Tile.full(60, 40), img, 0.5)
+    assert out[20, 30, 0] == pytest.approx(1.0, abs=1e-3)
+    assert out[0, 0, 0] < 0.6 and out[0, 0, 0] > 0.4  # 1 - 0.5 r^4 with r near 1
+    assert (out[..., 3] == 1).all()

@@ -1,0 +1,29 @@
+description = "The owner's reference look: near-black, curves glowing with warm and cool fringes and a hue running along them, drifting equations, faint light behind. No axes unless a scene asks."
+theme = "prism"
+life = "lively"
+
+[defaults.line.params]
+hue_along = 0.8
+
+[defaults.line.style]
+glow = "strong"
+stroke = "regular"
+
+[defaults.dot.style]
+glow = "strong"
+color = "primary"
+
+[defaults.equation.style]
+glow = "soft"
+
+[defaults.text.style]
+color = "primary"
+
+[defaults.haze.params]
+intensity = 0.14
+
+[defaults.domain_coloring.params]
+softness = 0.7
+
+[defaults.fractal.style]
+colormap = "ocean"

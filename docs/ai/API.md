@@ -31,11 +31,13 @@ s.set("camera.height", 6)  # world units visible top to bottom
 | Type | Parameters | Style keys (role group, default) |
 | --- | --- | --- |
 | `Dot` | `pos`, `r` (world radius, default 0.1) | `color` (emphasis, primary), `glow` (glow, none) |
-| `Line` | `points` (2 or more) | `color` (emphasis, primary), `stroke` (stroke, regular), `glow` (glow, none) |
+| `Line` | `points` (2 or more), `progress`, `hue_along` (colormap cycles along the length; 0: one color), `hue` (shifts them) | `color` (emphasis, primary), `stroke` (stroke, regular), `glow` (glow, none), `colormap` (colormap, spectrum) |
 | `cx.DomainColoring` | `function` (e.g. `"1/(z**2 + 1)"`), `pos` (center), `size` (w, h), `contour` (0-1), `softness` (0-1, edge feathering), `hue` (turns the wheel) | `colormap` (colormap, phase) |
 | `cx.Fractal` | `kind` (`mandelbrot`/`julia`), `c` (Julia constant), `pos`, `size`, `max_iter`, `density`, `hue`, `center` (exact text `"re im"`), `zoom` (powers of ten, to 280), `steady` (hold the outer color in a dive) | `colormap` (colormap, sequential) |
 | `cx.RiemannSurface` | `kind` (`sqrt`/`cbrt`/`log`), `pos` (branch point), `radius`, `height` (`re`/`im`), `scale`, `rings`, `segments` | `colormap` (colormap, phase), `material` (surface, solid) |
-| `Text` | `text`, `pos`, `anchor` (`center`/`left`/`right`), `leader`, `leader_on` (set by layout) | `color` (emphasis, primary), `size` (text, label), `leader` (stroke, hairline) |
+| `Text` | `text` (`$...$` is typeset math), `pos`, `anchor` (`center`/`left`/`right`), `leader`, `leader_on` (set by layout) | `color` (emphasis, primary), `size` (text, label), `leader` (stroke, hairline) |
+| `Equation` | `parts` (math or text, set on one baseline), `colors` (an emphasis role per part), `pos` | `color` (emphasis, primary), `size` (text, math), `glow` (glow, none) |
+| `Haze` | `pos`, `size`, `shafts`, `intensity`, `softness`, `seed`, `drift` | `color` (emphasis, secondary) |
 
 Every type also has `opacity` (0-1; below 0.5 it stops hiding things behind it), `dim`
 (0-1, owned by `dim_others`; what is drawn is `opacity` x `dim`) and
@@ -402,7 +404,8 @@ yourself, then the preset, then the look, then the type's default. Presets: `dot
 `classic`, `ember`, `ocean`; `riemann_surface`: `glass`, `soft_glass`.
 
 **Palettes** are style roles (`colormap`): `phase` (the full wheel: use it where hue means
-phase), `soft_phase` (three-hue wheel), `sequential`, `ember`, `ocean` (two-tone ramps).
+phase), `soft_phase` (three-hue wheel), `sequential`, `ember`, `ocean` (two-tone ramps),
+`spectrum` (a bright even wheel for color running along a curve).
 Fewer rainbows does not mean none: domain coloring keeps the full wheel.
 
 **Edges**: `cx.DomainColoring(softness=0..1)` feathers the modulus bands (0.5 by default).
@@ -427,6 +430,39 @@ assert (meta.theme, meta.life, meta.look) == ("midnight_glow", "subtle", "calm")
 assert calm.engine.document.object("plane").params["softness"] == 0.8  # from the preset
 assert calm.engine.state_at(0.0)["origin"].params.pos == (0.0, 0.0, 0.0)
 assert calm.engine.state_at(2.0)["pole"].params.pos != calm.engine.state_at(0.0)["pole"].params.pos
+```
+
+**Math.** Any text written as `$...$` is typeset (TeX math through matplotlib's mathtext,
+Computer Modern, no TeX install): `Text(text=r"$\psi(x) \approx x - \ln 2\pi$")`. Its box can
+be taller than a line (sums, fractions) and layout sees the real size. Bad TeX is refused when
+the object is added. For terms in different colors, `Equation(parts=(...), colors=(...))` sets
+parts side by side on one baseline (a relation at a part's edge gets TeX's thick space). A
+color inside a fraction is not possible: split where a part can end.
+
+**The prism look** (`look="prism"`, the owner's reference style): near-black stage, curves
+glowing with a hue running along them (`Line(hue_along=...)`, the `spectrum` colormap) and
+warm/cool fringes on the glow (theme `[bloom] fringe`), a vignette (`[bloom] vignette`),
+typeset equations that float (life `float`), and `Haze`, faint out-of-focus light behind.
+No axes unless the scene adds them. `examples/prism_primes.py` is the reference scene.
+
+```python
+from phasor import Equation, Haze, Line, Scene
+
+p = Scene("prism", look="prism", passes=None)
+p.add(Haze(id="haze"))
+p.add(Line(id="wave", points=[(x / 4, (x % 3) / 3, 0) for x in range(-12, 13)]))
+p.add(
+    Equation(
+        id="eq",
+        parts=("$E(x) =$", "$\\psi$", "$(x) - x$"),
+        colors=("primary", "secondary", "primary"),
+        pos=(0, 2, 0),
+    )
+)
+st = p.engine.state_at(3.0)
+assert st["wave"].params.hue_along > 0  # the look's default: color runs along curves
+assert st["eq"].params.pos != (0.0, 2.0, 0.0)  # equations drift a little (life)
+assert p.engine.inspect(0, id="eq")["objects"][0]["semantic"]["colors"][1] == "secondary"
 ```
 
 **Taste, the art director and variants.** `lint(aesthetic=True)` adds the taste rules:

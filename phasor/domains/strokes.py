@@ -11,9 +11,11 @@ from phasor.core.spatial import Camera
 DISC_SEGMENTS = 48
 
 
-def polyline(ctx: DrawContext, cam: Camera, pts, width, *, color, glow: float = 1.0) -> None:
+def polyline(ctx: DrawContext, cam: Camera, pts, width, *, color, glow: float = 1.0,
+             colors=None) -> None:  # fmt: skip
     """A stroked polyline (mitered joins). ``width`` is in world units: a number, or one per
-    point (perspective: wider where it is further away, so it looks constant on screen)."""
+    point (perspective: wider where it is further away, so it looks constant on screen).
+    ``colors`` (N, 4), one per point, runs a color along the curve."""
     pts = np.asarray(pts, dtype=np.float64)
     if len(pts) < 2:
         return
@@ -34,7 +36,10 @@ def polyline(ctx: DrawContext, cam: Camera, pts, width, *, color, glow: float = 
     positions[0::2], positions[1::2] = pts + off3, pts - off3
     k = 2 * np.arange(len(pts) - 1)
     indices = np.vstack([np.c_[k, k + 1, k + 2], np.c_[k + 1, k + 3, k + 2]])
-    ctx.triangles(positions, indices, color=color, glow=glow)
+    per_vertex = None
+    if colors is not None:
+        per_vertex = np.repeat(np.asarray(colors, dtype=np.float64), 2, axis=0)
+    ctx.triangles(positions, indices, color=color, glow=glow, colors=per_vertex)
 
 
 def segments(ctx: DrawContext, cam: Camera, pairs, width, *, color, glow: float = 1.0) -> None:
