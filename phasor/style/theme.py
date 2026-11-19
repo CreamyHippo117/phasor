@@ -29,7 +29,7 @@ ROLE_GROUPS: dict[str, tuple[str, ...]] = {
     # Cyclic wheels (phase) and ramps (the rest). `phase` is the full wheel: use it where hue
     # means something (domain coloring). `soft_phase` is a restrained three-hue wheel,
     # `ember` and `ocean` are two-tone ramps for fractals and plain fields.
-    "colormap": ("phase", "soft_phase", "sequential", "ember", "ocean", "spectrum"),
+    "colormap": ("phase", "soft_phase", "sequential", "ember", "ocean", "spectrum", "magnitude"),
 }
 _SECTION = {
     "emphasis": "palette",

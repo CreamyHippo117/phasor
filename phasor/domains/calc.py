@@ -332,7 +332,10 @@ class Taylor(ObjectBase):
 @register
 class VectorField(ObjectBase):
     """A planar field F = (P(x, y), Q(x, y)) as a grid of arrows (length scaled to the grid
-    spacing). Divergence and curl are in the semantics."""
+    spacing). Divergence and curl are in the semantics.
+
+    Presets: ``dense`` (many small thin arrows, lengths eased so weak ones still show, color
+    saying how strong: the ``magnitude`` colormap), ``bold`` (few thick glowing arrows)."""
 
     type: ClassVar[str] = "vector_field"
     Style: ClassVar = {
@@ -341,6 +344,11 @@ class VectorField(ObjectBase):
         "glow": ("glow", "none"),
         "colormap": ("colormap", "sequential"),
     }
+    Presets: ClassVar = {
+        "dense": {"params": {"spacing": 0.32, "length_by": "soft", "color_by_size": True},
+                  "style": {"colormap": "magnitude", "stroke": "hairline"}},
+        "bold": {"params": {"spacing": 1.0}, "style": {"stroke": "regular", "glow": "soft"}},
+    }  # fmt: skip
 
     class Params(ParamsBase):
         p: str = "-y"
@@ -349,6 +357,7 @@ class VectorField(ObjectBase):
         extent: tuple[float, float] = (8.0, 5.0)
         spacing: float = Field(0.8, gt=0.1)
         color_by_size: bool = False  # color each arrow by its size through the colormap
+        length_by: Literal["size", "soft"] = "size"  # "soft": weak arrows still show
 
         @field_validator("p", "q")
         @classmethod
@@ -394,32 +403,27 @@ class VectorField(ObjectBase):
         }
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
-        from phasor.domains.strokes import arrow
+        from phasor.core.color import ramp
+        from phasor.domains.geometry_math import normalize01, sample_ramp
+        from phasor.domains.strokes import field_arrows
 
         me = self.me(state)
         p = me.params
         cam = state.camera_for(me)
-        f = self._field(p)
         X, Y = self._samples(p)
-        U, V = f(X, Y)
-        mag = np.hypot(U, V)
-        top = float(np.nanmax(mag)) if np.isfinite(mag).any() and np.nanmax(mag) > 0 else 1.0
-        scale = p.spacing * 0.85 / top
-        w = me.style["stroke"] * float(cam.units_per_height(np.asarray(p.pos))) * 2.5
-        col = with_alpha(me.style["color"], p.opacity)
+        U, V = self._field(p)(X, Y)
         o = np.asarray(p.pos, dtype=np.float64)
-        for x, y, u, v in zip(X.ravel(), Y.ravel(), U.ravel(), V.ravel(), strict=True):
-            if not (math.isfinite(u) and math.isfinite(v)) or (abs(u) + abs(v)) * scale < 1e-6:
-                continue
-            a = o + np.array([x - u * scale / 2, y - v * scale / 2, 0.0])
-            b = o + np.array([x + u * scale / 2, y + v * scale / 2, 0.0])
-            c = col
-            if p.color_by_size:
-                from phasor.core.color import ramp
-                from phasor.domains.geometry_math import sample_ramp
-
-                c = (*sample_ramp(ramp(me.style["colormap"]), math.hypot(u, v) / top), p.opacity)
-            arrow(ctx, cam, a, b, w, c, me.style["glow"])
+        pts = o + np.c_[X.ravel(), Y.ravel(), np.zeros(X.size)]
+        vec = np.c_[np.ravel(U), np.ravel(V), np.zeros(X.size)]
+        w = me.style["stroke"] * float(cam.units_per_height(o)) * 2.5
+        if p.color_by_size:
+            mag = np.linalg.norm(vec, axis=1)
+            rgb = sample_ramp(ramp(me.style["colormap"]), normalize01(mag, 0.0, None))
+            cols = np.c_[rgb, np.full(len(rgb), p.opacity)]
+        else:
+            cols = with_alpha(me.style["color"], p.opacity)
+        field_arrows(ctx, cam, pts, vec, p.spacing, width=w, colors=cols,
+                     glow=me.style["glow"], length_by=p.length_by)  # fmt: skip
 
 
 # ---------------------------------------------------------------- Limit (epsilon-delta)

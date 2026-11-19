@@ -675,7 +675,27 @@ around them: the `orbit` verb, or drag in the editor. Formulas are text in `t` (
   radius r reports 2 pi r^2).
 - `geo.VectorField3D(fp="-y", fq="x", fr="0", extent=(4, 4, 4), counts=(5, 5, 3))`: arrows
   colored by size; semantics give divergence and curl. `calc.VectorField(color_by_size=True)`
-  does the same in a plane.
+  does the same in a plane. `spacing=0.5` (3D) places arrows that far apart instead of
+  `counts`.
+- **How field arrows look** (both types): `preset="dense"` is many small thin arrows with
+  heads in proportion, lengths eased (`length_by="soft"`: tanh of size, so weak arrows still
+  show and strong ones never touch) and color saying how strong (the `magnitude` colormap,
+  cool to warm; exempt from `color_restraint`, since the hue is read as a quantity).
+  `preset="bold"` is few thick glowing arrows. Without a preset: lengths in proportion to
+  size (`length_by="size"`). A dense 3D *box* gets crowded: use a plane (extent z = 0) or a
+  larger `spacing`.
+
+```python
+from phasor import Scene, calc, geo
+
+s = Scene("fields", passes=None)
+s.add(calc.VectorField(id="swirl", p="sin(y)", q="-sin(x)", extent=(12.0, 7.0), preset="dense"))
+seen = s.engine.inspect(0.0, id="swirl")["objects"][0]
+assert seen["semantic"]["arrows"] > 800  # many small arrows
+assert s.engine.document.object("swirl").style["colormap"] == "magnitude"
+s.add(geo.VectorField3D(id="plane", fp="-y", fq="x", extent=(6.0, 6.0, 0.0), preset="dense"))
+assert s.engine.inspect(0.0, id="plane")["objects"][0]["semantic"]["arrows"] == 14 * 14
+```
 - `geo.FlowLines(fp=..., fq=..., fr=..., seeds=(5, 5, 1), length=3.0, progress=...)`: where a
   particle dropped at each seed would travel, colored by the field's size along the line.
 

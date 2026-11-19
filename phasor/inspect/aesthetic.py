@@ -6,8 +6,8 @@ ordinary linter stays about problems, these are about taste. Every threshold is 
 
 | code            | fires when                                                              |
 | focal_point     | a beat has no highlighted object, or more than one                      |
-| color_restraint | more saturated hues on screen than the theme allows (a color field that |
-|                 | uses the phase wheel is exempt: there, hue carries meaning)             |
+| color_restraint | more saturated hues on screen than the theme allows (the phase wheel    |
+|                 | and the magnitude ramp are exempt: there, hue carries meaning)          |
 | glow_clip       | too many pixels blow out to flat white (needs a renderer)               |
 | density         | the content fills too little or too much of the frame                   |
 | motion_rhythm   | unrelated objects start different motions within the same short window  |
@@ -69,9 +69,14 @@ def _lut_hues(lut) -> set[int]:
     return {b for b in set(bins) - {None} if bins.count(b) >= LUT_SHARE * len(bins)}  # type: ignore[arg-type]
 
 
+# Colormaps whose hue is read as a quantity: a function's phase, a field's strength.
+MEANINGFUL = ("phase", "magnitude")
+
+
 def hues_on_screen(state: SceneState, shown: set[str]) -> set[int]:
     """Saturated hues of what is drawn: paint colors, and the colors of ramps and restrained
-    wheels. The full phase wheel is left out: it is how a function's phase is *read*."""
+    wheels. The phase wheel and the magnitude ramp are left out: there, hue is how a
+    function's phase or a field's strength is *read*."""
     hues: set[int] = set()
     for obj in state.objects:
         if obj.id not in shown or obj.params.opacity < 0.1:
@@ -79,8 +84,10 @@ def hues_on_screen(state: SceneState, shown: set[str]) -> set[int]:
         cm = obj.style.get("colormap")
         if getattr(obj.params, "hue_along", None) == 0:
             cm = None  # a line that does not run a hue along itself shows its paint color
+        if getattr(obj.params, "color_by_size", None) is False:
+            cm = None  # arrows not colored by size show their paint color
         if cm is not None:
-            if obj.roles.get("colormap") != "phase":
+            if obj.roles.get("colormap") not in MEANINGFUL:
                 hues |= _lut_hues(cm)
             continue
         color = obj.style.get("color")

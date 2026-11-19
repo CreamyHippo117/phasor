@@ -137,3 +137,34 @@ def test_a_running_loop_integral_accumulates_along_the_curve():
     assert cm.loop_integral(f, (0.0, 0.0), 1.0, "flux") == pytest.approx(0.0, abs=1e-12)
     with pytest.raises(ValueError, match="flux or circulation"):
         cm.loop_integral(f, (0.0, 0.0), 1.0, "work")
+
+
+@pytest.mark.gl
+@pytest.mark.skipif(not __import__("tests.conftest").conftest.gl_available(),
+                    reason="needs OpenGL")  # fmt: skip
+def test_the_dense_field_look_matches_its_golden():
+    """Many small arrows, heads in proportion, color by strength (preset "dense"), in 2D and
+    on a plane in 3D."""
+    import os
+
+    from PIL import Image
+
+    from phasor import Scene, calc, geo
+    from phasor.render.output import save_png
+    from tests.ssim import ssim
+    from tests.test_render import GOLDEN
+
+    s = Scene("dense")
+    s.add(calc.VectorField(id="f", p="sin(y) - 0.3*x", q="-sin(x) + 0.2*y",
+                           extent=(14.0, 8.0), preset="dense"))  # fmt: skip
+    t = Scene("dense3d")
+    t.use_camera("orbit", elevation=28.0, azimuth=-60.0, distance=13.0, drift=0.0)
+    t.add(geo.VectorField3D(id="f", fp="-y", fq="x", fr="0", extent=(8.0, 8.0, 0.0),
+                            preset="dense"))  # fmt: skip
+    pic = np.concatenate([s.engine.still(0.0, (480, 270)), t.engine.still(0.0, (480, 270))], 1)
+    path = GOLDEN / s.engine.pass_runner().renderer_class() / "dense_fields.png"
+    if os.environ.get("PHASOR_UPDATE_GOLDEN"):
+        save_png(path, pic)
+    if not path.exists():
+        pytest.skip(f"no {path.parent.name} golden yet; create with PHASOR_UPDATE_GOLDEN=1")
+    assert ssim(pic, np.asarray(Image.open(path).convert("RGB"))) >= 0.97

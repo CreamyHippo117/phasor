@@ -27,7 +27,7 @@ from phasor.core.objects import Bounds, DrawContext, ObjectBase, ParamsBase, Pas
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
 from phasor.domains import geometry_math as gm
-from phasor.domains.strokes import arrow, polyline, with_alpha
+from phasor.domains.strokes import field_arrows, polyline, with_alpha
 
 T = ("t",)
 UV = ("u", "v")
@@ -423,7 +423,11 @@ def _grid_points(center, extent, counts) -> np.ndarray:
 class VectorField3D(ObjectBase):
     """A vector field F(x, y, z) = (fp, fq, fr) as arrows on a grid in a box, each colored by
     its size (the ``colormap``), lengths scaled to the grid spacing. A box with no depth
-    (``extent`` z = 0) is a plane of arrows. Semantics: divergence, curl, strongest arrow."""
+    (``extent`` z = 0) is a plane of arrows. Semantics: divergence, curl, strongest arrow.
+
+    ``spacing`` > 0 places arrows that far apart instead of ``counts`` per axis. Presets:
+    ``dense`` (many small thin arrows, lengths eased so weak ones still show, color saying
+    how strong), ``bold`` (few thick glowing arrows)."""
 
     type: ClassVar[str] = "vector_field_3d"
     Style: ClassVar = {
@@ -431,13 +435,33 @@ class VectorField3D(ObjectBase):
         "stroke": ("stroke", "hairline"),
         "glow": ("glow", "none"),
     }
+    Presets: ClassVar = {
+        "dense": {"params": {"spacing": 0.45, "length_by": "soft"},
+                  "style": {"colormap": "magnitude", "stroke": "hairline"}},
+        "bold": {"params": {"counts": (5, 5, 1)},
+                 "style": {"stroke": "regular", "glow": "soft"}},
+    }  # fmt: skip
 
     class Params(_FieldParams):
         counts: tuple[int, int, int] = (7, 7, 1)  # arrows along x, y, z
+        spacing: float = Field(0.0, ge=0)  # > 0: arrows this far apart (instead of counts)
         color_by_size: bool = True
+        length_by: Literal["size", "soft"] = "size"  # "soft": weak arrows still show
+
+    def _counts(self, p) -> tuple[int, int, int]:
+        if p.spacing <= 0:
+            return p.counts
+        return tuple(max(1, int(e / p.spacing + 1e-9) + 1) if e > 0 else 1
+                     for e in p.extent)  # type: ignore[return-value]  # fmt: skip
+
+    def _spacing(self, p) -> float:
+        if p.spacing > 0:
+            return p.spacing
+        gaps = [e / (n - 1) for e, n in zip(p.extent, p.counts, strict=True) if e > 0 and n > 1]
+        return min(gaps) if gaps else 1.0
 
     def _arrows(self, p):
-        pts = _grid_points(p.pos, p.extent, p.counts)
+        pts = _grid_points(p.pos, p.extent, self._counts(p))
         v = _field(p)(pts - _vec(p.pos))
         return pts, v
 
@@ -467,20 +491,16 @@ class VectorField3D(ObjectBase):
         cam = state.camera_for(me)
         pts, v = self._arrows(p)
         mag = np.linalg.norm(v, axis=1)
-        top = float(np.nanmax(mag)) if np.isfinite(mag).any() else 0.0
-        if top <= 0:
-            return
-        gaps = [e / (n - 1) for e, n in zip(p.extent, p.counts, strict=True) if e > 0 and n > 1]
-        spacing = min(gaps) if gaps else 1.0
-        scale = spacing * 0.85 / top
-        lut = ramp(me.style["colormap"])
-        cols = gm.sample_ramp(lut, gm.normalize01(mag, 0.0, top))
         w = me.style["stroke"] * float(cam.units_per_height(_vec(p.pos))) * 2.5
-        for a, d, c, m in zip(pts, v, cols, mag, strict=True):
-            if not np.isfinite(m) or m * scale < 1e-6:
-                continue
-            col = (*c, p.opacity) if p.color_by_size else with_alpha(me.style["colormap"][0], 1)
-            arrow(ctx, cam, a - d * scale / 2, a + d * scale / 2, w, col, me.style["glow"])
+        if p.color_by_size:
+            rgb = gm.sample_ramp(ramp(me.style["colormap"]), gm.normalize01(mag, 0.0, None))
+            cols = np.c_[rgb, np.full(len(rgb), p.opacity)]
+        else:
+            # One color: a bright point on the ramp (its first entry is the background).
+            rgb = gm.sample_ramp(ramp(me.style["colormap"]), np.array([0.7]))[0]
+            cols = (*rgb, p.opacity)
+        field_arrows(ctx, cam, pts, v, self._spacing(p), width=w, colors=cols,
+                     glow=me.style["glow"], length_by=p.length_by)  # fmt: skip
 
 
 @register

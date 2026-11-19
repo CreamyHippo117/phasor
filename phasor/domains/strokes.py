@@ -68,14 +68,16 @@ def circle(ctx: DrawContext, cam: Camera, center, radius: float, width, *, color
     polyline(ctx, cam, pts, width, color=color, glow=glow)
 
 
-def arrow(ctx: DrawContext, cam: Camera, a, b, width, color, glow: float = 1.0) -> None:
-    """A straight arrow from ``a`` to ``b``, ``width`` in world units, head scaled to it."""
+def arrow(ctx: DrawContext, cam: Camera, a, b, width, color, glow: float = 1.0,
+          head: float | None = None) -> None:  # fmt: skip
+    """A straight arrow from ``a`` to ``b``, ``width`` in world units. The head is scaled to
+    the width, or is ``head`` (a share of the arrow's length) when given."""
     a, b = np.asarray(a, dtype=np.float64), np.asarray(b, dtype=np.float64)
     d = b - a
     length = float(np.linalg.norm(d))
     if length < 1e-9:
         return
-    head = min(length * 0.3, width * 7)
+    head = length * head if head is not None else min(length * 0.3, width * 7)
     unit = d / length
     side = np.cross(cam.forward, unit)
     side /= max(np.linalg.norm(side), 1e-9)
@@ -83,6 +85,43 @@ def arrow(ctx: DrawContext, cam: Camera, a, b, width, color, glow: float = 1.0) 
     polyline(ctx, cam, [a, base], width, color=color, glow=glow)
     tri = np.array([b, base + side * head * 0.45, base - side * head * 0.45])
     ctx.triangles(tri, np.array([[0, 1, 2]]), color=color, glow=glow)
+
+
+LENGTH_BY = ("size", "soft")
+
+
+def field_arrows(ctx: DrawContext, cam: Camera, centers, vectors, spacing: float, *, width,
+                 colors, glow: float = 1.0, length_by: str = "size") -> None:  # fmt: skip
+    """A field of arrows centred on ``centers`` (N, 3), pointing along ``vectors`` (N, 3),
+    for grids ``spacing`` apart. ``colors``: one RGBA, or one per arrow (N, 4).
+
+    ``length_by="size"``: length in proportion to size, the strongest 0.85 of the spacing.
+    ``length_by="soft"``: lengths follow tanh of size over a typical size, so weak arrows
+    still show and strong ones never reach their neighbours (the dense look: many small
+    arrows, where color says how strong)."""
+    pts = np.asarray(centers, dtype=np.float64).reshape(-1, 3)
+    vec = np.asarray(vectors, dtype=np.float64).reshape(-1, 3)
+    mag = np.linalg.norm(vec, axis=1)
+    ok = np.isfinite(mag) & (mag > 1e-12)
+    if not ok.any():
+        return
+    top = float(mag[ok].max())
+    if length_by == "soft":
+        typical = float(np.median(mag[ok]))
+        length = spacing * 0.9 * np.tanh(mag / max(1.5 * typical, 1e-12))
+    else:
+        length = spacing * 0.85 * mag / top
+    cols = np.asarray(colors, dtype=np.float64)
+    per_arrow = cols.ndim == 2
+    for k in np.flatnonzero(ok):
+        if length[k] < 1e-6:
+            continue
+        d = vec[k] / mag[k] * length[k]
+        c = tuple(cols[k]) if per_arrow else tuple(cols)
+        # Soft fields are many small arrows: a head in proportion to each one, so the
+        # direction still reads when the arrow is a few pixels long.
+        arrow(ctx, cam, pts[k] - d / 2, pts[k] + d / 2, width, c, glow,
+              head=0.38 if length_by == "soft" else None)  # fmt: skip
 
 
 def with_alpha(color, opacity: float):
