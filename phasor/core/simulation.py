@@ -5,8 +5,9 @@ answer, seed included), ``initial()`` and a pure ``step(state, dt)``; a state is
 numpy arrays. ``SimRunner.state_at(t)`` is *the nearest earlier checkpoint plus the remaining
 steps*, so it depends only on the simulation's parameters and ``t``, however you scrub.
 Checkpoints are cached in memory and, by default, on disk under
-``.phasor_cache/<hash of the parameters>/`` (override with ``PHASOR_CACHE``); a changed
-parameter is a different hash, a damaged file is recomputed rather than trusted.
+``.phasor_cache/<hash of the parameters and the solver's source>/`` (override with
+``PHASOR_CACHE``); a changed parameter or solver is a different hash, a damaged file is
+recomputed rather than trusted.
 
 Randomness inside a simulation must come from ``phasor.core.rng.rng`` (contract 3).
 """
@@ -14,6 +15,7 @@ Randomness inside a simulation must come from ``phasor.core.rng.rng`` (contract 
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import os
 from collections import OrderedDict
@@ -42,11 +44,23 @@ class Simulation(Protocol):
         ...
 
 
+def _code(cls: type) -> str:
+    """A hash of the source file that defines a simulation class: a fixed solver bug must
+    not be answered from a cache written by the old code (boundary review M7-M9)."""
+    try:
+        path = inspect.getsourcefile(cls)
+        if path:
+            return hashlib.sha256(Path(path).read_bytes()).hexdigest()[:16]
+    except (OSError, TypeError):
+        pass
+    return "unknown"
+
+
 def sim_key(sim: Simulation) -> str:
-    """The cache name: a hash of the class and every parameter."""
+    """The cache name: a hash of the class, its module's source and every parameter."""
     blob = json.dumps(
         {"class": f"{type(sim).__module__}.{type(sim).__qualname__}", "version": CACHE_VERSION,
-         "dt": sim.dt, "params": sim.params()},
+         "code": _code(type(sim)), "dt": sim.dt, "params": sim.params()},
         sort_keys=True, default=_plain,
     )  # fmt: skip
     return hashlib.sha256(blob.encode()).hexdigest()[:24]

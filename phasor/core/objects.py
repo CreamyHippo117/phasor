@@ -140,6 +140,10 @@ class ObjectBase:
     # Named starting points: name -> {"params": {...}, "style": {...}}. ``preset="soft_phase"``
     # fills in what you did not set yourself; explicit values always win.
     Presets: ClassVar[dict[str, dict[str, dict[str, Any]]]] = {}
+    # What living motion may do to this type (core/life.py): "glow" (light breathes),
+    # "wander" (a point drifts by a share of its radius ``r``), "hue" (colors turn). Only
+    # glow by default: geometry that means something (a polygon, a source) never drifts.
+    Life: ClassVar[frozenset[str]] = frozenset({"glow"})
 
     def __init__(
         self,

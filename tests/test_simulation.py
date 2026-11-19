@@ -110,3 +110,15 @@ def test_disk_cache_can_be_switched_off(tmp_path):
     r = SimRunner(Walk(), every=10, cache_dir=None)
     r.state_at(0.5)
     assert not list(tmp_path.iterdir())
+
+
+def test_a_changed_solver_is_a_different_cache(monkeypatch):
+    """Boundary review M7-M9: the key hashed parameters only, so after a solver bug fix the
+    disk cache kept serving the old code's answers. It now hashes the solver's source too."""
+    from phasor.core import simulation
+    from phasor.domains import pde_math as pm
+
+    sim = pm.Heat1D(n=20)
+    before = sim_key(sim)
+    monkeypatch.setattr(simulation, "_code", lambda cls: "patched solver")
+    assert sim_key(sim) != before

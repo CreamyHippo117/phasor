@@ -276,14 +276,15 @@ def evaluate(c: Compiled, t: float, replace: Mapping[str, Any] | None = None) ->
     meta = c.doc.meta
     life_amp = life.scale(meta.life, c.theme.life)
 
-    def build(target: str, model: type[BaseModel], tags: tuple[str, ...] = (), style=None):
+    def build(target: str, model: type[BaseModel], tags: tuple[str, ...] = (), style=None,
+              channels: frozenset[str] = frozenset()):  # fmt: skip
         values = {n: env[f"{target}.{n}"] for n in model.model_fields}
         if "dim" in values and "opacity" in values:  # what is drawn is opacity x dim
             values["opacity"] = values["opacity"] * values["dim"]
         if style is not None:  # objects live (cameras do not): see core/life.py
             values, style = life.adjust(target, tags, set(model.model_fields), values, style,
                                         seed=meta.seed, amp=life_amp, theme_life=c.theme.life,
-                                        t=t)  # fmt: skip
+                                        t=t, channels=channels)  # fmt: skip
             built[target] = style
         try:
             return model.model_validate(values)
@@ -303,7 +304,8 @@ def evaluate(c: Compiled, t: float, replace: Mapping[str, Any] | None = None) ->
     else:
         camera = ortho_camera(cam_params, aspect)
     objects = tuple(
-        ObjectState(o.id, o.type, o.index, build(o.id, o.params_model, o.tags, o.style),
+        ObjectState(o.id, o.type, o.index, build(o.id, o.params_model, o.tags, o.style,
+                                                 getattr(get_type(o.type), "Life", frozenset())),
                     MappingProxyType(built[o.id]), o.roles, o.tags, o.layer, o.impl)
         for o in c.objects
     )  # fmt: skip

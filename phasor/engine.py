@@ -31,6 +31,7 @@ from phasor.inspect.passes import PassRunner
 from phasor.layout.bake import Bake, bake, baked_state
 from phasor.layout.plan import Plan, compile_plan
 from phasor.time.compile import Compiled, compile_document
+from phasor.time.expr import CompiledExpr
 from phasor.time.tracks import ResolvedTrack
 
 STATE_CACHE_SIZE = 256
@@ -518,9 +519,13 @@ class Engine:
         return finish(picture, self._snap.compiled.theme, emission)
 
     def is_moving(self, t0: float, t1: float) -> bool:
-        """Whether anything animated by the document (a transition) runs between ``t0`` and
-        ``t1``. Life (slow wiggle) is not counted: it needs no blur."""
+        """Whether anything animated by the document runs between ``t0`` and ``t1``: a
+        transition, or an expression of ``t`` (``expr("t / 10")``; counted as moving whenever
+        it exists, so a finished one costs extra samples that come out identical). Life (slow
+        wiggle) is not counted: it needs no blur."""
         for node in self._snap.compiled.nodes.values():
+            if isinstance(node, CompiledExpr) and node.uses_t:
+                return True
             if isinstance(node, ResolvedTrack):
                 for seg in node.segments:
                     if seg.t0 < t1 and seg.t1 > t0 and seg.t1 > seg.t0:
@@ -546,11 +551,23 @@ class Engine:
         if samples <= 1 or shutter <= 0 or not self.is_moving(t - half, t + half):
             return self.frame(t, size)
         times = [t + (k + 0.5) / samples * (2 * half) - half for k in range(samples)]
-        acc = None
+        from phasor.render.passes import GLRenderer
+        from phasor.render.post import finish
+
+        runner = self.pass_runner()
+        if not isinstance(runner, GLRenderer):
+            raise RuntimeError("no OpenGL renderer on this machine (run `phasor doctor`)")
+        # Average the light before the tone map (which then runs once, contract 4): a bright
+        # moving glow smears at its real brightness instead of an already squashed one.
+        pic = glow = None
         for ts in times:
-            f = self.frame(min(max(ts, 0.0), max(self.duration, 0.0)), size)
-            acc = f.astype(np.float64) if acc is None else acc + f
-        return (acc / len(times)).astype(np.float32)
+            p, g = runner.color_and_emission(self.state_at(min(max(ts, 0.0), self.duration)), size)
+            pic = p.astype(np.float64) if pic is None else pic + p
+            if g is not None:
+                glow = g.astype(np.float64) if glow is None else glow + g
+        n = len(times)
+        return finish((pic / n).astype(np.float32), self._snap.compiled.theme,
+                      None if glow is None else (glow / n).astype(np.float32))  # fmt: skip
 
     def storyboard_times(self, count: int = 6) -> list[float]:
         """Start, every marker and the end; padded with evenly spaced times up to ``count``."""

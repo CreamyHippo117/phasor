@@ -26,7 +26,7 @@ tested. Gates green on Linux (software OpenGL). Untested on Windows and a GPU.
 
 ## Verification
 
-- `uv run pytest`: **625 passed, 17 skipped** (all need CUDA); ruff, ruff format, lint-imports clean.
+- `uv run pytest`: **673 passed, 20 skipped** (all need CUDA; after 9b, the rest of the tables and the 7-9 boundary review); ruff, ruff format, lint-imports clean.
 - **Heat equation (exit demo)**: the 1D solver agrees with the exact modes to 3e-3 and decays at
   exp(-k (m pi / L)^2 t); 2D single mode likewise; a hot spot only cools (maximum principle);
   an unstable step is refused; through the engine the plotted numbers stay on the exact
@@ -114,3 +114,43 @@ tested. Gates green on Linux (software OpenGL). Untested on Windows and a GPU.
 ## Open
 
 - **Boundary reviews of Milestones 7, 8 and 9** (strongest model).
+
+## Boundary review (Milestones 7-9, 2026-11-19)
+
+Done in this session by the model that wrote most of the code, not by an independent reviewer
+(CLAUDE.md asks for subagents only on request): treat it as weaker evidence than the M2-M6
+review. Audited the seven contracts over everything since `bd7dc40` (51 files, ~7,600 lines),
+plus hostile input to the new expression parser. Contracts 1 (one write path: only
+`Engine._commit` replaces the document; `polish` and `variants` go through `apply`), 2 (schema
+v5 migration tested; new params have defaults), 5 (contract test covers every new type),
+6 (lint-imports clean; `ramp` moved down to `core.color` so two domains share it) and 7
+(kiwisolver, the label placer and the camera solver are imported only inside `layout`) held.
+Found and fixed, each with a test that fails without the fix:
+
+1. **Contract 3, across sessions (M8).** The simulation disk cache was keyed by parameters
+   only, so after a solver bug fix `.phasor_cache` kept serving the old code's answers. The
+   key now hashes the solver module's source too.
+2. **Living motion moved meaningful geometry (M7, exposed by M8/M9).** Life guessed "a dot"
+   from parameters named `pos` and `r`, so with `life` on, polygons, clock diagrams, Cayley
+   graphs, homomorphisms and acoustic sources/listeners drifted, and a source's computed
+   arrivals jittered. Types now declare what life may do (`ObjectBase.Life`, glow only by
+   default; `Dot` wanders, `DomainColoring` and `Fractal` turn hue).
+3. **Motion blur missed expressions (M7).** `is_moving` looked only at tracks, so anything
+   driven by `expr("t ...")` (PDE time, permutations, most domain scenes) was never blurred.
+4. **Motion blur averaged after the tone map (M7).** Still one tone map per frame, but bright
+   moving glow was averaged after being squashed; the samples' light is now averaged first and
+   finished once.
+5. **Cyclic colormaps drew the hottest values dark (M8 spectrogram, M9 PDE heat maps)**, found
+   while building `Slice` (see Bugs 6).
+
+Checked and fine: no randomness or clock outside `rng`; deep zoom caches are pure functions;
+the parser refuses attribute access, calls outside the whitelist, lambdas, subscripts and
+overflowing constants.
+
+Open from the review (not fixed):
+- SymPy calls (`calc.Limit`, Taylor, divergence) have no time limit: a pathological formula
+  sent over MCP could stall the server.
+- Motion blur counts a finished expression (`min(t / 3, 1)` after t = 3) as moving: correct
+  pictures, wasted samples.
+- Milestone 10's exit demo names the reverb scene, which was skipped in Milestone 8.
+

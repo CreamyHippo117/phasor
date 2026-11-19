@@ -198,3 +198,20 @@ def test_soft_domain_coloring_has_fewer_hard_edges_than_classic():
 
     hard, soft = edges("classic"), edges("soft_phase")
     assert (hard > 25).sum() > 3 * (soft > 25).sum()
+
+
+def test_only_types_that_ask_for_it_wander():
+    """Boundary review M7-M9: life once guessed "a dot" from the parameters pos and r, so
+    polygons, clock diagrams and acoustic sources drifted (and a source's physics jittered)."""
+    from phasor import Dot, Scene, algebra
+
+    s = Scene("lively", passes=None, life="lively")
+    s.add(Dot(id="d", pos=(0, 0, 0), r=0.5))
+    s.add(algebra.Polygon(id="sq", n=4, pos=(3, 0, 0)))
+    s.add(algebra.ClockDiagram(id="clock", n=6, pos=(-3, 0, 0)))
+    e = s.engine
+    for t in (0.7, 1.9, 3.3):
+        st = e.state_at(t)
+        assert st["sq"].params.pos == (3.0, 0.0, 0.0)
+        assert st["clock"].params.pos == (-3.0, 0.0, 0.0)
+    assert len({e.state_at(t)["d"].params.pos for t in (0.7, 1.9, 3.3)}) == 3  # dots still live

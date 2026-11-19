@@ -87,6 +87,7 @@ class DomainColoring(_Plane):
     step every time |f(z)| doubles. Poles are white."""
 
     type: ClassVar[str] = "domain_coloring"
+    Life: ClassVar = frozenset({"hue", "glow"})
     Style: ClassVar = {"colormap": ("colormap", "phase")}
     # Hue means phase here, so the full wheel stays the default; presets vary the rest.
     Presets: ClassVar = {
@@ -222,6 +223,7 @@ class Fractal(_Plane):
     """
 
     type: ClassVar[str] = "fractal"
+    Life: ClassVar = frozenset({"hue", "glow"})
     Style: ClassVar = {"colormap": ("colormap", "sequential")}
     Presets: ClassVar = {
         "classic": {"style": {"colormap": "sequential"}},

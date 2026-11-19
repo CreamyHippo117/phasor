@@ -31,6 +31,7 @@ class Dot(ObjectBase):
     """A filled disc: a point, a pole, a sample."""
 
     type: ClassVar[str] = "dot"
+    Life: ClassVar = frozenset({"wander", "glow"})
     Style: ClassVar = {"color": ("emphasis", "primary"), "glow": ("glow", "none")}
     Presets: ClassVar = {
         "plain": {},

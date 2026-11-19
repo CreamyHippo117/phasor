@@ -6,7 +6,10 @@ compounding. If this file and SPEC.md disagree, stop and ask.
 ## Where we are
 
 - Owner approved ADR 0001, ADR 0002 and id tombstones on 2026-11-18.
-- Current milestone: **2-6 built; boundary review of 2-6 done 2026-11-18 (see `MILESTONE_6.md`). 7, 8, 9 built (9b deep zoom included, `MILESTONE_9.md`); boundary reviews of 7, 8 and 9 still open. Windows and CUDA untested**. See `MILESTONE_*.md` for what is built and deferred.
+- Current milestone: **2-6 built; boundary review of 2-6 done 2026-11-18 (see `MILESTONE_6.md`). 7, 8, 9 built (9b deep zoom included, `MILESTONE_9.md`); boundary review of 7-9 done 2026-11-19 by the authoring model, not independent (`MILESTONE_9.md`). Windows and CUDA untested**. See `MILESTONE_*.md` for what is built and deferred.
+- Roadmap (owner, 2026-11-19): Milestones 11 (Sketch) and 13 (Manim import) are dropped;
+  10 (GUI editor) and 12 (interactive export) remain. The `sketch` client slot in the layer
+  rule stays empty.
 - One milestone per branch. No work on milestone N+1 until N's exit demo and tests pass.
 - Before declaring a milestone done, run the `phasor-milestone-gate` skill.
 
@@ -94,7 +97,7 @@ compounding. If this file and SPEC.md disagree, stop and ask.
   rainbows is not no rainbows: hue that carries meaning (domain-coloring phase) keeps the
   wheel. Taste knobs are theme `[lint]`/`[life]` values, roles, looks and presets, never
   numbers typed into a scene. Life is a pure function of (id, seed, t); `exact` objects never
-  move. Aesthetic rules live in `inspect/aesthetic.py` and run only with `aesthetic=True`.
+  move; a type moves only in the ways its `Life` class variable names. Aesthetic rules live in `inspect/aesthetic.py` and run only with `aesthetic=True`.
 
 - Domains: numerics live in `domains/<name>_math.py` (pure NumPy, no drawing) and objects in
   `domains/<name>.py`; objects draw strokes through `domains/strokes.py`. A time-stepping model

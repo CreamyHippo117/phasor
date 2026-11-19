@@ -321,6 +321,35 @@ def test_motion_blur_smears_moving_things_and_leaves_still_moments_alone():
     assert e.frame_blurred(1.5, 24, shutter=0.0, size=size).tobytes() == sharp.tobytes()
 
 
+@pytest.mark.gl
+@pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
+def test_motion_blur_follows_expressions_and_keeps_glow_bright():
+    """Boundary review M7-M9: ``is_moving`` saw only tracks, so anything driven by
+    ``expr("t ...")`` never blurred; and the average was taken after the tone map, so a
+    bright glow streak came out dimmer than the same light at rest."""
+    from phasor import Dot, Scene, expr
+
+    s = Scene("blur2")
+    s.set("camera.height", 4)
+    s.add(Dot(id="d", pos=expr("(-4 + 4 * t, 0, 0)"), r=0.15,
+              style={"color": "highlight", "glow": "strong"}))  # fmt: skip
+    s.marker("end", 2.0)
+    e = s.engine
+    assert e.is_moving(0.9, 1.1)
+    size = (320, 180)
+    sharp = e.frame(1.0, size)
+    blur = e.frame_blurred(1.0, 24, shutter=1.0, samples=6, size=size)
+    _, xs = np.nonzero(sharp[..., :3].max(-1) > 0.6)  # the bright core, not the halo
+    _, bx = np.nonzero(blur[..., :3].max(-1) > 0.6)
+    assert (bx.max() - bx.min()) > (xs.max() - xs.min()) + 2  # it smears now
+    # averaging tone-mapped frames would lose light where the glow saturates; the HDR
+    # average keeps at least as much as a post-tonemap average of the same samples
+    half = 0.5 / 24
+    ts = [1.0 + (k + 0.5) / 6 * 2 * half - half for k in range(6)]
+    late = np.mean([e.frame(t, size) for t in ts], axis=0)
+    assert blur[..., :3].sum() >= late[..., :3].sum() * 0.999
+
+
 def test_the_render_job_blurs_finals_not_previews():
     from phasor.render.job import BLUR
 

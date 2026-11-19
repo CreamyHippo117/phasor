@@ -8,10 +8,13 @@ The noise is a few slow sine waves whose frequencies and phases come from
 What moves (amplitudes live in the theme's ``[life]``; the scene's ``life`` is ``off``,
 ``subtle`` or ``lively``):
 
-- dots (objects with ``pos`` and ``r``) wander a fraction of their own radius;
+- types that declare ``"wander"`` in ``Life`` (dots) drift a fraction of their radius ``r``;
 - glowing objects breathe: their glow swells and fades a little (strokes shimmer faster);
-- color fields (a ``hue`` parameter) turn their colors a few percent of the wheel (a field's
-  geometry never moves: a pole stays at its computed place).
+- types that declare ``"hue"`` (color fields) turn their colors a few percent of the wheel (a
+  field's geometry never moves: a pole stays at its computed place).
+
+Each type says what may happen to it (``ObjectBase.Life``, glow only by default): guessing
+from parameter names once made polygons, clocks and acoustic sources drift.
 
 Meaningful geometry stays put: objects tagged ``exact`` do not move, and a label's baked
 slot is measured against the wiggling anchor, so labels follow.
@@ -65,6 +68,7 @@ def adjust(
     amp: float,
     theme_life: Mapping[str, float],
     t: float,
+    channels: frozenset[str] = frozenset({"glow"}),
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Apply life to one object's resolved parameter ``values`` and ``style``; returns the
     new (values, style). Pure. ``amp`` 0 changes nothing."""
@@ -72,7 +76,9 @@ def adjust(
         return values, dict(style)
     th = theme_life
     values, style = dict(values), dict(style)
-    if {"pos", "r"} <= fields:  # a point drifts a fraction of its radius, in the camera plane
+    if (
+        "wander" in channels and {"pos", "r"} <= fields
+    ):  # a point drifts a fraction of its radius, in the camera plane
         d = amp * th["point"] * values["r"]
         x, y, z = values["pos"]
         values["pos"] = (
@@ -80,12 +86,16 @@ def adjust(
             y + d * noise(object_id, seed, "y", t, th["point_period"]),
             z,
         )
-    if "hue" in fields:  # a color field turns its colors by a few percent of the wheel
+    if (
+        "hue" in channels and "hue" in fields
+    ):  # a color field turns its colors by a few percent of the wheel
         values["hue"] = values["hue"] + amp * th["field"] * noise(
             object_id, seed, "hue", t, th["field_period"]
         )
     glow = style.get("glow")
-    if isinstance(glow, float) and glow > 1.0:  # light above plain paint breathes
+    if (
+        "glow" in channels and isinstance(glow, float) and glow > 1.0
+    ):  # light above plain paint breathes
         curve = "points" in fields
         a, period = (
             (th["shimmer"], th["shimmer_period"]) if curve else (th["glow"], th["glow_period"])
