@@ -3,7 +3,7 @@
 The plan agreed with the owner on 2026-11-19, kept here so it outlives any one session.
 Update the status column as items land. Commands are in `CLAUDE.md`.
 
-Status today: **1,146 tests** (`uv run pytest`): all pass on Linux with software OpenGL;
+Status today: **1,136 tests** (`uv run pytest`): all pass on Linux with software OpenGL;
 22 need CUDA, 1 needs TeX, 1 a GPU for the doctor, 4 build the packaged app (opt-in).
 **Untested: Windows, NVIDIA/CUDA, macOS, a real TeX install, a real pen, real handwriting.**
 
