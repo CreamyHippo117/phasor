@@ -21,7 +21,7 @@ from phasor.core.objects import (
     register,
 )
 from phasor.core.rng import rng
-from phasor.core.schema import Document, ExprSpec, Meta, ObjectSpec, json_schema
+from phasor.core.schema import SCHEMA_VERSION, Document, ExprSpec, Meta, ObjectSpec, json_schema
 from phasor.core.spatial import OrthoCameraParams, ortho_camera, overlay_camera, region_name
 from phasor.core.values import lerp, normalize, same_shape
 
@@ -115,7 +115,7 @@ def test_canonical_file_roundtrip_is_byte_stable(tmp_path):
 def test_migrate_rejects_missing_and_future_versions():
     with pytest.raises(DocumentError, match="schema_version"):
         io.parse_document({"meta": {"title": "t"}})
-    with pytest.raises(DocumentError, match="reads up to 6"):
+    with pytest.raises(DocumentError, match=f"reads up to {SCHEMA_VERSION}"):
         io.parse_document({"schema_version": 999, "meta": {"title": "t"}})
 
 
@@ -222,4 +222,4 @@ def test_rasterized_text_never_cuts_off_its_last_glyph(px):
 
 def test_v4_documents_migrate_with_life_off():
     doc = io.parse_document({"schema_version": 4, "meta": {"title": "old"}})
-    assert doc.schema_version == 6 and doc.meta.life == "off" and doc.meta.seed == 0
+    assert doc.schema_version == SCHEMA_VERSION and doc.meta.life == "off" and doc.meta.seed == 0

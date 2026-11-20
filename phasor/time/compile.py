@@ -29,7 +29,7 @@ from phasor.core.spatial import (
 )
 from phasor.core.state import ObjectState, SceneState
 from phasor.core.values import normalize, same_shape
-from phasor.style.theme import Theme, ThemeError, load_theme
+from phasor.style.theme import PALETTES, Theme, ThemeError, load_theme
 from phasor.time.easing import EASINGS
 from phasor.time.expr import CompiledExpr, ExprError, compile_expr
 from phasor.time.tracks import ResolvedSegment, ResolvedTrack, TimeMap
@@ -112,6 +112,9 @@ def compile_document(doc: Document) -> Compiled:
         theme = load_theme(doc.meta.theme)
     except ThemeError as e:
         raise DocumentError(Issue("unknown_theme", str(e), path="meta.theme")) from e
+    if doc.meta.palette is not None and doc.meta.palette not in PALETTES:
+        raise DocumentError(Issue("unknown_palette", f"palette must be one of {PALETTES}, got "
+                                  f"{doc.meta.palette!r}", path="meta.palette"))  # fmt: skip
     time_map = TimeMap(doc.timeline.markers)
     nodes: dict[str, Node] = {}
     owner: dict[str, type[BaseModel]] = {}  # path -> params model, for coercing track values
@@ -255,6 +258,14 @@ def _int_fields(model: type[BaseModel]) -> tuple[str, ...]:
     return tuple(n for n, f in model.model_fields.items() if f.annotation is int)
 
 
+def _strokes(c: Compiled) -> dict[str, Any]:
+    """The theme's ``[strokes]`` with the scene's ``palette`` (when it picks one) as colors."""
+    palette = c.doc.meta.palette
+    if palette is None:
+        return c.theme.strokes
+    return {**c.theme.strokes, "lut": tuple(tuple(x) for x in c.theme.values["colormap"][palette])}
+
+
 def evaluate(c: Compiled, t: float, replace: Mapping[str, Any] | None = None) -> SceneState:
     """Pure: depends only on (compiled document, t).
 
@@ -328,5 +339,5 @@ def evaluate(c: Compiled, t: float, replace: Mapping[str, Any] | None = None) ->
         overlay=overlay_camera(aspect),
         values=MappingProxyType(env),
         light=MappingProxyType(c.theme.light),
-        strokes=MappingProxyType(c.theme.strokes),
+        strokes=MappingProxyType(_strokes(c)),
     )

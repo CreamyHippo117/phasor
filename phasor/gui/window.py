@@ -432,6 +432,10 @@ class LooksPanel(QWidget):
         apply.clicked.connect(
             lambda: self.changed.emit(self.ed.apply_look(self.look.currentText()))
         )
+        self.palette = QComboBox()
+        self.palette.addItems(["theme's own", *editor.palettes()])
+        recolor = QPushButton("Apply palette")
+        recolor.clicked.connect(self.apply_palette)
         self.beat = QComboBox()
         show = QPushButton("Show variants")
         show.clicked.connect(self.show_variants)
@@ -443,6 +447,10 @@ class LooksPanel(QWidget):
         row.addWidget(self.look)
         row.addWidget(apply)
         lay.addLayout(row)
+        row_p = QHBoxLayout()
+        row_p.addWidget(self.palette)
+        row_p.addWidget(recolor)
+        lay.addLayout(row_p)
         row2 = QHBoxLayout()
         row2.addWidget(self.beat)
         row2.addWidget(show)
@@ -460,6 +468,11 @@ class LooksPanel(QWidget):
         meta = self.ed.engine.document.meta
         if meta.look:
             self.look.setCurrentText(meta.look)
+        self.palette.setCurrentText(meta.palette or "theme's own")
+
+    def apply_palette(self) -> None:
+        name = self.palette.currentText()
+        self.changed.emit(self.ed.set_palette(None if name == "theme's own" else name))
 
     def show_variants(self) -> None:
         if not self.beat.currentText():

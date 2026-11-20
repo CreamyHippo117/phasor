@@ -29,7 +29,22 @@ ROLE_GROUPS: dict[str, tuple[str, ...]] = {
     # Cyclic wheels (phase) and ramps (the rest). `phase` is the full wheel: use it where hue
     # means something (domain coloring). `soft_phase` is a restrained three-hue wheel,
     # `ember` and `ocean` are two-tone ramps for fractals and plain fields.
-    "colormap": ("phase", "soft_phase", "sequential", "ember", "ocean", "spectrum", "magnitude"),
+    # The stroke palettes (bright from end to end, for hue run along glowing curves; a scene
+    # picks one with ``palette``): `spectrum` is the prism rainbow, the rest are calmer.
+    "colormap": (
+        "phase",
+        "soft_phase",
+        "sequential",
+        "ember",
+        "ocean",
+        "spectrum",
+        "magnitude",
+        "moonlight",
+        "gold",
+        "glacier",
+        "borealis",
+        "rose",
+    ),
 }
 _SECTION = {
     "emphasis": "palette",
@@ -152,6 +167,9 @@ class Theme:
             return self.values[group][role]
         except KeyError:
             raise ThemeError(f"theme {self.name!r} defines no {group} role {role!r}") from None
+
+
+PALETTES = ("spectrum", "moonlight", "gold", "glacier", "borealis", "rose")
 
 
 def available_themes() -> list[str]:

@@ -35,11 +35,24 @@ class Look:
     # object type -> {"params": {...}, "style": {...}}; filled in only where a scene says nothing
     defaults: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
 
-    def fill(self, type_name: str, params: dict[str, Any], style: dict[str, str]):
+    def fill(self, type_name: str, params: dict[str, Any], style: dict[str, str],
+             palette: str | None = None):  # fmt: skip
         """``params`` and ``style`` with this look's defaults for ``type_name`` added where
-        the object did not set them."""
+        the object did not set them. With a ``palette``, what the look runs a hue along (its
+        lines) takes the palette's colors."""
         d = self.defaults.get(type_name, {})
-        return {**d.get("params", {}), **params}, {**d.get("style", {}), **style}
+        d_style = dict(d.get("style", {}))
+        if palette is not None and ("colormap" in d_style or "hue_along" in d.get("params", {})):
+            d_style["colormap"] = palette
+        return {**d.get("params", {}), **params}, {**d_style, **style}
+
+    def palette_targets(self) -> set[str]:
+        """The object types whose colors a palette sets (the ones the look runs a hue along)."""
+        return {
+            t
+            for t, d in self.defaults.items()
+            if "colormap" in d.get("style", {}) or "hue_along" in d.get("params", {})
+        }
 
 
 def available_looks() -> list[str]:

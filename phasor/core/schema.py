@@ -15,8 +15,8 @@ from phasor.core.constraints import PRIORITIES, RuleError, normalize_rule, parse
 from phasor.core.ids import is_valid_id, is_valid_name, parent_of, split_path
 from phasor.core.values import normalize
 
-SCHEMA_VERSION = 6  # 2: `constraints` (M2); 3: `retired_ids`; 4: `narration`, `Segment.verb` (M4);
-# 5: `meta.life`, `meta.seed`, `meta.look` (M7); 6: `controls` (M12)
+SCHEMA_VERSION = 7  # 2: `constraints` (M2); 3: `retired_ids`; 4: `narration`, `Segment.verb` (M4);
+# 5: `meta.life`, `meta.seed`, `meta.look` (M7); 6: `controls` (M12); 7: `meta.palette`
 OVERRIDES_VERSION = 1
 
 
@@ -159,6 +159,9 @@ class Meta(Model):
     life: Literal["off", "subtle", "lively"] = "off"
     seed: int = 0
     look: str | None = None  # the look preset the scene started from (the values are resolved)
+    # The colors run along strokes (a colormap role: "spectrum", the prism rainbow, or
+    # "moonlight", "gold", "glacier", "borealis", "rose"); None: the theme's own.
+    palette: str | None = None
     # "script": built by a Python script; later tweaks go to name.overrides.json.
     source: Literal["document", "script"] = "document"
 
@@ -189,7 +192,7 @@ class Control(Model):
 
 
 class Document(Model):
-    schema_version: Literal[6] = SCHEMA_VERSION
+    schema_version: Literal[7] = SCHEMA_VERSION
     meta: Meta
     objects: tuple[ObjectSpec, ...] = ()
     constraints: tuple[ConstraintSpec, ...] = ()

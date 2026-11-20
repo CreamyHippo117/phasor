@@ -48,6 +48,11 @@ sequential = ["#0b0e14", "#1f2a4d", "#7aa2f7", "#c0caf5", "#ffb454", "#f7768e", 
 ember = ["#0b0e14", "#3a1f1a", "#a8442a", "#ffb454", "#fff1d6", "#a8442a"]
 ocean = ["#0b0e14", "#12284a", "#1f6f8b", "#7fd1c7", "#e8fbf5", "#1f6f8b"]
 magnitude = ["#4a6fd8", "#3fa7c9", "#57c99a", "#c9d65a", "#f2a54a", "#e5585e"]  # field strength: weak (cool) to strong (warm); starts visible, not at the background
+moonlight = ["#f4f6ff", "#cdd8ff", "#ffffff", "#ffe8d2"]  # palette: white, a cool-warm shimmer
+gold = ["#ffe3a3", "#ffc061", "#ff9a5c", "#ffd27a"]  # palette: warm golds
+glacier = ["#d6f5ff", "#8fd3ff", "#5fa8ff", "#a8f0e6"]  # palette: ice blues and teals
+borealis = ["#7cffc4", "#4fd1c5", "#8a7dff", "#c38bff"]  # palette: green to violet
+rose = ["#ffb3c7", "#ff7aa2", "#c38bff", "#ff9a8a"]  # palette: pinks and violets
 spectrum = "oklch 0.7 0.16"  # prism: deeper hues, so a glowing curve keeps its color
 
 # Final look: the light that glow roles add blooms (`threshold` applies only when there is

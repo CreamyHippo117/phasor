@@ -147,23 +147,49 @@ class Workspace:
     def scene_new(
         self, title: str, theme: str | None = None, look: str | None = None,
         life: str | None = None, width: int = 1920, height: int = 1080, fps: float = 60.0,
+        palette: str | None = None,
     ) -> dict[str, Any]:  # fmt: skip
         """Start an empty scene (replaces the open one; save first if it matters). The theme
-        is dark (``midnight_glow``) unless a ``look`` ("calm", "glow", "chalk") or ``theme``
-        says otherwise; ``life`` ("off", "subtle", "lively") is the living motion."""
+        is dark (``midnight_glow``) unless a ``look`` ("calm", "glow", "chalk", "prism",
+        "prism_everywhere") or ``theme`` says otherwise; ``life`` ("off", "subtle",
+        "lively") is the living motion; ``palette`` the colors run along strokes
+        (``scene_palette``)."""
 
         def go():
             chosen = load_look(look) if look else None
             meta = Meta(
                 title=title, theme=theme or (chosen.theme if chosen else DEFAULT_THEME),
                 life=life or (chosen.life if chosen else "off"), look=look, width=width,
-                height=height, fps=fps,
+                height=height, fps=fps, palette=palette,
             )  # fmt: skip
             self._engine = Engine(Document(meta=meta), base_dir=self.root)
             self.path = None
 
         self._guard(go)
         return self.summary()
+
+    def scene_palette(self, palette: str | None) -> dict[str, Any]:
+        """Pick the colors run along strokes: ``spectrum`` (the prism rainbow), ``moonlight``
+        (white with a cool and warm shimmer), ``gold``, ``glacier``, ``borealis``, ``rose``,
+        or None for the theme's own. In the prism looks it recolors every glowing curve and
+        the lines the look runs a hue along; fringes, vignette and glow stay. One undo step."""
+        from phasor.style.theme import PALETTES
+
+        e = self.engine
+        if palette is not None and palette not in PALETTES:
+            raise ToolError(f"palette must be one of {PALETTES} (or none), got {palette!r}")
+        ops: list[dict[str, Any]] = [{"op": "set_meta", "field": "palette", "value": palette}]
+        look = load_look(e.document.meta.look) if e.document.meta.look else None
+        targets = look.palette_targets() if look else {"line"}
+        role = palette or (look.defaults.get("line", {}).get("style", {}).get("colormap")
+                           if look else None) or "spectrum"  # fmt: skip
+        for spec in e.document.objects:
+            # Without a look, only lines that run a hue along themselves change.
+            runs_hue = spec.type != "line" or look is not None or spec.params.get("hue_along", 0)
+            if spec.type in targets and "colormap" in _style_keys(spec.type) and runs_hue:
+                ops.append({"op": "set_style", "id": spec.id, "key": "colormap", "role": role})
+        r = e.apply(ops, origin="tweak")
+        return {**_slim_result(r.to_dict()), "palette": palette}
 
     def scene_open(self, path: str) -> dict[str, Any]:
         """Open ``name.phasor.json`` (or a ``.py`` script when the server allows scripts; a
@@ -243,7 +269,8 @@ class Workspace:
                 params = {**chosen.get("params", {}), **params}
                 style = {**chosen.get("style", {}), **style}
             if look is not None:
-                params, style = look.fill(str(spec.get("type")), params, style)
+                params, style = look.fill(str(spec.get("type")), params, style,
+                                          self.engine.document.meta.palette)  # fmt: skip
             out.append({**op, "object": {**spec, "params": params, "style": style}})
         return out
 
@@ -690,3 +717,10 @@ def _resolve(doc: Document, snap: list[dict[str, Any]], query: str) -> list[dict
     scored.sort(key=lambda s: (-s[0], s[1]))
     return [{"id": i, "score": round(s, 2), "why": w, "region": by_id.get(i, {}).get("region")}
             for s, i, w in scored]  # fmt: skip
+
+
+def _style_keys(type_name: str) -> set[str]:
+    from phasor.core.objects import get_type
+
+    cls = get_type(type_name)
+    return set(getattr(cls, "Style", {})) if cls else set()

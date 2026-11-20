@@ -6,10 +6,11 @@
 
 ## Tools
 
-- `scene_new`: Start an empty scene (replaces the open one; save first if it matters). The theme is dark (`midnight_glow`) unless a `look` ("calm", "glow", "chalk") or `theme` says otherwise; `life` ("off", "subtle", "lively") is the living motion.
+- `scene_new`: Start an empty scene (replaces the open one; save first if it matters). The theme is dark (`midnight_glow`) unless a `look` ("calm", "glow", "chalk", "prism", "prism_everywhere") or `theme` says otherwise; `life` ("off", "subtle", "lively") is the living motion; `palette` the colors run along strokes (`scene_palette`).
 - `scene_open`: Open `name.phasor.json` (or a `.py` script when the server allows scripts; a script that imports `manim` is run through phasor's Manim stand-in and opens as a plain scene, with `notes` on what could not be carried over).
 - `scene_save`: Save the document (`name.phasor.json`); tweaks to a script scene go to its overrides file beside it.
 - `scene_edit`: Apply a patch (one op, a list of ops, or `{"ops": [...]}`). Atomic: if any op is invalid nothing changes. Returns the result and the lint issues it added or fixed. An `add_object` may name a `preset` (see `object_types`); the scene's look fills in what is left unset, and explicit values always win.
+- `scene_palette`: Pick the colors run along strokes: `spectrum` (the prism rainbow), `moonlight` (white with a cool and warm shimmer), `gold`, `glacier`, `borealis`, `rose`, or None for the theme's own. In the prism looks it recolors every glowing curve and the lines the look runs a hue along; fringes, vignette and glow stay. One undo step.
 - `undo`: Revert the last edit (each patch, verb or narration is one step).
 - `redo`: Re-apply the edit that undo reverted.
 - `animate`: Animate with a choreography verb starting at a marker (or seconds). Timing comes from the theme. Returns when it starts and ends so the next step can follow it. `orbit` swings the 3D camera `value` degrees (default 360), until marker `until` if given. `transform` and `become` take `targets=[from, to]`; `sweep` takes `path` and `value`; `circumscribe` takes one target and `value` "circle" or "box".

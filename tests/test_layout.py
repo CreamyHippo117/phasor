@@ -11,7 +11,7 @@ from phasor import Dot, Line, Scene, Text, expr
 from phasor.core import io
 from phasor.core.constraints import Guard, Relation, RuleError, parse_rule, rule_ids
 from phasor.core.issues import DocumentError
-from phasor.core.schema import Document
+from phasor.core.schema import SCHEMA_VERSION, Document
 from phasor.layout import labels, solver
 from phasor.layout.bake import key_times
 from phasor.layout.geometry import Box, Coverage, footprint, screen_box
@@ -73,7 +73,7 @@ def test_schema_validates_normalizes_and_rejects_duplicate_rules():
 
 def test_version_1_documents_migrate():
     doc = io.parse_document({"schema_version": 1, "meta": {"title": "old"}})
-    assert doc.schema_version == 6 and doc.constraints == () and doc.retired_ids == ()
+    assert doc.schema_version == SCHEMA_VERSION and doc.constraints == () and doc.retired_ids == ()
 
 
 # ---------------------------------------------------------------- stage 2: the label placer

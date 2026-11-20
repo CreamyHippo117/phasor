@@ -516,6 +516,24 @@ epicycles, parametric curves, contours, the algebra and PDE drawings. Its theme
 any theme may set. Strokes that do not glow (axes, grids) keep their color, and objects that
 color by meaning (flow lines by speed, fields by strength) keep theirs.
 
+**Palettes within the prism looks.** The lens and glow stay; the colors are a choice:
+`Scene(..., look="prism_everywhere", palette="moonlight")`. `spectrum` is the prism rainbow
+(the default), `moonlight` is white with a cool and warm shimmer, then `gold`, `glacier`,
+`borealis` (green to violet) and `rose`. The palette is stored in the document
+(`meta.palette`); it colors the hue run along every glowing stroke and the lines the look
+runs a hue along. On an open scene, `scene_palette("gold")` (the AI's tool, and the editor's
+Looks tab) switches it in one undo step. The palettes are colormap roles in every theme, so
+any object with a `colormap` may use them too.
+
+```python
+from phasor import Line, Scene
+
+lit = Scene("moon", look="prism_everywhere", palette="moonlight", passes=None)
+lit.add(Line(id="arc", points=[(0, 0, 0), (1, 1, 0), (2, 0, 0)]))
+assert lit.engine.document.meta.palette == "moonlight"
+assert lit.engine.document.object("arc").style["colormap"] == "moonlight"
+```
+
 ```python
 from phasor import Equation, Line, Scene
 

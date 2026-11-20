@@ -17,6 +17,7 @@ from phasor import Scene, cx
 from phasor.core import io as docio
 from phasor.core.migrate import migrate
 from phasor.core.patch import parse_patch
+from phasor.core.schema import SCHEMA_VERSION
 from phasor.interactive import Player, export_web, snap
 from tests.conftest import gl_available
 
@@ -78,7 +79,7 @@ def test_controls_survive_saving_and_old_documents_gain_none(tmp_path):
     s.engine.save(path)
     assert [c.key for c in docio.load_document(path).controls] == ["set.c[0]", "set.c[1]"]
     old = migrate({"schema_version": 5, "meta": {"title": "old"}})
-    assert old["schema_version"] == 6 and old["controls"] == []
+    assert old["schema_version"] == SCHEMA_VERSION and old["controls"] == []
     a, b = julia().engine.document, julia().engine.document
     assert a == b
 

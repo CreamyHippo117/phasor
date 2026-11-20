@@ -181,6 +181,7 @@ class Scene:
         *,
         theme: str | None = None,
         look: str | None = None,
+        palette: str | None = None,
         life: str | None = None,
         seed: int = 0,
         width: int = 1920,
@@ -190,12 +191,15 @@ class Scene:
     ) -> None:
         """``look`` names a preset (``calm``, ``glow``, ``chalk``): it picks the theme and
         ``life`` and supplies defaults for objects. ``theme`` and ``life`` you give win over
-        the look's. The theme is dark (``midnight_glow``) unless you or the look say else."""
+        the look's. The theme is dark (``midnight_glow``) unless you or the look say else.
+        ``palette`` picks the colors run along strokes (``spectrum``, the prism rainbow,
+        or ``moonlight``, ``gold``, ``glacier``, ``borealis``, ``rose``): in the prism looks
+        it recolors every glowing curve and line and keeps the rest of the look."""
         self.look = load_look(look) if look else None
         theme = theme or (self.look.theme if self.look else DEFAULT_THEME)
         life = life or (self.look.life if self.look else "off")
         meta = Meta(title=title, theme=theme, width=width, height=height, fps=fps, life=life,
-                    seed=seed, look=look, source="script")  # fmt: skip
+                    seed=seed, look=look, palette=palette, source="script")  # fmt: skip
         engine_kwargs.setdefault("base_dir", _caller_dir())
         self.engine = Engine(Document(meta=meta), **engine_kwargs)
 
@@ -217,7 +221,8 @@ class Scene:
         The scene's look fills in what the object leaves unset (the values are stored)."""
         spec = obj.to_spec()
         if self.look is not None:
-            params, style = self.look.fill(spec.type, dict(spec.params), dict(spec.style))
+            params, style = self.look.fill(spec.type, dict(spec.params), dict(spec.style),
+                                           self.engine.document.meta.palette)  # fmt: skip
             spec = ObjectSpec(id=spec.id, type=spec.type, params=params, style=style,
                               tags=spec.tags, layer=spec.layer)  # fmt: skip
         self._apply(AddObject(object=spec))

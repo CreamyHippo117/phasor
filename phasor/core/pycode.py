@@ -76,6 +76,8 @@ def document_to_python(doc: Document) -> str:
             f"width={m.width}", f"height={m.height}", f"fps={m.fps!r}"]  # fmt: skip
     if m.look:
         args.append(f"look={m.look!r}")
+    if m.palette:
+        args.append(f"palette={m.palette!r}")
     lines.append(f"s = Scene({', '.join(args)})")
     cam = doc.cameras[0] if doc.cameras else None
     if cam is not None and cam.kind == "orbit":

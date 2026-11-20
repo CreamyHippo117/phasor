@@ -573,6 +573,22 @@ class Editor:
                 ops.append({"op": "set_style", "id": spec.id, "key": k, "role": role})
         return self._edit(ops, f"look: {name}")
 
+    def palettes(self) -> list[str]:
+        from phasor.style.theme import PALETTES
+
+        return list(PALETTES)
+
+    def set_palette(self, name: str | None) -> dict[str, Any]:
+        """Recolor the strokes with a palette (``spectrum``, the prism rainbow, ...): one
+        undo step, recorded as your edit."""
+        with self.lock:
+            r = self.ws.scene_palette(name)
+        if r["ok"]:
+            entry = {"what": f"palette: {name}", "version": self.version, "t": self.t}
+            self.history.append(entry)
+            self.ws.activity.append({"who": "you", **entry})
+        return r
+
     def variants(self, beat: str | float, n: int = 3) -> dict[str, Any]:
         with self.lock:
             return self.ws.variants(beat, n)

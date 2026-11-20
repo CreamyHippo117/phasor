@@ -279,3 +279,91 @@ def test_prism_everywhere_matches_its_golden():
     if not path.exists():
         pytest.skip(f"no {path.parent.name} golden yet; create with PHASOR_UPDATE_GOLDEN=1")
     assert ssim(img, np.asarray(Image.open(path).convert("RGB"))) >= 0.97
+
+
+# ---------------------------------------------------------------- palettes within the prism looks
+
+
+def test_a_palette_recolors_the_strokes_and_keeps_the_rest_of_the_look():
+    from phasor import calc
+    from phasor.render.passes import _stroke_hue
+    from phasor.style.theme import PALETTES, load_theme
+
+    assert PALETTES[0] == "spectrum"  # the prism rainbow comes first
+    luts = {}
+    for pal in PALETTES:
+        s = Scene("p", look="prism_everywhere", palette=pal, passes=None)
+        s.add(Line(id="ring", points=[(0, 0, 0), (1, 1, 0)]))
+        s.add(calc.Graph(id="g", function="sin(x)", xmin=-3, xmax=3))
+        st = s.engine.state_at(0.0)
+        assert s.engine.document.meta.palette == pal
+        assert s.engine.document.object("ring").style["colormap"] == pal  # lines follow too
+        luts[pal] = _stroke_hue(st, "color")[0]
+        assert load_theme(s.engine.document.meta.theme).bloom["vignette"] > 0  # the lens stays
+    assert len({lut.tobytes() for lut in luts.values()}) == len(PALETTES)  # all different
+    spread = {k: float(np.ptp(v, axis=1).mean()) for k, v in luts.items()}
+    assert spread["moonlight"] < spread["spectrum"] / 3  # moonlight is near white, not a rainbow
+
+
+def test_no_palette_means_the_themes_own_and_a_bad_one_is_refused():
+    from phasor.core.issues import DocumentError
+
+    plain = Scene("p", look="prism_everywhere", passes=None)
+    plain.add(Line(id="l", points=[(0, 0, 0), (1, 1, 0)]))
+    assert plain.engine.document.meta.palette is None
+    assert "colormap" not in plain.engine.document.object("l").style  # the type's own default
+    with pytest.raises(DocumentError, match="palette"):
+        Scene("p", palette="plaid", passes=None)
+
+
+def test_switching_palette_on_an_open_scene_is_one_undo_step(tmp_path):
+    from phasor.workspace import Workspace
+    from phasor.workspace.tools import ToolError
+
+    ws = Workspace(tmp_path)
+    ws.scene_new("p", look="prism")
+    ws.scene_edit({"op": "add_object", "object": {"id": "l", "type": "line",
+                   "params": {"points": [[0, 0, 0], [1, 1, 0]]}}})  # fmt: skip
+    assert ws.engine.document.object("l").params["hue_along"] == 0.8  # the prism look's line
+    r = ws.scene_palette("gold")
+    assert r["ok"] and ws.engine.document.meta.palette == "gold"
+    assert ws.engine.document.object("l").style["colormap"] == "gold"
+    ws.undo()
+    assert ws.engine.document.meta.palette is None
+    with pytest.raises(ToolError, match="palette must be one of"):
+        ws.scene_palette("plaid")
+
+
+def test_a_version_6_document_opens_with_the_themes_palette():
+    from phasor.core.migrate import migrate
+    from phasor.core.schema import Document
+
+    raw = {"schema_version": 6, "meta": {"title": "old"}, "objects": []}
+    doc = Document.model_validate(migrate(raw))
+    assert doc.schema_version == 7 and doc.meta.palette is None
+
+
+@pytest.mark.gl
+@pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
+def test_the_palettes_match_their_golden():
+    from PIL import Image
+
+    from phasor import calc
+    from phasor.render.output import save_png
+    from phasor.style.theme import PALETTES
+    from tests.ssim import ssim
+    from tests.test_render import GOLDEN
+
+    tiles = []
+    for pal in PALETTES:
+        s = Scene("palettes", look="prism_everywhere", palette=pal)
+        s.set("camera.height", 4)
+        s.add(calc.Graph(id="g", function="sin(3*x)*exp(-x**2/4)", xmin=-3.4, xmax=3.4))
+        tiles.append(s.engine.still(1.0, (240, 135)))
+    sheet = np.concatenate([np.concatenate(tiles[:3], 1), np.concatenate(tiles[3:], 1)], 0)
+    path = GOLDEN / s.engine.pass_runner().renderer_class() / "prism_palettes.png"
+    if os.environ.get("PHASOR_UPDATE_GOLDEN"):
+        save_png(path, sheet)
+    if not path.exists():
+        pytest.skip(f"no {path.parent.name} golden yet; create with PHASOR_UPDATE_GOLDEN=1")
+    assert ssim(sheet, np.asarray(Image.open(path).convert("RGB"))) >= 0.97

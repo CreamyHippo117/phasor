@@ -45,6 +45,11 @@ sequential = ["#f3eee2", "#cfd9ee", "#7aa2e0", "#2f5fb3", "#d9622b", "#8a2f4d", 
 ember = ["#f3eee2", "#f1d3b5", "#e49a63", "#b5502a", "#5a2418", "#b5502a"]
 ocean = ["#f3eee2", "#cfe6e8", "#7fb8c4", "#2f7d92", "#123d52", "#2f7d92"]
 magnitude = ["#2f4fa8", "#1f7f99", "#2e8f5e", "#8a8a17", "#c46a1f", "#b3343c"]  # field strength: weak (cool) to strong (warm)
+moonlight = ["#5b6475", "#3f4a63", "#6c7385", "#7a6a5c"]  # palette: graphite, cool-warm
+gold = ["#b37a12", "#c4581f", "#9c6a10", "#d08a1c"]  # palette: warm golds
+glacier = ["#1f6f9c", "#2f5fb3", "#1f8a8a", "#3a7fc0"]  # palette: deep blues and teals
+borealis = ["#1f8a5c", "#1f7f99", "#5a4fc0", "#7d3c98"]  # palette: green to violet
+rose = ["#c43a6a", "#a8326f", "#7d3c98", "#c4583f"]  # palette: pinks and violets
 spectrum = "oklch 0.55 0.13"
 
 # Final look: the light that glow roles add blooms (`threshold` applies only when there is
