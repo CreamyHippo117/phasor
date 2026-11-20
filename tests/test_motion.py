@@ -419,3 +419,70 @@ def test_the_motion_example_matches_its_golden():
     if not path.exists():
         pytest.skip(f"no {path.parent.name} golden yet; create with PHASOR_UPDATE_GOLDEN=1")
     assert ssim(sheet, np.asarray(Image.open(path).convert("RGB"))) >= 0.97
+
+
+# ---------------------------------------------------------------- narration and sliders
+
+
+def _narrated(script: str, tmp_path):
+    s = Scene("narrated", passes=None)
+    s.engine.base_dir = tmp_path
+    s.add(Equation(id="before", parts=("$x$", "$=2$")))
+    s.add(Equation(id="after", parts=("$x$", "$+1$", "$=3$"), pos=(0, -1, 0)))
+    s.add(geo.ParametricCurve(id="loop", fx="cos(t)", fy="sin(2*t)", pos=(3, 0, 0)))
+    s.add(Tracer(id="comet", path="loop"))
+    s.add(fourier.PartialSum(id="w", kind="square", terms=2, pos=(0, -3, 0)))
+    s.add(Dot(id="pt", pos=(-3, 0)))
+    s.narrate(script, voice="estimate")
+    s.at("change").transform("before", "after")
+    s.at("ride").travel("comet")
+    s.at("more").sweep("w.terms", 20)
+    s.at("look").flash("pt").circumscribe("pt").wiggle("pt")
+    return s.engine
+
+
+@pytest.mark.slow
+def test_the_motion_verbs_follow_the_narration(tmp_path):
+    """Every new verb is anchored to its marker: say it slower and they all move with it."""
+    quick = "[[change]] It changes. [[ride]] It rides. [[more]] More. [[look]] Look."
+    slow = ("[[change]] First, slowly and with great care, the equation changes. [[ride]] Then "
+            "the comet rides around its loop. [[more]] Now many more terms. [[look]] Look here.")  # fmt: skip
+    for script in (quick, slow):
+        e = _narrated(script, tmp_path)
+        m = e.document.timeline.markers
+        st = e.state_at
+        assert st(m["change"] - 0.01)["after"].params.opacity == 0
+        assert st(m["change"] + 0.01)["after"].params.opacity == 1
+        assert st(m["ride"] - 0.01)["comet"].params.progress == 0
+        assert st(m["ride"] + 0.5)["comet"].params.progress > 0
+        assert st(m["more"] - 0.01)["w"].params.terms == 2
+        assert st(m["look"] - 0.01)["pt"].params.flash == 0 < st(m["look"] + 0.2)["pt"].params.flash
+    assert m["look"] > 10  # the slow script really moved the markers
+    strict = [i for i in e.lint(strict=True) if i.code == "raw_motion" or i.severity == "error"]
+    assert not strict, [i.message for i in strict]  # verbs, anchored: what strict asks for
+
+
+def test_sliders_drive_the_new_objects_and_a_counter_follows(tmp_path):
+    from phasor.interactive import Player
+
+    s = Scene("sliders", passes=None)
+    s.add(cx.ComplexMap(id="m", function="z**2", amount=0.0, extent=(2.0, 2.0)))
+    s.add(geo.ParametricCurve(id="loop", pos=(-4, 0, 0)))
+    s.add(Tracer(id="comet", path="loop"))
+    s.add(geo.FlowParticles(id="p", fp="-y", fq="x", extent=(3.0, 3.0, 0.0), pos=(4, 0, 0)))
+    s.add(Counter(id="amt", value=expr("m.amount"), prefix="a = ", pos=(0, -2, 0)))
+    s.control("m.amount", min=0, max=1, step=0.1)
+    s.control("comet.progress", min=0, max=1, step=0.05)
+    s.control("p.speed", min=0.2, max=3, step=0.2)
+    e = s.engine
+    pl = Player(e)
+    pl.set("m.amount", 0.7)
+    pl.set("comet.progress", 0.5)
+    pl.set("p.speed", 2.0)
+    st = pl.state_at(0.0)
+    assert st["amt"].impl.semantics(st)["text"] == "$a = 0.70$"  # the readout follows the slider
+    assert st["comet"].impl.semantics(st)["position"][0] == pytest.approx(-5.0, abs=1e-3)
+    assert e.document.object("m").params["amount"] == 0.0  # the scene itself is untouched
+    s.marker("go", 1.0)
+    s.at("go").morph("m.amount", 1.0)  # an animation on a slider's parameter: lint says so
+    assert "orphan_control" in {i.code for i in e.lint()}
