@@ -11,14 +11,34 @@ from phasor.core.spatial import Camera
 DISC_SEGMENTS = 48
 
 
+def hue_colors(pts, lut, cycles: float, shift: float = 0.0, total: float | None = None):
+    """(N, 4) colors running ``lut`` (a wrapped ramp) along a polyline by arc length:
+    ``cycles`` times over ``total`` length (default: this polyline's), shifted by ``shift``."""
+    pts = np.asarray(pts, dtype=np.float64)
+    lut = np.asarray(lut, dtype=np.float64)
+    along = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(pts, axis=0), axis=1))])
+    total = max(float(along[-1] if total is None else total), 1e-12)
+    g = ((along / total * cycles + shift) % 1.0) * len(lut)
+    k0 = np.floor(g).astype(int) % len(lut)
+    f = (g - np.floor(g))[:, None]
+    rgb = lut[k0] * (1 - f) + lut[(k0 + 1) % len(lut)] * f
+    return np.c_[rgb, np.ones(len(pts))]
+
+
 def polyline(ctx: DrawContext, cam: Camera, pts, width, *, color, glow: float = 1.0,
              colors=None) -> None:  # fmt: skip
     """A stroked polyline (mitered joins). ``width`` is in world units: a number, or one per
     point (perspective: wider where it is further away, so it looks constant on screen).
-    ``colors`` (N, 4), one per point, runs a color along the curve."""
+    ``colors`` (N, 4), one per point, runs a color along the curve. With none given, a
+    glowing stroke runs the theme's ``[strokes]`` hue when the theme turns it on (the
+    ``prism_everywhere`` look); plain strokes (axes, grids) keep their color."""
     pts = np.asarray(pts, dtype=np.float64)
     if len(pts) < 2:
         return
+    theme_hue = getattr(ctx, "stroke_hue", None)
+    if colors is None and theme_hue is not None and glow > 1.0:
+        lut, cycles, shift = theme_hue
+        colors = hue_colors(pts, lut, cycles, shift)
     width = np.broadcast_to(np.asarray(width, dtype=np.float64), (len(pts),))
     flat = np.c_[pts @ cam.right, pts @ cam.up]  # coordinates in the camera plane
     seg = np.diff(flat, axis=0)

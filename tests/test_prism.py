@@ -203,3 +203,79 @@ def test_demo_lints_and_critiques_clean_and_matches_its_golden():
     if not path.exists():
         pytest.skip(f"no {path.parent.name} golden yet; create with PHASOR_UPDATE_GOLDEN=1")
     assert ssim(sheet, np.asarray(Image.open(path).convert("RGB"))) >= 0.97
+
+
+# ---------------------------------------------------------------- the prism look on everything
+
+
+def test_a_theme_can_start_from_another_and_strokes_are_off_by_default():
+    from phasor.style.theme import load_theme
+
+    vivid, prism = load_theme("prism_vivid"), load_theme("prism")
+    assert vivid.bloom == prism.bloom and vivid.values == prism.values  # inherited
+    assert vivid.strokes["hue_along"] == 0.8 and len(vivid.strokes["lut"]) > 2
+    for name in ("midnight_glow", "prism", "paper", "aurora"):
+        assert load_theme(name).strokes["hue_along"] == 0.0  # an option, never the default
+
+
+def _stroke_colors(look: str, glow: str):
+    from phasor import calc
+    from phasor.render.passes import _stroke_hue
+
+    s = Scene("g", look=look, passes=None)
+    s.add(calc.Graph(id="g", function="sin(x)", xmin=-3, xmax=3, style={"glow": glow}))
+    st = s.engine.state_at(0.0)
+    c = _Collector(_stroke_hue(st, "color"))
+    st["g"].impl.draw(c, st, "color")
+    return [cmd.get("colors") for kind, cmd in c.commands if kind == "mesh"]
+
+
+def test_prism_everywhere_runs_the_hue_along_glowing_strokes_only():
+    glowing = _stroke_colors("prism_everywhere", "strong")
+    assert glowing and glowing[0] is not None
+    hues = np.asarray(glowing[0])[:, :3]
+    assert np.ptp(hues, axis=0).max() > 0.3  # the color changes along the curve
+    assert _stroke_colors("prism_everywhere", "none") == [None]  # plain strokes stay plain
+    assert _stroke_colors("prism", "strong") == [None]  # plain prism: only lines run a hue
+    assert _stroke_colors("prism_everywhere", "strong")[0].shape == glowing[0].shape
+
+
+def test_the_hue_drifts_with_time_and_only_in_the_color_pass():
+    from phasor.render.passes import _stroke_hue
+
+    s = Scene("g", look="prism_everywhere", passes=None)
+    a, b = (
+        _stroke_hue(s.engine.state_at(0.0), "color"),
+        _stroke_hue(s.engine.state_at(5.0), "color"),
+    )
+    assert a[2] != b[2]  # shifted by flow x t: a pure function of time
+    assert _stroke_hue(s.engine.state_at(0.0), "id") is None
+
+
+@pytest.mark.gl
+@pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
+def test_prism_everywhere_matches_its_golden():
+    import math
+
+    from PIL import Image
+
+    from phasor import calc, fourier, geo
+    from phasor.render.output import save_png
+    from tests.ssim import ssim
+    from tests.test_render import GOLDEN
+
+    s = Scene("everywhere", look="prism_everywhere")
+    s.set("camera.height", 9)
+    s.add(fourier.PartialSum(id="w", kind="square", terms=15, pos=(-3.5, 2, 0), extent=(6, 2.4)))
+    t = np.linspace(0, 2 * np.pi, 80, endpoint=False)
+    s.add(fourier.Epicycles(id="e", terms=24, points=[
+        (3.5 + 1.8 * math.cos(a) ** 3, 2 + 1.6 * math.sin(a) ** 3, 0) for a in t]))  # fmt: skip
+    s.add(calc.Graph(id="g", function="sin(3*x)*exp(-x**2/8)", xmin=-7, xmax=7, pos=(0, -2.2, 0)))
+    s.add(geo.Axes(id="ax", dims=2, x_range=(-7, 7, 1), y_range=(-1, 1, 1), pos=(0, -2.2, 0)))
+    img = s.engine.still(1.0, (480, 270))
+    path = GOLDEN / s.engine.pass_runner().renderer_class() / "prism_everywhere.png"
+    if os.environ.get("PHASOR_UPDATE_GOLDEN"):
+        save_png(path, img)
+    if not path.exists():
+        pytest.skip(f"no {path.parent.name} golden yet; create with PHASOR_UPDATE_GOLDEN=1")
+    assert ssim(img, np.asarray(Image.open(path).convert("RGB"))) >= 0.97

@@ -468,6 +468,14 @@ warm/cool fringes on the glow (theme `[bloom] fringe`), a vignette (`[bloom] vig
 and typeset equations that float (life `float`).
 No axes unless the scene adds them. `examples/prism_primes.py` is the reference scene.
 
+**The prism look on everything** (`look="prism_everywhere"`, an option; the default stays
+`midnight_glow`): the same lens (fringes, vignette, drifting equations), and *every* glowing
+curve runs the spectrum along its length and lets it drift: graphs, Fourier partial sums and
+epicycles, parametric curves, contours, the algebra and PDE drawings. Its theme
+`prism_vivid` starts from `prism` (`base = "prism"`) and adds `[strokes] hue_along`, which
+any theme may set. Strokes that do not glow (axes, grids) keep their color, and objects that
+color by meaning (flow lines by speed, fields by strength) keep theirs.
+
 ```python
 from phasor import Equation, Line, Scene
 

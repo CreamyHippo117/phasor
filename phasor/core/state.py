@@ -40,6 +40,8 @@ class SceneState:
     values: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
     # The theme's three-point light rig and fog (``[light]``), for lit surfaces.
     light: Mapping[str, float] = field(default_factory=lambda: MappingProxyType({}), compare=False)
+    # The theme's ``[strokes]``: a hue run along glowing strokes (``hue_along`` 0: off).
+    strokes: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}), compare=False)
     _by_id: Mapping[str, ObjectState] = field(default=None, repr=False, compare=False)  # type: ignore[assignment]
 
     def __post_init__(self) -> None:

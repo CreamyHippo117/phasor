@@ -18,7 +18,7 @@ from phasor.core.objects import Bounds, DrawContext, ObjectBase, ParamsBase, Pas
 from phasor.core.state import SceneState
 from phasor.core.texconv import join_latex, to_latex
 from phasor.core.values import Vec3
-from phasor.domains.strokes import polyline
+from phasor.domains.strokes import hue_colors, polyline
 
 DISC_SEGMENTS = 64
 
@@ -146,16 +146,9 @@ class Line(ObjectBase):
         colors = None
         p = me.params
         if p.hue_along > 0:
-            lut = np.asarray(me.style["colormap"], dtype=np.float64)
             full = np.asarray(p.points, dtype=np.float64)
-            total = max(float(np.linalg.norm(np.diff(full, axis=0), axis=1).sum()), 1e-12)
-            along = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(pts, axis=0), axis=1))])
-            u = (along / total * p.hue_along + p.hue) % 1.0
-            g = u * len(lut)
-            k0 = np.floor(g).astype(int) % len(lut)
-            f = (g - np.floor(g))[:, None]
-            rgb = lut[k0] * (1 - f) + lut[(k0 + 1) % len(lut)] * f
-            colors = np.c_[rgb, np.ones(len(pts))]
+            total = float(np.linalg.norm(np.diff(full, axis=0), axis=1).sum())
+            colors = hue_colors(pts, me.style["colormap"], p.hue_along, p.hue, total)
         polyline(ctx, cam, pts, self._width(state, pts), color=_rgba(me.style["color"],
                  p.opacity), glow=me.style["glow"], colors=colors)  # fmt: skip
 

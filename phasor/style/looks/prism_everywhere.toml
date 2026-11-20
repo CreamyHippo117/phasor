@@ -1,0 +1,110 @@
+description = "The prism look on everything: every glowing curve (graphs, Fourier sums and epicycles, parametric curves, contours, diagrams) runs the spectrum along its length and lets it drift, with warm and cool fringes, darker corners and drifting equations. Axes and grids stay plain. An option: the default stays midnight_glow."
+theme = "prism_vivid"
+life = "lively"
+
+[defaults.line.params]
+hue_along = 0.8
+
+[defaults.line.style]
+glow = "strong"
+stroke = "regular"
+
+[defaults.dot.style]
+glow = "strong"
+color = "primary"
+
+[defaults.equation.style]
+glow = "soft"
+
+[defaults.text.style]
+color = "primary"
+
+[defaults.domain_coloring.params]
+softness = 0.7
+
+[defaults.fractal.style]
+colormap = "ocean"
+
+[defaults.epicycles.style]
+glow = "strong"
+
+[defaults.graph.style]
+glow = "strong"
+
+[defaults.parametric_curve.style]
+glow = "strong"
+
+[defaults.partial_sum.style]
+glow = "strong"
+
+[defaults.taylor.style]
+glow = "strong"
+
+[defaults.limit.style]
+glow = "strong"
+
+[defaults.loop_integral.style]
+glow = "strong"
+
+[defaults.pde_profile.style]
+glow = "strong"
+
+[defaults.pde_modes.style]
+glow = "strong"
+
+[defaults.impulse_response.style]
+glow = "strong"
+
+[defaults.eigen_lines.style]
+glow = "strong"
+
+[defaults.polygon.style]
+glow = "strong"
+
+[defaults.cayley_graph.style]
+glow = "strong"
+
+[defaults.homomorphism.style]
+glow = "strong"
+
+[defaults.subgroup_lattice.style]
+glow = "strong"
+
+[defaults.galois_diagram.style]
+glow = "strong"
+
+[defaults.permutation.style]
+glow = "strong"
+
+[defaults.wavefront.style]
+glow = "strong"
+
+[defaults.flow_lines.style]
+glow = "strong"
+
+[defaults.arrow.style]
+glow = "soft"
+
+[defaults.riemann_sum.style]
+glow = "soft"
+
+[defaults.spectrum.style]
+glow = "soft"
+
+[defaults.transform_grid.style]
+glow = "soft"
+
+[defaults.image_sources.style]
+glow = "soft"
+
+[defaults.source.style]
+glow = "soft"
+
+[defaults.listener.style]
+glow = "soft"
+
+[defaults.vector_field.style]
+glow = "soft"
+
+[defaults.vector_field_3d.style]
+glow = "soft"

@@ -232,11 +232,22 @@ def _define(src: str, kind: str) -> str:
     return f"{head}\n{defines[kind]}\n{rest}"
 
 
+def _stroke_hue(state, pass_) -> tuple | None:
+    """The theme's ``[strokes]`` hue for the color pass: (lut, cycles, shift at t)."""
+    st = getattr(state, "strokes", None) or {}
+    if pass_ != "color" or not st.get("hue_along") or not st.get("lut"):
+        return None
+    return (np.asarray(st["lut"], dtype=np.float64), float(st["hue_along"]),
+            (float(st.get("flow", 0.0)) * state.t) % 1.0)  # fmt: skip
+
+
 class _Collector:
     """Records an object's draw calls; the renderer replays them for the current pass."""
 
-    def __init__(self) -> None:
+    def __init__(self, stroke_hue: tuple | None = None) -> None:
         self.commands: list[tuple[str, dict[str, Any]]] = []
+        # (lut, cycles per stroke, shift): the theme's hue along glowing strokes, or None.
+        self.stroke_hue = stroke_hue
 
     def triangles(self, positions, indices=None, *, color, glow=1.0, colors=None) -> None:
         self.commands.append(
@@ -333,7 +344,7 @@ class GLRenderer:
     # ------------------------------------------------------------ drawing
 
     def _commands(self, state, obj: ObjectState, pass_) -> list:
-        collector = _Collector()
+        collector = _Collector(_stroke_hue(state, pass_))
         obj.impl.draw(collector, state, pass_)
         return collector.commands
 

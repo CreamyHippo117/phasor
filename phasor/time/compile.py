@@ -328,4 +328,5 @@ def evaluate(c: Compiled, t: float, replace: Mapping[str, Any] | None = None) ->
         overlay=overlay_camera(aspect),
         values=MappingProxyType(env),
         light=MappingProxyType(c.theme.light),
+        strokes=MappingProxyType(c.theme.strokes),
     )

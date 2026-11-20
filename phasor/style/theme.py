@@ -141,6 +141,9 @@ class Theme:
     light: dict[str, float] = field(default_factory=dict)  # three-point rig and depth fog
     life: dict[str, float] = field(default_factory=dict)  # living motion (see core/life.py)
     motion: dict[str, Any] = field(default_factory=dict)  # verb -> {duration, ease}, + scalars
+    # [strokes]: a hue run along glowing strokes (hue_along, flow, lut); off when hue_along 0
+    strokes: dict[str, Any] = field(default_factory=lambda: {"hue_along": 0.0, "flow": 0.0,
+                                                              "lut": ()})  # fmt: skip
 
     def resolve(self, group: str, role: str) -> Any:
         if role not in ROLE_GROUPS.get(group, ()):
@@ -157,10 +160,7 @@ def available_themes() -> list[str]:
 
 @functools.cache
 def load_theme(name: str) -> Theme:
-    path = THEME_DIR / f"{name}.toml"
-    if not path.exists():
-        raise ThemeError(f"unknown theme {name!r}; available: {available_themes()}")
-    raw = tomllib.loads(path.read_text(encoding="utf-8"))
+    raw = _raw(name)
     values: dict[str, dict[str, Any]] = {}
     for group, section in _SECTION.items():
         data = raw.get(section, {})
@@ -181,8 +181,50 @@ def load_theme(name: str) -> Theme:
             raise ThemeError(f"theme {name!r} is missing [{section}] keys {missing}")
         extra[section] = {k: float(v) for k, v in data.items()}
     motion = _motion(name, raw.get("motion", {}))
+    strokes = _strokes(name, raw.get("strokes", {}), values["colormap"])
     return Theme(name, hex_to_linear(raw["palette"]["background"]), values, **extra,
-                 motion=motion)  # fmt: skip
+                 motion=motion, strokes=strokes)  # fmt: skip
+
+
+def _raw(name: str, seen: tuple[str, ...] = ()) -> dict[str, Any]:
+    """A theme file's tables; ``base = "other"`` starts from that theme and overrides it
+    table by table (key by key inside a table)."""
+    path = THEME_DIR / f"{name}.toml"
+    if not path.exists():
+        raise ThemeError(f"unknown theme {name!r}; available: {available_themes()}")
+    raw = tomllib.loads(path.read_text(encoding="utf-8"))
+    base = raw.pop("base", None)
+    if base is None:
+        return raw
+    if base in (*seen, name):
+        raise ThemeError(f"theme {name!r}: base themes form a loop through {base!r}")
+    merged = _raw(base, (*seen, name))
+    for key, value in raw.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _merge(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
+    out = dict(a)
+    for k, v in b.items():
+        out[k] = _merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+    return out
+
+
+def _strokes(theme: str, data: dict[str, Any], colormaps: dict[str, Any]) -> dict[str, Any]:
+    """``[strokes]`` (optional): ``hue_along`` > 0 runs a colormap along every glowing stroke
+    that does not color itself (cycles per stroke), turning ``flow`` cycles a second."""
+    along = float(data.get("hue_along", 0.0))
+    cmap = str(data.get("colormap", "spectrum"))
+    if cmap not in colormaps:
+        raise ThemeError(f"theme {theme!r}: [strokes] colormap {cmap!r} is not a colormap role")
+    if along < 0:
+        raise ThemeError(f"theme {theme!r}: [strokes] hue_along must be >= 0")
+    return {"hue_along": along, "flow": float(data.get("flow", 0.0)),
+            "lut": tuple(tuple(c) for c in colormaps[cmap])}  # fmt: skip
 
 
 VERBS = (
