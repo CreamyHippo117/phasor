@@ -10,6 +10,7 @@ compounding. If this file and SPEC.md disagree, stop and ask.
 - Roadmap (owner, 2026-11-19): Milestones 11 (Sketch) and 13 (Manim import) were dropped,
   then both reinstated. The owner approved the three layers between the engine and the
   clients (`interactive`, `importers`, `workspace`) on 2026-11-19.
+- Test plan and its status: `TESTING.md` (A desktop app done; B Windows/NVIDIA and C gaps to do).
 - One milestone per branch. No work on milestone N+1 until N's exit demo and tests pass.
 - Before declaring a milestone done, run the `phasor-milestone-gate` skill.
 
