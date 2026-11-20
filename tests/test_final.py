@@ -33,7 +33,11 @@ REQUIRED = {
     "text": {"text": "hello $x^2$"},
     "wavefront": {"radius": 1.0},  # 0: not emitted yet
     "pressure_slice": {"time": 0.004},  # 0: the sound has not started
+    "tracer": {"path": "guide", "progress": 0.5},  # rides a curve
+    "callout": {"target": "guide"},  # rings an object
 }
+# Types that point at another object: the scene gets a curve called "guide" for them.
+PARTNERED = {"tracer", "callout"}
 # Examples that build a Scene called ``s``: not domain_coloring (a script that renders the
 # kernel directly) or manim_reverb (a Manim script, run through the importer in its own test).
 EXAMPLES = sorted(p.stem for p in (ROOT / "examples").glob("*.py")
@@ -47,6 +51,9 @@ def _one(name: str, camera: str, passes="auto"):
     s = Scene(f"one {name}", passes=passes)
     if camera == "orbit":
         s.use_camera("orbit")
+    if name in PARTNERED:
+        s.engine.apply({"op": "add_object", "object": {"id": "guide", "type": "line", "params": {
+            "points": [[-1, -0.5, 0], [0, 0.5, 0], [1, -0.5, 0]]}}}, origin="script")  # fmt: skip
     r = s.engine.apply({"op": "add_object", "object": {
         "id": "thing", "type": name, "params": REQUIRED.get(name, {})}}, origin="script")  # fmt: skip
     assert r.ok, (name, [i.message for i in r.errors])
@@ -115,10 +122,10 @@ def test_every_type_draws_something_in_2d_and_3d(name, camera, request):
     # so judge at a size where a "hairline" is a line.
     img = e.still(0.0, (960, 540))
     assert img.shape == (540, 960, 3)
-    empty = Scene("empty")
-    if camera == "orbit":
-        empty.use_camera("orbit")
-    blank = empty.engine.still(0.0, (960, 540))
+    # The same scene without the object (but with its guide curve, if it has one).
+    blank = e.fork()
+    assert blank.apply({"op": "remove_object", "id": "thing"}, origin="script").ok
+    blank = blank.still(0.0, (960, 540))
     assert np.abs(img.astype(int) - blank.astype(int)).max() > 8, f"{name} drew nothing"
 
 

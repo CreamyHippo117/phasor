@@ -91,6 +91,11 @@ class Graph(ObjectBase):
     def _runs(self, p):
         return _curve(_fn(p.function.strip()), p.xmin, p.xmax, p.pos)
 
+    def path_points(self, state: SceneState) -> np.ndarray | None:
+        """The longest unbroken run of the graph (what a ``Tracer`` travels along)."""
+        runs = self._runs(self.me(state).params)
+        return max(runs, key=len) if runs else None
+
     def world_bounds(self, state: SceneState) -> Bounds:
         runs = self._runs(self.me(state).params)
         return Bounds.of_points(np.vstack(runs) if runs else [self.me(state).params.pos], pad=0.05)

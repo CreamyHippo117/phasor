@@ -19,6 +19,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
+import numpy as np
+
 from phasor.core.schema import ExprSpec, MarkerRef, TimeRef
 from phasor.core.state import SceneState
 from phasor.time.compile import Compiled, evaluate
@@ -286,3 +288,209 @@ class Verbs:
         swing = self.motion["orbit_swing"]
         seg, done = self._segment(path, self._written(path) + swing, "orbit_reveal", 0.0)
         return Motion((*shown.ops, seg), max(shown.end, done))
+
+    # ---------------------------------------------------------- the motion verbs
+
+    def _instant(self, path: str, value: Any, verb: str, delay: float) -> dict[str, Any]:
+        """A jump to ``value`` at ``delay`` seconds after the anchor."""
+        t = _ref(shift(self.at, delay))
+        seg = {"t0": t, "t1": t, "to": value, "ease": "linear", "verb": verb}
+        return {"op": "add_segment", "path": path, "segment": seg}
+
+    def _span(self, path: str, value: Any, verb: str, t0: float, t1: float, ease: str):
+        seg = {"t0": _ref(shift(self.at, t0)), "t1": _ref(shift(self.at, t1)), "to": value,
+               "ease": ease, "verb": verb}  # fmt: skip
+        return {"op": "add_segment", "path": path, "segment": seg}
+
+    def _show_at(self, object_id: str, verb: str, delay: float) -> list[dict[str, Any]]:
+        """Appear (opacity 1) at ``delay``; hidden until then if nothing showed it before."""
+        path = f"{object_id}.opacity"
+        ops = []
+        if self._starts_hidden(path):
+            ops.append({"op": "set_param", "path": path, "value": 0.0})
+        return [*ops, self._instant(path, 1.0, verb, delay)]
+
+    def _of_type(self, object_id: str, verb: str, *names: str):
+        obj = self._object(object_id)
+        if obj.type not in names:
+            raise VerbError(f"{verb} needs {' or '.join(names)}; {object_id!r} is a {obj.type}")
+        return obj
+
+    def transform(self, source: str, target: str) -> Motion:
+        """An equation becoming the next: parts that appear in both glide from their old
+        place (and color) to the new; the old one's other parts fade out, the new one's fade
+        in. ``target`` is hidden until now; ``source`` disappears as it starts."""
+        a = self._of_type(source, "transform", "equation")
+        self._of_type(target, "transform", "equation")
+        ops: list[dict[str, Any]] = [
+            {"op": "set_param", "path": f"{target}.from_parts", "value": list(a.params.parts)},
+            {"op": "set_param", "path": f"{target}.from_colors", "value": list(a.params.colors)},
+            {"op": "set_param", "path": f"{target}.from_pos", "value": list(a.params.pos)},
+        ]
+        if self._starts_hidden(f"{target}.morph"):
+            ops.append({"op": "set_param", "path": f"{target}.morph", "value": 0.0})
+        ops += self._show_at(target, "transform", 0.0)
+        ops.append(self._instant(f"{source}.opacity", 0.0, "transform", 0.0))
+        seg, done = self._segment(f"{target}.morph", 1.0, "transform", 0.0)
+        return Motion((*ops, seg), done)
+
+    def become(self, source: str, target: str) -> Motion:
+        """One curve turning into another (a circle into a square): ``source``'s points move
+        onto ``target``'s (both resampled to the same count, closed curves aligned so the
+        motion is short), then ``target`` takes its place."""
+        a = self._of_type(source, "become", "line")
+        b = self._of_type(target, "become", "line")
+        path = f"{source}.points"
+        if not self._starts_hidden(path) or isinstance(self._base(path), ExprSpec):
+            raise VerbError(f"become needs {source!r}'s points unanimated before it")
+        pa, pb = _matched_shapes(np.asarray(a.params.points), np.asarray(b.params.points))
+        spec = self.motion["become"]
+        d = spec["duration"]
+        # The same shape with more points (a track keeps one point count throughout).
+        ops: list[dict[str, Any]] = [{"op": "set_param", "path": path, "value": pa.tolist()}]
+        ops.append(self._span(path, pb.tolist(), "become", 0.0, d, spec["ease"]))
+        ops += self._show_at(target, "become", d)
+        ops.append(self._instant(f"{source}.opacity", 0.0, "become", d))
+        return Motion(tuple(ops), d)
+
+    def write(self, *ids: str) -> Motion:
+        """Write text or an equation in, left to right (hidden until now)."""
+
+        def make(object_id: str, delay: float):
+            if not self._has(object_id, "write"):
+                kind = self.state[object_id].type
+                raise VerbError(f"write needs text or an equation; {object_id!r} is a {kind}")
+            path = f"{object_id}.write"
+            ops = [{"op": "set_param", "path": path, "value": 0.0}] if self._starts_hidden(
+                path) else []  # fmt: skip
+            seg, done = self._segment(path, 1.0, "write", delay)
+            return [*ops, seg], done
+
+        return self._each(ids, "write", make)
+
+    def travel(self, *ids: str) -> Motion:
+        """Send tracers along their paths, start to end, trailing light."""
+
+        def make(object_id: str, delay: float):
+            obj = self._of_type(object_id, "travel", "tracer")
+            if obj.impl.semantics(self.state).get("path_missing"):
+                raise VerbError(f"{object_id!r} travels along {obj.params.path!r}, which is not "
+                                "a curve in the scene")  # fmt: skip
+            path = f"{object_id}.progress"
+            ops = [{"op": "set_param", "path": path, "value": 0.0}] if self._starts_hidden(
+                path) else []  # fmt: skip
+            seg, done = self._segment(path, 1.0, "travel", delay)
+            return [*ops, seg], done
+
+        return self._each(ids, "travel", make)
+
+    def flash(self, *ids: str) -> Motion:
+        """A quick brightening: light and glow swell, then fall back."""
+        spec = self.motion["flash"]
+        d = spec["duration"]
+
+        def make(object_id: str, delay: float):
+            path = f"{object_id}.flash"
+            up = self._span(path, 1.0, "flash", delay, delay + 0.3 * d, spec["ease"])
+            down = self._span(path, 0.0, "flash", delay + 0.3 * d, delay + d, "smooth")
+            return [up, down], delay + d
+
+        return self._each(ids, "flash", make)
+
+    def circumscribe(self, object_id: str, shape: str = "circle") -> Motion:
+        """Draw a ring (or a box) around an object, then fade it: "look here". The ring is
+        the object's child ``<id>.ring``, made the first time and reused after."""
+        self._object(object_id)
+        if shape not in ("circle", "box"):
+            raise VerbError(f"circumscribe draws a 'circle' or a 'box', not {shape!r}")
+        ring = f"{object_id}.ring"
+        spec = self.motion["circumscribe"]
+        d = spec["duration"]
+        ops: list[dict[str, Any]] = []
+        if ring not in self.state:
+            ops.append({"op": "add_object", "object": {"id": ring, "type": "callout", "params": {
+                "target": object_id, "shape": shape, "progress": 0.0}}})  # fmt: skip
+        else:
+            ops += [self._instant(f"{ring}.progress", 0.0, "circumscribe", 0.0),
+                    self._instant(f"{ring}.opacity", 1.0, "circumscribe", 0.0)]  # fmt: skip
+        ops.append(self._span(f"{ring}.progress", 1.0, "circumscribe", 0.0, 0.6 * d, spec["ease"]))
+        ops.append(self._span(f"{ring}.opacity", 0.0, "circumscribe", 0.6 * d, d, "smooth"))
+        return Motion(tuple(ops), d)
+
+    def wiggle(self, *ids: str) -> Motion:
+        """A small shake from side to side: "this one"."""
+        spec = self.motion["wiggle"]
+        d = spec["duration"]
+
+        def make(object_id: str, delay: float):
+            if not self._has(object_id, "pos"):
+                kind = self.state[object_id].type
+                raise VerbError(f"wiggle moves an object's 'pos'; {object_id!r} is a {kind}")
+            path = f"{object_id}.pos"
+            self._base(path)  # refuses an expression
+            obj = self.state[object_id]
+            p0 = np.asarray(obj.params.pos, dtype=np.float64)
+            size = float(obj.impl.world_bounds(self.state).radius)
+            side = np.asarray(self.state.camera_for(obj).right) * max(0.06 * size, 1e-3)
+            steps = (p0 + side, p0 - side, p0 + side / 2, p0)
+            ops = [self._span(path, [float(v) for v in q], "wiggle", delay + k * d / 4,
+                              delay + (k + 1) * d / 4, "smooth")
+                   for k, q in enumerate(steps)]  # fmt: skip
+            return ops, delay + d
+
+        return self._each(ids, "wiggle", make)
+
+    def sweep(self, path: str, value: float, show: bool = True) -> Motion:
+        """Run a number from where it is to ``value`` at an even pace, showing it as it goes
+        (``show``: a ``Counter`` beside the object, ``<id>.readout``, made the first time)."""
+        target, _, name = path.rpartition(".")
+        obj = self._object(target)
+        current = getattr(obj.params, name, None)
+        if not isinstance(current, int | float) or isinstance(current, bool):
+            raise VerbError(f"sweep runs a number; {path} is {type(current).__name__}")
+        self._base(path)  # refuses an expression
+        seg, done = self._segment(path, float(value), "sweep", 0.0)
+        ops: list[dict[str, Any]] = []
+        readout = f"{target}.readout"
+        if show and readout not in self.state:
+            whole = type(obj.params).model_fields[name].annotation is int
+            label = name.replace("_", "\\_")  # mathtext: an underscore is a subscript
+            params = {
+                "value": {"expr": path},
+                "digits": 0 if whole else 2,
+                "prefix": f"\\mathrm{{{label}}} = ",
+                "opacity": 0.0,
+            }
+            ops.append(
+                {"op": "add_object", "object": {"id": readout, "type": "counter", "params": params}}
+            )
+            ops.append({"op": "add_constraint", "rule": f"{readout} near {target}"})
+            ops.append(self._instant(f"{readout}.opacity", 1.0, "sweep", 0.0))
+        return Motion((*ops, seg), done)
+
+
+def _resample(points: np.ndarray, n: int) -> np.ndarray:
+    pts = np.asarray(points, dtype=np.float64)
+    cum = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(pts, axis=0), axis=1))])
+    u = np.linspace(0.0, cum[-1], n)
+    return np.stack([np.interp(u, cum, pts[:, k]) for k in range(pts.shape[1])], axis=1)
+
+
+def _matched_shapes(a: np.ndarray, b: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Two polylines resampled to the same number of points; when both are closed, ``b`` is
+    turned (and reversed if that is closer) so each point travels as little as possible."""
+    n = max(len(a), len(b), 64)
+    ra, rb = _resample(a, n), _resample(b, n)
+    closed = np.allclose(a[0], a[-1]) and np.allclose(b[0], b[-1])
+    if closed:
+        best, best_cost = rb, np.inf
+        ring = rb[:-1]
+        for cand in (ring, ring[::-1]):
+            for k in range(0, len(cand), max(1, len(cand) // 64)):
+                c = np.roll(cand, -k, axis=0)
+                c = np.vstack([c, c[:1]])
+                cost = float(np.square(c - ra).sum())
+                if cost < best_cost:
+                    best, best_cost = c, cost
+        rb = best
+    return ra, rb

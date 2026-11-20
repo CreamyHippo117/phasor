@@ -272,10 +272,13 @@ class _Collector:
                          "opacity": float(opacity), "glow": float(glow)})
         )  # fmt: skip
 
-    def text(self, text, origin, height, *, color, anchor="center", glow=1.0) -> None:
+    def text(self, text, origin, height, *, color, anchor="center", glow=1.0,
+             reveal=1.0) -> None:  # fmt: skip
+        if reveal <= 0:
+            return
         self.commands.append(
             ("text", {"text": text, "origin": origin, "height": height, "color": color,
-                      "anchor": anchor, "glow": glow})
+                      "anchor": anchor, "glow": glow, "reveal": min(float(reveal), 1.0)})
         )  # fmt: skip
 
 
@@ -354,6 +357,8 @@ class GLRenderer:
         cam = state.camera_for(obj)
         for kind, c in self._commands(state, obj, pass_) if commands is None else commands:
             if kind == "surface" and pass_ == "color":
+                if obj.params.flash > 0:  # the flash verb lights surfaces too
+                    c = {**c, "glow": float(c.get("glow", 1.0)) * (1.0 + 1.5 * obj.params.flash)}
                 self._draw_lit(state, cam, c, order, zoom)
                 continue
             if kind == "surface":  # id and solo: plain triangles
@@ -379,9 +384,11 @@ class GLRenderer:
             prog["u_bias"].value = order * DEPTH_BIAS
             prog["u_zoom"].value = 1.0 / zoom
             if pass_ == "color":
-                prog["u_color"].value = tuple(float(x) for x in c["color"])
+                flash = float(obj.params.flash)  # the flash verb: more light, more glow
+                rgb = [float(x) * (1.0 + 0.8 * flash) for x in c["color"][:3]]
+                prog["u_color"].value = (*rgb, float(c["color"][3]))
                 if kind != "image":
-                    prog["u_glow"].value = float(c.get("glow", 1.0))
+                    prog["u_glow"].value = float(c.get("glow", 1.0)) * (1.0 + 1.5 * flash)
             elif pass_ == "id":
                 prog["u_id"].value = obj.index
             buffers = []
@@ -399,14 +406,17 @@ class GLRenderer:
                 tex = self._text_texture(c["text"], int(np.clip(px, 2, MAX_TEXT_PX)))
                 tex.use(0)
                 prog["u_tex"].value = 0
-                # Bitmap row 0 is the top of the text, so the top corners take v = 0.
+                # Bitmap row 0 is the top of the text, so the top corners take v = 0. A
+                # partial ``reveal`` (writing it in) shows the left share of the quad.
+                r = float(c.get("reveal", 1.0))
+                wr = wv * r
                 quad = np.array(
                     [
                         [*corner, 0, 1],
-                        [*(corner + wv), 1, 1],
+                        [*(corner + wr), r, 1],
                         [*(corner + hv), 0, 0],
-                        [*(corner + wv), 1, 1],
-                        [*(corner + wv + hv), 1, 0],
+                        [*(corner + wr), r, 1],
+                        [*(corner + wr + hv), r, 0],
                         [*(corner + hv), 0, 0],
                     ],
                     dtype="f4",

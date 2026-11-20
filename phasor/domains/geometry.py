@@ -17,6 +17,7 @@ Numerics (formulas, flow lines, coloring) are in ``geometry_math``.
 
 from __future__ import annotations
 
+import functools
 from typing import Any, ClassVar, Literal
 
 import numpy as np
@@ -151,11 +152,22 @@ class ParametricCurve(ObjectBase):
         progress: float = Field(1.0, ge=0, le=1)
         color_by: COLOR_BY_CURVE = "none"
         hue: float = 0.0  # shifts the colors along the ramp (a share of it, wrapping)
+        # Flowing into another curve: formulas to blend toward ("" keeps that coordinate's
+        # own), and how far (0: this curve, 1: the other). Animate ``blend`` with ``morph``.
+        to_fx: str = ""
+        to_fy: str = ""
+        to_fz: str = ""
+        blend: float = Field(0.0, ge=0, le=1)
 
         @field_validator("fx", "fy", "fz")
         @classmethod
         def _f(cls, v):
             return gm.check(v, T)
+
+        @field_validator("to_fx", "to_fy", "to_fz")
+        @classmethod
+        def _to(cls, v):
+            return gm.check(v, T) if v else v
 
         @model_validator(mode="after")
         def _range(self):
@@ -166,7 +178,15 @@ class ParametricCurve(ObjectBase):
     def _curve(self, p):
         t = np.linspace(p.t_range[0], p.t_range[1], p.samples)
         pts = np.stack([gm.compile_fn(f, T)(t) for f in (p.fx, p.fy, p.fz)], axis=1)
+        if p.blend > 0 and (p.to_fx or p.to_fy or p.to_fz):
+            pairs = ((p.fx, p.to_fx), (p.fy, p.to_fy), (p.fz, p.to_fz))
+            to = np.stack([gm.compile_fn(g or f, T)(t) for f, g in pairs], axis=1)
+            pts = pts * (1 - p.blend) + to * p.blend
         return t, _vec(p.pos) + p.scale * pts
+
+    def path_points(self, state: SceneState) -> np.ndarray:
+        """The whole curve (what a ``Tracer`` travels along)."""
+        return self._curve(self.me(state).params)[1]
 
     def _drawn(self, p, t, pts):
         n = max(2, round(p.progress * (len(t) - 1)) + 1)
@@ -265,11 +285,22 @@ class ParametricSurface(ObjectBase):
         domain_pos: Vec3 = (-4.0, 0.0, 0.0)  # where the flat input rectangle sits
         domain_size: tuple[float, float] = (3.0, 3.0)  # the input rectangle's size in the world
         morph: float = Field(1.0, ge=0, le=1)  # 0: flat input; 1: the output shape
+        # Flowing into another surface (z = x^2 - y^2 into z = sin x cos y): formulas to blend
+        # toward ("" keeps that coordinate's own) and how far. Animate ``blend`` with ``morph``.
+        to_fx: str = ""
+        to_fy: str = ""
+        to_fz: str = ""
+        blend: float = Field(0.0, ge=0, le=1)
 
         @field_validator("fx", "fy", "fz")
         @classmethod
         def _f(cls, v):
             return gm.check(v, UV)
+
+        @field_validator("to_fx", "to_fy", "to_fz")
+        @classmethod
+        def _to(cls, v):
+            return gm.check(v, UV) if v else v
 
         @field_validator("color_expr")
         @classmethod
@@ -289,6 +320,11 @@ class ParametricSurface(ObjectBase):
     def _grid(self, p):
         fx, fy, fz = (gm.compile_fn(f, UV) for f in (p.fx, p.fy, p.fz))
         pts, U, V = gm.surface_grid(fx, fy, fz, p.u_range, p.v_range, p.res)
+        if p.blend > 0 and (p.to_fx or p.to_fy or p.to_fz):
+            gx, gy, gz = (gm.compile_fn(g or f, UV) for f, g in
+                          ((p.fx, p.to_fx), (p.fy, p.to_fy), (p.fz, p.to_fz)))  # fmt: skip
+            to, _, _ = gm.surface_grid(gx, gy, gz, p.u_range, p.v_range, p.res)
+            pts = pts * (1 - p.blend) + to * p.blend
         return _vec(p.pos) + p.scale * pts, U, V
 
     def _flat(self, p, U, V) -> np.ndarray:
@@ -563,3 +599,83 @@ class FlowLines(ObjectBase):
             width = me.style["stroke"] * cam.units_per_height(pts)
             polyline(ctx, cam, pts, width, color=with_alpha((1.0, 1.0, 1.0, 1.0), p.opacity),
                      glow=me.style["glow"], colors=np.c_[rgb, np.ones(len(pts))])  # fmt: skip
+
+
+@register
+class FlowParticles(ObjectBase):
+    """Particles streaming along a vector field with fading tails: the field as motion.
+    ``count`` particles start at random points in the box (``rng(id, seed)``), travel
+    ``speed`` world units a second along the field's flow lines for ``lifetime`` seconds,
+    then start again: a pure function of time, so every frame is reproducible. Colored by
+    the field's strength (the ``magnitude`` colormap)."""
+
+    type: ClassVar[str] = "flow_particles"
+    Style: ClassVar = {
+        "colormap": ("colormap", "magnitude"),
+        "stroke": ("stroke", "regular"),
+        "glow": ("glow", "soft"),
+    }
+    Presets: ClassVar = {
+        "streaks": {"params": {"tail": 0.45, "count": 300}, "style": {"stroke": "hairline"}},
+        "sparks": {"params": {"tail": 0.08, "count": 400}, "style": {"glow": "strong"}},
+    }
+
+    class Params(_FieldParams):
+        count: int = Field(160, ge=1, le=5000)
+        speed: float = Field(1.0, gt=0)  # world units a second
+        lifetime: float = Field(3.0, gt=0)  # seconds before a particle starts again
+        tail: float = Field(0.2, ge=0, le=1)  # its tail, as a share of its life's path
+        seed: int = 0
+
+    def _paths(self, object_id: str, p):
+        return _particle_paths(object_id, p)
+
+    def world_bounds(self, state: SceneState) -> Bounds:
+        me = self.me(state)
+        paths, _, _ = self._paths(me.id, me.params)
+        return Bounds.of_points(paths.reshape(-1, 3), pad=0.05)
+
+    def features(self, state: SceneState) -> dict[str, np.ndarray]:
+        return {"center": _vec(self.me(state).params.pos)}
+
+    def semantics(self, state: SceneState) -> dict[str, Any]:
+        me = self.me(state)
+        p = me.params
+        _, _, strength = self._paths(me.id, p)
+        return {"kind": "flow_particles", "field": [p.fp, p.fq, p.fr], "count": p.count,
+                "speed": p.speed, "lifetime": p.lifetime,
+                "strongest": round(float(np.nanmax(strength)), 6)}  # fmt: skip
+
+    def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
+        me = self.me(state)
+        p = me.params
+        if p.opacity <= 0:
+            return
+        cam = state.camera_for(me)
+        paths, phase, strength = self._paths(me.id, p)
+        seg, alpha = gm.particles(paths, phase, state.t, p.lifetime, max(p.tail, 0.02))
+        top = float(np.nanmax(strength)) if np.isfinite(strength).any() else 1.0
+        rgb = gm.sample_ramp(ramp(me.style["colormap"]), gm.normalize01(strength, 0.0, top))
+        for pts, a, c in zip(seg, alpha, rgb, strict=True):
+            if a.max() <= 0.01 or np.linalg.norm(pts[-1] - pts[0]) < 1e-9:
+                continue
+            cols = np.c_[np.tile(c, (len(pts), 1)), a * p.opacity]
+            polyline(ctx, cam, pts, me.style["stroke"] * cam.units_per_height(pts),
+                     color=(*c, p.opacity), glow=me.style["glow"], colors=cols)  # fmt: skip
+
+
+@functools.lru_cache(maxsize=32)
+def _particle_paths(object_id: str, p) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """(paths (N, M, 3), birth phases (N,), field strength along each (N,)) for a
+    FlowParticles' parameters: random starts from ``rng(id, seed)``, flow lines by RK4."""
+    from phasor.core.rng import rng
+
+    g = rng(object_id, p.seed)
+    e = _vec(p.extent)
+    starts = _vec(p.pos) + (g.random((p.count, 3)) - 0.5) * e
+    phase = g.random(p.count)
+    field = _field(p)
+    steps = 48
+    paths, speed = gm.flow_lines(lambda q: field(q - _vec(p.pos)), starts, steps,
+                                 p.speed * p.lifetime / steps)  # fmt: skip
+    return paths, phase, np.nanmean(speed, axis=1)

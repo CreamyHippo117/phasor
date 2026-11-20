@@ -35,6 +35,8 @@ class ParamsBase(BaseModel):
     # fight over one track. In a SceneState, ``opacity`` already includes it.
     dim: float = Field(1.0, ge=0, le=1)
     z_index: int = 0  # draw order among coplanar objects; higher draws on top
+    # A brief brightening (the ``flash`` verb): the renderer adds light and glow by this much.
+    flash: float = Field(0.0, ge=0, le=1)
 
 
 @dataclass(frozen=True)
@@ -119,6 +121,7 @@ class DrawContext(Protocol):
         color: tuple[float, float, float, float],
         anchor: str = "center",  # "center" | "left" | "right"
         glow: float = 1.0,  # as for triangles: above 1 the text emits light
+        reveal: float = 1.0,  # the share shown, left to right (the ``write`` verb)
     ) -> None: ...
 
 

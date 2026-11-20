@@ -108,3 +108,12 @@ glow = "soft"
 
 [defaults.vector_field_3d.style]
 glow = "soft"
+
+[defaults.complex_map.style]
+glow = "strong"
+
+[defaults.tracer.style]
+glow = "strong"
+
+[defaults.callout.style]
+glow = "soft"

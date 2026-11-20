@@ -24,6 +24,7 @@ __all__ = [
     "divergence",
     "flow_lines",
     "normalize01",
+    "particles",
     "sample_ramp",
     "surface_grid",
     "tick_values",
@@ -161,3 +162,25 @@ def flow_lines(field, seeds: np.ndarray, steps: int, h: float, both: bool = Fals
         return fwd, sf
     back, sb = run(-1.0)
     return np.concatenate([back[:, :0:-1], fwd], axis=1), np.concatenate([sb[:, :0:-1], sf], axis=1)
+
+
+def particles(paths: np.ndarray, phase: np.ndarray, t: float, lifetime: float,
+              tail: float) -> tuple[np.ndarray, np.ndarray]:  # fmt: skip
+    """Where particles are at time ``t`` along precomputed ``paths`` (N, M, 3): each lives
+    ``lifetime`` seconds, born again at its start, ``phase`` (N,) apart. Returns (segments
+    (N, K, 3), alpha (N, K)) of each particle's tail, ``tail`` (a share of its life) long:
+    faint at the end, bright at the head, fading in after birth and out before death.
+    A pure function of t."""
+    n, m, _ = paths.shape
+    age = np.mod(t / lifetime + phase, 1.0)  # (N,) share of life lived
+    k = 8  # points per tail
+    share = age[:, None] - tail * np.linspace(1.0, 0.0, k)[None, :]  # (N, K), oldest first
+    share = np.clip(share, 0.0, None)
+    idx = share * (m - 1)
+    i0 = np.clip(np.floor(idx).astype(int), 0, m - 2)
+    f = (idx - i0)[..., None]
+    rows = np.arange(n)[:, None]
+    seg = paths[rows, i0] * (1 - f) + paths[rows, i0 + 1] * f
+    life = np.minimum(age / 0.15, (1 - age) / 0.15).clip(0.0, 1.0)  # fade in and out
+    alpha = np.linspace(0.0, 1.0, k)[None, :] ** 1.5 * life[:, None]
+    return seg, alpha

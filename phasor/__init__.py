@@ -20,6 +20,9 @@ _LAZY = {
     "Line": "phasor.domains.basic",
     "Text": "phasor.domains.basic",
     "Equation": "phasor.domains.basic",
+    "Tracer": "phasor.domains.basic",
+    "Callout": "phasor.domains.basic",
+    "Counter": "phasor.domains.basic",
     "to_latex": "phasor.core.texconv",
     "to_mathtext": "phasor.core.texconv",
 }

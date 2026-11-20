@@ -149,6 +149,14 @@ assert s4.engine.lint(strict=True) == []
 | `focus_pull(id, margin=0.15)` | move the camera onto an object |
 | `morph(path, value)` | change any parameter smoothly (a whole-number one, such as `terms`, in whole steps) |
 | `settle(path, value)` | move like a released spring (overshoot, then rest) |
+| `transform(a, b)` | equation `a` becomes `b`: parts that appear in both glide over (and change color); the rest fade |
+| `become(a, b)` | curve `a` turns into the shape of curve `b` (a circle into a square), then `b` takes its place |
+| `write(*ids)` | write text or an equation in, left to right (`write` 0 to 1) |
+| `travel(*ids)` | send `Tracer`s along their curves, trailing light (`progress` 0 to 1) |
+| `flash(*ids)` | a quick brightening (every object has `flash`, 0 to 1) |
+| `circumscribe(id, shape="circle")` | draw a ring (or `"box"`) around an object, then fade it: the child `<id>.ring` |
+| `wiggle(*ids)` | a small side-to-side shake (objects with `pos`) |
+| `sweep(path, value, show=True)` | run a number evenly to `value`, with a live readout `<id>.readout` beside it |
 
 Durations, easing and stagger come from the theme's `[motion]` table. Chain with `then()`:
 `s.at("loop_draw").trace("loop").then().reveal("loop.label")`. Several ids stagger.
@@ -156,6 +164,38 @@ Durations, easing and stagger come from the theme's `[motion]` table. Chain with
 
 Dimming uses each object's `dim` factor (drawn opacity = `opacity` x `dim`), so dimming and
 revealing never fight, whatever order you write them in.
+
+**Objects made for motion.** `Tracer(path="curve_id", progress=, trail=0.15)` is a glowing
+point riding another curve (a `Line`, `calc.Graph`, `geo.ParametricCurve` or
+`fourier.PartialSum`), its trail fading behind it (preset `comet`); semantics give its
+`position`, or `path_missing`. `Counter(value=expr("comet.progress"), prefix="p = ",
+digits=2)` shows a number that follows whatever it reads. `Callout(target=, shape=)` is the
+ring `circumscribe` draws. `cx.ComplexMap(function="z**2", amount=0)` is a grid pushed
+through f (animate `amount` 0 to 1 with `morph`; `center` is the complex point at the grid's
+middle, drawn at `pos`; lines break at poles). `geo.FlowParticles(fp=, fq=, fr=, count=,
+speed=, lifetime=, tail=)` streams particles along a field (random starts from
+`rng(id, seed)`, a pure function of time; presets `streaks`, `sparks`). `geo.ParametricCurve`
+and `geo.ParametricSurface` take `to_fx`/`to_fy`/`to_fz` and `blend` (0 to 1) to flow into
+another formula. `examples/motion_gallery.py` shows them all.
+
+```python
+from phasor import Counter, Equation, Scene, Tracer, cx, expr, geo
+
+mo = Scene("motion", passes=None)
+mo.add(Equation(id="before", parts=("$x$", "$=2$")))
+mo.add(Equation(id="after", parts=("$x$", "$+1$", "$=3$")))
+mo.add(geo.ParametricCurve(id="loop", fx="cos(t)", fy="sin(2*t)", pos=(3, 0, 0)))
+mo.add(Tracer(id="comet", path="loop", preset="comet"))
+mo.add(Counter(id="comet.count", value=expr("comet.progress"), prefix="p = ", pos=(3, -1.5, 0)))
+mo.add(cx.ComplexMap(id="bend", function="z**2", amount=0.0, extent=(1.6, 1.6), pos=(-3, 0, 0)))
+mo.marker("go", 0.5)
+mo.at("go").transform("before", "after").travel("comet").morph("bend.amount", 1.0)
+mo.at("go").then().flash("after").circumscribe("after")
+me = mo.engine
+assert me.inspect(1.0, id="after")["objects"][0]["semantic"]["matched"] == 1
+assert me.inspect(4.0, id="comet.count")["objects"][0]["semantic"]["text"] == "$p = 1.00$"
+assert "after.ring" in [o.id for o in me.document.objects]
+```
 
 ## Animate by hand
 

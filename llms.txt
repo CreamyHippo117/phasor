@@ -12,7 +12,7 @@
 - `scene_edit`: Apply a patch (one op, a list of ops, or `{"ops": [...]}`). Atomic: if any op is invalid nothing changes. Returns the result and the lint issues it added or fixed. An `add_object` may name a `preset` (see `object_types`); the scene's look fills in what is left unset, and explicit values always win.
 - `undo`: Revert the last edit (each patch, verb or narration is one step).
 - `redo`: Re-apply the edit that undo reverted.
-- `animate`: Animate with a choreography verb starting at a marker (or seconds). Timing comes from the theme. Returns when it starts and ends so the next step can follow it. `orbit` swings the 3D camera `value` degrees (default 360), until marker `until` if given.
+- `animate`: Animate with a choreography verb starting at a marker (or seconds). Timing comes from the theme. Returns when it starts and ends so the next step can follow it. `orbit` swings the 3D camera `value` degrees (default 360), until marker `until` if given. `transform` and `become` take `targets=[from, to]`; `sweep` takes `path` and `value`; `circumscribe` takes one target and `value` "circle" or "box".
 - `narrate`: Set the narration. `[[name]]` puts a marker at the next word. Every animation anchored to a marker follows the voice. `pace` adds breathing room after busy sentences.
 - `checkpoint`: Remember the current document under `name` (to compare or return to later).
 - `restore`: Go back to a checkpoint, as one step (undo brings you back again).
@@ -36,52 +36,57 @@
 
 ## Object types (use these names in add_object)
 
-- `arrow`: start, end
-- `axes`: dims, x_range, y_range, z_range, pos, scale, tick, labels
-- `cayley_graph`: group, generators, pos, r, draw
-- `cayley_table`: group, pos, cell, reveal, subgroup, cosets
-- `clock_diagram`: n, step, pos, r, cosets
-- `domain_coloring`: function, pos, size, contour, softness, hue
-- `dot`: pos, r
-- `eigen_lines`: matrix, pos, length
-- `epicycles`: points, terms, phase, trace
-- `equation`: parts, colors, pos
-- `flow_lines`: fp, fq, fr, pos, extent, seeds, steps, length, both, progress
-- `fractal`: kind, c, pos, size, max_iter, density, hue, center, zoom, steady
-- `galois_diagram`: primes, pos, width, height, gap
-- `graph`: function, xmin, xmax, pos
-- `homomorphism`: n, m, a, pos, r, gap, progress
-- `image_sources`: size, source, order, material, absorption, r
-- `impulse_response`: size, source, listener, order, material, absorption, pos, extent, duration, reveal, show_rt60
-- `limit`: function, a, epsilon, xmin, xmax, pos, bands
-- `line`: points, progress, hue_along, hue
-- `listener`: pos, r
-- `loop_integral`: p, q, measure, center, radius, pos, progress, arrows
-- `matrix`: matrix, pos, digits
-- `parametric_curve`: fx, fy, fz, t_range, samples, pos, scale, progress, color_by, hue
-- `parametric_surface`: fx, fy, fz, u_range, v_range, res, pos, scale, color_by, color_expr, with_map, domain_pos, domain_size, morph
-- `partial_sum`: kind, terms, pos, extent, reveal
-- `pde_field`: kind, time, pos, size, n, diffusivity, speed, mode, feed, kill, seed, scale
-- `pde_modes`: time, pos, extent, length, diffusivity, modes, count, boundary, components, ymax
-- `pde_profile`: kind, time, pos, extent, length, n, diffusivity, speed, modes, potential, dt, exact, ymax, boundary, method
-- `pde_slice`: time, pos, side, cube, n, diffusivity, mode, axis, at, scale
-- `pde_surface`: kind, time, pos, size, n, diffusivity, speed, mode, feed, kill, seed, scale, height
-- `permutation`: perm, pos, spacing, progress
-- `polygon`: n, pos, r, rotation, flip, fill
-- `pressure_slice`: size, origin, source, z, time, dx, material, absorption, frequency, gain, seed
-- `riemann_sum`: function, a, b, n, rule, pos
-- `riemann_surface`: kind, pos, radius, height, scale, rings, segments
-- `room`: size, origin, material, absorption
-- `source`: pos, r
-- `spectrogram`: f0, f1, duration, fs, nwin, pos, size
-- `spectrum`: frequencies, amplitudes, window, samples, fs, pos, extent, bins
-- `subgroup_lattice`: group, pos, width, height
-- `taylor`: function, center, order, xmin, xmax, ymax, pos
-- `text`: text, pos, anchor, leader, leader_on
-- `transform_grid`: matrix, pos, extent, spacing, square, basis
-- `vector_field`: p, q, pos, extent, spacing, color_by_size, length_by
-- `vector_field_3d`: fp, fq, fr, pos, extent, counts, spacing, color_by_size, length_by
-- `wavefront`: center, radius, rings
+- `arrow`: flash, start, end
+- `axes`: flash, dims, x_range, y_range, z_range, pos, scale, tick, labels
+- `callout`: flash, target, shape, pad, progress
+- `cayley_graph`: flash, group, generators, pos, r, draw
+- `cayley_table`: flash, group, pos, cell, reveal, subgroup, cosets
+- `clock_diagram`: flash, n, step, pos, r, cosets
+- `complex_map`: flash, function, pos, center, extent, lines, samples, amount, limit
+- `counter`: flash, value, digits, prefix, suffix, math, pos, anchor
+- `domain_coloring`: flash, function, pos, size, contour, softness, hue
+- `dot`: flash, pos, r
+- `eigen_lines`: flash, matrix, pos, length
+- `epicycles`: flash, points, terms, phase, trace
+- `equation`: flash, parts, colors, pos, write, from_parts, from_colors, from_pos, morph
+- `flow_lines`: flash, fp, fq, fr, pos, extent, seeds, steps, length, both, progress
+- `flow_particles`: flash, fp, fq, fr, pos, extent, count, speed, lifetime, tail, seed
+- `fractal`: flash, kind, c, pos, size, max_iter, density, hue, center, zoom, steady
+- `galois_diagram`: flash, primes, pos, width, height, gap
+- `graph`: flash, function, xmin, xmax, pos
+- `homomorphism`: flash, n, m, a, pos, r, gap, progress
+- `image_sources`: flash, size, source, order, material, absorption, r
+- `impulse_response`: flash, size, source, listener, order, material, absorption, pos, extent, duration, reveal, show_rt60
+- `limit`: flash, function, a, epsilon, xmin, xmax, pos, bands
+- `line`: flash, points, progress, hue_along, hue
+- `listener`: flash, pos, r
+- `loop_integral`: flash, p, q, measure, center, radius, pos, progress, arrows
+- `matrix`: flash, matrix, pos, digits
+- `parametric_curve`: flash, fx, fy, fz, t_range, samples, pos, scale, progress, color_by, hue, to_fx, to_fy, to_fz, blend
+- `parametric_surface`: flash, fx, fy, fz, u_range, v_range, res, pos, scale, color_by, color_expr, with_map, domain_pos, domain_size, morph, to_fx, to_fy, to_fz, blend
+- `partial_sum`: flash, kind, terms, pos, extent, reveal
+- `pde_field`: flash, kind, time, pos, size, n, diffusivity, speed, mode, feed, kill, seed, scale
+- `pde_modes`: flash, time, pos, extent, length, diffusivity, modes, count, boundary, components, ymax
+- `pde_profile`: flash, kind, time, pos, extent, length, n, diffusivity, speed, modes, potential, dt, exact, ymax, boundary, method
+- `pde_slice`: flash, time, pos, side, cube, n, diffusivity, mode, axis, at, scale
+- `pde_surface`: flash, kind, time, pos, size, n, diffusivity, speed, mode, feed, kill, seed, scale, height
+- `permutation`: flash, perm, pos, spacing, progress
+- `polygon`: flash, n, pos, r, rotation, flip, fill
+- `pressure_slice`: flash, size, origin, source, z, time, dx, material, absorption, frequency, gain, seed
+- `riemann_sum`: flash, function, a, b, n, rule, pos
+- `riemann_surface`: flash, kind, pos, radius, height, scale, rings, segments
+- `room`: flash, size, origin, material, absorption
+- `source`: flash, pos, r
+- `spectrogram`: flash, f0, f1, duration, fs, nwin, pos, size
+- `spectrum`: flash, frequencies, amplitudes, window, samples, fs, pos, extent, bins
+- `subgroup_lattice`: flash, group, pos, width, height
+- `taylor`: flash, function, center, order, xmin, xmax, ymax, pos
+- `text`: flash, text, pos, anchor, leader, leader_on, write
+- `tracer`: flash, path, progress, trail, r
+- `transform_grid`: flash, matrix, pos, extent, spacing, square, basis
+- `vector_field`: flash, p, q, pos, extent, spacing, color_by_size, length_by
+- `vector_field_3d`: flash, fp, fq, fr, pos, extent, counts, spacing, color_by_size, length_by
+- `wavefront`: flash, center, radius, rings
 
 ## Docs
 

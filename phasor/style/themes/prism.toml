@@ -196,3 +196,37 @@ ease = "in_out"
 [motion.orbit_reveal]
 duration = 2.4
 ease = "smoother"
+
+# The motion verbs added after the roadmap: an equation becoming the next, a shape becoming
+# another, text writing in, a point travelling a curve, quick emphasis, and a value swept.
+[motion.transform]
+duration = 1.3
+ease = "smoother"
+
+[motion.become]
+duration = 1.3
+ease = "smoother"
+
+[motion.write]
+duration = 1.6
+ease = "smooth"
+
+[motion.travel]
+duration = 3.0
+ease = "in_out"
+
+[motion.flash]
+duration = 0.7
+ease = "out"
+
+[motion.circumscribe]
+duration = 1.1
+ease = "in_out"
+
+[motion.wiggle]
+duration = 0.7
+ease = "smooth"
+
+[motion.sweep]
+duration = 2.5
+ease = "in_out"

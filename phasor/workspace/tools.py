@@ -40,6 +40,14 @@ VERBS = (
     "settle",
     "orbit",
     "orbit_reveal",
+    "transform",
+    "become",
+    "write",
+    "travel",
+    "flash",
+    "circumscribe",
+    "wiggle",
+    "sweep",
 )
 MAX_CHECKPOINTS = 32
 
@@ -262,7 +270,9 @@ class Workspace:
         """Animate with a choreography verb starting at a marker (or seconds). Timing comes
         from the theme. Returns when it starts and ends so the next step can follow it.
         ``orbit`` swings the 3D camera ``value`` degrees (default 360), until marker ``until``
-        if given."""
+        if given. ``transform`` and ``become`` take ``targets=[from, to]``; ``sweep`` takes
+        ``path`` and ``value``; ``circumscribe`` takes one target and ``value`` "circle" or
+        "box"."""
         if verb not in VERBS:
             raise ToolError(f"unknown verb {verb!r}; verbs are {list(VERBS)}")
         e = self.engine
@@ -282,6 +292,18 @@ class Workspace:
             if len(targets) != 1:
                 raise ToolError("focus_pull needs exactly one target id")
             args = (targets[0],)
+        elif verb in ("transform", "become"):
+            if len(targets) != 2:
+                raise ToolError(f"{verb} needs two target ids: [from, to]")
+            args = (targets[0], targets[1])
+        elif verb == "circumscribe":
+            if len(targets) != 1:
+                raise ToolError("circumscribe needs exactly one target id")
+            args = (targets[0], "circle" if value is None else str(value))
+        elif verb == "sweep":
+            if path is None or value is None:
+                raise ToolError("sweep needs path and value, e.g. path='wave.terms', value=40")
+            args = (path, float(value))
         else:
             args = tuple(targets)
         step = Scene.of(e).at(at, offset)

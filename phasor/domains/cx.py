@@ -407,3 +407,101 @@ class RiemannSurface(ObjectBase):
                     colors=colors.reshape(-1, 4), uv=uv.reshape(-1, 2),
                     material=me.roles["material"],
                     opacity=me.params.opacity * me.style["material"])  # fmt: skip
+
+
+# ---------------------------------------------------------------- ComplexMap
+
+
+@register
+class ComplexMap(ObjectBase):
+    """A grid in the complex plane pushed through ``z -> f(z)``: the picture of what a
+    function does to the plane. ``amount`` slides from the plain grid (0) to its image (1)
+    along ``(1 - amount) z + amount f(z)``: animate it (``morph("map.amount", 1)``) to
+    watch the plane bend. The grid covers ``extent`` around the complex point ``center``,
+    and is drawn with ``center`` at ``pos``: a point w of the image sits at
+    ``pos + (w - center)`` (so with both at 0, world coordinates are the complex plane, as
+    for ``DomainColoring``). Lines break at poles."""
+
+    type: ClassVar[str] = "complex_map"
+    Style: ClassVar = {
+        "color": ("emphasis", "secondary"),  # the vertical lines (Re z fixed)
+        "cross": ("emphasis", "primary"),  # the horizontal lines (Im z fixed)
+        "stroke": ("stroke", "regular"),
+        "glow": ("glow", "none"),
+    }
+    Presets: ClassVar = {
+        "glowing": {"style": {"glow": "soft"}},
+        "fine": {"params": {"lines": (21, 21)}, "style": {"stroke": "hairline"}},
+    }
+
+    class Params(ParamsBase):
+        function: str = Field("z**2", min_length=1)
+        pos: Vec3 = (0.0, 0.0, 0.0)  # where the grid's centre is drawn
+        center: tuple[float, float] = (0.0, 0.0)  # the complex point at the grid's centre
+        extent: tuple[float, float] = (4.0, 4.0)
+        lines: tuple[int, int] = (11, 11)  # vertical, horizontal
+        samples: int = Field(120, ge=8, le=4000)  # points per line
+        amount: float = Field(1.0, ge=0, le=1)  # 0: the plain grid; 1: its image under f
+        limit: float = Field(12.0, gt=0)  # lines are cut where |f| grows past this
+
+        @field_validator("function")
+        @classmethod
+        def _check(cls, v: str) -> str:
+            from phasor.render.gpu.codegen import FunctionError
+
+            try:
+                _parse(v.strip())
+            except FunctionError as e:
+                raise ValueError(str(e)) from None
+            return v
+
+        @field_validator("lines")
+        @classmethod
+        def _lines(cls, v):
+            if min(v) < 0 or max(v) > 200 or sum(v) == 0:
+                raise ValueError("lines is (vertical, horizontal), each 0 to 200, not both 0")
+            return v
+
+    def _runs(self, p) -> list[tuple[int, np.ndarray]]:
+        """[(family 0 vertical / 1 horizontal, (K, 3) world points)]."""
+        from phasor.domains import cx_math as xm
+
+        f = _parse(p.function.strip()).numpy()
+        z0 = complex(*p.center)
+        shift = complex(p.pos[0], p.pos[1]) - z0
+        out = []
+        for k, line in enumerate(xm.grid_lines(z0, p.extent, p.lines, p.samples)):
+            fam = 0 if k < p.lines[0] else 1
+            w = xm.deform(f, line, p.amount)
+            for run in xm.split_runs(w, p.limit):
+                run = run + shift
+                out.append((fam, np.stack([run.real, run.imag, np.full(len(run), p.pos[2])], 1)))
+        return out
+
+    def world_bounds(self, state: SceneState) -> Bounds:
+        p = self.me(state).params
+        runs = self._runs(p)
+        if not runs:
+            return Bounds.of_points([p.pos])
+        return Bounds.of_points(np.vstack([r for _, r in runs]), pad=0.02)
+
+    def features(self, state: SceneState) -> dict[str, np.ndarray]:
+        return {"center": np.asarray(self.me(state).params.pos, dtype=np.float64)}
+
+    def semantics(self, state: SceneState) -> dict[str, Any]:
+        p = self.me(state).params
+        f = _parse(p.function.strip())
+        return {"kind": "complex_map", "function": f.source, "latex": f.latex(),
+                "amount": round(p.amount, 6), "lines": int(sum(p.lines)),
+                "pieces": len(self._runs(p))}  # fmt: skip
+
+    def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
+        from phasor.domains.strokes import polyline, with_alpha
+
+        me = self.me(state)
+        p = me.params
+        cam = state.camera_for(me)
+        cols = (with_alpha(me.style["color"], p.opacity), with_alpha(me.style["cross"], p.opacity))
+        for fam, pts in self._runs(p):
+            polyline(ctx, cam, pts, me.style["stroke"] * cam.units_per_height(pts),
+                     color=cols[fam], glow=me.style["glow"])  # fmt: skip

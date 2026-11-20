@@ -238,6 +238,14 @@ VERBS = (
     "settle",
     "orbit",
     "orbit_reveal",
+    "transform",
+    "become",
+    "write",
+    "travel",
+    "flash",
+    "circumscribe",
+    "wiggle",
+    "sweep",
 )
 
 

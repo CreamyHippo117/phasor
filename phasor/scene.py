@@ -132,6 +132,38 @@ class At:
         """Reveal objects while the 3D camera swings a little around them."""
         return self._verb("orbit_reveal", *ids)
 
+    def transform(self, source: str, target: str) -> At:
+        """Equation ``source`` becomes ``target``: matching parts glide over, others fade."""
+        return self._verb("transform", source, target)
+
+    def become(self, source: str, target: str) -> At:
+        """Curve ``source`` turns into the shape of ``target``, which then takes its place."""
+        return self._verb("become", source, target)
+
+    def write(self, *ids: str) -> At:
+        """Write text or equations in, left to right."""
+        return self._verb("write", *ids)
+
+    def travel(self, *ids: str) -> At:
+        """Send tracers along their curves, trailing light."""
+        return self._verb("travel", *ids)
+
+    def flash(self, *ids: str) -> At:
+        """A quick brightening of each object."""
+        return self._verb("flash", *ids)
+
+    def circumscribe(self, object_id: str, shape: str = "circle") -> At:
+        """Draw a ring (or ``shape="box"``) around an object, then fade it."""
+        return self._verb("circumscribe", object_id, shape)
+
+    def wiggle(self, *ids: str) -> At:
+        """A small side-to-side shake."""
+        return self._verb("wiggle", *ids)
+
+    def sweep(self, path: str, value: float, show: bool = True) -> At:
+        """Run a number evenly to ``value``, with a live readout beside its object."""
+        return self._verb("sweep", path, value, show)
+
 
 def _caller_dir() -> Path:
     """The folder of the script that called ``Scene(...)``, or the working folder."""

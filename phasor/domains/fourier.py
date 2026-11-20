@@ -168,6 +168,10 @@ class PartialSum(ObjectBase):
         n = max(int(len(xs) * p.reveal), 2)
         return np.stack([px, py, np.full_like(px, p.pos[2])], axis=1)[:n]
 
+    def path_points(self, state: SceneState) -> np.ndarray:
+        """The partial sum's curve (what a ``Tracer`` travels along)."""
+        return self.features(state)["curve"]
+
     def world_bounds(self, state: SceneState) -> Bounds:
         p = self.me(state).params
         x, y, z = p.pos
