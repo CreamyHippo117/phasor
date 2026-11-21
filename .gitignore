@@ -14,3 +14,6 @@ examples/out/
 # Narration clips are regenerated from the script by the voice (cached per sentence).
 *.narration/
 .phasor/
+
+# full-quality showcase renders are made locally (showcase/README.md)
+/showcase/videos/
