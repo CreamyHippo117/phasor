@@ -76,3 +76,21 @@ def test_golden_storyboard():
     if not path.exists():
         pytest.skip(f"no {klass} golden yet; create with PHASOR_UPDATE_GOLDEN=1")
     assert ssim(sheet, np.asarray(Image.open(path).convert("RGB"))) >= 0.99
+
+
+def test_without_a_speech_engine_the_orbit_is_clean_too(tmp_path, monkeypatch):
+    """Without espeak (the owner's Windows PC) narration timing is estimated, every cue
+    moves, and the solver plans another orbit. That orbit once crossed the walk in front of
+    the branch point (19.1 s) and the lower sheet's point (20.8 s): stage 2 weighed hidden
+    shares by priority, so a medium goal 86% hidden looked fine (found 2026-11-21)."""
+    import shutil
+
+    import phasor.voice as voice
+
+    monkeypatch.setattr(voice, "espeak_available", lambda: False)
+    script = tmp_path / DEMO.name  # no speech cache beside it
+    shutil.copy(DEMO, script)
+    e = load(script)
+    assert not list(tmp_path.glob("*.narration/*.wav"))  # estimated: no speech was made
+    assert [str(i) for i in e.lint(strict=True)] == []
+    assert problems(e.events()) == []

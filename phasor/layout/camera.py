@@ -51,7 +51,9 @@ W_OCCLUDE = 20.0
 W_HIDDEN = 50.0  # stage 2: per (hidden share)^2 measured by the oracle
 W_PRIOR = 0.05  # pull toward the camera's default view where the goals do not care
 W_SPEED = 0.3  # smoothness also dislikes speed a little (per scaled unit per solve key)
-HIDDEN_OK = 0.5  # stage 2 re-solves when more than this share of an object is hidden
+HIDDEN_OK = 0.25  # stage 2 re-solves when more than this share of an object is hidden; 0.5
+# left no margin under the event log's "occluded" (half covered), which measures the whole
+# object rather than its middle (riemann_sqrt without a speech engine, 2026-11-21)
 ELEVATION = (-80.0, 85.0)
 MAX_TIMES_IN_ISSUE = 12
 
@@ -350,7 +352,7 @@ class Solution:
     issues: tuple[Issue, ...]
 
 
-REFINE_ROUNDS = 3
+REFINE_ROUNDS = 6  # 3 was too few for riemann_sqrt with estimated narration timing (2026-11-21)
 
 
 def solve(
@@ -478,20 +480,33 @@ def _stage2(c, f, x, vars_, pin, base, occl, t, hidden) -> np.ndarray:
     """Check avoid_occlusion on the depth buffer; if hidden, try nearby cameras."""
     cam_id = c.doc.timeline.camera
 
-    def measured(y) -> float:
+    def shares(y) -> list[tuple[float, float]]:
+        """(priority weight, hidden share) of every object an avoid_occlusion goal names."""
         p = pin(vars_.decode(y, base), t)
         state = evaluate(c, t, {f"{cam_id}.{n}": getattr(p, n) for n in vars_.free})
-        return sum(PRIORITY[r.spec.priority] * hidden(state, i) ** 2
-                   for r, g in occl for i in g.ids)  # fmt: skip
+        return [(PRIORITY[r.spec.priority], hidden(state, i)) for r, g in occl for i in g.ids]
 
-    worst = measured(x)
-    if worst <= HIDDEN_OK**2:
+    def clear(sh) -> bool:  # the same test as ``_check``: no object hidden past HIDDEN_OK
+        return all(h <= HIDDEN_OK for _, h in sh)
+
+    def weighted(sh) -> float:
+        return sum(w * h**2 for w, h in sh)
+
+    now = shares(x)
+    if clear(now):
         return x
-    best, best_cost = x, f(x) + W_HIDDEN * worst
-    for y in _nearby(x, vars_.names):
-        cost = f(y) + W_HIDDEN * measured(y)
-        if cost < best_cost:
-            best, best_cost = y, cost
+    tried = [(f(y), shares(y), y) for y in _nearby(x, vars_.names)]
+    # A nearby camera that clears the view wins outright, the smoothest of them. Found
+    # 2026-11-21 (riemann_sqrt with estimated narration timing): the "anything hidden?" test
+    # used priority-weighted shares, so a medium goal 86% hidden (0.3 * 0.86^2 < 0.5^2)
+    # looked fine, a weak goal never triggered at all, and _check then reported it unsolved.
+    ok = [(cost, y) for cost, sh, y in tried if clear(sh)]
+    if ok:
+        return min(ok, key=lambda cy: cy[0])[1]
+    best, best_cost = x, f(x) + W_HIDDEN * weighted(now)
+    for cost, sh, y in tried:
+        if cost + W_HIDDEN * weighted(sh) < best_cost:
+            best, best_cost = y, cost + W_HIDDEN * weighted(sh)
     return best
 
 

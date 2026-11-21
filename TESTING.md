@@ -104,11 +104,17 @@ suite, `phasor bench`, 2,000 frames, GPU reference pictures.
     path. New scenes follow Windows' own Documents folder (OneDrive).
   - Test-only: paths with backslashes, `Path.home()` reads `USERPROFILE`, an environment
     variable set to "" is dropped, two tests compared a CuPy array with a NumPy one.
-  - Not yet understood: `riemann_sqrt` reports its branch point hidden at 19-21 s with
-    OpenGL on the AMD chip (3 tests). Rerun with OpenGL on the RTX card.
+  - **`riemann_sqrt` failed without a speech engine** (not a Windows or GPU problem: Linux
+    gives the same numbers with espeak switched off). Estimated narration timing moves every
+    cue, the camera solver plans another orbit, and the walk passed in front of the branch
+    point (19.1 s) and the lower point (20.8 s). Camera solver bugs, fixed: stage 2 asked
+    "is anything hidden?" with priority-weighted shares (a medium goal 86% hidden passed, a
+    weak goal could never trigger), preferred smoothness over a clear view, stopped at 50%
+    hidden with no margin under the event log, and gave up after 3 refine rounds. Test:
+    `test_without_a_speech_engine_the_orbit_is_clean_too`.
 - No C++ compiler on the PC, so the 36 CPU-emulator kernel tests skip there (they run on Linux).
-- OpenGL ran on the processor's built-in AMD graphics, not the RTX card. Windows setting:
-  Settings > System > Display > Graphics, set Python to "High performance".
+- OpenGL ran on the processor's built-in AMD graphics: the monitor was plugged into the
+  motherboard. Moved to the RTX card, OpenGL runs on the RTX 4070 Ti.
 
 ## Found and not fixed
 

@@ -28,15 +28,30 @@ if __name__ == "__main__":
     oracle = e._oracle()
     out = ROOT / "examples" / "out" / "diag"
     out.mkdir(parents=True, exist_ok=True)
-    for t in np.round(np.arange(18.0, 22.01, 0.2), 1):
+    by_index = {o.index: o.id for o in e.state_at(0.0).objects}
+
+    def in_front(st, i: str) -> str:
+        """Which objects cover the middle of ``i`` in the id pass (what can hide it)."""
+        obj = st[i]
+        idb = r.id_buffer(st, (640, 360), force=frozenset({i}))
+        ((px, py),) = st.camera_for(obj).to_screen([obj.impl.world_bounds(st).center], 640, 360)
+        x, y = int(px), int(py)
+        patch = idb[max(y - 4, 0) : y + 5, max(x - 4, 0) : x + 5].ravel()
+        names = [
+            by_index.get(int(k), "?") for k in np.unique(patch) if k and by_index.get(int(k)) != i
+        ]
+        return ",".join(names) or "-"
+
+    for t in np.round(np.arange(0.0, e.duration + 0.01, 0.5), 1):
         st = e.state_at(float(t))
         eye = st.camera.eye
         shares = " ".join(
             f"{i}={hidden_share(st, i, oracle):.2f}" for i in ("branch", "upper", "lower")
         )
-        print(f"t={t:4.1f} eye=({eye[0]:+.2f}, {eye[1]:+.2f}, {eye[2]:+.2f}) | hidden {shares}",
-              flush=True)  # fmt: skip
-    for t in (19.1, 20.8):
+        front = " ".join(f"{i}<{in_front(st, i)}>" for i in ("branch", "lower"))
+        print(f"t={t:4.1f} eye=({eye[0]:+.2f}, {eye[1]:+.2f}, {eye[2]:+.2f}) | hidden {shares}"
+              f" | in front: {front}", flush=True)  # fmt: skip
+    for t in (19.1, 20.8, 21.0):
         st = e.state_at(t)
         save_png(out / f"frame_{t}.png", e.still(t, (640, 360)))
         z = r.depth_buffer(st, (640, 360))
