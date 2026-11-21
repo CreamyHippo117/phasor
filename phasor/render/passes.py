@@ -302,12 +302,18 @@ class GLRenderer:
         """``"software"`` (Mesa llvmpipe and friends) or ``"gpu"``. Golden images are kept
         per class because the two do not antialias identically. The query must run with
         the context current, like every other GL call."""
-        name = on_gl_thread(self._gl_info, "GL_RENDERER").lower()
+        name = self.on_gl_info("GL_RENDERER").lower()
         return "software" if any(k in name for k in ("llvmpipe", "softpipe", "swrast")) else "gpu"
 
-    def _gl_info(self, key: str) -> str:
-        with self.ctx:
-            return str(self.ctx.info[key])
+    def on_gl_info(self, key: str) -> str:
+        """A value of ``ctx.info`` (``"GL_RENDERER"``, ``"GL_VERSION"``...), read on the GL
+        thread."""
+
+        def read() -> str:
+            with self.ctx:
+                return str(self.ctx.info[key])
+
+        return on_gl_thread(read)
 
     def _program(self, pass_: str, kind: str):
         key = (pass_, kind)
