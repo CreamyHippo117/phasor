@@ -12,8 +12,12 @@ compounding. If this file and SPEC.md disagree, stop and ask.
   clients (`interactive`, `importers`, `workspace`) on 2026-11-19.
 - Test plan and its status: `TESTING.md` (A desktop app done; B Windows/NVIDIA mostly done on
   the owner's RTX 4070 Ti, 2026-11-21; C gaps to do).
-- Next (owner, 2026-11-21): (1) a folder of rendered scenes for the owner to watch; (2) a full
-  Windows desktop app; (3) then the owner adds GPU features and beauty mods.
+- Next (owner, 2026-11-21), in this order: (1) watch `showcase/` and profile renders
+  (`phasor render --profile`, to add: time per stage per frame); (2) render speed on the GPU,
+  guided by the profile: keep frames on the card (CUDA-GL interop, colour conversion before
+  the copy out), overlap drawing with encoding, motion blur averaged on the card; the GPU
+  goldens must not change; (3) the Windows desktop app finished on that renderer (packaged
+  `.exe` with CuPy, Start menu, no console flashes, smooth preview); (4) beauty features.
 - One milestone per branch. No work on milestone N+1 until N's exit demo and tests pass.
 - Before declaring a milestone done, run the `phasor-milestone-gate` skill.
 
