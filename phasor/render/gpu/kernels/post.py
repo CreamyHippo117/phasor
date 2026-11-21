@@ -386,3 +386,48 @@ def vignette(gpu, tile: Tile, image, strength: float = 0.3):
     gpu.launch(compiled, tile.n, (np.int32(tile.n), np.int32(tile.w), np.int32(tile.h),
                                   np.float32(strength), src, out))  # fmt: skip
     return out
+
+
+# ---------------------------------------------------------------- display bytes
+
+SRGB = """
+extern "C" __global__ void phasor_srgb8(int n, const float* in, unsigned char* out)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    for (int c = 0; c < 3; c++) {
+        // Double precision and the same constants as core.color.linear_to_srgb, then
+        // round half to even like np.round, so the card and NumPy agree byte for byte
+        // (up to pow's last bit). NaN and negatives become 0, above 1 becomes 1.
+        double x = (double)in[4 * (long long)i + c];
+        if (!(x > 0.0)) x = 0.0;
+        if (x > 1.0) x = 1.0;
+        double y = x <= 0.0031308 ? x * 12.92 : 1.055 * pow(x, 1.0 / 2.4) - 0.055;
+        out[3 * (long long)i + c] = (unsigned char)rint(y * 255.0);
+    }
+}
+"""
+
+
+def srgb8_reference(tile: Tile, image: np.ndarray) -> np.ndarray:
+    from phasor.render.output import encode_srgb8
+
+    _check(tile, image)
+    return encode_srgb8(image)
+
+
+@kernel(
+    "srgb8",
+    "(tile, image) -> uint8[h, w, 3]; linear display RGBA (0..1) -> sRGB bytes",
+    reference=srgb8_reference,
+)
+def srgb8(gpu, tile: Tile, image):
+    """The sRGB encode of ``render.output.encode_srgb8`` on the card, after the tone map
+    (contract 4: still once per pixel). The frame comes back as 6 MB of bytes at 1080p
+    instead of 33 MB of float32."""
+    _check(tile, image)
+    src = gpu.cp.ascontiguousarray(gpu.cp.asarray(image))
+    out = gpu.cp.empty((tile.h, tile.w, 3), dtype=gpu.cp.uint8)
+    compiled = gpu.compile(SRGB, "phasor_srgb8")
+    gpu.launch(compiled, tile.n, (np.int32(tile.n), src, out))
+    return out

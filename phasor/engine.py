@@ -515,9 +515,10 @@ class Engine:
 
         return encode_srgb8(self.frame(t, size))
 
-    def frame(self, t: float, size: tuple[int, int] | None = None):
+    def frame(self, t: float, size: tuple[int, int] | None = None, *, output: str = "linear"):
         """The finished picture at ``t`` in linear light: color pass, bloom, tone map.
-        (h, w, 4) float32, row 0 = top. ``still`` and ``phasor render`` both use this."""
+        (h, w, 4) float32, row 0 = top. ``still`` and ``phasor render`` both use this.
+        ``output="srgb8"``: the (h, w, 3) sRGB bytes instead, encoded on the card."""
         from phasor.render.passes import GLRenderer
         from phasor.render.post import finish
 
@@ -525,7 +526,7 @@ class Engine:
         if not isinstance(runner, GLRenderer):
             raise RuntimeError("no OpenGL renderer on this machine (run `phasor doctor`)")
         picture, emission = runner.color_and_emission(self.state_at(t), size)
-        return finish(picture, self._snap.compiled.theme, emission)
+        return finish(picture, self._snap.compiled.theme, emission, output=output)
 
     def timeline(self) -> dict[str, Any]:
         """What a timeline panel shows: the duration, the markers, for every animated
@@ -565,6 +566,7 @@ class Engine:
         shutter: float = 0.5,
         samples: int = 4,
         size: tuple[int, int] | None = None,
+        output: str = "linear",
     ):
         """Like ``frame`` but with motion blur: the average of ``samples`` frames spread over
         a shutter open ``shutter`` of a frame interval (0.5 is the film standard "180
@@ -574,7 +576,7 @@ class Engine:
 
         half = shutter / fps / 2
         if samples <= 1 or shutter <= 0 or not self.is_moving(t - half, t + half):
-            return self.frame(t, size)
+            return self.frame(t, size, output=output)
         times = [t + (k + 0.5) / samples * (2 * half) - half for k in range(samples)]
         from phasor.render.passes import GLRenderer
         from phasor.render.post import finish
@@ -595,7 +597,7 @@ class Engine:
         with stage("blur sum"):
             pic = (pic / n).astype(np.float32)
             glow = None if glow is None else (glow / n).astype(np.float32)
-        return finish(pic, self._snap.compiled.theme, glow)
+        return finish(pic, self._snap.compiled.theme, glow, output=output)
 
     def storyboard_times(self, count: int = 6) -> list[float]:
         """Start, every marker and the end; padded with evenly spaced times up to ``count``."""

@@ -74,15 +74,24 @@ def finish(
     emission: np.ndarray | None = None,
     *,
     backend: str = "auto",
+    output: str = "linear",
 ) -> np.ndarray:
-    """Linear HDR RGBA (h, w, 4) float32 -> linear display RGBA in 0..1, as NumPy.
+    """Linear HDR RGBA (h, w, 4) float32 -> linear display RGBA in 0..1, as NumPy; or,
+    with ``output="srgb8"``, the finished (h, w, 3) sRGB bytes, encoded where the frame
+    already is (on the card when there is one: GPU_SPEED.md step 1).
 
     The bloom comes from ``emission`` (the light glow roles add, from the renderer's second
     target), so plain paint never blooms and a thin glowing curve blooms in proportion to
     its light at any resolution. Without ``emission`` the light above the threshold in
     ``image`` itself is used."""
+    if output not in ("linear", "srgb8"):
+        raise ValueError(f"output must be 'linear' or 'srgb8', got {output!r}")
     with stage("post", sync=lambda: _card_sync(backend)):
-        return _finish(image, theme, emission, backend=backend)
+        out = _finish(image, theme, emission, backend=backend)
+    if output == "srgb8":
+        with stage("srgb", sync=lambda: _card_sync(backend)):
+            out = run("srgb8", _whole(out), image=out, backend=backend)
+    return to_host(out)
 
 
 def _finish(
@@ -105,4 +114,4 @@ def _finish(
               backend=backend)  # fmt: skip
     if b.get("vignette", 0.0) > 0:
         out = run("vignette", _whole(image), image=out, strength=b["vignette"], backend=backend)
-    return to_host(out)
+    return out  # still on the card when there is one; ``finish`` copies it out once

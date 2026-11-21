@@ -1,8 +1,9 @@
 """Render a scene to a video file or one still: the one place that loop lives.
 
 The CLI (`phasor render`) and the MCP `render` tool both call this. ``engine`` is
-anything with ``document``, ``duration``, ``frame(t, size)`` and ``audio_track()``
-(an ``Engine``); this layer must not import it.
+anything with ``document``, ``duration``, ``frame(t, size, output=...)``,
+``frame_blurred(...)`` and ``audio_track()`` (an ``Engine``); this layer must not import it.
+Frames come back as finished sRGB bytes (``output="srgb8"``), encoded on the card.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from typing import Any
 from phasor.core.timing import stage
 from phasor.render.doctor import run_doctor
 from phasor.render.encode import mux_audio, open_writer
-from phasor.render.output import encode_srgb8, save_png
+from phasor.render.output import save_png
 
 # name -> (width, height, fps); None means "the scene's own"
 PRESETS: dict[str, tuple[int | None, int | None, float | None]] = {
@@ -59,7 +60,7 @@ def render_file(
     shutter = p_shutter if shutter is None else shutter
     blur_samples = p_samples if blur_samples is None else blur_samples
     if frame is not None:
-        save_png(out, encode_srgb8(engine.frame(frame, size)))
+        save_png(out, engine.frame(frame, size, output="srgb8"))
         return {"path": str(out), "size": size, "t": frame, "frames": 1, "warnings": warnings}
     start = start or 0.0
     end = engine.duration if end is None else end
@@ -67,11 +68,11 @@ def render_file(
     writer = open_writer(out, *size, fps)
     for k in range(count):
         t = start + k / fps
-        linear = (
-            engine.frame_blurred(t, fps, shutter=shutter, samples=blur_samples, size=size)
-            if shutter > 0 and blur_samples > 1 else engine.frame(t, size)
+        srgb8 = (  # finished bytes, encoded on the card when there is one
+            engine.frame_blurred(t, fps, shutter=shutter, samples=blur_samples, size=size,
+                                 output="srgb8")
+            if shutter > 0 and blur_samples > 1 else engine.frame(t, size, output="srgb8")
         )  # fmt: skip
-        srgb8 = encode_srgb8(linear)
         with stage("encode"):
             writer.write(srgb8)
         if progress:

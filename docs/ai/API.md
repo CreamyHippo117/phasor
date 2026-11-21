@@ -380,6 +380,7 @@ from phasor.render.output import save_png
 
 save_png("out/frame.png", engine.still(3.0, (960, 540)))  # (h, w, 3) uint8 sRGB
 picture = engine.frame(3.0, (3840, 2160))  # linear, after bloom and tone map; float32
+bytes8 = engine.frame(3.0, (3840, 2160), output="srgb8")  # (h, w, 3) uint8, encoded on the card
 s.save("residues.phasor.json")  # canonical, diff-friendly
 engine = load("residues.phasor.json")  # or load("residues.py")
 ```

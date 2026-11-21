@@ -53,7 +53,7 @@ class _StrictCupy:
     """The part of CuPy launchers may use, with CuPy's rule that host arrays must be copied
     to the device with ``asarray`` first."""
 
-    float32, float64, int32 = np.float32, np.float64, np.int32
+    float32, float64, int32, uint8 = np.float32, np.float64, np.int32, np.uint8
 
     @staticmethod
     def asarray(a, dtype=None):
@@ -108,7 +108,7 @@ class EmuGpu:
             if isinstance(a, np.ndarray):
                 if not isinstance(a, DeviceArray):
                     raise TypeError("a host (NumPy) array passed to a kernel: cp.asarray it")
-                assert a.flags.c_contiguous and a.dtype in (np.float32, np.float64), (
+                assert a.flags.c_contiguous and a.dtype in (np.float32, np.float64, np.uint8), (
                     a.dtype,
                     a.flags,
                 )

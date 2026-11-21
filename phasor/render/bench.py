@@ -41,6 +41,7 @@ def _cases(w: int, h: int) -> dict[str, dict[str, Any]]:
         "gauss": {"image": image, "sigma": 1.5, "axis": 0},
         "resize": {"image": image},
         "tonemap": {"image": image, "bloom": image},
+        "srgb8": {"image": np.ascontiguousarray(image / np.float32(3.0))},  # display range
     }
 
 

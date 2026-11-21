@@ -32,6 +32,11 @@ def _rgba(seed=0, shape=(24, 32)):
 
 IMAGE = _rgba()
 IMAGE_TILE = Tile.full(32, 24)
+# Display-range values for the sRGB encode, plus the edges: 0, the curve's linear/power
+# switch at 0.0031308, half-way, 1, NaN, negative, above 1 and infinity.
+DISPLAY = np.ascontiguousarray(_rgba(3) / np.float32(4.0))
+DISPLAY[0, :9, :3] = np.array([0.0, 0.0031308, 0.0031309, 0.5, 1.0, np.nan, -0.2, 1.7, np.inf],
+                              dtype=np.float32)[:, None]  # fmt: skip
 
 # Reference orbits for the perturbation kernel: one at the spiral of test_deep_zoom.py (lasts
 # every step) and one that escapes after 19, so pixels must rebase onto its start.
@@ -78,6 +83,7 @@ CASES = {
     "fringe": [(IMAGE_TILE, {"image": IMAGE, "amount": 0.01}),
                (IMAGE_TILE, {"image": IMAGE, "amount": 0.0})],
     "vignette": [(IMAGE_TILE, {"image": IMAGE, "strength": 0.6})],
+    "srgb8": [(IMAGE_TILE, {"image": DISPLAY}), (IMAGE_TILE, {"image": IMAGE})],
     "gauss": [
         (IMAGE_TILE, {"image": IMAGE, "sigma": 1.5, "axis": 0}),
         (IMAGE_TILE, {"image": IMAGE, "sigma": 2.2, "axis": 1}),
@@ -90,7 +96,13 @@ needs_compiler = pytest.mark.skipif(cuda_emu.compiler() is None, reason="no C++ 
 def _close(name: str, got: np.ndarray, want: np.ndarray, *, strict: bool) -> None:
     """Agreement between a kernel and its reference. Color kernels may differ on the few
     pixels that sit on a discontinuity (a contour edge, a branch cut); real GPUs also fuse
-    multiply-adds, which moves fractal pixels on the set's boundary."""
+    multiply-adds, which moves fractal pixels on the set's boundary. Byte outputs (sRGB)
+    may differ by one step where pow's last bit tips the rounding, and nowhere else."""
+    if want.dtype == np.uint8:
+        assert got.shape == want.shape and got.dtype == np.uint8
+        diff = np.abs(got.astype(np.int16) - want)
+        assert diff.max() <= 1 and (diff > 0).mean() <= 1e-4, (name, int(diff.max()))
+        return
     assert got.shape == want.shape and got.dtype == want.dtype == np.float32
     err = np.abs(got.astype(np.float64) - want)
     if got.ndim == 3:
@@ -116,6 +128,7 @@ def test_every_kernel_has_a_reference_and_a_signature():
         "gauss",
         "palette",
         "resize",
+        "srgb8",
         "tonemap",
         "vignette",
     ]

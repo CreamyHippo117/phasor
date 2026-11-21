@@ -265,7 +265,7 @@ keeping fixed dt, the seed and the checkpoint cache (contract 3). Helps only tho
 | step | what | expected | measured | status |
 | --- | --- | --- | --- | --- |
 | 0 | frame bench | | 555 / 376 ms per frame (motion_gallery / prism_primes) | done |
-| 1 | sRGB on the card | -130 ms | | to do |
+| 1 | sRGB on the card | -130 ms | srgb 133 -> 5-12 ms, post 17 -> 10; frame 555 -> 425 / 376 -> 238 ms | done (the kernel alone is 2.2 ms; in a render the card idles at low clocks between frames, which steps 2-4 should fix) |
 | 2 | widen + blur sum on the card | -200 to -260 ms | | to do |
 | 3 | batched, cached drawing | draw 264 -> 30-60 ms | | to do |
 | 4 | parallel workers | x3 wall time | | to do (ADR 0003 for the bake cache first) |

@@ -304,6 +304,7 @@ Two renderers share one scene: a fast preview for iteration and a CUDA-accelerat
 **Look**
 
 - Linear HDR pipeline, wide-gamut option. Tone mapping is a shoulder curve: identity below the theme's knee (so paint colors show exactly as the theme defines them), then a smooth roll-off to white. ACES and AgX shift every color, including flat paint, so they are not the default; a theme may add them later as an option.
+- The sRGB encode follows the tone map once per pixel: `render/output.py` `encode_srgb8` on the host, and its twin, the `srgb8` kernel, on the card (`finish(..., output="srgb8")`, used by every render), which must agree with it to one 8-bit step.
 - Physically based bloom and glow with per-object emission strength: the color pass writes a second target holding only the light glow roles add, and the bloom (a blurred pyramid) is built from that, so plain paint never blooms and thin curves bloom by their energy at any resolution.
 - Kernel-drawn planes (domain coloring, fractals) are backdrops: layout lets labels sit on them, and lint judges the label by contrast against the real color pass.
 - Depth of field, film grain, vignette, chromatic aberration (all subtle and optional).
