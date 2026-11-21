@@ -260,16 +260,27 @@ keeping fixed dt, the seed and the checkpoint cache (contract 3). Helps only tho
   switch is held to codec tolerance (PSNR > 45 dB at cq 19).
 - Record each step's bench numbers in the table below, with the commit.
 
-## Next session (written 2026-11-21, after step 2)
+## Next session (written 2026-11-21, after step 3a)
 
-Start here. Steps 0, 1 and 2 are committed; the gate is green on the owner's PC.
+Start here. Steps 0, 1, 2 and 3a are committed; the full suite is green on the owner's PC
+(emulator tests included).
 
 1. **Re-measure first**: `uv run phasor bench --frames motion_gallery` and `prism_primes`.
-   Expect about 164 and 46 ms/frame. If they differ a lot, find out why before changing code.
-2. **Step 3a: reuse GL buffers** (no picture change; bit-identical). `draw` is now the
-   biggest cost by far on motion_gallery (113 of 164 ms). Write the bit-identical test
-   first (same frames before and after, `np.array_equal`), then the arena, then bench.
-3. **Then 3b, 3c**, each with its bit-identical test first, measured on its own.
+   Expect about 143 and 47 ms/frame.
+2. **Stroke building, not GL, is what is left of `draw`** (profile after 3a, motion_gallery
+   at 1080p): about 17 ms per color pass goes to `FlowParticles.draw`
+   (`domains/geometry.py`), which makes about 145 `strokes.polyline` calls per pass, each
+   spending most of its time in `np.r_`/`np.c_` (`numpy/lib/_index_tricks_impl.py`). A
+   blurred frame does four passes: about 70 ms of its 92 ms draw. The GL readback (two
+   `read_into`, about 6 ms each, includes waiting for the card) is the next biggest.
+   So, in order:
+   - **Vectorize `strokes.polyline`** (no `np.r_`/`np.c_`; one array build per stroke) and,
+     if still needed, let `FlowParticles` hand all its particles to one batched call.
+     Bit-identical test first: the same commands (positions, indices, colors) before and after
+     for every stroke-drawing type in `examples/`.
+   - **3c (cache an object's commands)** only if the above is not enough: flow particles
+     move every sample, so the cache would not help this scene anyway.
+   - **3b (one draw per object and kind)**: GL is no longer the cost; measure before doing.
 
 Open items:
 - Done after step 2: sharp frames (`Engine.frame`: every frame where only life moves,
@@ -279,6 +290,13 @@ Open items:
   66 -> 46.5 ms/frame. The inspector and stills keep `color_and_emission`.
 - The emulator tests now run on the owner's PC (WinLibs g++, 2026-11-21): all 42 pass,
   `srgb8` and `accumulate` included.
+- Lit surfaces (`ParametricSurface`, `RiemannSurface`) are not bit-repeatable on the RTX
+  4070 Ti: rendering the same state twice in one process differs by one float16 step
+  (<= 0.0005) on a few hundred pixels of the color and emission targets; id and solo are
+  exact. Found while checking 3a; it predates it (old vs old differs as much as old vs new).
+  Cause not found (the lit shader has nothing obviously order-dependent); likely the driver.
+  Contract 3 (time is pure) holds for the document and state, not for these last bits.
+  Golden tests tolerate it; bit-identical speed tests must leave lit surfaces out.
 - In a render the `srgb8` kernel takes 3-7 ms though it takes 2.2 ms alone (the card
   idles at low clocks between frames). Re-check after steps 3-4 before tuning it.
 - Owner approval still needed before building step 4's on-disk bake cache (ADR 0003)
@@ -294,7 +312,7 @@ Open items:
 | 0 | frame bench | | 555 / 376 ms per frame (motion_gallery / prism_primes) | done |
 | 1 | sRGB on the card | -130 ms | srgb 133 -> 5-12 ms, post 17 -> 10; frame 555 -> 425 / 376 -> 238 ms | done (the kernel alone is 2.2 ms; in a render the card idles at low clocks between frames, which steps 2-4 should fix) |
 | 2 | widen + blur sum on the card | -200 to -260 ms | widen + blur sum 250 -> 12 ms, post 31 -> 3; frame 437 -> 164 / 238 -> 66 ms | done (sums on the card in float32; 8-bit output within 1 code value of the float64 host sum) |
-| 3 | batched, cached drawing | draw 264 -> 30-60 ms | | to do |
+| 3 | batched, cached drawing | draw 264 -> 30-60 ms | 3a (reused GL buffers): draw 113 -> 92 ms, frame 164 -> 143 / 47 ms, pictures unchanged | 3a done; 3b/3c re-planned from a profile (Next session) |
 | 4 | parallel workers | x3 wall time | | to do (ADR 0003 for the bake cache first) |
 | 5 | GL-CUDA interop, GPU encoder | small | | measure first; new dependency needs approval |
 | 6 | simulations on the card | those scenes only | | candidate: measure in step 0 |

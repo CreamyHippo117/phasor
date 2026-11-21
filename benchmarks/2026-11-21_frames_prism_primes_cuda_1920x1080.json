@@ -12,7 +12,7 @@
     "state": 174,
     "widen": 22
   },
-  "commit": "4a60fa7",
+  "commit": "09ac6c7",
   "encoder": "pyav:h264_nvenc",
   "frame": [
     1920,
@@ -22,24 +22,24 @@
   "gl_renderer": "NVIDIA GeForce RTX 4070 Ti/PCIe/SSE2",
   "machine": "atlas-pc",
   "motion_blur": true,
-  "ms_per_frame": 46.55,
+  "ms_per_frame": 46.76,
   "platform": "Windows-11-10.0.26200-SP0",
   "preset": "final",
   "scene": "prism_primes",
-  "setup_s": 0.235,
+  "setup_s": 0.236,
   "stages_ms_per_frame": {
-    "blur sum": 6.89,
-    "draw": 6.54,
-    "encode": 7.33,
-    "gpu draw": 0.4,
-    "other": 3.54,
+    "blur sum": 6.8,
+    "draw": 5.9,
+    "encode": 7.6,
+    "gpu draw": 0.42,
+    "other": 3.67,
     "post": 2.86,
-    "readback": 11.51,
+    "readback": 12.13,
     "simulation": 0.0,
     "srgb": 1.41,
-    "state": 5.17,
-    "widen": 0.9
+    "state": 5.07,
+    "widen": 0.91
   },
-  "wall_s": 3.028,
-  "when": "2026-11-21T20:30:04+00:00"
+  "wall_s": 3.042,
+  "when": "2026-11-21T21:05:49+00:00"
 }

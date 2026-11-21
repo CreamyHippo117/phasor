@@ -283,6 +283,19 @@ class _Collector:
         )  # fmt: skip
 
 
+ARENA_MIN_BYTES = 64 * 1024  # first size of a reused vertex or index buffer; it doubles
+
+
+def _refill(buffer, data: np.ndarray) -> None:
+    """Replace a reused buffer's contents with ``data``: fresh storage (orphaned, so no draw
+    still reading the old contents makes us wait), grown by doubling when too small."""
+    size = buffer.size
+    while size < data.nbytes:
+        size *= 2
+    buffer.orphan(size)
+    buffer.write(data)
+
+
 class GLRenderer:
     """Renders SceneStates. Also satisfies ``phasor.inspect.passes.PassRunner``."""
 
@@ -296,6 +309,7 @@ class GLRenderer:
         self._fields: OrderedDict[tuple, np.ndarray] = OrderedDict()
         self._emit_clear: dict[tuple[int, int], Any] = {}
         self._bridge = None
+        self._arena: dict[tuple, tuple] = {}  # (program, layout, indexed) -> (vao, vbos, ibo)
 
     # ------------------------------------------------------------ resources
 
@@ -354,6 +368,31 @@ class GLRenderer:
             self._text_textures[key] = tex
         return self._text_textures[key]
 
+    def _vertex_array(self, prog, layout: tuple, arrays: list, indices=None):
+        """A vertex array over ``arrays`` (one per ``layout`` entry ``(format, *names)``)
+        and ``indices``, ready to draw, and its vertex count (GPU_SPEED.md step 3a).
+
+        One vertex array per (program, layout, indexed) lives as long as the renderer; its
+        buffers grow to the largest draw seen and are orphaned and refilled for each draw,
+        so the card never waits for a draw still reading the old contents. The draw is the
+        same as with fresh buffers: same data, same order, same count."""
+        key = (prog, layout, indices is not None)
+        if key not in self._arena:
+            ctx = self.ctx
+            vbos = [ctx.buffer(reserve=ARENA_MIN_BYTES) for _ in layout]
+            ibo = ctx.buffer(reserve=ARENA_MIN_BYTES) if indices is not None else None
+            vao = ctx.vertex_array(prog, [(b, *f) for b, f in zip(vbos, layout, strict=True)],
+                                   index_buffer=ibo, index_element_size=4)  # fmt: skip
+            self._arena[key] = (vao, vbos, ibo)
+        vao, vbos, ibo = self._arena[key]
+        for b, a in zip(vbos, arrays, strict=True):
+            _refill(b, np.ascontiguousarray(a, dtype="f4"))
+        if ibo is None:
+            return vao, len(arrays[0])
+        idx = np.ascontiguousarray(indices, dtype="i4")
+        _refill(ibo, idx)
+        return vao, idx.size
+
     # ------------------------------------------------------------ drawing
 
     def _commands(self, state, obj: ObjectState, pass_) -> list:
@@ -363,7 +402,6 @@ class GLRenderer:
 
     def _draw_object(self, state, obj: ObjectState, pass_, size, order: int, zoom: float,
                      commands=None) -> None:  # fmt: skip
-        ctx = self.ctx
         cam = state.camera_for(obj)
         for kind, c in self._commands(state, obj, pass_) if commands is None else commands:
             if kind == "surface" and pass_ == "color":
@@ -401,13 +439,10 @@ class GLRenderer:
                     prog["u_glow"].value = float(c.get("glow", 1.0)) * (1.0 + 1.5 * flash)
             elif pass_ == "id":
                 prog["u_id"].value = obj.index
-            buffers = []
             if kind == "image":
                 c["quad"][1].use(0)
                 prog["u_tex"].value = 0
-                vbo = ctx.buffer(c["quad"][0].tobytes())
-                vao = ctx.vertex_array(prog, [(vbo, "3f 2f", "in_pos", "in_uv")])
-                buffers = [vbo]
+                vao, n = self._vertex_array(prog, (("3f 2f", "in_pos", "in_uv"),), [c["quad"][0]])
             elif kind == "text":
                 corner, wv, hv = text_metrics.quad(
                     c["text"], c["origin"], c["height"], c["anchor"], cam.right, cam.up
@@ -431,30 +466,17 @@ class GLRenderer:
                     ],
                     dtype="f4",
                 )
-                vbo = ctx.buffer(quad.tobytes())
-                vao = ctx.vertex_array(prog, [(vbo, "3f 2f", "in_pos", "in_uv")])
-                buffers = [vbo]
+                vao, n = self._vertex_array(prog, (("3f 2f", "in_pos", "in_uv"),), [quad])
+            elif kind == "vmesh":
+                layout = (("3f", "in_pos"), ("4f", "in_color"))
+                vao, n = self._vertex_array(prog, layout, [c["positions"], c["colors"]],
+                                            c["indices"])  # fmt: skip
             else:
-                vbo = ctx.buffer(np.ascontiguousarray(c["positions"], dtype="f4").tobytes())
-                buffers = [vbo]
-                ibo = None
-                if c["indices"] is not None:
-                    ibo = ctx.buffer(np.ascontiguousarray(c["indices"], dtype="i4").tobytes())
-                    buffers.append(ibo)
-                if kind == "vmesh":
-                    cbo = ctx.buffer(np.ascontiguousarray(c["colors"], dtype="f4").tobytes())
-                    buffers.append(cbo)
-                    vao = ctx.vertex_array(prog, [(vbo, "3f", "in_pos"), (cbo, "4f", "in_color")],
-                                           index_buffer=ibo)  # fmt: skip
-                else:
-                    vao = ctx.vertex_array(prog, [(vbo, "3f", "in_pos")], index_buffer=ibo)
-            vao.render()
-            vao.release()
-            for b in buffers:
-                b.release()
+                vao, n = self._vertex_array(prog, (("3f", "in_pos"),), [c["positions"]],
+                                            c["indices"])  # fmt: skip
+            vao.render(vertices=n)
 
     def _draw_lit(self, state, cam, c, order: int, zoom: float) -> None:
-        ctx = self.ctx
         prog = self._program("color", "lit")
         light = state.light
         prog["u_vp"].write(cam.view_proj.astype("f4").T.tobytes())
@@ -476,14 +498,9 @@ class GLRenderer:
         data = np.empty((n, 12), dtype="f4")
         data[:, 0:3], data[:, 3:6] = c["positions"], c["normals"]
         data[:, 6:10], data[:, 10:12] = c["colors"], c["uv"]
-        vbo = ctx.buffer(data.tobytes())
-        ibo = ctx.buffer(np.ascontiguousarray(c["indices"], dtype="i4").tobytes())
-        vao = ctx.vertex_array(prog, [(vbo, "3f 3f 4f 2f", "in_pos", "in_normal", "in_rgba",
-                                       "in_uv")], index_buffer=ibo)  # fmt: skip
-        vao.render()
-        vao.release()
-        vbo.release()
-        ibo.release()
+        layout = (("3f 3f 4f 2f", "in_pos", "in_normal", "in_rgba", "in_uv"),)
+        vao, count = self._vertex_array(prog, layout, [data], c["indices"])
+        vao.render(vertices=count)
 
     def _field_quad(self, state, obj, cam, c, size, zoom):
         """Compute a kernel-drawn quad's visible pixels and upload them through the bridge.
