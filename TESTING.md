@@ -112,7 +112,12 @@ suite passes with OpenGL on the RTX card (1,178 passed). `phasor bench` saved. S
     weak goal could never trigger), preferred smoothness over a clear view, stopped at 50%
     hidden with no margin under the event log, and gave up after 3 refine rounds. Test:
     `test_without_a_speech_engine_the_orbit_is_clean_too`.
-- No C++ compiler on the PC, so the 36 CPU-emulator kernel tests skip there (they run on Linux).
+- No C++ compiler on the PC, so the CPU-emulator kernel tests skipped there. Fixed
+  2026-11-21: WinLibs g++ (`winget install BrechtSanders.WinLibs.POSIX.UCRT`; its `mingw64in`
+  must be on PATH when the tests run, for gcc's runtime DLLs). All 42 then passed after one
+  Windows-only harness fix: each test made a new `EmuGpu` with its own library cache, so the
+  second case of a kernel linked the same `.so` again, and Windows refuses to overwrite a
+  loaded library. The cache is now shared (`tests/cuda_emu.py` `_LIBS`).
 - **The suite passed but pytest exited 127** (2026-11-20): opening a scene dropped the last
   reference to the start screen, so the widget was deleted on the spot instead of by Qt's
   event loop, and Python aborted with an access violation at exit. The app itself quit

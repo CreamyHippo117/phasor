@@ -135,7 +135,8 @@ uv run pytest                             # gl/gpu tests skip themselves without
 uv run phasor doctor
 ```
 
-Headless Linux needs `libegl1 libgl1-mesa-dri` for the GL tests.
+Headless Linux needs `libegl1 libgl1-mesa-dri` for the GL tests. The CPU-emulator kernel
+tests need `g++` on PATH (Windows: `winget install BrechtSanders.WinLibs.POSIX.UCRT`).
 
 ## Model use
 

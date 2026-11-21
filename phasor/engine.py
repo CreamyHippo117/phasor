@@ -519,14 +519,31 @@ class Engine:
         """The finished picture at ``t`` in linear light: color pass, bloom, tone map.
         (h, w, 4) float32, row 0 = top. ``still`` and ``phasor render`` both use this.
         ``output="srgb8"``: the (h, w, 3) sRGB bytes instead, encoded on the card."""
+        return self._finished([t], size, output)
+
+    def _finished(self, times: list[float], size, output: str):
+        """The average light of the color pass at ``times`` (one time: the frame itself),
+        bloomed, tone-mapped and encoded once. Each sample goes to the card once as float16
+        and is widened and added there in float32, in a fixed order (GPU_SPEED.md step 2);
+        with one sample the sum is the widened sample exactly. Without a card the same sum
+        runs in NumPy."""
+        from phasor.render.gpu import Tile, run
         from phasor.render.passes import GLRenderer
-        from phasor.render.post import finish
+        from phasor.render.post import card_sync, finish
 
         runner = self.pass_runner()
         if not isinstance(runner, GLRenderer):
             raise RuntimeError("no OpenGL renderer on this machine (run `phasor doctor`)")
-        picture, emission = runner.color_and_emission(self.state_at(t), size)
-        return finish(picture, self._snap.compiled.theme, emission, output=output)
+        weight = 1.0 / len(times)
+        pic = glow = None
+        for ts in times:
+            p, g = runner.color_and_emission_raw(self.state_at(ts), size)
+            with stage("blur sum" if len(times) > 1 else "widen", sync=card_sync):
+                tile = Tile.full(p.shape[1], p.shape[0])
+                pic = run("accumulate", tile, image=p, weight=weight, acc=pic)
+                glow = run("accumulate", tile, image=g, weight=weight, acc=glow)
+        # rows bottom-up as GL stores them -> top-down (a view, wherever the sum is)
+        return finish(pic[::-1], self._snap.compiled.theme, glow[::-1], output=output)
 
     def timeline(self) -> dict[str, Any]:
         """What a timeline panel shows: the duration, the markers, for every animated
@@ -571,34 +588,15 @@ class Engine:
         """Like ``frame`` but with motion blur: the average of ``samples`` frames spread over
         a shutter open ``shutter`` of a frame interval (0.5 is the film standard "180
         degrees"), centered on ``t``. Where nothing is moving it is exactly ``frame``, so
-        Linear light, deterministic."""
+        still moments stay sharp and cost nothing extra. Life (slow wiggle) does not count
+        as moving (``is_moving``). Linear light, deterministic."""
         half = shutter / fps / 2
         if samples <= 1 or shutter <= 0 or not self.is_moving(t - half, t + half):
             return self.frame(t, size, output=output)
-        from phasor.render.gpu import Tile, run
-        from phasor.render.passes import GLRenderer
-        from phasor.render.post import card_sync, finish
-
-        runner = self.pass_runner()
-        if not isinstance(runner, GLRenderer):
-            raise RuntimeError("no OpenGL renderer on this machine (run `phasor doctor`)")
         # Average the light before the tone map (which then runs once, contract 4): a bright
         # moving glow smears at its real brightness instead of an already squashed one.
-        # Each sample goes to the card once as float16 and is added there in float32, in a
-        # fixed order (GPU_SPEED.md step 2); without a card the same sum runs in NumPy.
-        times = blur_times(t, fps, shutter, samples)
-        weight = 1.0 / len(times)
-        pic = glow = None
-        for ts in times:
-            p, g = runner.color_and_emission_raw(
-                self.state_at(min(max(ts, 0.0), self.duration)), size
-            )
-            with stage("blur sum", sync=card_sync):
-                tile = Tile.full(p.shape[1], p.shape[0])
-                pic = run("accumulate", tile, image=p, weight=weight, acc=pic)
-                glow = run("accumulate", tile, image=g, weight=weight, acc=glow)
-        # rows bottom-up as GL stores them -> top-down (a view, wherever the sum is)
-        return finish(pic[::-1], self._snap.compiled.theme, glow[::-1], output=output)
+        times = [min(max(ts, 0.0), self.duration) for ts in blur_times(t, fps, shutter, samples)]
+        return self._finished(times, size, output)
 
     def storyboard_times(self, count: int = 6) -> list[float]:
         """Start, every marker and the end; padded with evenly spaced times up to ``count``."""

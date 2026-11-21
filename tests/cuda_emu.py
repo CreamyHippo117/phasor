@@ -37,6 +37,7 @@ extern "C" void emu_set(unsigned b, unsigned t, unsigned d) {
 """
 _CTYPES = {np.int32: ctypes.c_int, np.float32: ctypes.c_float, np.float64: ctypes.c_double}
 _DIR = Path(tempfile.mkdtemp(prefix="phasor_emu_"))
+_LIBS: dict[str, ctypes.CDLL] = {}  # compiled kernels, by source hash
 
 
 def compiler() -> str | None:
@@ -83,7 +84,9 @@ class EmuGpu:
     cp = _StrictCupy()
 
     def __init__(self) -> None:
-        self._libs: dict[str, ctypes.CDLL] = {}
+        # One cache for every instance: a loaded library cannot be overwritten on Windows,
+        # so a second EmuGpu must reuse it rather than link the same file again.
+        self._libs = _LIBS
 
     def compile(self, source: str, entry: str, precision: str = "f32"):
         code = PRELUDE + HEADER + source

@@ -265,20 +265,20 @@ keeping fixed dt, the seed and the checkpoint cache (contract 3). Helps only tho
 Start here. Steps 0, 1 and 2 are committed; the gate is green on the owner's PC.
 
 1. **Re-measure first**: `uv run phasor bench --frames motion_gallery` and `prism_primes`.
-   Expect about 164 and 66 ms/frame. If they differ a lot, find out why before changing code.
+   Expect about 164 and 46 ms/frame. If they differ a lot, find out why before changing code.
 2. **Step 3a: reuse GL buffers** (no picture change; bit-identical). `draw` is now the
    biggest cost by far on motion_gallery (113 of 164 ms). Write the bit-identical test
    first (same frames before and after, `np.array_equal`), then the arena, then bench.
 3. **Then 3b, 3c**, each with its bit-identical test first, measured on its own.
 
 Open items:
-- Sharp frames (`Engine.frame`, where nothing moves) still widen on the host through
-  `color_and_emission`: 13 ms/frame of "widen" on prism_primes. A small follow-up: route
-  `frame` through `color_and_emission_raw` and one `accumulate` with weight 1 (proven exact
-  by `test_one_sample_sum_is_the_widened_sample_exactly`); the inspector and stills keep
-  `color_and_emission`.
-- The `srgb8` and `accumulate` emulator tests have not run anywhere (no C++ compiler on the
-  owner's PC); Linux CI must run them. Both kernels are plain C.
+- Done after step 2: sharp frames (`Engine.frame`: every frame where only life moves,
+  which `is_moving` does not count) also widen on the card, through one `accumulate` with
+  weight 1, bit-identical to the host path
+  (`test_a_sharp_frame_through_the_card_is_the_host_path_exactly`). prism_primes
+  66 -> 46.5 ms/frame. The inspector and stills keep `color_and_emission`.
+- The emulator tests now run on the owner's PC (WinLibs g++, 2026-11-21): all 42 pass,
+  `srgb8` and `accumulate` included.
 - In a render the `srgb8` kernel takes 3-7 ms though it takes 2.2 ms alone (the card
   idles at low clocks between frames). Re-check after steps 3-4 before tuning it.
 - Owner approval still needed before building step 4's on-disk bake cache (ADR 0003)

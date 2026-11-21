@@ -106,3 +106,21 @@ def test_same_blurred_frame_twice_is_identical():
     assert np.array_equal(first, e.frame_blurred(1.0, FPS, samples=6, size=SIZE, output="srgb8"))
     linear = e.frame_blurred(1.0, FPS, samples=6, size=SIZE)
     assert np.array_equal(linear, e.frame_blurred(1.0, FPS, samples=6, size=SIZE))
+
+
+def _old_frame(e, t: float, output: str):
+    """The pre-change sharp path: widen on the host, finish from host arrays."""
+    pic, glow = e.pass_runner().color_and_emission(e.state_at(t), SIZE)
+    return finish(pic, e._snap.compiled.theme, glow, output=output)
+
+
+@pytest.mark.gl
+@needs_gl
+def test_a_sharp_frame_through_the_card_is_the_host_path_exactly():
+    """``frame`` (every frame where only life moves: drift, breathing glow, hue) widens on
+    the card now too; a weight-1 sum is exact, so the pictures are bit-identical."""
+    for bright in (True, False):
+        e = _scene(bright).engine
+        for t in (0.0, 1.0, 3.0):
+            for output in ("linear", "srgb8"):
+                assert np.array_equal(e.frame(t, SIZE, output=output), _old_frame(e, t, output))
