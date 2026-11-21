@@ -405,3 +405,26 @@ def test_a_frame_size_nvenc_refuses_falls_back_to_libx264(tmp_path, monkeypatch)
     small = encode.open_writer(tmp_path / "small.mp4", 64, 48, 30)
     assert small.encoder == "pyav:libx264"
     small.close()
+
+
+@pytest.mark.gpu
+def test_h264_nvenc_encodes_at_constant_quality(tmp_path, monkeypatch):
+    """H.264 on the card is the default (owner, 2026-11-20); its quality options must be
+    ones NVENC accepts, and a fixed bitrate must not be set."""
+    from phasor.render import doctor, encode
+
+    if "h264_nvenc" not in doctor.check_pyav().data.get("working", []):
+        pytest.skip("no working h264_nvenc")
+    monkeypatch.setattr(encode, "best_encoder", lambda: "pyav:h264_nvenc")
+    w = encode.open_writer(tmp_path / "q.mp4", 640, 360, 30)
+    assert w.encoder == "pyav:h264_nvenc"
+    ramp = np.linspace(0, 255, 640, dtype=np.float64).astype(np.uint8)
+    frame = np.repeat(np.repeat(ramp[None, :, None], 360, axis=0), 3, axis=2)
+    for _ in range(30):
+        w.write(frame)
+    w.close()
+    import av
+
+    with av.open(str(tmp_path / "q.mp4")) as c:
+        assert c.streams.video[0].codec_context.name == "h264"
+        assert sum(1 for _ in c.decode(video=0)) == 30

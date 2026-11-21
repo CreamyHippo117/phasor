@@ -20,9 +20,12 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from phasor.core.proc import NO_WINDOW
+
 # Encoder probe order, SPEC "GPU and CUDA plan / Encoding".
-PYAV_ENCODERS = ("hevc_nvenc", "h264_nvenc", "libx264")
-FFMPEG_ENCODERS = ("hevc_nvenc", "h264_nvenc", "libx264")
+# H.264 before HEVC: it plays everywhere (owner, 2026-11-20).
+PYAV_ENCODERS = ("h264_nvenc", "hevc_nvenc", "libx264")
+FFMPEG_ENCODERS = ("h264_nvenc", "hevc_nvenc", "libx264")
 
 
 @dataclass
@@ -147,6 +150,7 @@ def check_nvidia_smi() -> Check:
         capture_output=True,
         text=True,
         timeout=15,
+        creationflags=NO_WINDOW,
     )
     if out.returncode != 0:
         return Check("nvidia_smi", False, out.stderr.strip() or "nvidia-smi failed")
@@ -285,14 +289,16 @@ def check_ffmpeg() -> Check:
     exe = shutil.which("ffmpeg")
     if not exe:
         return Check("ffmpeg", None, "no system ffmpeg on PATH")
-    ver = subprocess.run([exe, "-hide_banner", "-version"], capture_output=True, text=True)
+    ver = subprocess.run([exe, "-hide_banner", "-version"], capture_output=True, text=True,
+                         creationflags=NO_WINDOW)  # fmt: skip
     m = re.search(r"ffmpeg version (\S+)", ver.stdout)
     working: list[str] = []
     for codec in FFMPEG_ENCODERS:
         cmd = [exe, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
                "color=c=black:s=256x144:d=0.3", "-c:v", codec, "-f", "null", "-"]  # fmt: skip
         try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=30,
+                               creationflags=NO_WINDOW)  # fmt: skip
         except subprocess.TimeoutExpired:
             continue
         if r.returncode == 0:
@@ -309,7 +315,7 @@ def pick_encoder(pyav: Check | None, ffmpeg: Check | None) -> str | None:
     """SPEC probe order: PyAV NVENC, then system ffmpeg (NVENC first), then PyAV libx264."""
     pyav_ok = pyav.data.get("working", []) if pyav and pyav.ok else []
     ff_ok = ffmpeg.data.get("working", []) if ffmpeg and ffmpeg.ok else []
-    for codec in ("hevc_nvenc", "h264_nvenc"):
+    for codec in ("h264_nvenc", "hevc_nvenc"):
         if codec in pyav_ok:
             return f"pyav:{codec}"
     for codec in FFMPEG_ENCODERS:

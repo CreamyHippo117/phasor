@@ -67,6 +67,8 @@ compounding. If this file and SPEC.md disagree, stop and ask.
   The shared context lives on one thread: GL work from anywhere else goes through
   `glcontext.on_gl_thread(fn)` (a context current in one thread fails in every other).
 - Text files are read and written with `encoding="utf-8"` (Windows defaults to cp1252).
+- Every `subprocess` call passes `creationflags=NO_WINDOW` (`core/proc.py`), or the Windows
+  desktop app flashes a console window; `tests/test_proc.py` checks it.
 - Golden stills live in `tests/golden/<software|gpu>/`; regenerate with
   `PHASOR_UPDATE_GOLDEN=1 uv run pytest -k golden` and look at them before committing.
 - Layout runs only inside `layout/bake.py`, and only `Engine` runs or applies the bake.

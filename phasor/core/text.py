@@ -30,6 +30,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from phasor.core.proc import NO_WINDOW
 from phasor.core.texconv import to_latex, to_mathtext
 
 _REF = 64
@@ -101,7 +102,7 @@ def _latex(text: str, em_px: int):
         (work / "m.tex").write_text(_TEX_DOC % text, encoding="utf-8")
         run = subprocess.run(
             [_tex("latex"), "-interaction=nonstopmode", "-halt-on-error", "m.tex"],
-            cwd=work, capture_output=True, text=True, timeout=60,
+            cwd=work, capture_output=True, text=True, timeout=60, creationflags=NO_WINDOW,
         )  # fmt: skip
         if run.returncode != 0 or not (work / "m.dvi").exists():
             tail = [ln for ln in run.stdout.splitlines() if ln.startswith("!")][:1]
@@ -109,7 +110,7 @@ def _latex(text: str, em_px: int):
         png = subprocess.run(
             [_tex("dvipng"), "-q", "-T", "tight", "--depth", "-bg", "Transparent", "-fg",
              "rgb 1.0 1.0 1.0", "-D", f"{dpi:.2f}", "-o", "m.png", "m.dvi"],
-            cwd=work, capture_output=True, text=True, timeout=60,
+            cwd=work, capture_output=True, text=True, timeout=60, creationflags=NO_WINDOW,
         )  # fmt: skip
         if png.returncode != 0 or not (work / "m.png").exists():
             raise ValueError(f"cannot typeset {text!r}: dvipng failed")

@@ -6,7 +6,7 @@
 - ``*.png`` with a ``%d`` pattern, or a directory: a PNG sequence (for editing).
 - ``*.mov``: ProRes 4444 through a system ffmpeg (for editing).
 - anything else (``*.mp4``): the best working encoder, probed in SPEC order: PyAV NVENC
-  (hevc, then h264), a system ffmpeg fed raw frames over a pipe (NVENC first), then PyAV
+  (h264, then hevc), a system ffmpeg fed raw frames over a pipe (NVENC first), then PyAV
   libx264. A probe counts only when it really encoded frames (``render.doctor``).
 """
 
@@ -21,6 +21,7 @@ from typing import Protocol
 
 import numpy as np
 
+from phasor.core.proc import NO_WINDOW
 from phasor.render.doctor import check_ffmpeg, check_pyav, pick_encoder
 
 
@@ -83,6 +84,11 @@ class PyAVWriter:
         self._stream.pix_fmt = "yuv420p"
         if codec == "libx264":
             self._stream.options = {"crf": "16", "preset": "medium"}
+        elif codec == "h264_nvenc":
+            # Constant quality, not NVENC's fixed default bitrate: on prism_primes cq 19 matched
+            # the default's 43 dB PSNR at a fifth of the size, and hard frames get more bits.
+            self._stream.bit_rate = 0
+            self._stream.options = {"preset": "p5", "rc": "vbr", "cq": "19"}
         self._frame_type = av.VideoFrame
 
     def write(self, frame: np.ndarray) -> None:
@@ -109,7 +115,8 @@ class FFmpegWriter:
                "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{width}x{height}",
                "-r", f"{rate.numerator}/{rate.denominator}", "-i", "-",
                "-c:v", codec, "-pix_fmt", pix_fmt, str(path)]  # fmt: skip
-        self._proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+        self._proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE,
+                                      creationflags=NO_WINDOW)  # fmt: skip
 
     def write(self, frame: np.ndarray) -> None:
         assert self._proc.stdin is not None

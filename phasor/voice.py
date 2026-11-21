@@ -28,6 +28,7 @@ from typing import Protocol
 
 import numpy as np
 
+from phasor.core.proc import NO_WINDOW
 from phasor.core.schema import Narration, Word
 from phasor.style.theme import Theme
 from phasor.time.narration import (
@@ -69,7 +70,7 @@ class Espeak:
             raise VoiceError("espeak-ng is not installed (apt install espeak-ng, or the "
                              "Windows installer from github.com/espeak-ng)")  # fmt: skip
         r = subprocess.run([exe, "-v", self.lang, "-s", str(self.wpm), "-w", str(path), text],
-                           capture_output=True, text=True)  # fmt: skip
+                           capture_output=True, text=True, creationflags=NO_WINDOW)  # fmt: skip
         if r.returncode != 0:
             raise VoiceError(f"espeak-ng failed: {r.stderr.strip()}")
 
@@ -89,7 +90,8 @@ class Piper:
         if exe is None:
             raise VoiceError("piper is not installed (pip install piper-tts)")
         r = subprocess.run([exe, "--model", self.model, "--output_file", str(path)],
-                           input=text, capture_output=True, text=True)  # fmt: skip
+                           input=text, capture_output=True, text=True,
+                           creationflags=NO_WINDOW)  # fmt: skip
         if r.returncode != 0:
             raise VoiceError(f"piper failed: {r.stderr.strip()[-400:]}")
 

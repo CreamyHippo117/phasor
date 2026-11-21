@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from phasor.core.proc import NO_WINDOW
+
 APP_NAME = "phasor"
 MAX_RECENT = 12
 ASSETS = Path(__file__).parent / "assets"
@@ -244,10 +246,9 @@ class ExportJob:
             self.engine.save(self._snapshot)
             # Kept open for the life of the job (the process writes to it); closed in _cleanup.
             self._log = tempfile.TemporaryFile(mode="w+", encoding="utf-8")  # noqa: SIM115
-            flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
             self.proc = subprocess.Popen(
                 self.command(str(self._snapshot)), stdout=self._log, stderr=self._log,
-                cwd=self.scene_dir, creationflags=flags,
+                cwd=self.scene_dir, creationflags=NO_WINDOW,
             )  # fmt: skip
         except BaseException:
             self._cleanup()
@@ -338,7 +339,7 @@ def install_shortcut() -> dict[str, Any]:
               "$s.Save()")  # fmt: skip
         env = {**os.environ, "PHASOR_LNK": str(link), "PHASOR_EXE": cmd[0], "PHASOR_ARGS": args}
         r = subprocess.run(["powershell", "-NoProfile", "-Command", ps], env=env,
-                           capture_output=True, text=True)  # fmt: skip
+                           capture_output=True, text=True, creationflags=NO_WINDOW)  # fmt: skip
         return {"ok": r.returncode == 0, "path": str(link), "error": r.stderr.strip()}
     return {"ok": False, "error": "on macOS, build the app (packaging/README.md) and drag it "
                                   "to Applications"}  # fmt: skip
