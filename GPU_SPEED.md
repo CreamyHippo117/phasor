@@ -260,33 +260,27 @@ keeping fixed dt, the seed and the checkpoint cache (contract 3). Helps only tho
   switch is held to codec tolerance (PSNR > 45 dB at cq 19).
 - Record each step's bench numbers in the table below, with the commit.
 
-## Next session (written 2026-11-21, after step 1)
+## Next session (written 2026-11-21, after step 2)
 
-Start here. Steps 0 and 1 are committed (`9542ccf`, `c2c60e7`); the gate is green.
+Start here. Steps 0, 1 and 2 are committed; the gate is green on the owner's PC.
 
 1. **Re-measure first**: `uv run phasor bench --frames motion_gallery` and `prism_primes`.
-   Expect about 425 and 238 ms/frame. If they differ a lot, find out why before changing code.
-2. **Step 2: widen and sum the blur samples on the card** (about -200 to -260 ms/frame,
-   the biggest remaining cost):
-   - `GLRenderer._read`: an internal variant returning the raw float16 targets (no
-     `astype`, no `np.stack`); keep `color_and_emission`'s float32 contract for the
-     inspector and stills.
-   - New kernel `accumulate` (out += weight * in, float32). The CPU emulator cannot run
-     `__half`, so widen float16 -> float32 in the launcher with `astype` (a call NumPy and
-     CuPy share), and let the kernel see float32 only. Add it to `CASES` in
-     `tests/test_kernels.py`, to the kernel list there, and to `render/bench.py` `_cases`
-     (`test_bench_runs_on_the_card` requires every kernel).
-   - `Engine.frame_blurred`: upload each sample once, add on the card, pass the device sum
-     straight into `finish` (which already keeps the frame on the card until the end).
-   - Tests listed under step 2 above; then bench, update the status table, commit.
-3. **Then step 3a** (reuse GL buffers): no picture change, so it's the safe first
-   part of the drawing work. 3b/3c after, with the bit-identical tests first.
+   Expect about 164 and 66 ms/frame. If they differ a lot, find out why before changing code.
+2. **Step 3a: reuse GL buffers** (no picture change; bit-identical). `draw` is now the
+   biggest cost by far on motion_gallery (113 of 164 ms). Write the bit-identical test
+   first (same frames before and after, `np.array_equal`), then the arena, then bench.
+3. **Then 3b, 3c**, each with its bit-identical test first, measured on its own.
 
 Open items:
-- The `srgb8` emulator tests have not run anywhere (no C++ compiler on the owner's PC);
-  Linux CI must run them. The kernel is plain C (`pow`, `rint`, `unsigned char`).
-- In a render the `srgb8` kernel takes 5-12 ms though it takes 2.2 ms alone (the card
-  idles at low clocks between frames). Re-check after steps 2-4 before tuning it.
+- Sharp frames (`Engine.frame`, where nothing moves) still widen on the host through
+  `color_and_emission`: 13 ms/frame of "widen" on prism_primes. A small follow-up: route
+  `frame` through `color_and_emission_raw` and one `accumulate` with weight 1 (proven exact
+  by `test_one_sample_sum_is_the_widened_sample_exactly`); the inspector and stills keep
+  `color_and_emission`.
+- The `srgb8` and `accumulate` emulator tests have not run anywhere (no C++ compiler on the
+  owner's PC); Linux CI must run them. Both kernels are plain C.
+- In a render the `srgb8` kernel takes 3-7 ms though it takes 2.2 ms alone (the card
+  idles at low clocks between frames). Re-check after steps 3-4 before tuning it.
 - Owner approval still needed before building step 4's on-disk bake cache (ADR 0003)
   and step 5's new dependency (`PyNvVideoCodec`).
 - `benchmarks/2026-11-21_cuda_1920x1080.json` (a kernel bench from before this work) is
@@ -299,7 +293,7 @@ Open items:
 | --- | --- | --- | --- | --- |
 | 0 | frame bench | | 555 / 376 ms per frame (motion_gallery / prism_primes) | done |
 | 1 | sRGB on the card | -130 ms | srgb 133 -> 5-12 ms, post 17 -> 10; frame 555 -> 425 / 376 -> 238 ms | done (the kernel alone is 2.2 ms; in a render the card idles at low clocks between frames, which steps 2-4 should fix) |
-| 2 | widen + blur sum on the card | -200 to -260 ms | | to do |
+| 2 | widen + blur sum on the card | -200 to -260 ms | widen + blur sum 250 -> 12 ms, post 31 -> 3; frame 437 -> 164 / 238 -> 66 ms | done (sums on the card in float32; 8-bit output within 1 code value of the float64 host sum) |
 | 3 | batched, cached drawing | draw 264 -> 30-60 ms | | to do |
 | 4 | parallel workers | x3 wall time | | to do (ADR 0003 for the bake cache first) |
 | 5 | GL-CUDA interop, GPU encoder | small | | measure first; new dependency needs approval |

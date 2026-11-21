@@ -84,6 +84,12 @@ CASES = {
                (IMAGE_TILE, {"image": IMAGE, "amount": 0.0})],
     "vignette": [(IMAGE_TILE, {"image": IMAGE, "strength": 0.6})],
     "srgb8": [(IMAGE_TILE, {"image": DISPLAY}), (IMAGE_TILE, {"image": IMAGE})],
+    "accumulate": [  # the first blur sample (float16, as GL stores it), then a running sum
+        (IMAGE_TILE, {"image": IMAGE.astype(np.float16), "weight": 0.25}),
+        (IMAGE_TILE, {"image": IMAGE.astype(np.float16), "weight": 0.25, "acc": _rgba(7)}),
+        (IMAGE_TILE, {"image": IMAGE, "weight": 1.0 / 6, "acc": _rgba(8)}),
+        (IMAGE_TILE, {"image": IMAGE[..., :1].copy(), "weight": 0.5}),  # any channel count
+    ],
     "gauss": [
         (IMAGE_TILE, {"image": IMAGE, "sigma": 1.5, "axis": 0}),
         (IMAGE_TILE, {"image": IMAGE, "sigma": 2.2, "axis": 1}),
@@ -120,6 +126,7 @@ def test_every_kernel_has_a_reference_and_a_signature():
     ks = registered()
     assert sorted(ks) == sorted(CASES)
     assert sorted(ks) == [
+        "accumulate",
         "bright",
         "deep",
         "domain",

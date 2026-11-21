@@ -42,6 +42,7 @@ def _cases(w: int, h: int) -> dict[str, dict[str, Any]]:
         "resize": {"image": image},
         "tonemap": {"image": image, "bloom": image},
         "srgb8": {"image": np.ascontiguousarray(image / np.float32(3.0))},  # display range
+        "accumulate": {"image": image.astype(np.float16), "weight": 0.25, "acc": image},
     }
 
 

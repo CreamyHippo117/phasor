@@ -431,3 +431,55 @@ def srgb8(gpu, tile: Tile, image):
     compiled = gpu.compile(SRGB, "phasor_srgb8")
     gpu.launch(compiled, tile.n, (np.int32(tile.n), src, out))
     return out
+
+
+# ---------------------------------------------------------------- motion-blur sum
+
+ACCUMULATE = """
+extern "C" __global__ void phasor_accumulate(int n, float weight, const float* in,
+                                             const float* acc, int has_acc, float* out)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    float x = weight * in[i];
+    out[i] = has_acc ? acc[i] + x : x;
+}
+"""
+
+
+def _check_sum(tile: Tile, image, acc) -> None:
+    if (tile.x0, tile.y0, tile.w, tile.h) != (0, 0, tile.full_w, tile.full_h):
+        raise KernelError("post-processing kernels need the whole image, not a tile")
+    if tuple(image.shape[:2]) != (tile.h, tile.w) or str(image.dtype) not in ("float16", "float32"):
+        raise KernelError(f"image must be float16 or float32 with shape ({tile.h}, {tile.w}, "
+                          f"c), got {image.dtype} {tuple(image.shape)}")  # fmt: skip
+    if acc is not None and (tuple(acc.shape) != tuple(image.shape) or str(acc.dtype) != "float32"):
+        raise KernelError(f"acc must be float32 with shape {tuple(image.shape)}, "
+                          f"got {acc.dtype} {tuple(acc.shape)}")  # fmt: skip
+
+
+def accumulate_reference(tile: Tile, image: np.ndarray, weight: float = 1.0,
+                         acc: np.ndarray | None = None) -> np.ndarray:  # fmt: skip
+    _check_sum(tile, image, acc)
+    x = np.float32(weight) * image.astype(np.float32)
+    return x if acc is None else (acc + x).astype(np.float32)  # a new array: inputs untouched
+
+
+@kernel(
+    "accumulate",
+    "(tile, image, weight=1.0, acc=None) -> float32[h, w, c]; acc + weight * image",
+    reference=accumulate_reference,
+)
+def accumulate(gpu, tile: Tile, image, weight: float = 1.0, acc=None):
+    """One step of a weighted sum in float32 (``Engine.frame_blurred``: the motion-blur
+    samples). A float16 ``image`` (the renderer's raw read) goes to the card at half the
+    bytes and is widened there; the sum stays on the card for ``post.finish``. Any number of
+    channels. Fixed order, no atomics: the same samples give the same bits."""
+    _check_sum(tile, image, acc)
+    src = gpu.cp.ascontiguousarray(gpu.cp.asarray(image).astype(np.float32))
+    out = gpu.cp.empty_like(src)
+    prev = src if acc is None else gpu.cp.ascontiguousarray(gpu.cp.asarray(acc))
+    compiled = gpu.compile(ACCUMULATE, "phasor_accumulate")
+    gpu.launch(compiled, int(src.size), (np.int32(src.size), np.float32(weight), src, prev,
+                                         np.int32(acc is not None), out))  # fmt: skip
+    return out

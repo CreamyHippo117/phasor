@@ -406,6 +406,8 @@ assert field.shape == (90, 160) and (field == -1).any()  # -1 marks points in th
 | `escape` | `center`, `height`, `max_iter=256`, `julia=None`, `precision=None` | smooth escape count; Mandelbrot, or the Julia set of `julia=(re, im)` |
 | `tonemap` | `image`, `exposure=1.0` | ACES filmic curve, linear in and out (whole image) |
 | `gauss` | `image`, `sigma`, `axis` | one pass of a Gaussian blur along x (0) or y (1) (whole image) |
+| `srgb8` | `image` | linear display RGBA (0..1) -> (h, w, 3) uint8 sRGB (whole image) |
+| `accumulate` | `image`, `weight=1.0`, `acc=None` | float32 `acc + weight * image`; `image` may be float16 (whole image, any channel count; the motion-blur sum) |
 
 - `center` and `height` describe the view like the 2D camera: the point at the middle of
   the frame and how many units the frame is tall.

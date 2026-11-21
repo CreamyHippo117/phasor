@@ -571,33 +571,34 @@ class Engine:
         """Like ``frame`` but with motion blur: the average of ``samples`` frames spread over
         a shutter open ``shutter`` of a frame interval (0.5 is the film standard "180
         degrees"), centered on ``t``. Where nothing is moving it is exactly ``frame``, so
-        still moments stay sharp and cost nothing extra. Linear light, deterministic."""
-        import numpy as np
-
+        Linear light, deterministic."""
         half = shutter / fps / 2
         if samples <= 1 or shutter <= 0 or not self.is_moving(t - half, t + half):
             return self.frame(t, size, output=output)
-        times = [t + (k + 0.5) / samples * (2 * half) - half for k in range(samples)]
+        from phasor.render.gpu import Tile, run
         from phasor.render.passes import GLRenderer
-        from phasor.render.post import finish
+        from phasor.render.post import card_sync, finish
 
         runner = self.pass_runner()
         if not isinstance(runner, GLRenderer):
             raise RuntimeError("no OpenGL renderer on this machine (run `phasor doctor`)")
         # Average the light before the tone map (which then runs once, contract 4): a bright
         # moving glow smears at its real brightness instead of an already squashed one.
+        # Each sample goes to the card once as float16 and is added there in float32, in a
+        # fixed order (GPU_SPEED.md step 2); without a card the same sum runs in NumPy.
+        times = blur_times(t, fps, shutter, samples)
+        weight = 1.0 / len(times)
         pic = glow = None
         for ts in times:
-            p, g = runner.color_and_emission(self.state_at(min(max(ts, 0.0), self.duration)), size)
-            with stage("blur sum"):
-                pic = p.astype(np.float64) if pic is None else pic + p
-                if g is not None:
-                    glow = g.astype(np.float64) if glow is None else glow + g
-        n = len(times)
-        with stage("blur sum"):
-            pic = (pic / n).astype(np.float32)
-            glow = None if glow is None else (glow / n).astype(np.float32)
-        return finish(pic, self._snap.compiled.theme, glow, output=output)
+            p, g = runner.color_and_emission_raw(
+                self.state_at(min(max(ts, 0.0), self.duration)), size
+            )
+            with stage("blur sum", sync=card_sync):
+                tile = Tile.full(p.shape[1], p.shape[0])
+                pic = run("accumulate", tile, image=p, weight=weight, acc=pic)
+                glow = run("accumulate", tile, image=g, weight=weight, acc=glow)
+        # rows bottom-up as GL stores them -> top-down (a view, wherever the sum is)
+        return finish(pic[::-1], self._snap.compiled.theme, glow[::-1], output=output)
 
     def storyboard_times(self, count: int = 6) -> list[float]:
         """Start, every marker and the end; padded with evenly spaced times up to ``count``."""
@@ -653,6 +654,13 @@ class Engine:
         if id is not None and self.document.object(id) is None:
             known = sorted(o.id for o in self.document.objects)
             raise KeyError(f"no object {id!r}; objects are {known}")
+
+
+def blur_times(t: float, fps: float, shutter: float = 0.5, samples: int = 4) -> list[float]:
+    """The ``samples`` moments ``Engine.frame_blurred`` averages: evenly spread over a
+    shutter open ``shutter`` of a frame interval, centered on ``t``."""
+    half = shutter / fps / 2
+    return [t + (k + 0.5) / samples * (2 * half) - half for k in range(samples)]
 
 
 def _drop_superseded(overrides: Overrides, patch: Any) -> Overrides:

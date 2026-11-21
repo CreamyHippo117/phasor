@@ -541,7 +541,7 @@ class GLRenderer:
             return self._render_current(state, pass_, size, **kwargs)
 
     def _render_current(
-        self, state, pass_, size, *, only=None, force=frozenset(), zoom=1.0
+        self, state, pass_, size, *, only=None, force=frozenset(), zoom=1.0, raw=False
     ) -> np.ndarray:
         import moderngl
 
@@ -592,10 +592,17 @@ class GLRenderer:
         # is charged for the copy alone (a read otherwise waits for the drawing too).
         with stage("gpu draw", sync=ctx.finish):
             pass
-        return self._read(resolved, pass_, size)
+        return self._read(resolved, pass_, size, raw=raw)
 
-    def _read(self, resolved, pass_, size) -> np.ndarray:
+    def _read(self, resolved, pass_, size, raw=False):
         w, h = size
+        if pass_ == "color" and raw:  # as stored: float16, rows bottom-up, not widened
+            with stage("readback"):
+                return tuple(
+                    np.frombuffer(resolved.read(components=4, dtype="f2", attachment=a),
+                                  dtype=np.float16).reshape(h, w, 4)
+                    for a in (0, 1)
+                )  # fmt: skip
         if pass_ == "color":
             out = []
             for attachment in (0, 1):
@@ -656,6 +663,15 @@ class GLRenderer:
         size = size or (state.width, state.height)
         both = self._render(state, "color", size)
         return both[0], both[1]
+
+    def color_and_emission_raw(
+        self, state: SceneState, size: tuple[int, int] | None = None
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """``color_and_emission`` as the targets store it: (h, w, 4) float16, rows
+        bottom-up (row 0 = the bottom of the frame), read-only. For sums made on the card
+        (``Engine.frame_blurred``), which widen and flip there instead of on the host."""
+        size = size or (state.width, state.height)
+        return self._render(state, "color", size, raw=True)
 
     def id_buffer(self, state, size, force: frozenset[str] = frozenset()) -> np.ndarray:
         return self._cached(

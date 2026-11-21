@@ -24,9 +24,11 @@ def test_frame_bench_reports_every_stage(tmp_path):
     assert r["frames"] == 4 and r["motion_blur"]
     stages = r["stages_ms_per_frame"]
     assert set(stages) == {*STAGES, "other"}
-    for s in ("state", "draw", "gpu draw", "readback", "widen", "blur sum", "post", "srgb",
-              "encode"):  # fmt: skip
+    for s in ("state", "draw", "gpu draw", "readback", "blur sum", "post", "srgb", "encode"):
         assert r["calls"].get(s, 0) > 0, s  # every stage of a blurred frame was seen
+    # blurred samples are widened on the card, inside "blur sum" (GPU_SPEED.md step 2);
+    # "widen" (on the host) is left to sharp frames
+    assert stages["widen"] == 0.0
     assert all(v >= 0 for v in stages.values())
     total = sum(stages.values())
     assert total == pytest.approx(r["ms_per_frame"], rel=0.05)  # the stages explain the frame

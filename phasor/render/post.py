@@ -57,7 +57,7 @@ def bloom(image: Any, threshold: float, levels: int, backend: str = "auto") -> A
     return light if total is None else total
 
 
-def _card_sync(backend: str) -> None:
+def card_sync(backend: str = "auto") -> None:
     """Wait for the card, so a stopwatch charges its work to the stage that launched it."""
     if backend == "reference":
         return
@@ -83,15 +83,22 @@ def finish(
     The bloom comes from ``emission`` (the light glow roles add, from the renderer's second
     target), so plain paint never blooms and a thin glowing curve blooms in proportion to
     its light at any resolution. Without ``emission`` the light above the threshold in
-    ``image`` itself is used."""
+    ``image`` itself is used. ``image`` and ``emission`` may already be on the card (CuPy
+    arrays, as ``Engine.frame_blurred`` passes them); they are then not copied out."""
     if output not in ("linear", "srgb8"):
         raise ValueError(f"output must be 'linear' or 'srgb8', got {output!r}")
-    with stage("post", sync=lambda: _card_sync(backend)):
+    with stage("post", sync=lambda: card_sync(backend)):
         out = _finish(image, theme, emission, backend=backend)
     if output == "srgb8":
-        with stage("srgb", sync=lambda: _card_sync(backend)):
+        with stage("srgb", sync=lambda: card_sync(backend)):
             out = run("srgb8", _whole(out), image=out, backend=backend)
     return to_host(out)
+
+
+def _contiguous(a: Any) -> Any:
+    """Host arrays become contiguous float32; device arrays stay where they are (each
+    kernel launcher makes its own input contiguous on the card)."""
+    return np.ascontiguousarray(a, dtype=np.float32) if isinstance(a, np.ndarray) else a
 
 
 def _finish(
@@ -101,11 +108,11 @@ def _finish(
     *,
     backend: str = "auto",
 ) -> np.ndarray:
-    image = np.ascontiguousarray(image, dtype=np.float32)
+    image = _contiguous(image)
     b = theme.bloom
     source, threshold = image, b["threshold"]
     if emission is not None:
-        source, threshold = np.ascontiguousarray(emission, dtype=np.float32), 0.0
+        source, threshold = _contiguous(emission), 0.0
     glow = bloom(source, threshold, int(b["levels"]), backend) if b["strength"] > 0 else None
     if glow is not None and b.get("fringe", 0.0) > 0:  # warm and cool rims on the glow only
         glow = run("fringe", _whole(image), image=glow, amount=b["fringe"], backend=backend)
