@@ -21,8 +21,10 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 # Encoder probe order, SPEC "GPU and CUDA plan / Encoding".
-PYAV_ENCODERS = ("hevc_nvenc", "h264_nvenc", "libx264")
-FFMPEG_ENCODERS = ("hevc_nvenc", "h264_nvenc", "libx264")
+# H.264 first: Windows plays it out of the box; H.265 (HEVC) needs a paid extension there
+# (found 2026-11-21: the owner's videos would not open). NVENC encodes both equally fast.
+PYAV_ENCODERS = ("h264_nvenc", "hevc_nvenc", "libx264")
+FFMPEG_ENCODERS = ("h264_nvenc", "hevc_nvenc", "libx264")
 
 
 @dataclass
@@ -309,7 +311,7 @@ def pick_encoder(pyav: Check | None, ffmpeg: Check | None) -> str | None:
     """SPEC probe order: PyAV NVENC, then system ffmpeg (NVENC first), then PyAV libx264."""
     pyav_ok = pyav.data.get("working", []) if pyav and pyav.ok else []
     ff_ok = ffmpeg.data.get("working", []) if ffmpeg and ffmpeg.ok else []
-    for codec in ("hevc_nvenc", "h264_nvenc"):
+    for codec in ("h264_nvenc", "hevc_nvenc"):
         if codec in pyav_ok:
             return f"pyav:{codec}"
     for codec in FFMPEG_ENCODERS:

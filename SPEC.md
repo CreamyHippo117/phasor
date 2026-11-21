@@ -350,7 +350,7 @@ CUDA does the math, OpenGL draws the picture, and one narrow bridge connects the
 
 **Encoding**
 
-- `render/encode.py` probes at startup, in order: PyAV with `hevc_nvenc`/`h264_nvenc`, a system `ffmpeg.exe` fed raw frames over a pipe, then PyAV `libx264`. A probe must encode real frames: PyAV wheels list NVENC codecs even on machines without an NVIDIA GPU.
+- `render/encode.py` probes at startup, in order: PyAV with `h264_nvenc`/`hevc_nvenc` (H.264 first: Windows plays it without an extension), a system `ffmpeg.exe` fed raw frames over a pipe, then PyAV `libx264`. A probe must encode real frames: PyAV wheels list NVENC codecs even on machines without an NVIDIA GPU.
 - Audio is muxed in the same step from the narration blocks.
 
 **Hardware tiers**
