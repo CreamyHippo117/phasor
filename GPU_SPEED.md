@@ -260,6 +260,39 @@ keeping fixed dt, the seed and the checkpoint cache (contract 3). Helps only tho
   switch is held to codec tolerance (PSNR > 45 dB at cq 19).
 - Record each step's bench numbers in the table below, with the commit.
 
+## Next session (written 2026-11-21, after step 1)
+
+Start here. Steps 0 and 1 are committed (`9542ccf`, `c2c60e7`); the gate is green.
+
+1. **Re-measure first**: `uv run phasor bench --frames motion_gallery` and `prism_primes`.
+   Expect about 425 and 238 ms/frame. If they differ a lot, find out why before changing code.
+2. **Step 2: widen and sum the blur samples on the card** (about -200 to -260 ms/frame,
+   the biggest remaining cost):
+   - `GLRenderer._read`: an internal variant returning the raw float16 targets (no
+     `astype`, no `np.stack`); keep `color_and_emission`'s float32 contract for the
+     inspector and stills.
+   - New kernel `accumulate` (out += weight * in, float32). The CPU emulator cannot run
+     `__half`, so widen float16 -> float32 in the launcher with `astype` (a call NumPy and
+     CuPy share), and let the kernel see float32 only. Add it to `CASES` in
+     `tests/test_kernels.py`, to the kernel list there, and to `render/bench.py` `_cases`
+     (`test_bench_runs_on_the_card` requires every kernel).
+   - `Engine.frame_blurred`: upload each sample once, add on the card, pass the device sum
+     straight into `finish` (which already keeps the frame on the card until the end).
+   - Tests listed under step 2 above; then bench, update the status table, commit.
+3. **Then step 3a** (reuse GL buffers): no picture change, so it's the safe first
+   part of the drawing work. 3b/3c after, with the bit-identical tests first.
+
+Open items:
+- The `srgb8` emulator tests have not run anywhere (no C++ compiler on the owner's PC);
+  Linux CI must run them. The kernel is plain C (`pow`, `rint`, `unsigned char`).
+- In a render the `srgb8` kernel takes 5-12 ms though it takes 2.2 ms alone (the card
+  idles at low clocks between frames). Re-check after steps 2-4 before tuning it.
+- Owner approval still needed before building step 4's on-disk bake cache (ADR 0003)
+  and step 5's new dependency (`PyNvVideoCodec`).
+- `benchmarks/2026-11-21_cuda_1920x1080.json` (a kernel bench from before this work) is
+  untracked; the owner decides whether to commit it.
+- Beauty upgrades: the owner has a list of about 10; deliberately not started.
+
 ## Status
 
 | step | what | expected | measured | status |
