@@ -21,6 +21,7 @@ from typing import Any
 
 import numpy as np
 
+from phasor.core.timing import stage
 from phasor.render.gpu import run
 from phasor.render.gpu.bridge import to_host
 from phasor.render.gpu.budget import Tile
@@ -56,6 +57,17 @@ def bloom(image: Any, threshold: float, levels: int, backend: str = "auto") -> A
     return light if total is None else total
 
 
+def _card_sync(backend: str) -> None:
+    """Wait for the card, so a stopwatch charges its work to the stage that launched it."""
+    if backend == "reference":
+        return
+    from phasor.render.gpu.registry import default_gpu
+
+    g = default_gpu()
+    if g is not None:
+        g.cp.cuda.Device().synchronize()
+
+
 def finish(
     image: np.ndarray,
     theme: Theme,
@@ -69,6 +81,17 @@ def finish(
     target), so plain paint never blooms and a thin glowing curve blooms in proportion to
     its light at any resolution. Without ``emission`` the light above the threshold in
     ``image`` itself is used."""
+    with stage("post", sync=lambda: _card_sync(backend)):
+        return _finish(image, theme, emission, backend=backend)
+
+
+def _finish(
+    image: np.ndarray,
+    theme: Theme,
+    emission: np.ndarray | None = None,
+    *,
+    backend: str = "auto",
+) -> np.ndarray:
     image = np.ascontiguousarray(image, dtype=np.float32)
     b = theme.bloom
     source, threshold = image, b["threshold"]

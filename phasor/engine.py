@@ -21,6 +21,7 @@ from phasor.core.issues import DocumentError, Issue
 from phasor.core.patch import TWEAK_OPS, apply_ops, apply_overrides, parse_patch, record_tweaks
 from phasor.core.schema import Document, Meta, Overrides
 from phasor.core.state import SceneState
+from phasor.core.timing import stage
 from phasor.inspect import aesthetic as aesthetic_rules
 from phasor.inspect import critic, inspector
 from phasor.inspect import events as event_log
@@ -275,7 +276,8 @@ class Engine:
 
     def state_at(self, t: float) -> SceneState:
         """Pure function of (document, t), layout included. Cached per document version."""
-        return self._state(self._snap, t)
+        with stage("state"):
+            return self._state(self._snap, t)
 
     def _state(self, snap: _Snapshot, t: float) -> SceneState:
         t = float(t)
@@ -585,12 +587,15 @@ class Engine:
         pic = glow = None
         for ts in times:
             p, g = runner.color_and_emission(self.state_at(min(max(ts, 0.0), self.duration)), size)
-            pic = p.astype(np.float64) if pic is None else pic + p
-            if g is not None:
-                glow = g.astype(np.float64) if glow is None else glow + g
+            with stage("blur sum"):
+                pic = p.astype(np.float64) if pic is None else pic + p
+                if g is not None:
+                    glow = g.astype(np.float64) if glow is None else glow + g
         n = len(times)
-        return finish((pic / n).astype(np.float32), self._snap.compiled.theme,
-                      None if glow is None else (glow / n).astype(np.float32))  # fmt: skip
+        with stage("blur sum"):
+            pic = (pic / n).astype(np.float32)
+            glow = None if glow is None else (glow / n).astype(np.float32)
+        return finish(pic, self._snap.compiled.theme, glow)
 
     def storyboard_times(self, count: int = 6) -> list[float]:
         """Start, every marker and the end; padded with evenly spaced times up to ``count``."""

@@ -22,6 +22,7 @@ import numpy as np
 
 from phasor.core import text as text_metrics
 from phasor.core.state import ObjectState, SceneState
+from phasor.core.timing import stage
 from phasor.layout.geometry import occludes
 from phasor.render.glcontext import on_gl_thread, shared_context
 
@@ -532,7 +533,8 @@ class GLRenderer:
         return verts, tex
 
     def _render(self, state, pass_, size, **kwargs) -> np.ndarray:
-        return on_gl_thread(self._render_on_gl_thread, state, pass_, size, **kwargs)
+        with stage("draw"):
+            return on_gl_thread(self._render_on_gl_thread, state, pass_, size, **kwargs)
 
     def _render_on_gl_thread(self, state, pass_, size, **kwargs) -> np.ndarray:
         with self.ctx:  # make our context current: another one may have been used since
@@ -586,14 +588,24 @@ class GLRenderer:
             self._draw_deferred(state, deferred, size, zoom)
         if resolved is not target:
             ctx.copy_framebuffer(resolved, target)
+        # Measured runs only: wait for the card to finish drawing here, so the read below
+        # is charged for the copy alone (a read otherwise waits for the drawing too).
+        with stage("gpu draw", sync=ctx.finish):
+            pass
+        return self._read(resolved, pass_, size)
+
+    def _read(self, resolved, pass_, size) -> np.ndarray:
         w, h = size
         if pass_ == "color":
             out = []
             for attachment in (0, 1):
-                raw = resolved.read(components=4, dtype="f2", attachment=attachment)
-                px = np.frombuffer(raw, dtype=np.float16).reshape(h, w, 4)[::-1]
-                out.append(px.astype(np.float32))
-            return np.stack(out)
+                with stage("readback"):
+                    raw = resolved.read(components=4, dtype="f2", attachment=attachment)
+                with stage("widen"):  # float16 rows bottom-up -> float32 rows top-down
+                    px = np.frombuffer(raw, dtype=np.float16).reshape(h, w, 4)[::-1]
+                    out.append(px.astype(np.float32))
+            with stage("widen"):
+                return np.stack(out)
         if pass_ == "id":
             raw = np.frombuffer(resolved.read(components=1, dtype="u4"), dtype=np.uint32)
             return raw.reshape(h, w)[::-1].copy()

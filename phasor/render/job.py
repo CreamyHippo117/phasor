@@ -11,6 +11,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from phasor.core.timing import stage
 from phasor.render.doctor import run_doctor
 from phasor.render.encode import mux_audio, open_writer
 from phasor.render.output import encode_srgb8, save_png
@@ -46,7 +47,8 @@ def render_file(
     w, h, preset_fps = PRESETS[preset]
     size = (w or meta.width, h or meta.height)
     fps = fps or preset_fps or meta.fps
-    tier = run_doctor().tier
+    with stage("setup"):  # once per render, not per frame
+        tier = run_doctor().tier
     if tier == "C":
         raise RuntimeError("no OpenGL here (tier C); nothing can be rendered")
     warnings = (
@@ -69,7 +71,9 @@ def render_file(
             engine.frame_blurred(t, fps, shutter=shutter, samples=blur_samples, size=size)
             if shutter > 0 and blur_samples > 1 else engine.frame(t, size)
         )  # fmt: skip
-        writer.write(encode_srgb8(linear))
+        srgb8 = encode_srgb8(linear)
+        with stage("encode"):
+            writer.write(srgb8)
         if progress:
             progress(k + 1, count)
     writer.close()

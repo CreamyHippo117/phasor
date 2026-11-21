@@ -207,6 +207,8 @@ def _cmd_style(args: argparse.Namespace) -> int:
 
 
 def _cmd_bench(args: argparse.Namespace) -> int:
+    if args.frames:
+        return _cmd_bench_frames(args)
     from phasor.render.bench import run_bench, save
 
     result = run_bench(args.width, args.height, args.repeats)
@@ -216,6 +218,35 @@ def _cmd_bench(args: argparse.Namespace) -> int:
         print(f"  {name:8s} {r['ms']:10.2f} ms")
     if result["peak_vram_bytes"] is not None:
         print(f"  peak VRAM {result['peak_vram_bytes'] / 2**20:.0f} MB")
+    print(f"saved {path}")
+    return 0
+
+
+def _cmd_bench_frames(args: argparse.Namespace) -> int:
+    """Where a final frame's time goes, stage by stage (GPU_SPEED.md, step 0)."""
+    from pathlib import Path
+
+    from phasor.core.issues import DocumentError
+    from phasor.render.bench import run_frame_bench, save_frames
+    from phasor.scene import load
+
+    scene = Path(args.frames)
+    if not scene.exists() and (Path("examples") / f"{args.frames}.py").exists():
+        scene = Path("examples") / f"{args.frames}.py"  # an example by name
+    try:
+        engine = load(str(scene))
+        r = run_frame_bench(engine, scene.name.split(".")[0], args.count, args.preset)
+    except (DocumentError, OSError, ValueError, RuntimeError) as e:
+        print(f"phasor bench: {e}", file=sys.stderr)
+        return 1
+    path = save_frames(r, args.dir)
+    w, h = r["frame"]
+    blur = ", motion blur" if r["motion_blur"] else ""
+    print(f"{r['scene']}: {r['frames']} frames, {w}x{h}{blur}, kernels on {r['backend']}, "
+          f"GL on {r['gl_renderer']}, {r['encoder']}")  # fmt: skip
+    for name, ms in r["stages_ms_per_frame"].items():
+        print(f"  {name:10s} {ms:9.1f} ms/frame")
+    print(f"  {'total':10s} {r['ms_per_frame']:9.1f} ms/frame  (setup {r['setup_s']:.1f} s, once)")
     print(f"saved {path}")
     return 0
 
@@ -306,6 +337,11 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--height", type=int, default=1080)
     b.add_argument("--repeats", type=int, default=3)
     b.add_argument("--dir", default="benchmarks", help="where results are saved")
+    b.add_argument("--frames", metavar="SCENE", help="time whole frames of SCENE (a file or "
+                   "an example name) stage by stage, instead of single kernels")  # fmt: skip
+    b.add_argument("--count", type=int, default=60, help="frames to time (with --frames)")
+    b.add_argument("--preset", default="final", choices=["preview", "final", "4k"],
+                   help="render preset (with --frames)")  # fmt: skip
     b.set_defaults(func=_cmd_bench)
 
     # Client commands (mcp, gui) register themselves through the "phasor.commands"

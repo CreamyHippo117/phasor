@@ -8,8 +8,26 @@ waiting for Python.
 
 ## Where a frame goes today (RTX 4070 Ti, Windows 11, 2026-11-20)
 
-Final preset (1920x1080, 60 fps, motion blur: 4 samples per moving frame), 60 frames from
-the middle of each scene:
+Measured with `phasor bench --frames SCENE` (step 0), 60 final frames from the middle of
+each scene (1920x1080, 60 fps, motion blur: 4 samples per moving frame):
+
+| stage | motion_gallery | prism_primes | what it is |
+| --- | --- | --- | --- |
+| draw | 105 ms | 12 ms | Python: objects' `draw()`, strokes, GL calls |
+| gpu draw | 2 ms | 1 ms | the card drawing all 4 samples |
+| readback | 20 ms | 14 ms | copying the 2 float16 targets per sample to the host |
+| widen | 137 ms | 100 ms | NumPy: float16 -> float32, flip, stack |
+| blur sum | 121 ms | 77 ms | NumPy: float64 sum of the samples and the divide |
+| post | 17 ms | 17 ms | bloom, tone map, lens on the card (with transfers) |
+| srgb | 133 ms | 133 ms | NumPy: sRGB encode to 8 bits |
+| encode | 8 ms | 8 ms | NVENC |
+| state, other | 12 ms | 13 ms | |
+| **per frame** | **555 ms** | **376 ms** | |
+
+The card draws a whole frame in 1-2 ms. Three NumPy conversions (widen, blur sum, srgb)
+are 70% of motion_gallery's frame and 82% of prism_primes'.
+
+The first, rougher measurement (before the bench; draw included widen and readback):
 
 | stage | motion_gallery | prism_primes | runs on |
 | --- | --- | --- | --- |
@@ -73,13 +91,14 @@ Tests:
 
 Done when: bench shows the sRGB stage under 5 ms and all of the above pass.
 
-## Step 2. Sum the blur samples on the card (expected: -100 to -140 ms/frame)
+## Step 2. Widen and sum the blur samples on the card (expected: -200 to -260 ms/frame)
 
 Today each blur sample is read back as float16, widened to float32, stacked, added up in
 float64 on the CPU, divided, narrowed again, and then sent to the card for post.
 
 - `GLRenderer` gets an internal read that returns the raw float16 picture and emission
-  without widening or stacking (`color_and_emission` keeps its public float32 contract for
+  without widening or stacking ("widen" is 100-137 ms per frame today: it goes away; the
+  card widens with `astype`, a call NumPy and CuPy share) (`color_and_emission` keeps its public float32 contract for
   the inspector and stills).
 - New kernel `accumulate` (out += weight * in, float32, any number of channels): each
   sample goes to the card once (2 x 16 MB, about 3 ms), is added there, and the sum goes
@@ -98,7 +117,7 @@ Tests:
 - `test_memory_stays_flat_over_a_long_render` (exists) still passes: the device sum must
   not leak.
 
-Done when: bench shows "blur sum + rest" under 20 ms on motion_gallery.
+Done when: bench shows widen + blur sum under 20 ms on motion_gallery (from 258 ms).
 
 ## Step 3. Draw without building every stroke from scratch (expected: 264 -> 30-60 ms)
 
@@ -245,9 +264,9 @@ keeping fixed dt, the seed and the checkpoint cache (contract 3). Helps only tho
 
 | step | what | expected | measured | status |
 | --- | --- | --- | --- | --- |
-| 0 | frame bench | | | to do |
+| 0 | frame bench | | 555 / 376 ms per frame (motion_gallery / prism_primes) | done |
 | 1 | sRGB on the card | -130 ms | | to do |
-| 2 | blur sum on the card | -100 to -140 ms | | to do |
+| 2 | widen + blur sum on the card | -200 to -260 ms | | to do |
 | 3 | batched, cached drawing | draw 264 -> 30-60 ms | | to do |
 | 4 | parallel workers | x3 wall time | | to do (ADR 0003 for the bake cache first) |
 | 5 | GL-CUDA interop, GPU encoder | small | | measure first; new dependency needs approval |

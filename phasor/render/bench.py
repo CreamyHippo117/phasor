@@ -85,3 +85,86 @@ def save(result: dict[str, Any], directory: str | Path = "benchmarks") -> Path:
     path = d / f"{stamp}_{result['backend']}_{result['frame'][0]}x{result['frame'][1]}.json"
     path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return path
+
+
+# ---------------------------------------------------------------- whole frames (GPU_SPEED.md)
+
+STAGES = (
+    "state",
+    "simulation",
+    "draw",
+    "gpu draw",
+    "readback",
+    "widen",
+    "blur sum",
+    "post",
+    "srgb",
+    "encode",
+)
+
+
+def run_frame_bench(engine: Any, name: str, count: int = 60, preset: str = "final",
+                    out_dir: str | Path | None = None) -> dict[str, Any]:  # fmt: skip
+    """Render ``count`` frames from the middle of ``engine``'s scene the way ``phasor
+    render`` does and report milliseconds per frame per stage (``core/timing.py``).
+    ``other`` is what no stage claimed. The layout bake and kernel compiles happen before
+    the clock starts, so they are not counted."""
+    import tempfile
+
+    from phasor.core.timing import Stopwatch
+    from phasor.render.job import PRESETS, render_file
+
+    fps = PRESETS[preset][2] or engine.document.meta.fps
+    span = count / fps
+    start = max(0.0, (engine.duration - span) / 2)
+    with tempfile.TemporaryDirectory(prefix="phasor_bench_") as d:
+        out = Path(out_dir or d) / f"{name}_bench.mp4"
+        render_file(engine, out, preset=preset, start=start, end=start + 2 / fps)  # warm up
+        with Stopwatch() as sw:
+            r = render_file(engine, out, preset=preset, start=start, end=start + span)
+    frames = r["frames"]
+    setup = sw.seconds.get("setup", 0.0)  # once per render: kept out of the per-frame times
+    per = {s: round(1000 * sw.seconds.get(s, 0.0) / frames, 2) for s in STAGES}
+    per["other"] = round(1000 * sw.other() / frames, 2)
+    cuda = gpu.default_gpu()
+    return {
+        "when": datetime.now(UTC).isoformat(timespec="seconds"),
+        "machine": platform.node(),
+        "platform": platform.platform(),
+        "scene": name,
+        "preset": preset,
+        "frame": list(r["size"]),
+        "frames": frames,
+        "motion_blur": r["motion_blur"],
+        "encoder": r["encoder"],
+        "backend": "cuda" if cuda is not None else "reference",
+        "gl_renderer": engine.pass_runner().on_gl_info("GL_RENDERER"),
+        "commit": _commit(),
+        "wall_s": round(sw.wall, 3),
+        "setup_s": round(setup, 3),
+        "ms_per_frame": round(1000 * (sw.wall - setup) / frames, 2),
+        "stages_ms_per_frame": per,
+        "calls": dict(sorted(sw.calls.items())),
+    }
+
+
+def _commit() -> str | None:
+    import subprocess
+
+    from phasor.core.proc import NO_WINDOW
+
+    try:
+        r = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True,
+                           text=True, timeout=10, creationflags=NO_WINDOW)  # fmt: skip
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return r.stdout.strip() or None
+
+
+def save_frames(result: dict[str, Any], directory: str | Path = "benchmarks") -> Path:
+    d = Path(directory)
+    d.mkdir(parents=True, exist_ok=True)
+    w, h = result["frame"]
+    path = d / f"{result['when'][:10]}_frames_{result['scene']}_{result['backend']}_{w}x{h}.json"
+    path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path

@@ -24,6 +24,8 @@ from typing import Any, Protocol
 
 import numpy as np
 
+from phasor.core.timing import stage
+
 State = dict[str, np.ndarray]
 CACHE_VERSION = 1
 DEFAULT_EVERY = 100  # steps between checkpoints
@@ -175,11 +177,12 @@ class SimRunner:
             self._cursor = (n, state)
             return state
         cur = dict(state)
-        for k in range(start + 1, n + 1):
-            cur = self.sim.step(cur, self.sim.dt)
-            self.steps_run += 1
-            if k % self.every == 0:
-                self._save(k, cur)
+        with stage("simulation"):
+            for k in range(start + 1, n + 1):
+                cur = self.sim.step(cur, self.sim.dt)
+                self.steps_run += 1
+                if k % self.every == 0:
+                    self._save(k, cur)
         frozen = _frozen(cur)
         self._cursor = (n, frozen)
         return frozen
