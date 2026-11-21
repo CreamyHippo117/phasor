@@ -48,13 +48,13 @@ Then the long ones: `$env:PHASOR_LONG_RENDER=2000; uv run pytest tests/test_gpu.
 (PowerShell), and the GPU reference pictures: `$env:PHASOR_UPDATE_GOLDEN=1; uv run pytest -k golden`
 (look at `tests/golden/gpu/` before committing them).
 
-First run: all 58 GPU tests pass on an RTX 4070 Ti (Windows 11, CuPy 14.2), with OpenGL on
-the processor's AMD graphics. Still to do there: the same with OpenGL on the RTX card, the full
-suite, `phasor bench`, 2,000 frames, GPU reference pictures.
+On the owner's PC (RTX 4070 Ti, Windows 11, CuPy 14.2): all 58 GPU tests pass, and the full
+suite passes with OpenGL on the RTX card (1,178 passed). `phasor bench` saved. Still to do:
+GPU reference pictures, 2,000 frames, the packaged app, real TeX.
 
 | # | What | Status |
 |---|---|---|
-| B1 | Full suite on Windows **without** OpenGL (what CI sees) and **with** it | to do |
+| B1 | Full suite on Windows **without** OpenGL (what CI sees) and **with** it | **with OpenGL: pass** 2026-11-21 (1,178 passed, 63 skipped; 17 failures fixed first). Without OpenGL: to do |
 | B2 | Windows paths: spaces, backslashes, a non-English user name, CRLF, deleting a temp file still open, `%APPDATA%` settings | to do |
 | B3 | Packaged `.exe`: build, start with no console window, Start-menu shortcut, exports that do not flash a console | to do |
 | B4 | CUDA: every kernel against NumPy on the card; CUDA picked automatically; CUDA frames reach OpenGL unchanged (odd sizes, HDR) | **pass** 2026-11-21 on an RTX 4070 Ti, Windows 11 (58 GPU tests; two bugs found and fixed first) |
