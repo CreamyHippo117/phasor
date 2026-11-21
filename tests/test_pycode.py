@@ -36,7 +36,7 @@ def plain(doc):
 
 def rebuild(doc, tmp_path):
     path = tmp_path / "again.py"
-    path.write_text(document_to_python(doc))
+    path.write_text(document_to_python(doc), encoding="utf-8")
     return runpy.run_path(str(path), run_name="x")["s"].engine.document
 
 

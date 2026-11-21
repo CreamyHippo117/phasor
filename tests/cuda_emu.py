@@ -90,7 +90,7 @@ class EmuGpu:
         key = hashlib.sha1((code + precision).encode()).hexdigest()[:16]
         if key not in self._libs:
             src, lib = _DIR / f"{key}.cpp", _DIR / f"{key}.so"
-            src.write_text(code)
+            src.write_text(code, encoding="utf-8")
             # -ffp-contract=off: no fused multiply-add, like the NumPy reference.
             cmd = [compiler(), "-shared", "-fPIC", "-O1", "-ffp-contract=off", "-Wall",
                    "-Werror=return-type", *PRECISIONS[precision], str(src), "-o", str(lib)]  # fmt: skip

@@ -392,7 +392,8 @@ def test_constraints_on_a_scripted_scene_live_in_the_overrides_file(tmp_path):
         "from phasor import Dot, Scene, Text\n"
         "s = Scene('demo')\n"
         "s.add(Dot(id='dot', pos=(1, 1)))\n"
-        "s.add(Text(id='dot.label', text='p'))\n"
+        "s.add(Text(id='dot.label', text='p'))\n",
+        encoding="utf-8",
     )
     from phasor import load
 
@@ -406,7 +407,7 @@ def test_constraints_on_a_scripted_scene_live_in_the_overrides_file(tmp_path):
     assert again.apply({"op": "remove_constraint", "rule": "label(dot) below dot gap 0.1"}).ok
     assert again.overrides.is_empty()
     # If the script drops the object, the rule is reported, not silently lost.
-    script.write_text("from phasor import Scene\ns = Scene('demo')\n")
+    script.write_text("from phasor import Scene\ns = Scene('demo')\n", encoding="utf-8")
     (issue,) = load(script, passes=None).lint()
     assert issue.code == "orphan_override" and "dot" in issue.ids
 

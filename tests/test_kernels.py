@@ -411,13 +411,17 @@ def test_post_kernels_reject_tiles_and_wrong_images():
 
 @pytest.mark.gl
 def test_copy_bridge_round_trips_a_frame_and_reuses_its_texture():
-    from phasor.render.glcontext import shared_context
+    from phasor.render.glcontext import on_gl_thread, shared_context
     from phasor.render.gpu.bridge import CopyBridge
 
     ctx = shared_context()
     bridge = CopyBridge(ctx)
     frame = _rgba(3, (18, 40))
     frame[0, 0] = [9.5, 0.0, 0.25, 1.0]  # HDR values and a known corner survive
+    on_gl_thread(_round_trip, ctx, bridge, frame)
+
+
+def _round_trip(ctx, bridge, frame):
     with ctx:
         tex = bridge.upload(frame)
         assert tex.size == (40, 18) and tex.components == 4 and tex.dtype == "f2"
@@ -432,15 +436,19 @@ def test_copy_bridge_round_trips_a_frame_and_reuses_its_texture():
 
 @pytest.mark.gl
 def test_a_kernel_frame_reaches_opengl_through_the_bridge():
-    from phasor.render.glcontext import shared_context
+    from phasor.render.glcontext import on_gl_thread, shared_context
     from phasor.render.gpu.bridge import CopyBridge
 
     frame = gpu.render("domain", 96, 54, function=F, center=(0, 0), height=4.0)
     ctx = shared_context()
     bridge = CopyBridge(ctx)
-    with ctx:
-        bridge.upload(frame)
-        np.testing.assert_allclose(bridge.read_back(), frame, rtol=1e-3, atol=1e-4)
+
+    def check():
+        with ctx:
+            bridge.upload(frame)
+            np.testing.assert_allclose(bridge.read_back(), frame, rtol=1e-3, atol=1e-4)
+
+    on_gl_thread(check)
 
 
 def test_soft_contours_remove_the_jump_and_keep_the_bands():

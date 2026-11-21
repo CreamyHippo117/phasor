@@ -148,14 +148,15 @@ def test_paths_cannot_leave_the_workspace(ws, tmp_path):
 
 
 def test_scripts_are_refused_unless_allowed(tmp_path):
-    (tmp_path / "evil.py").write_text("raise SystemExit('ran')\n")
+    (tmp_path / "evil.py").write_text("raise SystemExit('ran')\n", encoding="utf-8")
     with pytest.raises(ToolError, match="does not run scripts"):
         Workspace(tmp_path).scene_open("evil.py")
 
 
 def test_a_script_scene_keeps_its_structure_and_takes_tweaks_as_overrides(tmp_path):
     (tmp_path / "s.py").write_text(
-        "from phasor import Dot, Scene\ns = Scene('s')\ns.add(Dot(id='d', pos=(0, 0)))\n"
+        "from phasor import Dot, Scene\ns = Scene('s')\ns.add(Dot(id='d', pos=(0, 0)))\n",
+        encoding="utf-8",
     )
     w = Workspace(tmp_path, allow_scripts=True)
     assert w.scene_open("s.py")["source"] == "script"
@@ -352,7 +353,7 @@ def test_exit_demo_an_ai_builds_and_fixes_a_scene_from_a_one_line_prompt(tmp_pat
     spec = importlib.util.spec_from_file_location("replay", root / "replay.py")
     replay = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(replay)
-    calls = json.loads((root / "session.json").read_text())
+    calls = json.loads((root / "session.json").read_text(encoding="utf-8"))
     if not gl_available():  # pictures and renders need OpenGL; the rest of the session does not
         calls = [c for c in calls if c["tool"] != "render"]
     steps = asyncio.run(replay.replay(calls, str(tmp_path)))
@@ -454,7 +455,7 @@ def test_an_unknown_preset_is_a_clear_error(tmp_path):
 
 
 def test_critique_polish_and_the_rubric(tmp_path):
-    (tmp_path / "STYLE.md").write_text("# my taste\none hero per beat\n")
+    (tmp_path / "STYLE.md").write_text("# my taste\none hero per beat\n", encoding="utf-8")
     w = Workspace(tmp_path)
     w.scene_new("rough")
     w.scene_edit(
@@ -530,7 +531,7 @@ def test_storyboard_compare_over_the_workspace(tmp_path):
     Image.fromarray(np.full((90, 160, 3), 40, dtype=np.uint8)).save(
         tmp_path / "gallery" / "dark.png"
     )
-    (tmp_path / "gallery" / "dark.txt").write_text("calm and dark\n")
+    (tmp_path / "gallery" / "dark.txt").write_text("calm and dark\n", encoding="utf-8")
     w = Workspace(tmp_path)
     w.scene_new("cmp")
     w.scene_edit({"op": "add_object", "object": {"id": "d", "type": "dot", "params": {"r": 1.0}}})

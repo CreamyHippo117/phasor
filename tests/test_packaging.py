@@ -36,7 +36,7 @@ def test_the_entry_point_runs_the_command_line_and_survives_having_no_console(mo
 def test_the_icon_and_the_recipe_are_there():
     assert (ROOT / "phasor" / "gui" / "assets" / "icon.png").exists()
     assert (ROOT / "phasor" / "gui" / "assets" / "icon.ico").exists()
-    spec = (ROOT / "packaging" / "phasor.spec").read_text()
+    spec = (ROOT / "packaging" / "phasor.spec").read_text(encoding="utf-8")
     assert 'copy_metadata("phasor")' in spec  # entry points (commands, tabs) need it
     assert '"examples"' in spec and "mpl-data" in spec  # examples and math fonts
 
@@ -86,7 +86,9 @@ def test_the_app_renders_a_scene_with_typeset_maths(built, tmp_path):
 
     s = Scene("maths", passes=None)
     s.add(Text(id="eq", text=r"$\oint f\,dz = 2\pi i$"))
-    (tmp_path / "m.phasor.json").write_text(json.dumps(s.engine.document.model_dump(mode="json")))
+    (tmp_path / "m.phasor.json").write_text(
+        json.dumps(s.engine.document.model_dump(mode="json")), encoding="utf-8"
+    )
     r = _run(built, "--cli", "render", "m.phasor.json", "--frame", "0", "-o", "m.png",
              tmp=tmp_path)  # fmt: skip
     assert r.returncode == 0, r.stderr[-2000:]

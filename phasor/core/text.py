@@ -85,6 +85,11 @@ _TEX_DOC = (
 )
 
 
+def _tex(program: str) -> str:
+    """The full path of a TeX program: Windows starts only ``.exe`` files by bare name."""
+    return shutil.which(program) or program
+
+
 def _latex(text: str, em_px: int):
     """(coverage uint8 (h, w), depth in px) of a math string through TeX: ``latex`` makes a
     DVI, ``dvipng`` draws it white on transparent at ``em_px`` pixels per (10 pt) em."""
@@ -95,14 +100,14 @@ def _latex(text: str, em_px: int):
         work = Path(d)
         (work / "m.tex").write_text(_TEX_DOC % text, encoding="utf-8")
         run = subprocess.run(
-            ["latex", "-interaction=nonstopmode", "-halt-on-error", "m.tex"],
+            [_tex("latex"), "-interaction=nonstopmode", "-halt-on-error", "m.tex"],
             cwd=work, capture_output=True, text=True, timeout=60,
         )  # fmt: skip
         if run.returncode != 0 or not (work / "m.dvi").exists():
             tail = [ln for ln in run.stdout.splitlines() if ln.startswith("!")][:1]
             raise ValueError(f"cannot typeset {text!r}: {tail[0] if tail else 'latex failed'}")
         png = subprocess.run(
-            ["dvipng", "-q", "-T", "tight", "--depth", "-bg", "Transparent", "-fg",
+            [_tex("dvipng"), "-q", "-T", "tight", "--depth", "-bg", "Transparent", "-fg",
              "rgb 1.0 1.0 1.0", "-D", f"{dpi:.2f}", "-o", "m.png", "m.dvi"],
             cwd=work, capture_output=True, text=True, timeout=60,
         )  # fmt: skip

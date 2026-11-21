@@ -110,7 +110,7 @@ def test_recordings_with_word_timings_place_markers_on_words(tmp_path):
         write_wav(rec / f"{k}.wav", np.full(int(0.4 * n_words * rate), 1000, np.int16), rate)
         words = [{"text": w.strip("."), "start": 0.4 * j, "end": 0.4 * j + 0.3}
                  for j, w in enumerate(text.split())]  # fmt: skip
-        (rec / f"{k}.json").write_text(json.dumps(words))
+        (rec / f"{k}.json").write_text(json.dumps(words), encoding="utf-8")
     script = "Draw a small loop around [[loop_draw]] the one at i.\nOnly that pole contributes."
     n = from_recordings(script, [rec / "0.wav", rec / "1.wav"], TimingsFile(), tmp_path, THEME)
     assert n.blocks[0].markers["loop_draw"] == pytest.approx(5 * 0.4)  # "the" is word 6

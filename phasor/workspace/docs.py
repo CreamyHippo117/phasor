@@ -36,7 +36,7 @@ def sections() -> list[dict[str, str]]:
     out: list[dict[str, str]] = []
     for f in sorted(_ai_dir(root).glob("*.md")):
         title, body = f.stem, []
-        for line in [*f.read_text().splitlines(), "## "]:
+        for line in [*f.read_text(encoding="utf-8").splitlines(), "## "]:
             if line.startswith(("## ", "### ")):
                 if "".join(body).strip():
                     out.append(
@@ -48,7 +48,7 @@ def sections() -> list[dict[str, str]]:
     ex = _examples_dir(root)
     if ex.is_dir():
         for f in sorted(ex.glob("*.py")):
-            text = f.read_text()
+            text = f.read_text(encoding="utf-8")
             out.append({"source": f"examples/{f.name}", "heading": f.stem, "text": text})
     return out
 
@@ -98,4 +98,4 @@ def read(name: str) -> str:
     f = _ai_dir(root) / f"{name}.md"
     if not f.exists():
         raise KeyError(f"no doc {name!r}")
-    return f.read_text()
+    return f.read_text(encoding="utf-8")

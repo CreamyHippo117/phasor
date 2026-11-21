@@ -149,7 +149,7 @@ def test_tweaks_to_a_scripted_scene_go_to_overrides_not_the_base(tmp_path):
 
     path = tmp_path / "demo.phasor.json"
     e.save(path)
-    saved = json.loads((tmp_path / "demo.overrides.json").read_text())
+    saved = json.loads((tmp_path / "demo.overrides.json").read_text(encoding="utf-8"))
     assert saved["params"] == {"dot.r": 0.5}
     reopened = Engine.open(path, passes=None)
     assert reopened.state_at(0)["dot"].params.r == 0.5 and io.dumps(reopened.base) == base
@@ -166,7 +166,8 @@ def _write_script(path, radius_line: str) -> None:
         s = Scene("demo", passes=None)
         {radius_line}
         s.add(Dot(id="other", r=0.3))
-    """)
+    """),
+        encoding="utf-8",
     )
 
 
@@ -217,7 +218,7 @@ def test_plain_documents_are_edited_in_place(tmp_path):
 
 def test_load_script_needs_exactly_one_scene(tmp_path):
     script = tmp_path / "none.py"
-    script.write_text("x = 1\n")
+    script.write_text("x = 1\n", encoding="utf-8")
     with pytest.raises(ValueError, match="exactly one Scene"):
         load(script)
 

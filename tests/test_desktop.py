@@ -46,6 +46,7 @@ def home(tmp_path, monkeypatch):
     h = tmp_path / "home"
     (h / "Documents").mkdir(parents=True)
     monkeypatch.setenv("HOME", str(h))
+    monkeypatch.setenv("USERPROFILE", str(h))  # what Path.home() reads on Windows
     monkeypatch.setenv("PHASOR_CONFIG_DIR", str(h / "settings"))
     monkeypatch.setenv("XDG_DATA_HOME", str(h / "share"))
     yield h
@@ -60,7 +61,7 @@ def plain_scene(path: Path, title: str = "plain") -> Path:
     doc = s.engine.document.model_dump(mode="json")
     doc["meta"]["source"] = "document"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(doc))
+    path.write_text(json.dumps(doc), encoding="utf-8")
     return path
 
 
@@ -78,9 +79,11 @@ def test_settings_round_trip_and_survive_a_damaged_file(home):
     again = Settings.load()
     assert again.recent == [str(b.resolve()), str(a.resolve())]  # newest first
     assert again.last_dir == str(home) and again.math_engine == "auto"
-    Settings.path().write_text("{ not json")
+    Settings.path().write_text("{ not json", encoding="utf-8")
     assert Settings.load().recent == []  # damaged: defaults, no crash
-    Settings.path().write_text(json.dumps({"recent": [1, None, "x"], "math_engine": "bogus"}))
+    Settings.path().write_text(
+        json.dumps({"recent": [1, None, "x"], "math_engine": "bogus"}), encoding="utf-8"
+    )
     bad = Settings.load()
     assert bad.recent == ["x"] and bad.math_engine == "mathtext"  # junk values ignored
 
@@ -148,7 +151,7 @@ def test_tweaks_to_a_script_scene_are_kept_when_saved(home):
 
     script = home / "scene.py"
     script.write_text("from phasor import Scene, Dot\ns = Scene('script', passes=None)\n"
-                      "s.add(Dot(id='p', pos=(0, 0)))\n")  # fmt: skip
+                      "s.add(Dot(id='p', pos=(0, 0)))\n", encoding="utf-8")  # fmt: skip
     ed = _editor(script)
     ed.set_param("p", "r", "0.4")
     ed.save()
@@ -165,7 +168,7 @@ def test_each_export_runs_the_matching_command():
         "render",
         "s.phasor.json",
         "-o",
-        "/out/a.png",
+        str(Path("/out/a.png")),  # backslashes on Windows
         "--frame",
         "1.5",
         "--preset",
@@ -213,7 +216,7 @@ def test_a_picture_and_a_web_page_export_and_leave_nothing_behind(home):
     page = ExportJob(e, "web", home / "out" / "s.html", scene_dir=folder, steps=2)
     page.start()
     _wait(page)
-    assert page.ok and "<html" in (home / "out" / "s.html").read_text()
+    assert page.ok and "<html" in (home / "out" / "s.html").read_text(encoding="utf-8")
 
 
 @gl
@@ -247,7 +250,7 @@ def test_a_failed_export_says_why_and_leaves_nothing_behind(home):
 def test_an_export_to_a_place_that_cannot_exist_leaves_nothing_behind(home):
     e = _engine(home)
     folder = home / "scene"
-    (home / "a_file").write_text("not a folder")
+    (home / "a_file").write_text("not a folder", encoding="utf-8")
     job = ExportJob(e, "picture", home / "a_file" / "s.png", scene_dir=folder)
     with pytest.raises(OSError):
         job.start()
@@ -357,7 +360,7 @@ def test_opening_an_open_scene_again_brings_its_window_forward(desk, home):
 def test_a_broken_file_says_why_and_opens_nothing(desk, home, monkeypatch):
     asked = Asked(monkeypatch)
     bad = home / "bad.phasor.json"
-    bad.write_text("{ broken")
+    bad.write_text("{ broken", encoding="utf-8")
     assert desk.open(bad) is None and desk.windows == []
     assert asked.warnings and "bad.phasor.json" in asked.warnings[0][1]
 
@@ -410,7 +413,9 @@ def test_closing_with_unsaved_edits_asks_first(desk, home, monkeypatch, answer, 
     assert w.close() is closes
     assert asked.close_prompts == 1
     assert (w not in desk.windows) is closes
-    assert (json.loads(p.read_text())["objects"][0]["params"].get("r") == 0.3) is saved
+    assert (
+        json.loads(p.read_text(encoding="utf-8"))["objects"][0]["params"].get("r") == 0.3
+    ) is saved
 
 
 def test_a_clean_window_closes_without_asking(desk, home, monkeypatch):
@@ -533,7 +538,7 @@ def test_the_python_module_runs_the_command_line():
 def test_a_menu_shortcut_on_linux_and_honest_answers_elsewhere(home, monkeypatch):
     monkeypatch.setattr(sys, "platform", "linux")
     r = install_shortcut()
-    entry = (home / "share" / "applications" / "phasor.desktop").read_text()
+    entry = (home / "share" / "applications" / "phasor.desktop").read_text(encoding="utf-8")
     assert r["ok"] and "Exec=" in entry and "-m phasor.gui %f" in entry
     assert f"Icon={appmod.ICON}" in entry and appmod.ICON.exists()
     monkeypatch.setattr(sys, "platform", "darwin")
@@ -558,3 +563,15 @@ def test_the_windows_shortcut_is_made_by_powershell(home, monkeypatch):
     assert r["ok"] and r["path"].endswith("phasor.lnk")
     assert seen["cmd"][0] == "powershell" and seen["env"]["PHASOR_EXE"] == sys.executable
     assert "phasor.gui" in seen["env"]["PHASOR_ARGS"]
+
+
+def test_scenes_go_to_the_documents_folder_windows_shows(home, monkeypatch):
+    """On Windows, OneDrive often moves Documents (C:/Users/<you>/OneDrive/Documents)."""
+    from phasor.gui import app, desktop
+
+    moved = home / "OneDrive" / "Documents"
+    moved.mkdir(parents=True)
+    monkeypatch.setattr(app, "windows_documents", lambda: moved)
+    assert desktop.scenes_folder() == moved / "phasor"
+    monkeypatch.setattr(app, "windows_documents", lambda: home.parent / "elsewhere")
+    assert desktop.scenes_folder() == home / "Documents" / "phasor"  # not someone else's

@@ -22,6 +22,8 @@ import os
 import secrets
 import socket
 import socketserver
+import subprocess
+import sys
 import threading
 from pathlib import Path
 from typing import Any
@@ -117,6 +119,8 @@ class RemoteServer:
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w", encoding=ENCODING) as f:
             f.write(data)
+        if sys.platform == "win32":  # 0o600 means nothing to Windows: set the ACL instead
+            _windows_private(path)
         return path
 
     def stop(self, root: str | Path | None = None) -> None:
@@ -188,3 +192,16 @@ class RemoteWorkspace:
 
         forward.__signature__ = sig.replace(parameters=params)  # type: ignore[attr-defined]
         return forward
+
+
+def _windows_private(path: Path) -> None:
+    """Only the current user may read ``path``: drop inherited permissions and grant this
+    user alone (``icacls``, part of Windows). The token in the file lets a program drive
+    the editor, so a failure here is an error, not a warning."""
+    user = os.environ.get("USERNAME", "")
+    domain = os.environ.get("USERDOMAIN", "")
+    who = f"{domain}\\{user}" if domain else user
+    subprocess.run(
+        ["icacls", str(path), "/inheritance:r", "/grant:r", f"{who}:F"],
+        check=True, capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW,
+    )  # fmt: skip

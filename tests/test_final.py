@@ -86,7 +86,7 @@ def _examples(include_slow: bool = False):
 def test_every_type_keeps_the_object_contract_and_has_docs():
     from phasor.core.objects import REQUIRED_MEMBERS
 
-    api = (ROOT / "docs" / "ai" / "API.md").read_text()
+    api = (ROOT / "docs" / "ai" / "API.md").read_text(encoding="utf-8")
     for name in TYPES:
         cls = registered_types()[name]
         assert all(hasattr(cls, m) for m in REQUIRED_MEMBERS), name
@@ -149,7 +149,7 @@ def test_every_example_survives_save_and_load(name, tmp_path):
     again = phasor.load(path)  # measured the same way as the original (OpenGL when there)
     d = diff_documents(e.document, again.document)
     assert d["same"], d["changes"][:3]
-    top = list(json.loads(path.read_text()))
+    top = list(json.loads(path.read_text(encoding="utf-8")))
     assert top == sorted(top)  # sorted keys, so a diff of two saves is readable
     for t in (0.0, e.duration / 2):
         a = e.inspect(t, detail="brief")
@@ -274,12 +274,16 @@ def test_a_fork_never_touches_the_scene_its_history_or_its_file(tmp_path):
     e = _example("julia_explorer")
     path = tmp_path / "j.phasor.json"
     e.save(path)
-    saved, doc, version = path.read_text(), e.document.model_dump(mode="json"), e.version
+    saved, doc, version = (
+        path.read_text(encoding="utf-8"),
+        e.document.model_dump(mode="json"),
+        e.version,
+    )
     p = Player(e)
     key = p.controls[0].key
     p.set(key, p.controls[0].max)
     assert p.values[key] == p.controls[0].max
-    assert e.document.model_dump(mode="json") == doc and path.read_text() == saved
+    assert e.document.model_dump(mode="json") == doc and path.read_text(encoding="utf-8") == saved
     assert e.version == version  # no new step in the scene's history
 
 
@@ -289,7 +293,8 @@ def test_a_tweak_to_a_script_scene_survives_running_the_script_again(tmp_path):
     script.write_text(
         "from phasor import Scene, Dot\n"
         "s = Scene('tweaks', passes=None)\n"
-        "s.add(Dot(id='p', pos=(0, 0)))\n"
+        "s.add(Dot(id='p', pos=(0, 0)))\n",
+        encoding="utf-8",
     )
     e = phasor.load(script, passes=None)
     assert e.apply({"op": "set_param", "path": "p.r", "value": 0.4}).ok  # a tweak
@@ -297,6 +302,8 @@ def test_a_tweak_to_a_script_scene_survives_running_the_script_again(tmp_path):
     assert (tmp_path / "scene.overrides.json").exists()
     again = phasor.load(script, passes=None)
     assert again.document.object("p").params["r"] == 0.4
-    script.write_text(script.read_text().replace("id='p'", "id='q'"))
+    script.write_text(
+        script.read_text(encoding="utf-8").replace("id='p'", "id='q'"), encoding="utf-8"
+    )
     gone = phasor.load(script, passes=None)
     assert "orphan_override" in {i.code for i in gone.lint()}

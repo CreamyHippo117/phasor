@@ -131,7 +131,7 @@ def _save_plain(engine, path):
     script takes structure only from its script."""
     doc = engine.document.model_dump(mode="json")
     doc["meta"]["source"] = "document"
-    path.write_text(json.dumps(doc))
+    path.write_text(json.dumps(doc), encoding="utf-8")
 
 
 def _px(sk, x, y):
@@ -234,14 +234,14 @@ def test_the_sketch_command_lists_and_applies(tmp_path, capsys):
     sk = Sketch(e)
     c, r = _px(sk, 0.0, 1.0), _px(sk, 0.6, 0.0)[0] - _px(sk, 0.0, 0.0)[0]
     strokes = [loop(c, r).tolist(), *[s.tolist() for s in _letters()]]
-    (tmp_path / "s.json").write_text(json.dumps({"t": 0.5, "strokes": strokes}))
+    (tmp_path / "s.json").write_text(json.dumps({"t": 0.5, "strokes": strokes}), encoding="utf-8")
     scene, stroke_file = str(tmp_path / "demo.phasor.json"), str(tmp_path / "s.json")
     assert main(["sketch", scene, stroke_file]) == 0
     rows = [json.loads(x) for x in capsys.readouterr().out.splitlines()]
     assert [r_["kind"] for r_ in rows] == ["contour", "handwriting"]
     assert (tmp_path / "demo.handwriting1.png").exists()
     assert main(["sketch", scene, stroke_file, "--accept", "--text", "1=$x$"]) == 0
-    saved = json.loads((tmp_path / "demo.phasor.json").read_text())
+    saved = json.loads((tmp_path / "demo.phasor.json").read_text(encoding="utf-8"))
     ids = {o["id"] for o in saved["objects"]}
     assert {"contour", "contour.label", "note"} <= ids
 

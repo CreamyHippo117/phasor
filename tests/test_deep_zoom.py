@@ -206,6 +206,9 @@ def test_a_1e_30_frame_through_the_engine_is_the_kernels_picture():
     lut = np.asarray(theme.values["colormap"]["sequential"], dtype=np.float32)
     want = gpu.run("palette", Tile.full(96, 54), field=field, lut=lut, density=0.35,
                    inside=theme.background[:3])  # fmt: skip
+    from phasor.render.gpu.bridge import to_host
+
+    want = to_host(want)  # a CuPy array on an NVIDIA machine
     close = np.abs(color[..., :3] - want[..., :3]).max(axis=-1) < 0.03
     assert close.mean() > 0.9  # (MSAA and float16 move the finest filaments)
     assert len(np.unique(np.round(color[..., :3], 2).reshape(-1, 3), axis=0)) > 50

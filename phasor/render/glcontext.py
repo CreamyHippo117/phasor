@@ -6,7 +6,8 @@ Mesa's llvmpipe software renderer. Nothing else in phasor may call
 ``moderngl.create_context`` directly.
 
 GL calls go to whichever context is *current*, and creating a context makes it current.
-So every piece of GL work must run inside ``with ctx:``; the renderer does this for you.
+So every piece of GL work must run inside ``with ctx:`` on the GL thread
+(``on_gl_thread``); the renderer does this for you.
 """
 
 from __future__ import annotations
@@ -14,11 +15,15 @@ from __future__ import annotations
 import functools
 import os
 import sys
-from typing import TYPE_CHECKING
+import threading
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from typing import TYPE_CHECKING, Any, TypeVar
 
 if TYPE_CHECKING:
     import moderngl
 
+T = TypeVar("T")
 REQUIRED_GL = 430  # OpenGL 4.3: compute shaders, SSBOs, integer textures
 
 
@@ -56,8 +61,34 @@ def create_standalone_context(require: int = REQUIRED_GL) -> moderngl.Context:
     raise GLUnavailableError("; ".join(errors))
 
 
+_local = threading.local()
+
+
+def _mark_gl_thread() -> None:
+    _local.gl = True
+
+
+@functools.cache
+def _gl_thread() -> ThreadPoolExecutor:
+    return ThreadPoolExecutor(1, thread_name_prefix="phasor-gl", initializer=_mark_gl_thread)
+
+
+def on_gl_thread(fn: Callable[..., T], /, *args: Any, **kwargs: Any) -> T:
+    """Run ``fn`` on phasor's one OpenGL thread and return its result (or raise its error).
+
+    A context is current in one thread at a time, and the shared context stays current in
+    the thread that made it. So every use of it happens on that thread: the editor drawing
+    and an AI connection linting from another thread take turns there. Mesa and WGL both
+    refuse a context current elsewhere ("cannot create buffer", found on Windows
+    2026-11-21). Called from the GL thread itself, ``fn`` simply runs."""
+    if getattr(_local, "gl", False):
+        return fn(*args, **kwargs)
+    return _gl_thread().submit(fn, *args, **kwargs).result()
+
+
 @functools.cache
 def shared_context() -> moderngl.Context:
-    """The process-wide offscreen context. Renderers share it, so GL objects are compiled
-    once and there is never a question of which context owns them."""
-    return create_standalone_context()
+    """The process-wide offscreen context, made on (and used only on) the GL thread; see
+    ``on_gl_thread``. Renderers share it, so GL objects are compiled once and there is
+    never a question of which context owns them."""
+    return on_gl_thread(create_standalone_context)

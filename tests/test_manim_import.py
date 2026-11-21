@@ -20,7 +20,7 @@ ROOT = Path(__file__).parents[1]
 
 def script(tmp_path, body: str, name="s.py") -> Path:
     p = tmp_path / name
-    p.write_text("from manim import *\n\n" + body)
+    p.write_text("from manim import *\n\n" + body, encoding="utf-8")
     return p
 
 
@@ -95,7 +95,9 @@ def test_the_command_saves_a_scene_that_loads_and_lints(tmp_path, capsys):
     assert "RoomReverb: 12 objects, 14.5 s" in text and "note: axes with different" in text
     doc = io.load_document(out)
     assert len(doc.objects) == 12 and doc.meta.title == "RoomReverb"
-    assert (tmp_path / "reverb.scene.py").read_text().startswith("from phasor import ")
+    assert (
+        (tmp_path / "reverb.scene.py").read_text(encoding="utf-8").startswith("from phasor import ")
+    )
     assert main(["manim", str(tmp_path / "missing.py")]) == 1
 
 
@@ -264,7 +266,7 @@ class B(Scene):
     with pytest.raises(ManimImportError, match="no Scene 'C'"):
         import_manim(p, "C")
     none = tmp_path / "n.py"
-    none.write_text("x = 1\n")
+    none.write_text("x = 1\n", encoding="utf-8")
     with pytest.raises(ManimImportError, match="defines no Manim Scene"):
         import_manim(none)
     assert "manim" not in sys.modules  # the stand-in is removed when the import is done

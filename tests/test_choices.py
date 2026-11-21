@@ -19,11 +19,11 @@ def test_record_and_read_back(tmp_path):
     choices.record(path, scene="s", beat="loop", options=["as_is", "calmer"], winner="as_is")
     log = choices.read(path)
     assert [c["winner"] for c in log] == ["calmer", "as_is"] and log[0]["note"] == "softer"
-    assert all(json.loads(line) for line in path.read_text().splitlines())
+    assert all(json.loads(line) for line in path.read_text(encoding="utf-8").splitlines())
     with pytest.raises(ValueError, match="not one of the options"):
         choices.record(path, scene="s", beat="x", options=["a"], winner="b")
     assert choices.read(tmp_path / "missing.jsonl") == []
-    path.write_text("not json\n")
+    path.write_text("not json\n", encoding="utf-8")
     with pytest.raises(ValueError, match=r"choices.jsonl:1"):
         choices.read(path)
 

@@ -23,7 +23,7 @@ import numpy as np
 from phasor.core import text as text_metrics
 from phasor.core.state import ObjectState, SceneState
 from phasor.layout.geometry import occludes
-from phasor.render.glcontext import shared_context
+from phasor.render.glcontext import on_gl_thread, shared_context
 
 DEPTH_BIAS = 1e-5  # NDC depth per draw-order step
 MAX_TEXT_PX = 512
@@ -302,9 +302,12 @@ class GLRenderer:
         """``"software"`` (Mesa llvmpipe and friends) or ``"gpu"``. Golden images are kept
         per class because the two do not antialias identically. The query must run with
         the context current, like every other GL call."""
-        with self.ctx:
-            name = str(self.ctx.info["GL_RENDERER"]).lower()
+        name = on_gl_thread(self._gl_info, "GL_RENDERER").lower()
         return "software" if any(k in name for k in ("llvmpipe", "softpipe", "swrast")) else "gpu"
+
+    def _gl_info(self, key: str) -> str:
+        with self.ctx:
+            return str(self.ctx.info[key])
 
     def _program(self, pass_: str, kind: str):
         key = (pass_, kind)
@@ -523,6 +526,9 @@ class GLRenderer:
         return verts, tex
 
     def _render(self, state, pass_, size, **kwargs) -> np.ndarray:
+        return on_gl_thread(self._render_on_gl_thread, state, pass_, size, **kwargs)
+
+    def _render_on_gl_thread(self, state, pass_, size, **kwargs) -> np.ndarray:
         with self.ctx:  # make our context current: another one may have been used since
             return self._render_current(state, pass_, size, **kwargs)
 
@@ -643,10 +649,14 @@ class GLRenderer:
             world = dataclasses.replace(
                 state, objects=tuple(o for o in state.objects if o.layer != "overlay")
             )
-            with self.ctx:
-                self._render_current(world, "id", size)
-                fbo, _ = self._target("id", size)
-                raw = fbo.read(components=1, attachment=-1, dtype="f4")
+
+            def draw():
+                with self.ctx:
+                    self._render_current(world, "id", size)
+                    fbo, _ = self._target("id", size)
+                    return fbo.read(components=1, attachment=-1, dtype="f4")
+
+            raw = on_gl_thread(draw)
             w, h = size
             z = np.frombuffer(raw, dtype=np.float32).reshape(h, w)[::-1].astype(np.float64)
             return _view_depth(state.camera, z, size)

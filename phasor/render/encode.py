@@ -138,9 +138,31 @@ def open_writer(path: str | Path, width: int, height: int, fps: float) -> Writer
     if choice is None:
         raise EncodeError("no working video encoder (run `phasor doctor`); write PNGs instead")
     backend, codec = choice.split(":", 1)
+    if backend == "pyav" and codec.endswith("_nvenc") and not _nvenc_takes(codec, width, height):
+        codec = "libx264"  # NVENC has a minimum frame size (found 2026-11-21: 64x48 refused)
     if backend == "pyav":
         return PyAVWriter(path, width, height, fps, codec)
     return FFmpegWriter(path, width, height, fps, codec, "yuv420p")
+
+
+@functools.cache
+def _nvenc_takes(codec: str, width: int, height: int) -> bool:
+    """Whether NVIDIA's encoder accepts this frame size: it refuses small frames (the limit
+    depends on the card), and the refusal only comes when the first frame is encoded."""
+    import io
+
+    import av
+
+    try:
+        with av.open(io.BytesIO(), "w", format="mp4") as c:
+            st = c.add_stream(codec, rate=30)
+            st.width, st.height, st.pix_fmt = width, height, "yuv420p"
+            frame = av.VideoFrame.from_ndarray(np.zeros((height, width, 3), np.uint8), "rgb24")
+            for packet in [*st.encode(frame), *st.encode()]:
+                c.mux(packet)
+        return True
+    except Exception:
+        return False
 
 
 def mux_audio(video: str | Path, samples: np.ndarray, rate: int) -> None:

@@ -90,6 +90,23 @@ suite, `phasor bench`, 2,000 frames, GPU reference pictures.
 - **The card rounded differently from the reference**: NVRTC fuses `a*b + c` by default, and
   fractal edges amplify the difference (3% of a tile, 10% of a deep float64 view). Kernels now
   compile with `--fmad=false`.
+- Full suite on Windows (first run): 1,157 passed, 17 failed. Fixed:
+  - **OpenGL from a second thread failed** ("cannot create buffer"): the context stays current
+    in the thread that used it, so the editor drawing and an AI connection linting could not
+    share it. Also true on Linux, depending on which thread drew first. All GL work now runs
+    on one GL thread (`glcontext.on_gl_thread`).
+  - **Text files read as cp1252** (Windows' default) broke the docs search and an AI tool:
+    57 reads and writes now say UTF-8.
+  - **NVENC refuses small frames** (64x48): such videos fall back to libx264.
+  - **The AI connection file was readable by others**: `0o600` means nothing on Windows; it
+    now gets an ACL for this user alone (`icacls`).
+  - **The fake TeX in the tests** needs `.cmd` wrappers, and phasor now starts TeX by its full
+    path. New scenes follow Windows' own Documents folder (OneDrive).
+  - Test-only: paths with backslashes, `Path.home()` reads `USERPROFILE`, an environment
+    variable set to "" is dropped, two tests compared a CuPy array with a NumPy one.
+  - Not yet understood: `riemann_sqrt` reports its branch point hidden at 19-21 s with
+    OpenGL on the AMD chip (3 tests). Rerun with OpenGL on the RTX card.
+- No C++ compiler on the PC, so the 36 CPU-emulator kernel tests skip there (they run on Linux).
 - OpenGL ran on the processor's built-in AMD graphics, not the RTX card. Windows setting:
   Settings > System > Display > Graphics, set Python to "High performance".
 

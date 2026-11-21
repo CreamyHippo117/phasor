@@ -158,7 +158,7 @@ def test_the_web_export_bakes_every_combination_into_one_file(tmp_path):
     info = export_web(s.engine, tmp_path / "page.html", size=(96, 54),
                       steps={"set.c[0]": 3, "set.c[1]": 2})  # fmt: skip
     assert info["frames"] == 6 and [a["steps"] for a in info["axes"]] == [3, 2]
-    page = (tmp_path / "page.html").read_text()
+    page = (tmp_path / "page.html").read_text(encoding="utf-8")
     assert "http://" not in page and "https://" not in page  # no network, no server
     d = _frames_of(page)
     assert [a["label"] for a in d["axes"]] == ["Re c", "Im c"] and len(d["frames"]) == 6

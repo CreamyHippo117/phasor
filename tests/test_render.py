@@ -16,6 +16,7 @@ from phasor.cli import main
 from phasor.core.issues import DocumentError
 from phasor.render import gpu
 from phasor.render.gpu import ComplexFunction
+from phasor.render.gpu.bridge import to_host
 from phasor.style.theme import load_theme
 from tests.conftest import gl_available
 
@@ -135,6 +136,7 @@ def test_fractal_color_matches_the_kernels():
     lut = np.asarray(THEME.values["colormap"]["sequential"], dtype=np.float32)
     want = gpu.run("palette", gpu.Tile.full(320, 180), field=field, lut=lut, density=0.35,
                    inside=THEME.background[:3])  # fmt: skip
+    want = to_host(want)  # a CuPy array on an NVIDIA machine
     close = np.abs(color[..., :3] - want[..., :3]).max(axis=-1) < 0.02
     assert close.mean() > 0.97  # (the set's edge differs where float16 and MSAA meet)
 
@@ -205,7 +207,7 @@ def test_bench_times_every_kernel(tmp_path, capsys):
     assert main(["bench", "--width", "64", "--height", "48", "--repeats", "1",
                  "--dir", str(tmp_path)]) == 0  # fmt: skip
     (saved,) = tmp_path.iterdir()
-    result = json.loads(saved.read_text())
+    result = json.loads(saved.read_text(encoding="utf-8"))
     assert sorted(result["kernels"]) == sorted(gpu.registered())
     assert all(r["ms"] >= 0 for r in result["kernels"].values())
     assert "escape" in capsys.readouterr().out
@@ -217,7 +219,8 @@ def test_render_command(tmp_path, capsys):
         "from phasor import Dot, Scene\n"
         "s = Scene('tiny')\n"
         "s.add(Dot(id='d', r=0.5, style={'glow': 'soft'}))\n"
-        "s.at(0).to('d.pos', (2, 0), duration=0.2)\n"
+        "s.at(0).to('d.pos', (2, 0), duration=0.2)\n",
+        encoding="utf-8",
     )
     still = tmp_path / "still.png"
     code = main(["render", str(scene), "--frame", "0.1", "-o", str(still)])
@@ -354,3 +357,51 @@ def test_the_render_job_blurs_finals_not_previews():
     from phasor.render.job import BLUR
 
     assert BLUR["preview"][0] == 0 and BLUR["final"] == (0.5, 4) == BLUR["4k"]
+
+
+@pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
+def test_other_threads_can_render_after_this_one_has():
+    """The editor draws on the main thread while an AI connection lints from another. A GL
+    context stays current in the thread that used it, so other threads used to fail
+    ("cannot create buffer"/"texture": found on Windows 2026-11-21, then here). All GL work
+    now runs on one GL thread, and every thread gets the same picture."""
+    import threading
+
+    from phasor.render.passes import default_renderer
+
+    s = Scene("threads", passes=None)
+    s.add(Line(id="l", points=[(-2, 0), (2, 1)]))
+    s.add(Text(id="t", text="hello", pos=(0, 1)))
+    state = s.engine.state_at(0.0)
+    r = default_renderer()
+    want = r.color(state, (160, 90)).copy()  # this thread first
+    got, errors = [], []
+
+    def work():
+        try:
+            for _ in range(10):
+                got.append(r.color(state, (160, 90)).copy())
+                r.id_buffer(state, (160, 90), force=frozenset({"l"}))
+                r._cache.clear()  # really draw again
+        except Exception as e:
+            errors.append(e)
+
+    threads = [threading.Thread(target=work) for _ in range(3)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == [] and len(got) == 30
+    for g in got:
+        np.testing.assert_array_equal(g, want)
+
+
+def test_a_frame_size_nvenc_refuses_falls_back_to_libx264(tmp_path, monkeypatch):
+    """NVIDIA's encoder refuses small frames (64x48 on an RTX 4070 Ti, 2026-11-21)."""
+    from phasor.render import encode
+
+    monkeypatch.setattr(encode, "best_encoder", lambda: "pyav:hevc_nvenc")
+    monkeypatch.setattr(encode, "_nvenc_takes", lambda codec, w, h: w >= 256)
+    small = encode.open_writer(tmp_path / "small.mp4", 64, 48, 30)
+    assert small.encoder == "pyav:libx264"
+    small.close()

@@ -222,7 +222,14 @@ def test_exit_demo_cluttered_scene_is_flagged_then_auto_fixed(passes, tmp_path):
 
     # The script was never edited: the fixes live in the overrides file and survive a reload.
     e.save(tmp_path / "cluttered.phasor.json")
-    assert len(json.loads((tmp_path / "cluttered.overrides.json").read_text())["constraints"]) == 4
+    assert (
+        len(
+            json.loads((tmp_path / "cluttered.overrides.json").read_text(encoding="utf-8"))[
+                "constraints"
+            ]
+        )
+        == 4
+    )
     assert load(script, passes=passes).lint() == []
     assert load(tmp_path / "cluttered.phasor.json", passes=passes).lint() == []
 

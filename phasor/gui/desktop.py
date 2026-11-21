@@ -53,9 +53,16 @@ SCENE_FILTER = "phasor scenes (*.phasor.json *.py);;All files (*)"
 
 
 def scenes_folder() -> Path:
-    """Where new scenes and copied examples go by default: Documents/phasor."""
-    docs = Path.home() / "Documents"
-    return (docs if docs.is_dir() else Path.home()) / "phasor"
+    """Where new scenes and copied examples go by default: Documents/phasor. On Windows,
+    the Documents folder Explorer shows (often moved into OneDrive), when it is inside
+    the home folder."""
+    from phasor.gui.app import windows_documents
+
+    home = Path.home()
+    docs = windows_documents() or home / "Documents"
+    if not docs.is_relative_to(home) or not docs.is_dir():
+        docs = home / "Documents"
+    return (docs if docs.is_dir() else home) / "phasor"
 
 
 # ---------------------------------------------------------------- the app

@@ -130,7 +130,7 @@ def _speak_block(synth: Synth, block: Block, folder: Path) -> Spoken:
     clip = folder / f"{key}.wav"
     meta = folder / f"{key}.json"
     if clip.exists() and meta.exists():
-        return Spoken(tuple(json.loads(meta.read_text())), clip.name)
+        return Spoken(tuple(json.loads(meta.read_text(encoding="utf-8"))), clip.name)
     parts, rate = [], None
     with tempfile.TemporaryDirectory() as tmp:
         for i, piece in enumerate(block.pieces):
@@ -144,7 +144,7 @@ def _speak_block(synth: Synth, block: Block, folder: Path) -> Spoken:
     assert rate is not None
     durations = [len(p) / rate for p in parts]
     write_wav(clip, np.concatenate(parts), rate)
-    meta.write_text(json.dumps(durations))
+    meta.write_text(json.dumps(durations), encoding="utf-8")
     return Spoken(tuple(durations), clip.name)
 
 
@@ -188,7 +188,7 @@ class TimingsFile:
         path = wav.with_suffix(".json")
         if not path.exists():
             raise VoiceError(f"no word timings at {path}")
-        return [Word.model_validate(w) for w in json.loads(path.read_text())]
+        return [Word.model_validate(w) for w in json.loads(path.read_text(encoding="utf-8"))]
 
 
 @dataclass(frozen=True)

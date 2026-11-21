@@ -34,7 +34,7 @@ def window(tmp_path):
     import json
 
     path = tmp_path / "w.phasor.json"
-    path.write_text(json.dumps(SCENE))
+    path.write_text(json.dumps(SCENE), encoding="utf-8")
     app, win, server = open_editor(str(path), show=False)
     win.resize(1000, 640)
     yield app, win, server, tmp_path
@@ -165,7 +165,9 @@ def test_the_code_tab_runs_edited_code(julia_window):
     win.code.run()
     assert "ran:" in win.code.status.text()
     assert win.ed.engine.document.object("set").params["max_iter"] == 90
-    assert "max_iter=90" in (root / "j.py").read_text()  # the script on disk is the code
+    assert "max_iter=90" in (root / "j.py").read_text(
+        encoding="utf-8"
+    )  # the script on disk is the code
     win.code.text.setPlainText("s = Scene(")
     win.code.run()
     assert win.code.status.text().startswith("not run: line 1")
@@ -248,7 +250,7 @@ def test_the_sketch_tab_turns_a_drawn_loop_into_a_traced_contour(tmp_path):
                      "params": {"function": "1/(z**2+1)", "size": [8.0, 4.5]}}],
         "timeline": {"markers": {"end": 2.0}},
     }  # fmt: skip
-    (tmp_path / "s.phasor.json").write_text(json.dumps(scene))
+    (tmp_path / "s.phasor.json").write_text(json.dumps(scene), encoding="utf-8")
     _app, win, server = open_editor(str(tmp_path / "s.phasor.json"), show=False)
     try:
         titles = [t for t, _ in win.panels]

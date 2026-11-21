@@ -349,7 +349,7 @@ def test_stills_are_deterministic(demo):
 def test_exit_demo_script_runs(tmp_path):
     env = {**os.environ, "PYTHONPATH": str(ROOT)}
     script = tmp_path / "moving_dot.py"
-    script.write_text(DEMO.read_text())
+    script.write_text(DEMO.read_text(encoding="utf-8"), encoding="utf-8")
     r = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, env=env)
     assert r.returncode == 0, r.stderr
     assert "dot [dot]" in r.stdout and (tmp_path / "moving_dot.phasor.json").exists()

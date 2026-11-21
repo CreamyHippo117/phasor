@@ -38,7 +38,7 @@ async def replay(calls: list[dict], workdir: str, show: int = 600) -> list[dict]
 
 
 if __name__ == "__main__":
-    with open(sys.argv[1]) as f:
+    with open(sys.argv[1], encoding="utf-8") as f:
         recorded = json.load(f)
     steps = asyncio.run(replay(recorded, sys.argv[2]))
     for s in steps:

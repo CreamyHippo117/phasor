@@ -46,6 +46,29 @@ def config_dir() -> Path:
     return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / APP_NAME
 
 
+def windows_documents() -> Path | None:
+    """Windows' own Documents folder (``FOLDERID_Documents``), which OneDrive may have
+    moved; None elsewhere or if Windows will not say."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        import uuid
+        from ctypes import wintypes
+
+        guid = (ctypes.c_byte * 16)(*uuid.UUID("FDD39AD0-238F-46AF-ADB4-6C85480369C7").bytes_le)
+        out = ctypes.c_wchar_p()
+        shell32, ole32 = ctypes.windll.shell32, ctypes.windll.ole32  # type: ignore[attr-defined]
+        if shell32.SHGetKnownFolderPath(guid, wintypes.DWORD(0), None, ctypes.byref(out)):
+            return None
+        try:
+            return Path(out.value) if out.value else None
+        finally:
+            ole32.CoTaskMemFree(out)
+    except Exception:
+        return None
+
+
 def frozen() -> bool:
     """Whether this is the packaged app (PyInstaller) rather than Python with phasor."""
     return bool(getattr(sys, "frozen", False))

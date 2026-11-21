@@ -41,8 +41,11 @@ def _reset_engine():
 def fake_tex(tmp_path, monkeypatch):
     for name, body in (("latex", FAKE_LATEX), ("dvipng", FAKE_DVIPNG)):
         path = tmp_path / name
-        path.write_text(body.format(py=sys.executable))
+        path.write_text(body.format(py=sys.executable), encoding="utf-8")
         path.chmod(path.stat().st_mode | stat.S_IEXEC)
+        if sys.platform == "win32":  # Windows runs programs by extension, not by #!
+            (tmp_path / f"{name}.cmd").write_text(f'@"{sys.executable}" "{path}" %*\r\n',
+                                                  encoding="utf-8")  # fmt: skip
     monkeypatch.setenv("PATH", str(tmp_path))
     tm._math.cache_clear()
     yield

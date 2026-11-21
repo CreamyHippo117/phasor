@@ -164,20 +164,23 @@ def test_the_same_frame_twice_on_the_card_is_identical():
 def test_cuda_frames_reach_opengl_unchanged():
     import cupy
 
+    from phasor.render.glcontext import on_gl_thread
     from phasor.render.gpu.bridge import CopyBridge
     from phasor.render.passes import default_renderer
+
+    ctx = default_renderer().ctx
+    bridge = CopyBridge(ctx)
+
+    def through(frame):
+        with ctx:
+            tex = bridge.upload(cupy.asarray(frame))
+            return tex.size, bridge.read_back()
 
     rng = np.random.default_rng(1)
     for w, h in [(64, 36), (333, 101), (64, 36)]:  # an odd size, and back (texture reuse)
         frame = rng.random((h, w, 4), dtype=np.float32) * 4  # HDR values above 1 survive
-        ctx = default_renderer().ctx
-        with ctx:
-            bridge = getattr(test_cuda_frames_reach_opengl_unchanged, "bridge", None)
-            if bridge is None:
-                bridge = test_cuda_frames_reach_opengl_unchanged.bridge = CopyBridge(ctx)
-            tex = bridge.upload(cupy.asarray(frame))
-            assert tex.size == (w, h)
-            back = bridge.read_back()
+        size, back = on_gl_thread(through, frame)
+        assert size == (w, h)
         np.testing.assert_allclose(back, frame, rtol=1e-3, atol=1e-3)  # float16 on the way
 
 
@@ -292,7 +295,7 @@ print("ok", r.tier)
 
 
 def test_hidden_card_falls_back_to_numpy():
-    r = _child(FALLBACK, CUDA_VISIBLE_DEVICES="")
+    r = _child(FALLBACK, CUDA_VISIBLE_DEVICES="-1")  # Windows drops a variable set to ""
     assert r.returncode == 0 and r.stdout.startswith("ok"), r.stderr[-2000:]
 
 

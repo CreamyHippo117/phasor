@@ -27,7 +27,7 @@ def folder(tmp_path):
     ):
         Image.fromarray(_frame(color)).save(g / f"{name}.png")
         if note:
-            (g / f"{name}.txt").write_text(note + "\nmore text ignored\n")
+            (g / f"{name}.txt").write_text(note + "\nmore text ignored\n", encoding="utf-8")
     return g
 
 

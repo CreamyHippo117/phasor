@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import inspect
 import json
+import os
 import socket
+import sys
 import threading
 
 import pytest
@@ -58,7 +60,14 @@ def test_strangers_and_private_methods_are_refused(hosted, tmp_path):
     host, port = server.address
     assert host == "127.0.0.1"
     handoff = tmp_path / HANDOFF
-    assert oct(handoff.stat().st_mode & 0o777) == "0o600"  # only this user can read the token
+    if sys.platform == "win32":  # an ACL with this user alone
+        import subprocess
+
+        acl = subprocess.run(["icacls", str(handoff)], capture_output=True, text=True).stdout
+        grants = [ln for ln in acl.splitlines()[:-2] if ":" in ln.replace(str(handoff), "")]
+        assert len(grants) == 1 and os.environ["USERNAME"].lower() in grants[0].lower(), acl
+    else:
+        assert oct(handoff.stat().st_mode & 0o777) == "0o600"  # only this user can read it
 
     def ask(req) -> dict:
         with socket.create_connection((host, port)) as s:

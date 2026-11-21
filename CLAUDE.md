@@ -61,6 +61,9 @@ compounding. If this file and SPEC.md disagree, stop and ask.
 - Don't claim something works on Windows/CUDA unless it ran there. Say "untested on X".
 - All GL work goes through `render/passes.py` (`default_renderer()`), which shares one context
   and makes it current per render. Creating GL objects outside `with ctx:` corrupts state.
+  The shared context lives on one thread: GL work from anywhere else goes through
+  `glcontext.on_gl_thread(fn)` (a context current in one thread fails in every other).
+- Text files are read and written with `encoding="utf-8"` (Windows defaults to cp1252).
 - Golden stills live in `tests/golden/<software|gpu>/`; regenerate with
   `PHASOR_UPDATE_GOLDEN=1 uv run pytest -k golden` and look at them before committing.
 - Layout runs only inside `layout/bake.py`, and only `Engine` runs or applies the bake.
