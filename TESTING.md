@@ -50,7 +50,7 @@ Then the long ones: `$env:PHASOR_LONG_RENDER=2000; uv run pytest tests/test_gpu.
 
 On the owner's PC (RTX 4070 Ti, Windows 11, CuPy 14.2): all 58 GPU tests pass, and the full
 suite passes with OpenGL on the RTX card (1,178 passed). `phasor bench` saved. Still to do:
-GPU reference pictures, 2,000 frames, the packaged app, real TeX.
+2,000 frames, the packaged app, real TeX.
 
 | # | What | Status |
 |---|---|---|
@@ -58,7 +58,7 @@ GPU reference pictures, 2,000 frames, the packaged app, real TeX.
 | B2 | Windows paths: spaces, backslashes, a non-English user name, CRLF, deleting a temp file still open, `%APPDATA%` settings | to do |
 | B3 | Packaged `.exe`: build, start with no console window, Start-menu shortcut, exports that do not flash a console | to do |
 | B4 | CUDA: every kernel against NumPy on the card; CUDA picked automatically; CUDA frames reach OpenGL unchanged (odd sizes, HDR) | **pass** 2026-11-21 on an RTX 4070 Ti, Windows 11 (58 GPU tests; two bugs found and fixed first) |
-| B5 | GPU reference pictures (`tests/golden/gpu/`): regenerate and look; the same kernel and the same whole frame twice are identical; a whole frame on the card matches the NumPy frame | tests written, to run |
+| B5 | GPU reference pictures (`tests/golden/gpu/`): regenerate and look; the same kernel and the same whole frame twice are identical; a whole frame on the card matches the NumPy frame | **done** 2026-11-21: 17 pictures from the RTX 4070 Ti, checked by eye; 16 match the software ones (SSIM >= 0.99, antialiasing only). `riemann_sqrt` depended on the speech engine (cue times); its storyboard now uses estimated timing everywhere |
 | B6 | Deep zoom at 1e-30 on the card against exact iteration; real float64 on the card; tiling and supersampling; a 4K frame within the VRAM budget; the card faster than NumPy; `phasor bench`; memory flat over 300 (or 2,000) frames; clean fallback with the card hidden or CuPy broken | tests written, to run (fallback passes on Linux) |
 | B7 | A packaged app with CuPy in it: `PHASOR_PACKAGE_GPU=1` and `PHASOR_TEST_PACKAGE=1`, then `pytest tests/test_packaging.py` | tests written, to run |
 | B8 | Real TeX (MiKTeX): the LaTeX engine end to end, conversion on real LaTeX, a clear message for a missing LaTeX package | to do |

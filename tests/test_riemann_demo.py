@@ -27,6 +27,26 @@ def engine():
 
 
 @functools.cache
+def estimated():
+    """The demo with estimated narration timing, as on a machine without a speech engine.
+    The golden storyboard uses it, so the picture does not depend on whether espeak is
+    installed (its timing moves every cue and so the whole orbit)."""
+    import shutil
+    import tempfile
+
+    import phasor.voice as voice
+
+    real = voice.espeak_available
+    voice.espeak_available = lambda: False
+    try:
+        script = Path(tempfile.mkdtemp(prefix="phasor_riemann_")) / DEMO.name
+        shutil.copy(DEMO, script)  # no speech cache beside it
+        return load(script)
+    finally:
+        voice.espeak_available = real
+
+
+@functools.cache
 def log():
     return tuple(engine().events())  # 10 Hz plus every marker, real pixels
 
@@ -66,7 +86,7 @@ def test_golden_storyboard():
     from phasor.render.output import save_png
     from tests.ssim import ssim
 
-    e = engine()
+    e = estimated()
     m = e.document.timeline.markers
     klass = e.pass_runner().renderer_class()
     path = GOLDEN / klass / "riemann_sqrt.png"
@@ -78,19 +98,12 @@ def test_golden_storyboard():
     assert ssim(sheet, np.asarray(Image.open(path).convert("RGB"))) >= 0.99
 
 
-def test_without_a_speech_engine_the_orbit_is_clean_too(tmp_path, monkeypatch):
+def test_without_a_speech_engine_the_orbit_is_clean_too():
     """Without espeak (the owner's Windows PC) narration timing is estimated, every cue
     moves, and the solver plans another orbit. That orbit once crossed the walk in front of
     the branch point (19.1 s) and the lower sheet's point (20.8 s): stage 2 weighed hidden
     shares by priority, so a medium goal 86% hidden looked fine (found 2026-11-21)."""
-    import shutil
-
-    import phasor.voice as voice
-
-    monkeypatch.setattr(voice, "espeak_available", lambda: False)
-    script = tmp_path / DEMO.name  # no speech cache beside it
-    shutil.copy(DEMO, script)
-    e = load(script)
-    assert not list(tmp_path.glob("*.narration/*.wav"))  # estimated: no speech was made
+    e = estimated()
+    assert not list(e.base_dir.glob("*.narration/*.wav"))  # estimated: no speech was made
     assert [str(i) for i in e.lint(strict=True)] == []
     assert problems(e.events()) == []
