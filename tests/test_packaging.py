@@ -100,7 +100,7 @@ def test_the_app_renders_a_scene_with_typeset_maths(built, tmp_path):
 @pytest.mark.slow
 def test_the_app_bundles_its_examples(built):
     ex = built.parent / "_internal" / "examples"
-    assert (ex / "julia_explorer.py").exists() and (ex / "residue_theorem.narration").exists()
+    assert (ex / "julia_explorer.py").exists() and (ex / "residue_theorem.py").exists()
 
 
 @pytest.mark.slow
