@@ -7,7 +7,8 @@ thread index. ``EmuGpu`` stands in for ``registry.Gpu``, so the real launcher co
 argument order, types and the output buffer are all exercised.
 
 What this does not cover: NVRTC accepting the source, CuPy's argument passing, and GPU
-floating point (fused multiply-add). Those need the ``gpu``-marked tests on real hardware.
+floating point (the card compiles without fused multiply-add, like this emulator,
+but its exp, log and sin are not libm's). Those need the ``gpu``-marked tests on real hardware.
 """
 
 from __future__ import annotations
@@ -42,8 +43,44 @@ def compiler() -> str | None:
     return shutil.which("g++") or shutil.which("clang++")
 
 
+class DeviceArray(np.ndarray):
+    """An array "on the card". CuPy refuses host (NumPy) arrays in ``ascontiguousarray`` and
+    in kernel arguments; this stand-in refuses them too, so a launcher that forgets
+    ``cp.asarray`` fails here and not only on an NVIDIA machine."""
+
+
+class _StrictCupy:
+    """The part of CuPy launchers may use, with CuPy's rule that host arrays must be copied
+    to the device with ``asarray`` first."""
+
+    float32, float64, int32 = np.float32, np.float64, np.int32
+
+    @staticmethod
+    def asarray(a, dtype=None):
+        return np.array(a, dtype=dtype, copy=True).view(DeviceArray)
+
+    @staticmethod
+    def ascontiguousarray(a, dtype=None):
+        if not isinstance(a, DeviceArray):
+            raise TypeError(f"Argument 'a' has incorrect type (expected a device array, got "
+                            f"{type(a).__module__}.{type(a).__name__})")  # fmt: skip
+        return np.ascontiguousarray(a, dtype=dtype).view(DeviceArray)
+
+    @staticmethod
+    def empty(shape, dtype=np.float32):
+        return np.empty(shape, dtype=dtype).view(DeviceArray)
+
+    @staticmethod
+    def empty_like(a, dtype=None):
+        return np.empty_like(a, dtype=dtype).view(DeviceArray)
+
+    def __getattr__(self, name):
+        raise AttributeError(f"launchers may use only asarray, ascontiguousarray, empty, "
+                             f"empty_like and dtypes from cp, not cp.{name}")  # fmt: skip
+
+
 class EmuGpu:
-    cp = np
+    cp = _StrictCupy()
 
     def __init__(self) -> None:
         self._libs: dict[str, ctypes.CDLL] = {}
@@ -69,6 +106,8 @@ class EmuGpu:
         cargs, argtypes = [], []
         for a in args:
             if isinstance(a, np.ndarray):
+                if not isinstance(a, DeviceArray):
+                    raise TypeError("a host (NumPy) array passed to a kernel: cp.asarray it")
                 assert a.flags.c_contiguous and a.dtype in (np.float32, np.float64), (
                     a.dtype,
                     a.flags,

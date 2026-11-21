@@ -137,12 +137,12 @@ def tonemap(
     if not 0.0 < knee < 1.0:
         raise KernelError("knee must be between 0 and 1")
     _check(tile, image)
-    src = gpu.cp.ascontiguousarray(image)
+    src = gpu.cp.ascontiguousarray(gpu.cp.asarray(image))
     if bloom is None:
         glow, bloom_strength = src, 0.0
     else:
         _check(tile, bloom)
-        glow = gpu.cp.ascontiguousarray(bloom)
+        glow = gpu.cp.ascontiguousarray(gpu.cp.asarray(bloom))
     out = gpu.cp.empty_like(src)
     compiled = gpu.compile(SOURCE, "phasor_tonemap")
     args = (np.int32(tile.n), np.float32(exposure), np.float32(knee), src, glow,
@@ -183,7 +183,7 @@ def gauss(gpu, tile: Tile, image, sigma: float, axis: int):
     _check(tile, image)
     if axis not in (0, 1) or sigma <= 0:
         raise KernelError("gauss needs axis 0 or 1 and sigma > 0")
-    src = gpu.cp.ascontiguousarray(image)
+    src = gpu.cp.ascontiguousarray(gpu.cp.asarray(image))
     out = gpu.cp.empty_like(src)
     compiled = gpu.compile(SOURCE, "phasor_gauss")
     args = (np.int32(tile.n), np.int32(tile.w), np.int32(tile.h), np.int32(axis),
@@ -213,7 +213,7 @@ def bright(gpu, tile: Tile, image, threshold: float = 1.0):
     """Keep only what is brighter than ``threshold`` (luminance), scaled so the excess is
     kept and the hue is unchanged. Linear HDR: only emissive things exceed 1."""
     _check(tile, image)
-    src = gpu.cp.ascontiguousarray(image)
+    src = gpu.cp.ascontiguousarray(gpu.cp.asarray(image))
     out = gpu.cp.empty_like(src)
     compiled = gpu.compile(SOURCE, "phasor_bright")
     gpu.launch(compiled, tile.n, (np.int32(tile.n), np.float32(threshold), src, out))
@@ -255,7 +255,7 @@ def resize(gpu, tile: Tile, image):
     """Resample a whole image to the tile's size. Halving a dimension averages pixel pairs
     exactly, so repeated halving builds a box-filtered pyramid (bloom)."""
     _resize_check(tile, image)
-    src = gpu.cp.ascontiguousarray(image)
+    src = gpu.cp.ascontiguousarray(gpu.cp.asarray(image))
     out = gpu.cp.empty((tile.h, tile.w, 4), dtype=gpu.cp.float32)
     compiled = gpu.compile(SOURCE, "phasor_resize")
     args = (np.int32(tile.n), np.int32(src.shape[1]), np.int32(src.shape[0]),
@@ -351,7 +351,7 @@ def fringe(gpu, tile: Tile, image, amount: float = 0.004):
     inward by ``amount`` of the distance from the center (plus a small fixed diagonal), so
     halos split into warm and cool rims. Applied to the bloom only: paint stays exact."""
     _check(tile, image)
-    src = gpu.cp.ascontiguousarray(image)
+    src = gpu.cp.ascontiguousarray(gpu.cp.asarray(image))
     out = gpu.cp.empty_like(src)
     compiled = gpu.compile(LENS, "phasor_fringe")
     gpu.launch(compiled, tile.n, (np.int32(tile.n), np.int32(tile.w), np.int32(tile.h),
@@ -380,7 +380,7 @@ def vignette(gpu, tile: Tile, image, strength: float = 0.3):
     """Darken toward the corners (theme ``[bloom] vignette``): 1 - strength r^4, r = 1 at a
     corner. After the tone map; the middle of the frame is left exactly as it was."""
     _check(tile, image)
-    src = gpu.cp.ascontiguousarray(image)
+    src = gpu.cp.ascontiguousarray(gpu.cp.asarray(image))
     out = gpu.cp.empty_like(src)
     compiled = gpu.compile(LENS, "phasor_vignette")
     gpu.launch(compiled, tile.n, (np.int32(tile.n), np.int32(tile.w), np.int32(tile.h),

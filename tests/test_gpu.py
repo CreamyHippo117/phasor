@@ -47,8 +47,10 @@ def test_auto_picks_cuda_and_the_answer_lives_on_the_card():
     params = {"center": (-0.6, 0.0), "height": 2.6, "max_iter": 64}
     out = gpu.run("escape", Tile.full(64, 36), **params)
     assert isinstance(out, cupy.ndarray)
-    np.testing.assert_allclose(_host(out), get("escape").reference(Tile.full(64, 36), **params),
-                               atol=1e-3)  # fmt: skip
+    from tests.test_kernels import _close
+
+    _close("escape", _host(out), get("escape").reference(Tile.full(64, 36), **params),
+           strict=False)  # fmt: skip
 
 
 # ---------------------------------------------------------------- the same frame twice
@@ -121,7 +123,7 @@ def test_float64_on_the_card_is_real_float64():
     f64 = _host(gpu.run("escape", tile, backend="cuda", precision="f64", **params))
     assert len(np.unique(f32)) < 10 < 500 < len(np.unique(f64))
     want = get("escape").reference(tile, precision="f64", **params)
-    assert (np.abs(f64 - want) < 1e-2).mean() > 0.98  # fused multiply-add may move a few
+    assert (np.abs(f64 - want) < 1e-2).mean() > 0.98
 
 
 # ---------------------------------------------------------------- whole frames

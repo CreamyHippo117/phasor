@@ -271,7 +271,7 @@ def palette(gpu, tile: Tile, field, lut, density=0.35, offset=0.0, inside=(0.0, 
     """Color an escape field: a cyclic table indexed by sqrt(count), so bands stay even as
     counts grow; points in the set get ``inside``. ``tile`` is the field's own extent."""
     table, inside_rgb = _palette_args(field, lut, inside)
-    src = gpu.cp.ascontiguousarray(field)
+    src = gpu.cp.ascontiguousarray(gpu.cp.asarray(field))
     out = gpu.cp.empty((*src.shape, 4), dtype=gpu.cp.float32)
     compiled = gpu.compile(PALETTE, "phasor_palette")
     args = (np.int32(src.size), src, gpu.cp.asarray(table), np.int32(len(table)),

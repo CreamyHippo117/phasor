@@ -53,7 +53,7 @@ Then the long ones: `$env:PHASOR_LONG_RENDER=2000; uv run pytest tests/test_gpu.
 | B1 | Full suite on Windows **without** OpenGL (what CI sees) and **with** it | to do |
 | B2 | Windows paths: spaces, backslashes, a non-English user name, CRLF, deleting a temp file still open, `%APPDATA%` settings | to do |
 | B3 | Packaged `.exe`: build, start with no console window, Start-menu shortcut, exports that do not flash a console | to do |
-| B4 | CUDA: every kernel against NumPy on the card; CUDA picked automatically; CUDA frames reach OpenGL unchanged (odd sizes, HDR) | tests written, to run |
+| B4 | CUDA: every kernel against NumPy on the card; CUDA picked automatically; CUDA frames reach OpenGL unchanged (odd sizes, HDR) | first run 2026-11-21 (RTX 4070 Ti, Windows 11): found two bugs, fixed, rerun to do |
 | B5 | GPU reference pictures (`tests/golden/gpu/`): regenerate and look; the same kernel and the same whole frame twice are identical; a whole frame on the card matches the NumPy frame | tests written, to run |
 | B6 | Deep zoom at 1e-30 on the card against exact iteration; real float64 on the card; tiling and supersampling; a 4K frame within the VRAM budget; the card faster than NumPy; `phasor bench`; memory flat over 300 (or 2,000) frames; clean fallback with the card hidden or CuPy broken | tests written, to run (fallback passes on Linux) |
 | B7 | A packaged app with CuPy in it: `PHASOR_PACKAGE_GPU=1` and `PHASOR_TEST_PACKAGE=1`, then `pytest tests/test_packaging.py` | tests written, to run |
@@ -76,6 +76,18 @@ Then the long ones: `$env:PHASOR_LONG_RENDER=2000; uv run pytest tests/test_gpu.
 | C11 | Docs match the code: every public name in `API.md`, the command table, the AI tool list | P3 | to do |
 | C12 | Light themes and every look pass lint on every example | P3 | to do |
 | C13 | Sketching with a real pen; Manim import against real Manim | P3 | to do (needs the owner) |
+
+## Found on the owner's PC (2026-11-21, RTX 4070 Ti, Windows 11, CuPy 14.2)
+
+- **Every final render with CUDA crashed**: the picture kernels (glow, tone map, resize,
+  fringe, vignette, fractal palette) passed host arrays to `cp.ascontiguousarray`, which CuPy
+  refuses. Fixed (`cp.asarray` first). The CPU stand-in for the card (`tests/cuda_emu.py`)
+  now refuses host arrays the same way, so this kind of bug fails on Linux too.
+- **The card rounded differently from the reference**: NVRTC fuses `a*b + c` by default, and
+  fractal edges amplify the difference (3% of a tile, 10% of a deep float64 view). Kernels now
+  compile with `--fmad=false`.
+- OpenGL ran on the processor's built-in AMD graphics, not the RTX card. Windows setting:
+  Settings > System > Display > Graphics, set Python to "High performance".
 
 ## Found and not fixed
 

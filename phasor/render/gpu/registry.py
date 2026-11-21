@@ -29,6 +29,11 @@ from phasor.render.gpu.budget import Tile
 BLOCK = 256
 HEADER = (Path(__file__).parent / "complex.cuh").read_text(encoding="utf-8")
 PRECISIONS = {"f32": (), "f64": ("-DPHASOR_F64",)}
+# No fused multiply-add: the card then rounds every + and * like the NumPy reference, so a
+# fractal's chaotic edge comes out the same on both (found on an RTX 4070 Ti, 2026-11-21:
+# with FMA, 3% of a Mandelbrot tile and 10% of a 1e-11 float64 view moved). Costs a little
+# speed; the reference is the specification.
+NVRTC_OPTIONS = ("--fmad=false",)
 
 
 class KernelError(RuntimeError):
@@ -100,7 +105,7 @@ class Gpu:
         key = (source, entry, precision)
         if key not in self._compiled:
             self._compiled[key] = self.cp.RawKernel(
-                HEADER + source, entry, options=PRECISIONS[precision]
+                HEADER + source, entry, options=NVRTC_OPTIONS + PRECISIONS[precision]
             )
         return self._compiled[key]
 
