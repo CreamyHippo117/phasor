@@ -4,7 +4,7 @@ The plan agreed with the owner on 2026-11-19, kept here so it outlives any one s
 Update the status column as items land. Commands are in `CLAUDE.md`.
 
 Status today: **1,136 tests** (`uv run pytest`): all pass on Linux with software OpenGL;
-22 need CUDA, 1 needs TeX, 1 a GPU for the doctor, 4 build the packaged app (opt-in).
+60 need CUDA, 1 needs TeX, 1 a GPU for the doctor, 4 build the packaged app (opt-in).
 **Untested: Windows, NVIDIA/CUDA, macOS, a real TeX install, a real pen, real handwriting.**
 
 How to run the opt-in parts:
@@ -33,15 +33,30 @@ PHASOR_UPDATE_GOLDEN=1 uv run pytest -k golden                 # regenerate refe
 
 ## B. Windows and NVIDIA (on the owner's PC)
 
+GPU tests are written (`tests/test_gpu.py`, 38 tests, plus 22 in `test_kernels.py` and
+`test_doctor.py`); they skip themselves without a card. On the PC, in the phasor folder:
+
+```bash
+uv sync --extra gl --extra encode --extra gui --extra mcp --extra gpu
+uv run phasor doctor
+uv run pytest
+uv run pytest tests/test_gpu.py tests/test_kernels.py -v -m gpu
+uv run phasor bench
+```
+
+Then the long ones: `$env:PHASOR_LONG_RENDER=2000; uv run pytest tests/test_gpu.py -k memory`
+(PowerShell), and the GPU reference pictures: `$env:PHASOR_UPDATE_GOLDEN=1; uv run pytest -k golden`
+(look at `tests/golden/gpu/` before committing them).
+
 | # | What | Status |
 |---|---|---|
 | B1 | Full suite on Windows **without** OpenGL (what CI sees) and **with** it | to do |
 | B2 | Windows paths: spaces, backslashes, a non-English user name, CRLF, deleting a temp file still open, `%APPDATA%` settings | to do |
 | B3 | Packaged `.exe`: build, start with no console window, Start-menu shortcut, exports that do not flash a console | to do |
-| B4 | CUDA: the 22 skipped kernel tests, and the CUDA to OpenGL hand-off | to do |
-| B5 | GPU reference pictures (`tests/golden/gpu/`): regenerate and look; the same frame twice is identical on the GPU | to do |
-| B6 | GPU deep zoom precision; timings saved (`phasor bench`); memory flat over a 2,000-frame render; clean fallback without a driver | to do |
-| B7 | A packaged app with CuPy in it | to do |
+| B4 | CUDA: every kernel against NumPy on the card; CUDA picked automatically; CUDA frames reach OpenGL unchanged (odd sizes, HDR) | tests written, to run |
+| B5 | GPU reference pictures (`tests/golden/gpu/`): regenerate and look; the same kernel and the same whole frame twice are identical; a whole frame on the card matches the NumPy frame | tests written, to run |
+| B6 | Deep zoom at 1e-30 on the card against exact iteration; real float64 on the card; tiling and supersampling; a 4K frame within the VRAM budget; the card faster than NumPy; `phasor bench`; memory flat over 300 (or 2,000) frames; clean fallback with the card hidden or CuPy broken | tests written, to run (fallback passes on Linux) |
+| B7 | A packaged app with CuPy in it: `PHASOR_PACKAGE_GPU=1` and `PHASOR_TEST_PACKAGE=1`, then `pytest tests/test_packaging.py` | tests written, to run |
 | B8 | Real TeX (MiKTeX): the LaTeX engine end to end, conversion on real LaTeX, a clear message for a missing LaTeX package | to do |
 
 ## C. Gaps in the suite

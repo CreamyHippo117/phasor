@@ -114,3 +114,15 @@ def test_the_window_starts_and_stays_up(built, tmp_path):
         p.terminate()
         out = p.communicate(timeout=20)[0]
     assert "did not load" not in out  # the Sketch tab came along too
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(not os.environ.get("PHASOR_PACKAGE_GPU"), reason="PHASOR_PACKAGE_GPU=1")
+def test_the_gpu_app_runs_kernels_on_the_card(built, tmp_path):
+    """B7: built with PHASOR_PACKAGE_GPU=1 on an NVIDIA machine, the app finds the card."""
+    from tests.conftest import cuda_available
+
+    if not cuda_available():
+        pytest.skip("no CUDA device on this machine")
+    r = _run(built, "--cli", "doctor", tmp=tmp_path)
+    assert "[ok  ] rawkernel" in r.stdout and "tier:    A" in r.stdout, r.stdout

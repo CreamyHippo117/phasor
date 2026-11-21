@@ -3,10 +3,11 @@
 #   uv run pyinstaller packaging/phasor.spec --noconfirm
 # Output: dist/phasor/ (a folder app; on macOS also dist/phasor.app).
 # Build on each platform for that platform: PyInstaller does not cross-compile.
+import os
 import sys
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
+from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_submodules, copy_metadata
 
 ROOT = Path(SPECPATH).parent
 ICON = ROOT / "phasor" / "gui" / "assets" / ("icon.ico" if sys.platform == "win32" else "icon.png")
@@ -18,13 +19,28 @@ datas += collect_data_files("matplotlib", subdir="mpl-data")  # mathtext fonts
 datas += [(str(ROOT / "docs" / "ai"), "phasor/_docs/docs/ai"),
           (str(ROOT / "examples"), "examples")]
 hidden = collect_submodules("phasor") + ["moderngl", "glcontext", "av", "kiwisolver"]
+binaries = []
+excludes = ["cupy", "tkinter", "IPython", "ipywidgets", "notebook", "pytest"]
+# PHASOR_PACKAGE_GPU=1 bundles CuPy and its CUDA libraries (NVIDIA machines; about 1 GB more).
+# The app still runs on a machine without a card: the kernels fall back to NumPy.
+if os.environ.get("PHASOR_PACKAGE_GPU"):
+    excludes.remove("cupy")
+    for package in ("cupy", "cupy_backends", "fastrlock", "nvidia"):
+        try:
+            d, b, h = collect_all(package)
+        except Exception:  # nvidia.* wheels are absent with older CuPy
+            continue
+        datas += d
+        binaries += b
+        hidden += h
 
 a = Analysis(
     [str(ROOT / "packaging" / "entry.py")],
     pathex=[str(ROOT)],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hidden,
-    excludes=["cupy", "tkinter", "IPython", "ipywidgets", "notebook", "pytest"],
+    excludes=excludes,
     noarchive=False,
 )
 pyz = PYZ(a.pure)
