@@ -69,23 +69,23 @@
 - `parametric_curve`: flash, fx, fy, fz, t_range, samples, pos, scale, progress, color_by, hue, to_fx, to_fy, to_fz, blend
 - `parametric_surface`: flash, fx, fy, fz, u_range, v_range, res, pos, scale, color_by, color_expr, with_map, domain_pos, domain_size, morph, to_fx, to_fy, to_fz, blend
 - `partial_sum`: flash, kind, terms, pos, extent, reveal
-- `pde_field`: flash, kind, time, pos, size, n, diffusivity, speed, mode, feed, kill, seed, scale, smooth, isolines
+- `pde_field`: flash, smooth, isolines, hue_cycles, hue, fade, ambient, contrast, kind, time, pos, size, n, diffusivity, speed, mode, feed, kill, seed, scale
 - `pde_modes`: flash, time, pos, extent, length, diffusivity, modes, count, boundary, components, ymax
 - `pde_profile`: flash, kind, time, pos, extent, length, n, diffusivity, speed, modes, potential, dt, exact, ymax, boundary, method
-- `pde_slice`: flash, time, pos, side, cube, n, diffusivity, mode, axis, at, scale, smooth, isolines
-- `pde_surface`: flash, kind, time, pos, size, n, diffusivity, speed, mode, feed, kill, seed, scale, height
+- `pde_slice`: flash, smooth, isolines, hue_cycles, hue, fade, ambient, contrast, time, pos, side, cube, n, diffusivity, mode, axis, at, scale
+- `pde_surface`: flash, kind, time, pos, size, n, diffusivity, speed, mode, feed, kill, seed, scale, height, hue_cycles, hue, contrast, lines
 - `permutation`: flash, perm, pos, spacing, progress
 - `phase_portrait`: flash, f, g, constants, pos, extent, seeds, n_seeds, t_end, steps, progress, backward, flow, flow_spacing, nullclines, hue_cycles, seed
 - `point_cloud`: flash, source, degree, coefficients, kind, constants, max_iter, points, values, count, seed, pos, size, scale, point_size, exposure, hue, color_by, twist, twinkle, white
 - `polygon`: flash, n, pos, r, rotation, flip, fill
-- `pressure_slice`: flash, size, origin, source, z, time, dx, material, absorption, frequency, gain, seed, smooth, isolines
+- `pressure_slice`: flash, smooth, isolines, hue_cycles, hue, fade, ambient, contrast, size, origin, source, z, time, dx, material, absorption, frequency, gain, seed
 - `riemann_sum`: flash, function, a, b, n, rule, pos
 - `riemann_surface`: flash, kind, pos, radius, height, scale, rings, segments
 - `room`: flash, size, origin, material, absorption
 - `room3d`: flash, size, origin, path, scale, material, absorption, walls, edge_angle
 - `sound_rays`: flash, room, source, time, speed, hue_step, count, bounces, trail, seed
 - `source`: flash, pos, r
-- `spectrogram`: flash, f0, f1, duration, fs, nwin, pos, size, smooth, isolines
+- `spectrogram`: flash, smooth, isolines, hue_cycles, hue, fade, ambient, contrast, f0, f1, duration, fs, nwin, pos, size
 - `spectrum`: flash, frequencies, amplitudes, window, samples, fs, pos, extent, bins
 - `subgroup_lattice`: flash, group, pos, width, height
 - `taylor`: flash, function, center, order, xmin, xmax, ymax, pos

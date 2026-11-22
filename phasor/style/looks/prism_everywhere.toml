@@ -131,38 +131,72 @@ glow = "strong"
 [defaults.callout.style]
 glow = "soft"
 
-# heat maps: smooth, glowing where strong, contour lines of light (BEAUTY.md item 2)
+# heat maps: smooth, dark where quiet and glowing where strong in spectrum hues that
+# run with the value, contour lines of light, edges melting into the dark
+# (BEAUTY.md item 2; the same values as heatmap.PRISM)
 [defaults.pde_field.params]
 dim = 0.88  # a little see-through: what is behind glows through
 smooth = true
 isolines = 8
+hue_cycles = 1.6
+fade = 0.1
+ambient = 0.0
+contrast = 2.0
 
 [defaults.pde_field.style]
 glow = "soft"
+colormap = "spectrum"
 
 [defaults.pde_slice.params]
 dim = 0.88  # a little see-through: what is behind glows through
 smooth = true
 isolines = 8
+hue_cycles = 1.6
+fade = 0.1
+ambient = 0.0
+contrast = 2.0
 
 [defaults.pde_slice.style]
 glow = "soft"
+colormap = "spectrum"
 
 [defaults.pressure_slice.params]
 dim = 0.88  # a little see-through: what is behind glows through
 smooth = true
 isolines = 8
+hue_cycles = 1.6
+fade = 0.1
+ambient = 0.0
+contrast = 2.0
 
 [defaults.pressure_slice.style]
 glow = "soft"
+colormap = "spectrum"
 
 [defaults.spectrogram.params]
 dim = 0.88  # a little see-through: what is behind glows through
 smooth = true
 isolines = 8
+hue_cycles = 1.6
+fade = 0.1
+ambient = 0.0
+contrast = 2.0
 
 [defaults.spectrogram.style]
 glow = "soft"
+colormap = "spectrum"
+
+# the height mode in 3D: a dark landscape in spectrum hues under a net of glowing
+# lines (the same values as pde.Surface's prism preset)
+[defaults.pde_surface.params]
+hue_cycles = 1.6
+contrast = 1.5
+lines = 24
+
+[defaults.pde_surface.style]
+colormap = "spectrum"
+glow = "strong"
+material = "glass"
 
 # point clouds: palette hue, glow and haze (BEAUTY.md item 3)
 [defaults.point_cloud.params]
@@ -215,9 +249,6 @@ glow = "soft"
 glow = "strong"
 
 [defaults.parametric_surface.style]
-material = "glass"
-
-[defaults.pde_surface.style]
 material = "glass"
 
 [defaults.riemann_surface.style]

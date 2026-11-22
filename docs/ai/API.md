@@ -772,6 +772,17 @@ shine and haze and quiet parts melt into the background. A wave glows both ways,
 and cool for down (`positive` and `negative` roles). `preset="prism"` sets all three; the
 `prism` looks use it. Plain pictures are unchanged.
 
+The prism preset also colours by the spectrum: `hue_cycles` > 0 reads the `colormap` role
+(`spectrum` in the prism looks, or the scene's `palette`) as a wheel, its hue turning that
+many times over the value range, so each contour line has the hue of its level; on a
+`Spectrogram` the hue runs up the frequency axis, so a sliding tone's trace runs through the
+spectrum like a prism stroke. Brightness then comes from the field's strength alone: the
+glow weight raised to `contrast` (above 1, only the strongest parts light up), with
+`ambient` the share a quiet pixel keeps (0: the dark ground). `fade` melts the edges into the
+background over that share of the shorter side, so there is no square border and no square
+halo. `hue` turns the colours; a lively look drifts it a little. All default to the plain
+picture; they are taste knobs for looks and presets, not numbers for a scene to type.
+
 ```python
 from phasor import Scene
 from phasor.domains import pde
@@ -779,6 +790,25 @@ from phasor.domains import pde
 hot = Scene("hot plate", look="prism", passes=None)
 hot.add(pde.Field(id="plate", kind="heat", mode=(0, 0), time=0.1, scale=0.3))
 assert hot.engine.document.object("plate").params["isolines"] == 8
+plate = hot.engine.document.object("plate")
+assert plate.params["hue_cycles"] > 0 and plate.params["fade"] > 0
+assert plate.style["colormap"] == "spectrum"
+```
+
+The height mode, `pde.Surface`, has a prism preset too (the prism looks use it): with
+`hue_cycles` > 0 the surface is dark where the field is quiet and takes the spectrum's hue of
+its value where it is strong (`contrast` as above), under a net of `lines` grid lines each
+way drawn as glowing strokes in the same hues (`stroke` and `glow` roles). Give the scene an
+orbit camera (`examples/prism_drum_3d.py`).
+
+```python
+from phasor import Scene
+from phasor.domains import pde
+
+drum = Scene("drum", look="prism", passes=None)
+drum.use_camera("orbit")
+drum.add(pde.Surface(id="skin", kind="wave", mode=(2, 3), scale=1.2))
+assert drum.engine.document.object("skin").params["lines"] > 0
 ```
 
 **Point clouds.** `from phasor import cloud`. `cloud.PointCloud` splats many points (a

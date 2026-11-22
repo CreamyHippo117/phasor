@@ -26,7 +26,7 @@ from phasor.core.objects import Bounds, DrawContext, ObjectBase, ParamsBase, Pas
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
 from phasor.domains import fourier_math as fm
-from phasor.domains.heatmap import heat_pixels, lut_colour
+from phasor.domains.heatmap import PRISM, HeatParams, heat_pixels, lut_colour, wheel_colour
 from phasor.domains.strokes import circle, disc, polyline, with_alpha
 
 
@@ -323,12 +323,12 @@ class Spectrogram(ObjectBase):
 
     type: ClassVar[str] = "spectrogram"
     Style: ClassVar = {"colormap": ("colormap", "ocean"), "glow": ("glow", "none")}
-    Presets: ClassVar = {
-        # the prism look: smooth, glowing where strong, contour lines of light
-        "prism": {"params": {"smooth": True, "isolines": 8}, "style": {"glow": "soft"}},
-    }
+    # the prism look (heatmap.PRISM); here the hue runs up the frequency axis, so a sliding
+    # tone's trace runs through the spectrum the way hue runs along a prism stroke
+    Presets: ClassVar = {"prism": PRISM}
+    Life: ClassVar = frozenset({"hue", "glow"})
 
-    class Params(ParamsBase):
+    class Params(HeatParams):
         f0: float = Field(200.0, gt=0)
         f1: float = Field(1200.0, gt=0)
         duration: float = Field(1.0, gt=0)
@@ -336,8 +336,6 @@ class Spectrogram(ObjectBase):
         nwin: int = Field(256, ge=16, le=4096)
         pos: Vec3 = (0.0, 0.0, 0.0)  # centre
         size: tuple[float, float] = (6.0, 3.0)
-        smooth: bool = False  # bicubic between grid values (the prism look); else as before
-        isolines: int = Field(0, ge=0, le=64)  # contour levels drawn as thin light
 
     def _rect(self, p):
         c = np.asarray(p.pos, dtype=np.float64) - np.array([p.size[0] / 2, p.size[1] / 2, 0.0])
@@ -364,11 +362,16 @@ class Spectrogram(ObjectBase):
         corner, right, up = self._rect(p)
         glow = float(me.style.get("glow", 1.0))
         paint = lut_colour(lut, "linear" if p.smooth else "nearest")
+        wheel = wheel_colour(me.style["colormap"], p)
+
+        def up_hue(v, u, h):  # prism: the hue of the frequency (its place up the panel)
+            return np.broadcast_to(wheel(h)[:, None], (*v.shape, 3))
+
         pixels = heat_pixels(
             mag.T, p.size, lambda v: paint(np.sqrt(np.clip(v, 0, 1))), cells=True,
-            how="smooth" if p.smooth else "nearest", isolines=p.isolines,
-            level=lambda v: np.sqrt(np.clip(v, 0, 1)),
+            how="smooth" if p.smooth else "nearest", level=lambda v: np.sqrt(np.clip(v, 0, 1)),
             weight=(lambda v: np.sqrt(np.clip(v, 0, 1))) if glow > 1 else None,
-            background=state.background,
+            background=state.background, **p.drawing(),
+            colour_at=up_hue if p.hue_cycles > 0 else None,
         )  # fmt: skip
         ctx.field(corner, right, up, pixels=pixels, opacity=p.opacity, glow=glow)

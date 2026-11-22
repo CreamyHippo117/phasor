@@ -97,6 +97,11 @@ kind = "physics"
 tier = "technique"
 teaches = "Heat maps in the prism look: a spreading hot spot, a drum mode, a spectrogram, glowing isolines"
 
+[examples.prism_drum_3d]
+kind = "physics"
+tier = "technique"
+teaches = "The prism look in 3D: a vibrating drum as a dark landscape under a net of glowing lines, the camera orbiting"
+
 [examples.point_cloud]
 kind = "complex"
 tier = "technique"
