@@ -33,17 +33,20 @@ SUPERSAMPLE = 2  # kernel pixels per output pixel, per side, for clean contour e
 def _parse(source: str):
     from phasor.render.gpu.codegen import ComplexFunction
 
-    return ComplexFunction.parse(source)
+    return ComplexFunction.parse(source, constant=True)  # ``a``: DomainColoring's constant
 
 
-@functools.cache
-def _zeros_and_poles(source: str) -> tuple[tuple[complex, ...], tuple[complex, ...]]:
-    """Zeros and poles of a rational function, with multiplicity; () for anything else."""
+@functools.lru_cache(maxsize=256)
+def _zeros_and_poles(
+    source: str, a: complex = 0j
+) -> tuple[tuple[complex, ...], tuple[complex, ...]]:
+    """Zeros and poles of a rational function (with the constant ``a`` put in), with
+    multiplicity; () for anything else."""
     import sympy as sp
 
-    from phasor.render.gpu.codegen import Z
+    from phasor.render.gpu.codegen import A, Z
 
-    expr = _parse(source).expr
+    expr = _parse(source).expr.subs(A, sp.Float(a.real) + sp.I * sp.Float(a.imag))
     num, den = sp.fraction(sp.cancel(sp.together(expr)))
     if not (num.is_polynomial(Z) and den.is_polynomial(Z)):
         return (), ()
@@ -116,6 +119,8 @@ class DomainColoring(_Plane):
         radius: float = Field(0.0, ge=0)  # > 0: the prism look, lit this far round zeros/poles
         ambient: float = Field(0.06, ge=0, le=1)  # prism look: light away from zeros and poles
         lines: int = Field(0, ge=0, le=64)  # prism look: glowing rays of phase per turn, + rings
+        # the constant ``a`` the function may use, as (re, im): animate it to move zeros/poles
+        a: tuple[float, float] = (0.0, 0.0)
 
         @field_validator("function")
         @classmethod
@@ -137,7 +142,7 @@ class DomainColoring(_Plane):
 
     def features(self, state: SceneState) -> dict[str, np.ndarray]:
         p = self.me(state).params
-        zeros, poles = _zeros_and_poles(p.function.strip())
+        zeros, poles = _zeros_and_poles(p.function.strip(), complex(*p.a))
         return {
             "center": np.asarray(p.pos),
             "zeros": self._inside(state, zeros),
@@ -152,6 +157,7 @@ class DomainColoring(_Plane):
             "kind": "domain_coloring",
             "backdrop": True,
             "function": f.source,
+            "a": [round(float(p.a[0]), 6), round(float(p.a[1]), 6)],
             "latex": f.latex(),
             "zeros": [[round(float(x), 6), round(float(y), 6)] for x, y, _ in feats["zeros"]],
             "poles": [[round(float(x), 6), round(float(y), 6)] for x, y, _ in feats["poles"]],
@@ -173,9 +179,11 @@ class DomainColoring(_Plane):
             if p.radius > 0:
                 return gpu.render("domain_glow", pw, ph, supersample=SUPERSAMPLE, function=f,
                                   lut=lut, radius=p.radius, ambient=p.ambient,
-                                  contour=p.contour, lines=p.lines, **view)  # fmt: skip
+                                  contour=p.contour, lines=p.lines, a=complex(*p.a),
+                                  **view)  # fmt: skip
             return gpu.render("domain", pw, ph, supersample=SUPERSAMPLE, function=f,
-                              contour=p.contour, soft=p.softness, lut=lut, **view)  # fmt: skip
+                              contour=p.contour, soft=p.softness, lut=lut, a=complex(*p.a),
+                              **view)  # fmt: skip
 
         ctx.field(corner, r, u, pixels=pixels, opacity=p.opacity,
                   glow=float(me.style.get("glow", 1.0)) if p.radius > 0 else 1.0)  # fmt: skip
@@ -481,12 +489,14 @@ class ComplexMap(ObjectBase):
         @field_validator("function")
         @classmethod
         def _check(cls, v: str) -> str:
-            from phasor.render.gpu.codegen import FunctionError
+            from phasor.render.gpu.codegen import A, FunctionError
 
             try:
-                _parse(v.strip())
+                f = _parse(v.strip())
             except FunctionError as e:
                 raise ValueError(str(e)) from None
+            if f.expr.has(A):
+                raise ValueError("the constant a is for cx.DomainColoring only")
             return v
 
         @field_validator("lines")

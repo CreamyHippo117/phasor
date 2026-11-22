@@ -65,7 +65,25 @@ def _state(sim, time: float):
         raise ValueError(
             f"time {time:g} is {runner.step_of(time):,} steps in (limit {MAX_STEPS:,})"
         )
-    return runner.state_at(time)
+    # Between two solver steps the state is blended linearly, so a field whose step is longer
+    # than a frame still moves every frame (a coarse wave stepped 5 frames at a time looked
+    # like 6 fps). Still pure: it depends only on the two steps either side of ``time``.
+    f = max(time, 0.0) / sim.dt
+    n0 = int(np.floor(f))
+    w = f - n0
+    a = runner.state_at(n0 * sim.dt)
+    if w < 1e-9:
+        return a
+    b = runner.state_at((n0 + 1) * sim.dt)
+    out = {}
+    for k, v in a.items():
+        if isinstance(v, np.ndarray) and np.issubdtype(v.dtype, np.inexact) and k in b:
+            m = (1 - w) * v + w * b[k]
+            m.setflags(write=False)
+            out[k] = m
+        else:
+            out[k] = v
+    return out
 
 
 # ---------------------------------------------------------------- Profile (1D)

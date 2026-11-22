@@ -23,6 +23,7 @@ from tests import cuda_emu
 FULL = Tile.full(64, 64)
 OFFSET = Tile(8, 4, 48, 40, 64, 48)  # not at the origin, not square: catches index mix-ups
 F = ComplexFunction.parse("1/(z**2 + 1)")
+FA = ComplexFunction.parse("(z**3 - 1) / (z**2 + a)", constant=True)  # a: a run-time constant
 
 
 def _rgba(seed=0, shape=(24, 32)):
@@ -70,6 +71,8 @@ CASES = {
         (OFFSET, {"function": F, "center": (0.3, -0.2), "height": 3.0, "contour": 0.0,
                   "precision": "f64"}),
         (FULL, {"function": F, "center": (0.0, 0.0), "height": 4.0, "soft": 0.8}),
+
+        (FULL, {"function": FA, "center": (0.0, 0.0), "height": 4.0, "a": 0.3 + 0.7j}),
     ],
     "domain_glow": [
         (FULL, {"function": F, "center": (0.0, 0.0), "height": 4.0, "precision": "f64"}),
@@ -78,6 +81,9 @@ CASES = {
         (FULL, {"function": F, "center": (0.0, 0.0), "height": 4.0}),
         (FULL, {"function": F, "center": (0.0, 0.0), "height": 4.0, "lines": 12,
                 "precision": "f64"}),
+
+        (FULL, {"function": FA, "center": (0.0, 0.0), "height": 4.0, "lines": 12,
+                "a": -0.2 + 0.6j, "precision": "f64"}),
     ],
     "tonemap": [
         (IMAGE_TILE, {"image": IMAGE, "exposure": 1.7}),
@@ -544,3 +550,19 @@ def test_vignette_leaves_the_middle_and_darkens_the_corners():
     assert out[20, 30, 0] == pytest.approx(1.0, abs=1e-3)
     assert out[0, 0, 0] < 0.6 and out[0, 0, 0] > 0.4  # 1 - 0.5 r^4 with r near 1
     assert (out[..., 3] == 1).all()
+
+
+def test_the_constant_a_is_a_kernel_argument_not_part_of_the_source():
+    """Animating ``a`` must not recompile: the CUDA source is the same for every value, and
+    the reference with ``a`` set matches the function with that number written in."""
+    from phasor.render.gpu.kernels.domain_coloring import domain_reference, source_for
+
+    fixed = ComplexFunction.parse("(z**3 - 1) / (z**2 + (0.3+0.7j))")
+    assert "(a," in FA.c() and "(a," not in ComplexFunction.parse("z + 1").c()
+    assert source_for(FA) == source_for(FA)  # one source, whatever a is
+    tile = Tile.full(24, 16)
+    got = domain_reference(tile, FA, (0.0, 0.0), 4.0, a=0.3 + 0.7j)
+    want = domain_reference(tile, fixed, (0.0, 0.0), 4.0)
+    assert np.allclose(got, want, atol=1e-5)
+    with pytest.raises(FunctionError):
+        ComplexFunction.parse("z + a")  # only where the caller allows the constant

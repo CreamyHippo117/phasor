@@ -336,3 +336,17 @@ def test_prism_fractal_golden_storyboard():
     assert e.lint() == []
     sheet = e.storyboard([1.2, 4.5, 13.5], size=(320, 180))["image"]
     _golden("prism_fractal", sheet, e.pass_runner().renderer_class())
+
+
+def test_the_domain_constant_a_animates_and_the_poles_follow():
+    """``a`` is a parameter like any other: it tweens, and zeros and poles move with it."""
+    s = Scene("a", passes=None)
+    s.add(cx.DomainColoring(id="p", function="1/(z**2 + a)", a=(1.0, 0.0)))
+    s.marker("m", 0.0)
+    s.at("m").to("p.a", (4.0, 0.0), duration=1.0)
+    e = s.engine
+    first = sorted(y for _, y in e.inspect(0.0, id="p")["objects"][0]["semantic"]["poles"])
+    last = sorted(y for _, y in e.inspect(1.0, id="p")["objects"][0]["semantic"]["poles"])
+    assert np.allclose(first, [-1, 1], atol=1e-6) and np.allclose(last, [-2, 2], atol=1e-6)
+    with pytest.raises(Exception, match="DomainColoring only"):
+        s.add(cx.ComplexMap(id="m", function="z + a"))
