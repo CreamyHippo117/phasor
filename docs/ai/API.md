@@ -798,7 +798,6 @@ sky.add(cloud.PointCloud(id="roots", source="roots", degree=8, size=(4.5, 2.6)))
 seen = sky.engine.inspect(0.0, id="roots")["objects"][0]["semantic"]
 assert seen["points"] == 2**8 * 8 and seen["backdrop"]  # every +-1 polynomial of degree 8
 assert sky.engine.document.object("roots").style["glow"] == "strong"
-
 ```
 
 **A 3D room with sound bouncing in it** (`ac`, BEAUTY.md step 7). Give the scene an orbit
