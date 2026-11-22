@@ -113,5 +113,8 @@ glow = "strong"
 glow = "strong"
 
 # linear systems (ANIMATIONS.md D5): the same glow as the phase portrait, modes and grid are the linalg objects'
+[defaults.linear_system.params]
+dim = 0.9  # a little see-through, as the phase portrait
+
 [defaults.linear_system.style]
 glow = "strong"

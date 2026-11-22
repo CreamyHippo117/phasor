@@ -17,8 +17,8 @@ A = ((1.0, 2.0), (2.0, 1.0))
 s = Scene("linear_system", look="prism")
 AT = (0, -0.3, 0)
 s.add(linalg.TransformGrid(id="grid", flow=A, flow_time=0.0, extent=9, pos=AT, square=0,
-                           basis=0))  # fmt: skip
-s.add(linalg.EigenLines(id="modes", matrix=A, length=9, pos=AT))
+                           basis=0, style={"glow": "soft"}))  # fmt: skip
+s.add(linalg.EigenLines(id="modes", matrix=A, length=9, pos=AT, style={"glow": "strong"}))
 s.add(dyn.LinearSystem(id="sys", matrix=A, extent=(12, 6.6), n_seeds=12, t_end=3.0,
                        progress=0.0, pos=AT))  # fmt: skip
 s.add(Text(id="title", text="x' = A x: the modes", pos=(8 / 9, 0.07), layer="overlay",
