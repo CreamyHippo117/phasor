@@ -759,6 +759,49 @@ hot = Scene("hot plate", look="prism", passes=None)
 hot.add(pde.Field(id="plate", kind="heat", mode=(0, 0), time=0.1, scale=0.3))
 assert hot.engine.document.object("plate").params["isolines"] == 8
 ```
+## Graphs and networks (`nw`)
+
+`nw.Network` draws a graph: nodes joined by edges, thousands of them in one draw call. Give
+one source: `path` (a file next to the scene: an edge list `.csv`/`.tsv`/`.txt` with
+`a,b[,weight]` per line, node-link `.json` whose extra node fields become attributes, or
+`.graphml`), `edges` (pairs of node names, with optional `nodes` for their order), or a
+`generator`: `tree` (`branching`, `depth`), `grid` (`rows`, `cols`), `random` (`n`, `p`),
+`small_world` (`n`, `k`, `p`), `hypercube` (`cube_dim`), `tictactoe` (every position of the
+game: 765 up to rotation and reflection, or all 5,478 with `symmetric=False`; node
+attributes `move` and `outcome` under perfect play).
+
+`layout`: `spring` (force-directed), `radial` (the root in the middle, each move a ring
+further out, every node a wedge of angle in proportion to what grows from it: branches fan
+out as rays; game trees), `layers` (breadth first from `root`, a level per move, ordered by
+their parents), `circle`, `random`;
+`dims` 2 or 3 (3D wants an orbit camera); `size` (world half-width), `pos`. `color_by`:
+`depth`, `degree`, or a node attribute; `hue` turns the palette. `grow` (0-1) shows that share
+of the edges, nearest the root first (morph it to grow the graph); `node_size` draws dots.
+`exposure` is the light per edge: a dense graph shares its light out so it builds up where
+edges crowd instead of burning out. `cross_edges` (0-1) dims the edges off the breadth-first
+spanning tree (in a game: the same position reached by another order of moves); 0 hides them. Styles: `colormap` (spectrum), `edge`, `node`, `glow`,
+`stroke`. Presets `plain`, `prism` (the prism looks use it). A missing file is
+`missing_file`; an AI may only load files inside its folder.
+
+```python
+from phasor import Scene
+from phasor.domains import network as nw
+
+g = Scene("graphs", passes=None)
+g.add(nw.Network(id="tree", generator="tree", branching=2, depth=5, layout="layers"))
+g.add(
+    nw.Network(
+        id="ring",
+        edges=(("a", "b"), ("b", "c"), ("c", "a")),
+        layout="circle",
+        pos=(5, 0, 0),
+        size=1.0,
+    )
+)
+sem = g.engine.inspect(0, id="tree")["objects"][0]["semantic"]
+assert (sem["nodes"], sem["edges"], sem["depth"]) == (63, 62, 5)
+```
+
 ## Space: axes, curves, surfaces and fields (`geo`)
 
 `from phasor import geo`. Give the scene an orbit camera (`s.use_camera("orbit")`) to turn

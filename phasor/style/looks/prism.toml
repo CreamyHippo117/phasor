@@ -71,3 +71,10 @@ glow = "soft"
 
 [defaults.flow_particles.style]
 glow = "strong"
+
+[defaults.network.params]
+color_by = "depth"
+dim = 0.75  # graphs stack many edges: a little dimmer, so crossings do not pile up to white
+
+[defaults.network.style]
+glow = "soft"

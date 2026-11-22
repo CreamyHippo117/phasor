@@ -27,6 +27,7 @@ TYPES = sorted(registered_types())
 # The fewest parameters each type needs (the rest have defaults).
 REQUIRED = {
     "domain_coloring": {"function": "1/(z**2+1)"},
+    "network": {"generator": "tree", "branching": 2, "depth": 3},
     "image": {"path": str(Path(__file__).resolve().parents[1] / "examples/assets/sunset.png")},
     "epicycles": {"points": [[1, 0, 0], [0, 1, 0], [-1, 0, 0], [0, -1, 0]]},
     "equation": {"parts": ["$e^{i\\pi}$", "$+1=0$"]},

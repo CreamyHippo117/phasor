@@ -15,4 +15,4 @@ from phasor.domains import (
 )  # fmt: skip
 
 __all__ = ["acoustics", "algebra", "basic", "calc", "cx", "fourier", "geometry", "linalg",
-           "media", "pde"]  # fmt: skip
+           "media", "network", "pde"]  # fmt: skip
