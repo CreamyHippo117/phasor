@@ -789,6 +789,22 @@ assert plate.params["hue_cycles"] > 0 and plate.params["fade"] > 0
 assert plate.style["colormap"] == "spectrum"
 ```
 
+The height mode, `pde.Surface`, has a prism preset too (the prism looks use it): with
+`hue_cycles` > 0 the surface is dark where the field is quiet and takes the spectrum's hue of
+its value where it is strong (`contrast` as above), under a net of `lines` grid lines each
+way drawn as glowing strokes in the same hues (`stroke` and `glow` roles). Give the scene an
+orbit camera (`examples/prism_drum_3d.py`).
+
+```python
+from phasor import Scene
+from phasor.domains import pde
+
+drum = Scene("drum", look="prism", passes=None)
+drum.use_camera("orbit")
+drum.add(pde.Surface(id="skin", kind="wave", mode=(2, 3), scale=1.2))
+assert drum.engine.document.object("skin").params["lines"] > 0
+```
+
 **Point clouds.** `from phasor import cloud`. `cloud.PointCloud` splats many points (a
 million is fine on the GPU) as tiny Gaussians of light that add up, so dense regions glow and
 the structure at their edges shows. Sources: `roots` (the roots of every polynomial of

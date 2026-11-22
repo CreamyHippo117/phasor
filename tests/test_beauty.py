@@ -318,6 +318,50 @@ def test_prism_heat_maps_take_a_palette_and_drift_with_life():
     assert len(hues) > 1  # lively: the colours turn a little
 
 
+def _surface_commands(look):
+    from phasor.domains import pde
+    from phasor.render.passes import _Collector
+
+    s = Scene("s", look=look, passes=None)
+    s.use_camera("orbit")
+    s.add(pde.Surface(id="d", kind="wave", mode=(2, 3), scale=1.2, n=32))
+    st = s.engine.state_at(0.0)
+    c = _Collector()
+    st["d"].impl.draw(c, st, "color")
+    c.commands.append(("style", st["d"].style))  # for the checks, not a draw
+    return c.commands
+
+
+def test_the_prism_surface_is_dark_under_a_net_of_glowing_lines_in_many_hues():
+    (surface,) = [c for k, c in _surface_commands("prism") if k == "surface"]
+    strokes = [c for k, c in _surface_commands("prism") if k == "mesh"]
+    assert strokes and all(c["glow"] > 1 for c in strokes)  # the net is light
+    rgb = np.concatenate([c["colors"][:, :3] for c in strokes])
+    hues = {round(_hue(x) * 12) % 12 for x in rgb[:: max(1, len(rgb) // 400)]}
+    assert len(hues) >= 5  # the net runs through the spectrum
+    lum = surface["colors"][:, :3].max(axis=1)
+    assert lum.min() < 0.02 < lum.max()  # dark at rest, coloured where it swings
+
+
+def test_the_plain_surface_is_unchanged():
+    from phasor.core.color import ramp
+
+    *cmds, (_, style) = _surface_commands(None)
+    assert [k for k, _ in cmds] == ["surface"]  # no net
+    (surface,) = [c for _, c in cmds]
+    lut = ramp(style["colormap"])
+    assert np.isin(surface["colors"][:, :3].round(6), lut.round(6)).all()  # ramp entries
+
+
+@needs_gl
+@pytest.mark.slow
+def test_prism_drum_3d_golden_storyboard():
+    e = runpy.run_path(str(ROOT / "examples" / "prism_drum_3d.py"), run_name="x")["s"].engine
+    assert e.lint(strict=True) == []
+    sheet = e.storyboard([0.5, 3.0, 7.0], size=(320, 180))["image"]
+    _golden("prism_drum_3d", sheet, e.pass_runner().renderer_class())
+
+
 # ---------------------------------------------------------------- 4. prism fractals
 
 

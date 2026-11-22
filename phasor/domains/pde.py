@@ -28,7 +28,7 @@ from phasor.core.state import SceneState
 from phasor.core.values import Vec3
 from phasor.domains import pde_math as pm
 from phasor.domains.heatmap import PRISM, HeatParams, heat_pixels, lut_colour, wheel_colour
-from phasor.domains.strokes import disc, polyline, with_alpha
+from phasor.domains.strokes import disc, polyline, polylines, with_alpha
 
 CHECKPOINT_EVERY = 100
 MAX_STEPS = 400_000  # a frame further into the simulation than this is refused
@@ -388,10 +388,19 @@ class Field(_Plate):
 @register
 class Surface(_Plate):
     """A 2D solution as a lit 3D surface: the height is the value (times ``height``). Give
-    the scene an orbit camera."""
+    the scene an orbit camera. In the prism look (``hue_cycles`` > 0) the surface is dark
+    where the field is quiet and takes the spectrum's hue of its value, and ``lines`` grid
+    lines each way are drawn on it as glowing strokes in the hue of the value under them."""
 
     type: ClassVar[str] = "pde_surface"
-    Style: ClassVar = {"colormap": ("colormap", "ember"), "material": ("surface", "solid")}
+    Style: ClassVar = {"colormap": ("colormap", "ember"), "material": ("surface", "solid"),
+                       "glow": ("glow", "none"), "stroke": ("stroke", "hairline")}  # fmt: skip
+    Life: ClassVar = frozenset({"hue", "glow"})
+    Presets: ClassVar = {
+        # the prism look: a dark landscape in spectrum hues under a net of glowing lines
+        "prism": {"params": {"hue_cycles": 1.6, "contrast": 1.5, "lines": 24},
+                  "style": {"colormap": "spectrum", "glow": "strong"}},
+    }  # fmt: skip
 
     class Params(ParamsBase):
         kind: Literal["heat", "wave", "reaction"] = "heat"
@@ -407,6 +416,11 @@ class Surface(_Plate):
         seed: int = 0
         scale: float = PField(1.0, gt=0)
         height: float = PField(2.0, gt=0)  # world height of a value of ``scale``
+        # > 0 (prism): colour from the colormap as a wheel, this many turns over the values
+        hue_cycles: float = PField(0.0, ge=0, le=8)
+        hue: float = 0.0  # with hue_cycles: turns the colours; life adds a little
+        contrast: float = PField(1.0, ge=0.25, le=8)  # with hue_cycles: brightness = strength^this
+        lines: int = PField(0, ge=0, le=100)  # with hue_cycles: glowing grid lines each way
 
         @model_validator(mode="after")
         def _stable(self):
@@ -447,6 +461,11 @@ class Surface(_Plate):
         lut = ramp(me.style["colormap"], np.float64)
         v = np.clip(u / p.scale, 0, 1) if p.kind != "wave" else 0.5 + 0.5 * np.tanh(u / p.scale)
         rgb = lut[np.clip((v * (len(lut) - 1)).astype(int), 0, len(lut) - 1)]
+        if p.hue_cycles > 0:  # prism: dark where quiet, the spectrum's hue of the value
+            hue = wheel_colour(me.style["colormap"], p)(v)
+            strength = (np.abs(2 * v - 1) if p.kind == "wave" else v) ** p.contrast
+            rgb = hue * strength[..., None]
+            self._net(ctx, state, pts, normals, hue * (0.3 + 0.7 * strength[..., None]))
         colors = np.concatenate([rgb, np.ones((*rgb.shape[:-1], 1))], axis=-1)
         k = (np.arange(nx - 1)[:, None] * ny + np.arange(ny - 1)[None, :]).ravel()
         tris = np.vstack([np.c_[k, k + ny, k + 1], np.c_[k + 1, k + ny, k + ny + 1]])
@@ -460,6 +479,25 @@ class Surface(_Plate):
             material=me.roles["material"],
             opacity=me.params.opacity * float(me.style["material"]),
         )
+
+    def _net(self, ctx: DrawContext, state: SceneState, pts, normals, rgb) -> None:
+        """The prism look's ``lines`` grid lines each way, as glowing strokes coloured
+        ``rgb`` per grid point, lifted a hair off the surface so they never sink into it."""
+        me = self.me(state)
+        p = me.params
+        if p.lines <= 0:
+            return
+        cam = state.camera_for(me)
+        lifted = pts + normals * (0.004 * max(p.size))
+        rgba = np.concatenate([rgb, np.full((*rgb.shape[:-1], 1), p.opacity)], axis=-1)
+        glow = float(me.style["glow"])
+        for axis in (0, 1):  # lines of constant x, then of constant y
+            grid, cols = np.moveaxis(lifted, axis, 0), np.moveaxis(rgba, axis, 0)
+            step = max(1, (len(grid) - 1) // p.lines)
+            rows = grid[::step]
+            w = me.style["stroke"] * cam.units_per_height(rows.reshape(-1, 3))
+            polylines(ctx, cam, rows, w.reshape(rows.shape[:2]), color=(1, 1, 1, p.opacity),
+                      glow=glow, colors=cols[::step])  # fmt: skip
 
 
 # ---------------------------------------------------------------- Modes (separation of variables)

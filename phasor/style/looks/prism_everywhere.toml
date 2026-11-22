@@ -180,6 +180,17 @@ contrast = 2.0
 glow = "soft"
 colormap = "spectrum"
 
+# the height mode in 3D: a dark landscape in spectrum hues under a net of glowing
+# lines (the same values as pde.Surface's prism preset)
+[defaults.pde_surface.params]
+hue_cycles = 1.6
+contrast = 1.5
+lines = 24
+
+[defaults.pde_surface.style]
+colormap = "spectrum"
+glow = "strong"
+
 # point clouds: palette hue, glow and haze (BEAUTY.md item 3)
 [defaults.point_cloud.params]
 exposure = 0.06

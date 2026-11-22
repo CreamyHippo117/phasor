@@ -25,6 +25,7 @@ SCENES = [
     ("prism_primes", "the prism look: primes heard through the zeta zeros, glowing strokes"),
     ("prism_domain", "domain coloring in the prism look: glowing zeros, poles, rays and rings"),
     ("prism_heat", "heat maps in the prism look: a hot spot, a vibrating drum, a chirp"),
+    ("prism_drum_3d", "a vibrating drum in 3D, a net of glowing lines, orbiting"),
     ("point_cloud", "a million polynomial roots as glowing points, falling toward z = i"),
     ("prism_fractal", "fractals in the prism look: a morphing Julia set, a dive, glowing edges"),
     ("residue_theorem", "a narrated short: the residue theorem, every motion on a spoken cue"),

@@ -70,7 +70,7 @@
 - `pde_modes`: flash, time, pos, extent, length, diffusivity, modes, count, boundary, components, ymax
 - `pde_profile`: flash, kind, time, pos, extent, length, n, diffusivity, speed, modes, potential, dt, exact, ymax, boundary, method
 - `pde_slice`: flash, smooth, isolines, hue_cycles, hue, fade, ambient, contrast, time, pos, side, cube, n, diffusivity, mode, axis, at, scale
-- `pde_surface`: flash, kind, time, pos, size, n, diffusivity, speed, mode, feed, kill, seed, scale, height
+- `pde_surface`: flash, kind, time, pos, size, n, diffusivity, speed, mode, feed, kill, seed, scale, height, hue_cycles, hue, contrast, lines
 - `permutation`: flash, perm, pos, spacing, progress
 - `point_cloud`: flash, source, degree, coefficients, kind, constants, max_iter, points, values, count, seed, pos, size, scale, point_size, exposure, hue, color_by
 - `polygon`: flash, n, pos, r, rotation, flip, fill
