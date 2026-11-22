@@ -204,3 +204,9 @@ glow = "strong"
 
 [defaults.fixed_points.style]
 glow = "strong"
+
+[defaults.winding.params]
+hue_along = 1.0
+
+[defaults.winding.style]
+glow = "strong"

@@ -38,6 +38,7 @@ SCENES = [
     ("basics_3d", "3D basics: axes, a helix, a surface, a vector field"),
     ("residues", "domain coloring of 1/(z^2 + 1) with a glowing contour"),
     ("fourier_linalg", "Fourier series and linear algebra"),
+    ("fourier_winding", "the Fourier transform: a wound signal, its centroid and the spectrum"),
     ("heat_dihedral", "the heat equation and the dihedral group"),
     ("room_acoustics", "a room, its echoes and the pressure wave"),
 ]

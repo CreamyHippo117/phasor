@@ -122,6 +122,17 @@ def sinusoids(freqs, amps, n: int, fs: float) -> np.ndarray:
                np.zeros(n))  # fmt: skip
 
 
+def wound_signal(signal, freq, fs: float) -> np.ndarray:
+    """Multiply samples by the clockwise winding phasor at each test frequency."""
+    t = np.arange(len(signal)) / fs
+    return np.asarray(signal) * np.exp(-2j * np.pi * np.asarray(freq)[..., None] * t)
+
+
+def winding_mean(signal, freq, fs: float):
+    """Centroid of the wound samples, equal to DFT / N at the FFT bins."""
+    return wound_signal(signal, freq, fs).mean(axis=-1)
+
+
 def spectrum(freqs, amps, win: str, n: int, fs: float) -> dict[str, np.ndarray]:
     """Magnitude spectrum of a few sinusoids seen through a window (amplitude-corrected so a
     tone on a bin reads its true amplitude). Returns ``freq`` (Hz) and ``mag``."""
