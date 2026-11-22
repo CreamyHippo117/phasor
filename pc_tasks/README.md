@@ -1,0 +1,56 @@
+# Tasks for Claude Code on the owner's PC
+
+Steps 3, 4 and 7 of `BEAUTY.md` need the RTX card (GPU kernels, GPU reference pictures,
+fast renders), so they are done on the PC. Each has its own instruction file here, written so
+**three sessions can work at the same time** without touching each other's work.
+
+| File | Step | Branch | Folder (git worktree) |
+|---|---|---|---|
+| `03_point_clouds.md` | 3. Point clouds: millions of glowing points, splatted on the GPU | `beauty/point-clouds` | `C:\Users\Atlas\phasor-clouds` |
+| `04_prism_fractals.md` | 4. Fractals in the prism look | `beauty/prism-fractals` | `C:\Users\Atlas\phasor-fractals` |
+| `07_acoustics_3d.md` | 7. A 3D room with sound bouncing in it | `beauty/acoustics-3d` | `C:\Users\Atlas\phasor-room` |
+
+## Starting the three at once (PowerShell)
+
+Each task works in its own copy of the project (a git *worktree*: same history, separate
+folder and branch), so the sessions never edit the same files on disk. Once:
+
+```bash
+cd C:\Users\Atlas\phasor-dev
+git pull
+git worktree add ..\phasor-clouds -b beauty/point-clouds
+git worktree add ..\phasor-fractals -b beauty/prism-fractals
+git worktree add ..\phasor-room -b beauty/acoustics-3d
+```
+
+Then open three PowerShell windows, one per folder, and in each:
+
+```bash
+uv sync --extra gl --extra encode --extra gui --extra mcp --extra gpu
+claude
+```
+
+and give it: **"Read CLAUDE.md, then pc_tasks/03_point_clouds.md, and do that task."**
+(04 or 07 in the other windows.)
+
+## Order of merging
+
+The three branches touch a few shared files (`docs/ai/API.md`, `BEAUTY.md`, the showcase
+list, `tests/test_kernels.py`). Merge them back into `claude/funny-ride-v6qgsf` one at a time,
+**3, then 4, then 7**, resolving those small conflicts as you go (each task file says how).
+Step 4's "cloud mode" uses step 3's splat kernel: do that part after step 3 is merged.
+
+## Rules every task follows (from CLAUDE.md, in short)
+
+- Keep `prism_primes`' look exactly; the new looks are presets, used by the `prism` looks.
+- Glow comes only from emission. A kernel picture glows through its **alpha channel** (a
+  per-pixel glow weight) and the object's `glow` role: see `DrawContext.field` and
+  `cx.DomainColoring`'s `prism` preset (`domain_glow` kernel) for the pattern.
+- A new GPU kernel is a CuPy `RawKernel` in `phasor/render/gpu/kernels/` with a NumPy
+  reference, added to `CASES` in `tests/test_kernels.py`, tested three ways (reference
+  maths, CPU emulator, real GPU).
+- Every new type: docs in `docs/ai/API.md`, an example in `examples/`, a golden storyboard
+  (software golden from Linux CI later; **GPU golden made here**, looked at before commit),
+  a showcase entry.
+- Before pushing: `uv run ruff check .`, `uv run ruff format --check .`, `uv run lint-imports`,
+  `uv run pytest -q`. Push the task's branch, then tell the owner it is ready to merge.

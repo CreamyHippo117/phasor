@@ -79,8 +79,14 @@ void main() {
     rgb = v_color.rgb;
 #endif
 #ifdef IMAGE
-    frag = vec4(texture(u_tex, v_uv).rgb * a, a);  // kernel pixels, premultiplied
-    emit = vec4(0.0, 0.0, 0.0, a);                 // they emit nothing, and hide what does
+    // Kernel pixels, premultiplied. Their alpha is a per-pixel glow weight w (0-1): with
+    // the object's glow g, a pixel shines (1 + w (g - 1)) times brighter and sends
+    // w (g - 1) of its light to the bloom. g = 1 (the default) emits nothing and hides
+    // what does, as before.
+    vec4 t = texture(u_tex, v_uv);
+    float lit = t.a * max(u_glow - 1.0, 0.0);
+    frag = vec4(t.rgb * (1.0 + lit) * a, a);
+    emit = vec4(t.rgb * lit * a, a);
     return;
 #endif
 #ifdef TEXTURED
@@ -256,10 +262,11 @@ class _Collector:
                       "colors": colors})
         )  # fmt: skip
 
-    def field(self, corner, right, up, *, pixels, opacity=1.0) -> None:
+    def field(self, corner, right, up, *, pixels, opacity=1.0, glow=1.0) -> None:
         self.commands.append(
             ("field", {"corner": np.asarray(corner, dtype=np.float64), "right": np.asarray(right),
-                       "up": np.asarray(up), "pixels": pixels, "opacity": opacity})
+                       "up": np.asarray(up), "pixels": pixels, "opacity": opacity,
+                       "glow": float(glow)})
         )  # fmt: skip
 
     def surface(self, positions, indices, *, normals, colors, uv=None, material="solid",
@@ -442,7 +449,14 @@ class GLRenderer:
                 quad = self._field_quad(state, obj, cam, c, size, zoom)
                 if quad is None:
                     continue
-                kind, c = "image", {"quad": quad, "color": (0.0, 0.0, 0.0, c["opacity"])}
+                kind, c = (
+                    "image",
+                    {
+                        "quad": quad,
+                        "color": (0.0, 0.0, 0.0, c["opacity"]),
+                        "glow": c.get("glow", 1.0),
+                    },
+                )
             elif kind == "field":  # id and solo: a plain quad
                 p0, r, u = c["corner"], c["right"], c["up"]
                 c = {
@@ -461,8 +475,7 @@ class GLRenderer:
                 flash = float(obj.params.flash)  # the flash verb: more light, more glow
                 rgb = [float(x) * (1.0 + 0.8 * flash) for x in c["color"][:3]]
                 prog["u_color"].value = (*rgb, float(c["color"][3]))
-                if kind != "image":
-                    prog["u_glow"].value = float(c.get("glow", 1.0)) * (1.0 + 1.5 * flash)
+                prog["u_glow"].value = float(c.get("glow", 1.0)) * (1.0 + 1.5 * flash)
             elif pass_ == "id":
                 prog["u_id"].value = obj.index
             if kind == "image":

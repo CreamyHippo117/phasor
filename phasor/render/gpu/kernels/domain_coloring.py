@@ -121,3 +121,159 @@ def domain(
             np.int32(len(table)), np.float32(contour), np.float32(soft), out)  # fmt: skip
     gpu.launch(compiled, tile.n, args)
     return out
+
+
+# ---------------------------------------------------------------- the prism look
+#
+# Light where the function does something: each pixel's distance to the nearest zero or pole
+# is estimated by one Newton step, d = |f / f'| (the same for a pole, since 1/f has the same
+# ratio), with no root finding, so it works for any formula. Weight w = 1 / (1 + (d / r)^2):
+# 1 at a zero or pole, a long soft tail (the haze) away from them. Colour is the phase from the
+# table, as in the classic picture, at ambient + (1 - ambient) w, with soft sinusoidal modulus
+# bands; alpha carries w, the glow weight the renderer turns into light and bloom.
+
+
+def glow_source_for(function: ComplexFunction) -> str:
+    return (
+        "static __device__ cplx phasor_f(cplx z) { return "
+        + function.c()
+        + """; }
+
+extern "C" __global__ void phasor_domain_glow("""
+        + VIEW_PARAMS
+        + """, const float* lut, int lut_n, float radius, float ambient, float contour,
+    int lines, float line_glow, float* out)
+{"""
+        + VIEW_BODY
+        + """
+    float* o = out + 4 * (long long)i;
+    cplx z = c_make(x, y);
+    cplx w = phasor_f(z);
+    real m = c_abs(w);
+    if (!(m <= R(1e30))) { o[0] = 1.0f; o[1] = 1.0f; o[2] = 1.0f; o[3] = 1.0f; return; }
+    real hs = (real)(0.5 * height / (double)full_h);  // half a pixel
+    cplx dw = c_sub(phasor_f(c_make(x + hs, y)), phasor_f(c_make(x - hs, y)));
+    real dm = c_abs(dw) / (R(2) * hs);                 // |f'|
+    real wt = R(0);
+    if (m == R(0)) wt = R(1);
+    else if (dm > R(0) && dm <= R(1e30)) {
+        real q = (m / dm) / (real)radius;
+        wt = R(1) / (R(1) + q * q);
+    }
+    real band = R(0.5);
+    if (m > R(0)) band = R(0.5) - R(0.5) * (real)cos(R(2.0 * PHASOR_PI) * (real)log2(m));
+    real h = c_arg(w) / R(2.0 * PHASOR_PI);
+    h = h - (real)floor(h);
+    // Lines of constant phase (rays) and constant |f| (rings), about a pixel wide anywhere:
+    // log f changes by |f'/f| per world unit, so a pixel spans g = |f'/f| px of it.
+    real ln = R(0);
+    if (lines > 0 && m > R(0) && dm > R(0) && dm <= R(1e30)) {
+        real g = (dm / m) * R(2) * hs;
+        real ph = h * (real)lines;
+        real dp = R(0.5) - (real)fabs(ph - (real)floor(ph) - R(0.5));        // to a ray
+        real dist = dp * R(2.0 * PHASOR_PI) / (real)lines / g;              // in pixels
+        real lm = (real)log2(m);
+        real dl = R(0.5) - (real)fabs(lm - (real)floor(lm) - R(0.5));        // to a ring
+        real dist2 = dl * R(0.6931471805599453) / g;
+        real d1 = dist < dist2 ? dist : dist2;
+        ln = (real)exp(-d1 * d1 / R(0.8));
+    }
+    real lit = wt + (real)line_glow * ln * (R(1) - wt);
+    real shade = ((real)ambient + (R(1) - (real)ambient) * lit) * (R(1) - (real)contour * band);
+    real f = h * (real)lut_n;
+    int k0 = (int)f;
+    if (k0 >= lut_n) k0 = lut_n - 1;
+    real u = f - (real)k0;
+    int k1 = (k0 + 1) % lut_n;
+    for (int c = 0; c < 3; c++)
+        o[c] = (float)(shade * ((real)lut[3 * k0 + c] * (R(1) - u) + (real)lut[3 * k1 + c] * u));
+    o[3] = (float)lit;
+}
+"""
+    )
+
+
+def domain_glow_reference(
+    tile: Tile,
+    function: ComplexFunction,
+    center: tuple[float, float],
+    height: float,
+    lut: np.ndarray | None = None,
+    radius: float = 0.3,
+    ambient: float = 0.08,
+    contour: float = 0.15,
+    precision: str = "f32",
+    lines: int = 0,
+    line_glow: float = 0.6,
+) -> np.ndarray:
+    lut = phase_lut() if lut is None else np.asarray(lut, dtype=np.float32)
+    x, y = plane(tile, center, height)
+    f = function.numpy()
+    hs = 0.5 * height / tile.full_h
+    with np.errstate(all="ignore"):
+        w = f(x + 1j * y)
+        m = np.abs(w)
+        pole = ~(m <= POLE)
+        dm = np.abs(f((x + hs) + 1j * y) - f((x - hs) + 1j * y)) / (2 * hs)
+        q = (m / dm) / radius
+        wt = np.where(m == 0, 1.0, np.where((dm > 0) & (dm <= POLE), 1 / (1 + q * q), 0.0))
+        band = np.where(m > 0, 0.5 - 0.5 * np.cos(2 * np.pi * np.log2(np.where(m > 0, m, 1))),
+                        0.5)  # fmt: skip
+        h = np.angle(w) / (2 * np.pi)
+        h = np.where(pole, 0.0, h - np.floor(h))
+        ln = np.zeros_like(wt)
+        if lines > 0:
+            g = (dm / m) * 2 * hs
+            ok = (m > 0) & (dm > 0) & (dm <= POLE)
+            ph = h * lines
+            dist = (0.5 - np.abs(ph - np.floor(ph) - 0.5)) * 2 * np.pi / lines / g
+            lm = np.log2(np.where(m > 0, m, 1.0))
+            dist2 = (0.5 - np.abs(lm - np.floor(lm) - 0.5)) * np.log(2) / g
+            d1 = np.minimum(dist, dist2)
+            ln = np.where(ok, np.exp(-d1 * d1 / 0.8), 0.0)
+        lit = wt + line_glow * ln * (1 - wt)
+        shade = (ambient + (1 - ambient) * lit) * (1 - contour * band)
+    fl = h * len(lut)
+    k0 = np.minimum(fl.astype(np.int64), len(lut) - 1)
+    u = (fl - k0)[..., None]
+    rgb = shade[..., None] * (lut[k0] * (1 - u) + lut[(k0 + 1) % len(lut)] * u)
+    out = np.ones((tile.h, tile.w, 4), dtype=np.float32)
+    out[..., :3] = np.where(pole[..., None], 1.0, rgb)
+    out[..., 3] = np.where(pole, 1.0, lit)
+    return out
+
+
+@kernel(
+    "domain_glow",
+    "(tile, function, center, height, lut=None, radius=0.3, ambient=0.08, contour=0.15, "
+    "precision='f32', lines=0, line_glow=0.6) -> float32[h, w, 4] linear RGB, alpha = glow",
+    reference=domain_glow_reference,
+)
+def domain_glow(
+    gpu,
+    tile: Tile,
+    function: ComplexFunction,
+    center: tuple[float, float],
+    height: float,
+    lut: np.ndarray | None = None,
+    radius: float = 0.3,
+    ambient: float = 0.08,
+    contour: float = 0.15,
+    precision: str = "f32",
+    lines: int = 0,
+    line_glow: float = 0.6,
+):
+    """The prism look of ``function``: phase as hue, lit near its zeros and poles (within
+    about ``radius`` world units), ``ambient`` light elsewhere, soft modulus bands of depth
+    ``contour``; ``lines`` rays of constant phase per turn plus a ring each time |f|
+    doubles, about a pixel wide, lit by ``line_glow``; alpha is the glow weight."""
+    if radius <= 0:
+        raise ValueError("radius must be positive")
+    table = np.ascontiguousarray(phase_lut() if lut is None else lut, dtype=np.float32)
+    compiled = gpu.compile(glow_source_for(function), "phasor_domain_glow", precision)
+    out = gpu.cp.empty((tile.h, tile.w, 4), dtype=gpu.cp.float32)
+    args = (*view_args(tile, center, height), gpu.cp.asarray(table), np.int32(len(table)),
+            np.float32(radius), np.float32(ambient), np.float32(contour), np.int32(lines),
+            np.float32(line_glow), out)  # fmt: skip
+    gpu.launch(compiled, tile.n, args)
+    return out

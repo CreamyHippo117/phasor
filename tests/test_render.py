@@ -400,7 +400,7 @@ def test_a_frame_size_nvenc_refuses_falls_back_to_libx264(tmp_path, monkeypatch)
     """NVIDIA's encoder refuses small frames (64x48 on an RTX 4070 Ti, 2026-11-21)."""
     from phasor.render import encode
 
-    monkeypatch.setattr(encode, "best_encoder", lambda: "pyav:hevc_nvenc")
+    monkeypatch.setattr(encode, "best_encoder", lambda: "pyav:h264_nvenc")
     monkeypatch.setattr(encode, "_nvenc_takes", lambda codec, w, h: w >= 256)
     small = encode.open_writer(tmp_path / "small.mp4", 64, 48, 30)
     assert small.encoder == "pyav:libx264"

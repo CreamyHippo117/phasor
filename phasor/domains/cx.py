@@ -84,17 +84,26 @@ class _Plane(ObjectBase):
 @register
 class DomainColoring(_Plane):
     """A function of z, shown as color: hue is the phase of f(z), and the brightness bands
-    step every time |f(z)| doubles. Poles are white."""
+    step every time |f(z)| doubles. Poles are white.
+
+    With ``radius`` above 0 (the ``prism`` preset) it is the prism look instead: dark, with
+    light where the function does something. Each zero and pole glows, out to about
+    ``radius`` world units, with the phase wrapped round it as hue; ``ambient`` is the faint
+    light everywhere else; the ``glow`` style role sets how bright the light is and how much
+    it blooms."""
 
     type: ClassVar[str] = "domain_coloring"
     Life: ClassVar = frozenset({"hue", "glow"})
-    Style: ClassVar = {"colormap": ("colormap", "phase")}
+    Style: ClassVar = {"colormap": ("colormap", "phase"), "glow": ("glow", "none")}
     # Hue means phase here, so the full wheel stays the default; presets vary the rest.
     Presets: ClassVar = {
         "classic": {"params": {"softness": 0.0, "contour": 0.35}},  # hard contour edges
         "soft_phase": {"params": {"softness": 0.8, "contour": 0.25},
                        "style": {"colormap": "soft_phase"}},  # restrained three-hue wheel
         "vivid": {"params": {"softness": 0.5, "contour": 0.4}},
+        # dark ground, glowing zeros and poles, haze (the look of the prism strokes)
+        "prism": {"params": {"radius": 0.35, "ambient": 0.06, "contour": 0.0, "lines": 12},
+                  "style": {"glow": "strong"}},
     }  # fmt: skip
 
     class Params(ParamsBase):
@@ -104,6 +113,9 @@ class DomainColoring(_Plane):
         contour: float = Field(0.35, ge=0, le=1)  # how dark the modulus bands get
         softness: float = Field(0.5, ge=0, le=1)  # feathering of the band edges (0: hard)
         hue: float = 0.0  # turns the color wheel (a share of one turn); life adds a little
+        radius: float = Field(0.0, ge=0)  # > 0: the prism look, lit this far round zeros/poles
+        ambient: float = Field(0.06, ge=0, le=1)  # prism look: light away from zeros and poles
+        lines: int = Field(0, ge=0, le=64)  # prism look: glowing rays of phase per turn, + rings
 
         @field_validator("function")
         @classmethod
@@ -156,14 +168,17 @@ class DomainColoring(_Plane):
         def pixels(pw: int, ph: int, center: tuple[float, float], height: float) -> np.ndarray:
             from phasor.render import gpu
 
-            return gpu.render(
-                "domain", pw, ph, supersample=SUPERSAMPLE, function=f,
-                center=(corner[0] + center[0], corner[1] + center[1]), height=height,
-                contour=p.contour, soft=p.softness, lut=lut,
-                precision="f64" if height < F64_BELOW else "f32",
-            )  # fmt: skip
+            view = {"center": (corner[0] + center[0], corner[1] + center[1]), "height": height,
+                    "precision": "f64" if height < F64_BELOW else "f32"}  # fmt: skip
+            if p.radius > 0:
+                return gpu.render("domain_glow", pw, ph, supersample=SUPERSAMPLE, function=f,
+                                  lut=lut, radius=p.radius, ambient=p.ambient,
+                                  contour=p.contour, lines=p.lines, **view)  # fmt: skip
+            return gpu.render("domain", pw, ph, supersample=SUPERSAMPLE, function=f,
+                              contour=p.contour, soft=p.softness, lut=lut, **view)  # fmt: skip
 
-        ctx.field(corner, r, u, pixels=pixels, opacity=p.opacity)
+        ctx.field(corner, r, u, pixels=pixels, opacity=p.opacity,
+                  glow=float(me.style.get("glow", 1.0)) if p.radius > 0 else 1.0)  # fmt: skip
 
 
 @functools.lru_cache(maxsize=64)

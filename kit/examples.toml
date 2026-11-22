@@ -87,6 +87,16 @@ kind = "basics"
 tier = "reference"
 teaches = "The smallest scene: a labeled dot crosses the frame and passes behind a disc"
 
+[examples.prism_domain]
+kind = "complex"
+tier = "technique"
+teaches = "Domain coloring in the prism look: zeros and poles as points of light, phase rays and modulus rings as thin light"
+
+[examples.prism_heat]
+kind = "physics"
+tier = "technique"
+teaches = "Heat maps in the prism look: a spreading hot spot, a drum mode, a spectrogram, glowing isolines"
+
 [examples.cluttered]
 tier = "hidden"
 why = "deliberately cluttered, to show the linter flagging it"

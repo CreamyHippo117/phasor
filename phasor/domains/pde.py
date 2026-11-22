@@ -27,6 +27,7 @@ from phasor.core.simulation import runner_for
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
 from phasor.domains import pde_math as pm
+from phasor.domains.heatmap import heat_pixels, lut_colour
 from phasor.domains.strokes import disc, polyline, with_alpha
 
 CHECKPOINT_EVERY = 100
@@ -283,33 +284,21 @@ class _Plate(ObjectBase):
         return out
 
 
-def _heatmap(v: np.ndarray, lut: np.ndarray, size: tuple[float, float]):
-    """``ctx.field`` pixels for a grid of values in 0..1 (v[i, j] at x_i, y_j) spanning a
-    ``size`` rectangle: bilinear in the grid, then the colormap."""
-    nx, ny = v.shape
-    sx, sy = size
-
-    def pixels(pw: int, ph: int, center: tuple[float, float], height: float) -> np.ndarray:
-        half_w = height * pw / ph / 2
-        xs = center[0] + (np.arange(pw) + 0.5) / pw * 2 * half_w - half_w
-        ys = center[1] + (0.5 - (np.arange(ph) + 0.5) / ph) * height
-        gx = np.clip(xs / sx * (nx - 1), 0, nx - 1)
-        gy = np.clip(ys / sy * (ny - 1), 0, ny - 1)
-        x0, y0 = np.floor(gx).astype(int), np.floor(gy).astype(int)
-        x1, y1 = np.minimum(x0 + 1, nx - 1), np.minimum(y0 + 1, ny - 1)
-        fx, fy = (gx - x0)[None, :], (gy - y0)[:, None]
-        val = (
-            v[x0][:, y0].T * (1 - fx) * (1 - fy)
-            + v[x1][:, y0].T * fx * (1 - fy)
-            + v[x0][:, y1].T * (1 - fx) * fy
-            + v[x1][:, y1].T * fx * fy
-        )
-        idx = np.clip((val * (len(lut) - 1)).astype(int), 0, len(lut) - 1)
-        out = np.ones((ph, pw, 4), dtype=np.float32)
-        out[..., :3] = lut[idx]
-        return out
-
-    return pixels
+def _heat(v: np.ndarray, lut: np.ndarray, size, p, glow: float, state, *, signed=None):
+    """``ctx.field`` pixels for values ``v`` (0..1, at grid nodes) on a ``size`` rectangle,
+    plain or in the prism look (``p.smooth``, ``p.isolines``, a ``glow`` role above 1).
+    ``signed``: (positive, negative) colours for a wave, whose 0.5 is rest: in the prism look
+    both directions glow, each in its own colour."""
+    colour = lut_colour(lut, "linear" if p.smooth else "nearest")
+    weight = (lambda x: x) if glow > 1 else None
+    if signed is not None and glow > 1:
+        pos, neg = (np.asarray(c[:3], dtype=np.float64) for c in signed)
+        weight = lambda x: np.abs(2 * x - 1)  # noqa: E731
+        colour = lambda x: np.where((x >= 0.5)[..., None], pos, neg)  # noqa: E731
+    return heat_pixels(
+        v, size, colour, how="smooth" if p.smooth else "linear", isolines=p.isolines,
+        weight=weight, background=state.background,
+    )  # fmt: skip
 
 
 @register
@@ -319,11 +308,15 @@ class Field(_Plate):
     maps its sign too (zero in the middle). A backdrop: labels may sit on it."""
 
     type: ClassVar[str] = "pde_field"
-    Style: ClassVar = {"colormap": ("colormap", "ember")}
+    Style: ClassVar = {"colormap": ("colormap", "ember"), "glow": ("glow", "none"),
+                       "positive": ("emphasis", "highlight"),
+                       "negative": ("emphasis", "secondary")}  # fmt: skip
     Presets: ClassVar = {
         "heat": {"style": {"colormap": "ember"}},
         "drum": {"style": {"colormap": "ocean"}},
         "pattern": {"style": {"colormap": "sequential"}},
+        # the prism look: smooth, glowing where strong, contour lines of light
+        "prism": {"params": {"smooth": True, "isolines": 8}, "style": {"glow": "soft"}},
     }
 
     class Params(ParamsBase):
@@ -339,6 +332,8 @@ class Field(_Plate):
         kill: float = PField(0.06, gt=0)
         seed: int = 0
         scale: float = PField(1.0, gt=0)
+        smooth: bool = False  # bicubic between grid values (the prism look); else as before
+        isolines: int = PField(0, ge=0, le=64)  # contour levels drawn as thin light
 
         @model_validator(mode="after")
         def _stable(self):
@@ -367,10 +362,10 @@ class Field(_Plate):
         lut = ramp(me.style["colormap"], np.float32)
         v = np.clip(u / p.scale, 0, 1) if p.kind != "wave" else 0.5 + 0.5 * np.tanh(u / p.scale)
         corner, right, up = self._rect(p)
-
-        pixels = _heatmap(v, lut, p.size)
-
-        ctx.field(corner, right, up, pixels=pixels, opacity=p.opacity)
+        glow = float(me.style.get("glow", 1.0))
+        signed = (me.style["positive"], me.style["negative"]) if p.kind == "wave" else None
+        pixels = _heat(v, lut, p.size, p, glow, state, signed=signed)
+        ctx.field(corner, right, up, pixels=pixels, opacity=p.opacity, glow=glow)
 
 
 @register
@@ -564,6 +559,11 @@ class Slice(ObjectBase):
         "colormap": ("colormap", "ember"),
         "edge": ("emphasis", "muted"),
         "stroke": ("stroke", "hairline"),
+        "glow": ("glow", "none"),
+    }
+    Presets: ClassVar = {
+        # the prism look: smooth, glowing where strong, contour lines of light
+        "prism": {"params": {"smooth": True, "isolines": 8}, "style": {"glow": "soft"}},
     }
 
     class Params(ParamsBase):
@@ -577,6 +577,8 @@ class Slice(ObjectBase):
         axis: Literal["x", "y", "z"] = "z"
         at: float = PField(0.5, ge=0, le=1)
         scale: float = PField(0.0, ge=0)  # value shown at full color; 0: the cube's hottest now
+        smooth: bool = False  # bicubic between grid values (the prism look); else as before
+        isolines: int = PField(0, ge=0, le=64)  # contour levels drawn as thin light
 
         @model_validator(mode="after")
         def _stable(self):
@@ -636,7 +638,9 @@ class Slice(ObjectBase):
         v = np.clip(pm.slice3d(u, p.axis, p.at) / top, 0, 1)
         lut = ramp(me.style["colormap"], np.float32)
         corner, r, up = self._plane(p)
-        ctx.field(corner, r, up, pixels=_heatmap(v, lut, (p.side, p.side)), opacity=p.opacity)
+        glow = float(me.style.get("glow", 1.0))
+        ctx.field(corner, r, up, pixels=_heat(v, lut, (p.side, p.side), p, glow, state),
+                  opacity=p.opacity, glow=glow)  # fmt: skip
         c = np.asarray(p.pos, dtype=np.float64) - p.side / 2
         w = me.style["stroke"] * float(cam.units_per_height(np.asarray(p.pos)))
         e = np.eye(3) * p.side

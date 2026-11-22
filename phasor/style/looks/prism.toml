@@ -19,8 +19,43 @@ glow = "soft"
 [defaults.text.style]
 color = "primary"
 
-[defaults.domain_coloring.params]
-softness = 0.7
+[defaults.domain_coloring.params]  # the prism preset: glowing zeros, poles, rays and rings
+radius = 0.35
+ambient = 0.06
+contour = 0.0
+lines = 12
+
+[defaults.domain_coloring.style]
+glow = "strong"
 
 [defaults.fractal.style]
 colormap = "ocean"
+
+# heat maps: smooth, glowing where strong, contour lines of light (BEAUTY.md item 2)
+[defaults.pde_field.params]
+smooth = true
+isolines = 8
+
+[defaults.pde_field.style]
+glow = "soft"
+
+[defaults.pde_slice.params]
+smooth = true
+isolines = 8
+
+[defaults.pde_slice.style]
+glow = "soft"
+
+[defaults.pressure_slice.params]
+smooth = true
+isolines = 8
+
+[defaults.pressure_slice.style]
+glow = "soft"
+
+[defaults.spectrogram.params]
+smooth = true
+isolines = 8
+
+[defaults.spectrogram.style]
+glow = "soft"

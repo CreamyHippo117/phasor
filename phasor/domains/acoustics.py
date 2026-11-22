@@ -29,6 +29,7 @@ from phasor.core.simulation import runner_for
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
 from phasor.domains import ac_math
+from phasor.domains.heatmap import heat_pixels
 from phasor.domains.strokes import circle, disc, polyline, with_alpha
 
 MAX_SHOWN = 800  # image sources drawn at most
@@ -499,7 +500,12 @@ class PressureSlice(ObjectBase):
     usually ``expr("t")``); the field is a checkpointed simulation, so scrubbing is cheap."""
 
     type: ClassVar[str] = "pressure_slice"
-    Style: ClassVar = {"positive": ("emphasis", "highlight"), "negative": ("emphasis", "secondary")}
+    Style: ClassVar = {"positive": ("emphasis", "highlight"), "negative": ("emphasis", "secondary"),
+                       "glow": ("glow", "none")}  # fmt: skip
+    Presets: ClassVar = {
+        # the prism look: smooth, glowing where strong, contour lines of light
+        "prism": {"params": {"smooth": True, "isolines": 8}, "style": {"glow": "soft"}},
+    }
 
     class Params(ParamsBase):
         size: Vec3 = (8.0, 5.0, 3.0)
@@ -513,6 +519,8 @@ class PressureSlice(ObjectBase):
         frequency: float = Field(200.0, gt=1)
         gain: float = Field(1.0, gt=0)  # how strongly pressure turns into color
         seed: int = 0
+        smooth: bool = False  # bicubic between grid values (the prism look); else as before
+        isolines: int = Field(0, ge=0, le=64)  # contour levels drawn as thin light
 
         @field_validator("size")
         @classmethod
@@ -562,25 +570,18 @@ class PressureSlice(ObjectBase):
         slab = self._slab(state)
         pos, neg = np.asarray(me.style["positive"][:3]), np.asarray(me.style["negative"][:3])
         bg = np.asarray(state.background[:3])
-        nx, ny = slab.shape
-        sx, sy = p.size[0], p.size[1]
 
-        def pixels(pw: int, ph: int, center: tuple[float, float], height: float) -> np.ndarray:
-            half_w = height * pw / ph / 2
-            u = center[0] + (np.arange(pw) + 0.5) / pw * 2 * half_w - half_w  # along right (m)
-            v = center[1] + half_w * 0 + (0.5 - (np.arange(ph) + 0.5) / ph) * height  # row 0 = top
-            gx = np.clip(u / sx * nx - 0.5, 0, nx - 1)
-            gy = np.clip(v / sy * ny - 0.5, 0, ny - 1)
-            x0, y0 = np.floor(gx).astype(int), np.floor(gy).astype(int)
-            x1, y1 = np.minimum(x0 + 1, nx - 1), np.minimum(y0 + 1, ny - 1)
-            fx, fy = (gx - x0)[None, :], (gy - y0)[:, None]
-            val = (slab[x0][:, y0].T * (1 - fx) * (1 - fy) + slab[x1][:, y0].T * fx * (1 - fy)
-                   + slab[x0][:, y1].T * (1 - fx) * fy + slab[x1][:, y1].T * fx * fy)  # fmt: skip
+        def colour(val: np.ndarray) -> np.ndarray:
             level = np.tanh(p.gain * 8.0 * val)  # -1..1
             tint = np.where(level[..., None] >= 0, pos, neg)
-            rgb = bg + (tint - bg) * np.abs(level)[..., None]
-            out = np.ones((ph, pw, 4), dtype=np.float32)
-            out[..., :3] = rgb
-            return out
+            return bg + (tint - bg) * np.abs(level)[..., None]
 
-        ctx.field(corner, right, up, pixels=pixels, opacity=p.opacity)
+        glow = float(me.style.get("glow", 1.0))
+        pixels = heat_pixels(
+            slab, (p.size[0], p.size[1]), colour, cells=True,
+            how="smooth" if p.smooth else "linear", isolines=p.isolines,
+            level=lambda v: 0.5 + 0.5 * np.tanh(p.gain * 8.0 * v),
+            weight=(lambda v: np.abs(np.tanh(p.gain * 8.0 * v))) if glow > 1 else None,
+            background=state.background,
+        )  # fmt: skip
+        ctx.field(corner, right, up, pixels=pixels, opacity=p.opacity, glow=glow)

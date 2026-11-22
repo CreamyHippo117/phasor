@@ -33,6 +33,7 @@ def _cases(w: int, h: int) -> dict[str, dict[str, Any]]:
     return {
         "deep": {"center": (0.0, 0.0), "height": 1e-20, "orbit": orbit, "max_iter": 1000},
         "domain": {"function": f, "center": (0.0, 0.0), "height": 4.5},
+        "domain_glow": {"function": f, "center": (0.0, 0.0), "height": 4.5, "lines": 12},
         "escape": {"center": (-0.6, 0.0), "height": 2.6, "max_iter": 256},
         "palette": {"field": field, "lut": phase_lut()},
         "bright": {"image": image, "threshold": 1.0},

@@ -45,7 +45,7 @@
 - `clock_diagram`: flash, n, step, pos, r, cosets
 - `complex_map`: flash, function, pos, center, extent, lines, samples, amount, limit
 - `counter`: flash, value, digits, prefix, suffix, math, pos, anchor
-- `domain_coloring`: flash, function, pos, size, contour, softness, hue
+- `domain_coloring`: flash, function, pos, size, contour, softness, hue, radius, ambient, lines
 - `dot`: flash, pos, r
 - `eigen_lines`: flash, matrix, pos, length
 - `epicycles`: flash, points, terms, phase, trace
@@ -66,19 +66,19 @@
 - `parametric_curve`: flash, fx, fy, fz, t_range, samples, pos, scale, progress, color_by, hue, to_fx, to_fy, to_fz, blend
 - `parametric_surface`: flash, fx, fy, fz, u_range, v_range, res, pos, scale, color_by, color_expr, with_map, domain_pos, domain_size, morph, to_fx, to_fy, to_fz, blend
 - `partial_sum`: flash, kind, terms, pos, extent, reveal
-- `pde_field`: flash, kind, time, pos, size, n, diffusivity, speed, mode, feed, kill, seed, scale
+- `pde_field`: flash, kind, time, pos, size, n, diffusivity, speed, mode, feed, kill, seed, scale, smooth, isolines
 - `pde_modes`: flash, time, pos, extent, length, diffusivity, modes, count, boundary, components, ymax
 - `pde_profile`: flash, kind, time, pos, extent, length, n, diffusivity, speed, modes, potential, dt, exact, ymax, boundary, method
-- `pde_slice`: flash, time, pos, side, cube, n, diffusivity, mode, axis, at, scale
+- `pde_slice`: flash, time, pos, side, cube, n, diffusivity, mode, axis, at, scale, smooth, isolines
 - `pde_surface`: flash, kind, time, pos, size, n, diffusivity, speed, mode, feed, kill, seed, scale, height
 - `permutation`: flash, perm, pos, spacing, progress
 - `polygon`: flash, n, pos, r, rotation, flip, fill
-- `pressure_slice`: flash, size, origin, source, z, time, dx, material, absorption, frequency, gain, seed
+- `pressure_slice`: flash, size, origin, source, z, time, dx, material, absorption, frequency, gain, seed, smooth, isolines
 - `riemann_sum`: flash, function, a, b, n, rule, pos
 - `riemann_surface`: flash, kind, pos, radius, height, scale, rings, segments
 - `room`: flash, size, origin, material, absorption
 - `source`: flash, pos, r
-- `spectrogram`: flash, f0, f1, duration, fs, nwin, pos, size
+- `spectrogram`: flash, f0, f1, duration, fs, nwin, pos, size, smooth, isolines
 - `spectrum`: flash, frequencies, amplitudes, window, samples, fs, pos, extent, bins
 - `subgroup_lattice`: flash, group, pos, width, height
 - `taylor`: flash, function, center, order, xmin, xmax, ymax, pos
