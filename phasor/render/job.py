@@ -8,7 +8,7 @@ Frames come back as finished sRGB bytes (``output="srgb8"``), encoded on the car
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +27,21 @@ PRESETS: dict[str, tuple[int | None, int | None, float | None]] = {
 # iterating, on for finals, where it is what makes fast motion look smooth rather than stuttery.
 BLUR: dict[str, tuple[float, int]] = {"preview": (0.0, 1), "final": (0.5, 4), "4k": (0.5, 4)}
 
+# A source of finished frames, in order: (times, size, fps, shutter, samples) -> each frame's
+# (h, w, 3) sRGB bytes. ``scene.parallel_frames`` is one (render workers, ADR 0003); without
+# one, ``render_file`` renders on ``engine`` itself, one frame after another.
+FrameSource = Callable[[list[float], tuple[int, int], float, float, int], Iterator[Any]]
+
+
+def render_frame(engine: Any, t: float, fps: float, size: tuple[int, int], shutter: float,
+                 samples: int) -> Any:  # fmt: skip
+    """One finished frame of a render: motion-blurred when the shutter is open and there is
+    more than one sample, else sharp. The one rule for the serial loop and the workers."""
+    if shutter > 0 and samples > 1:
+        return engine.frame_blurred(t, fps, shutter=shutter, samples=samples, size=size,
+                                    output="srgb8")  # fmt: skip
+    return engine.frame(t, size, output="srgb8")
+
 
 def render_file(
     engine: Any,
@@ -40,10 +55,12 @@ def render_file(
     progress: Callable[[int, int], None] | None = None,
     shutter: float | None = None,
     blur_samples: int | None = None,
+    frame_source: FrameSource | None = None,
 ) -> dict[str, Any]:
     """Render ``engine`` to ``out`` (.mp4/.mov, a folder or a ``%05d.png`` pattern; a PNG
     when ``frame`` is given). Returns what was written. Raises ``RuntimeError`` on a machine
-    with no OpenGL, and ``EncodeError`` when no encoder works."""
+    with no OpenGL, and ``EncodeError`` when no encoder works. ``frame_source`` makes the
+    frames instead of ``engine`` (``scene.parallel_frames``: several processes)."""
     meta = engine.document.meta
     w, h, preset_fps = PRESETS[preset]
     size = (w or meta.width, h or meta.height)
@@ -67,15 +84,14 @@ def render_file(
     count = max(1, round((end - start) * fps))
     # The encoder runs on its own thread: frame k is encoded while frame k+1 renders.
     # "encode" then times only the hand-over (and any wait for a slow encoder).
+    times = [start + k / fps for k in range(count)]
+    if frame_source is None:
+        frames = (render_frame(engine, t, fps, size, shutter, blur_samples) for t in times)
+    else:
+        frames = frame_source(times, size, fps, shutter, blur_samples)
     writer = BackgroundWriter(open_writer(out, *size, fps))
     try:
-        for k in range(count):
-            t = start + k / fps
-            srgb8 = (  # finished bytes, encoded on the card when there is one
-                engine.frame_blurred(t, fps, shutter=shutter, samples=blur_samples, size=size,
-                                     output="srgb8")
-                if shutter > 0 and blur_samples > 1 else engine.frame(t, size, output="srgb8")
-            )  # fmt: skip
+        for k, srgb8 in enumerate(frames):  # finished bytes, encoded on the card if any
             with stage("encode"):
                 writer.write(srgb8)
             if progress:
@@ -83,6 +99,8 @@ def render_file(
     except BaseException:
         writer.abort()
         raise
+    finally:
+        frames.close()  # a frame source stops its workers
     with stage("encode"):  # the frames still queued
         writer.close()
     track = engine.audio_track()

@@ -36,8 +36,11 @@ def _expr(source: str, names: tuple[str, ...]) -> sp.Expr:
     return parse_expression(source, names)
 
 
+@functools.lru_cache(maxsize=256)
 def compile_fn(source: str, names: tuple[str, ...]) -> Callable[..., np.ndarray]:
-    """``f(*arrays)`` for a formula in ``names``; scalars broadcast to the input shape."""
+    """``f(*arrays)`` for a formula in ``names``; scalars broadcast to the input shape.
+    Compiled once per (formula, names): SymPy's lambdify is slow, and draws ask again and
+    again for the same few formulas."""
     expr = _expr(source, names)
     syms = [sp.Symbol(n, real=True) for n in names]
     fn = sp.lambdify(syms, expr, "numpy")

@@ -147,7 +147,7 @@ def _cmd_render(args: argparse.Namespace) -> int:
     from phasor.core.issues import DocumentError
     from phasor.render.encode import EncodeError
     from phasor.render.job import render_file
-    from phasor.scene import load
+    from phasor.scene import default_workers, load, parallel_frames
 
     def progress(k: int, n: int) -> None:
         if not args.quiet:
@@ -157,10 +157,12 @@ def _cmd_render(args: argparse.Namespace) -> int:
     try:
         engine = load(args.scene)
         default = stem + (".png" if args.frame is not None else ".mp4")
+        workers = default_workers() if args.workers is None else args.workers
+        source = parallel_frames(engine, workers) if workers > 1 else None
         r = render_file(
             engine, args.out or default, preset=args.preset, fps=args.fps, start=args.start,
             end=args.end, frame=args.frame, progress=progress, shutter=args.shutter,
-            blur_samples=args.blur_samples,
+            blur_samples=args.blur_samples, frame_source=source,
         )  # fmt: skip
     except (DocumentError, OSError, ValueError, RuntimeError, EncodeError) as e:
         print(f"\nphasor render: {e}", file=sys.stderr)
@@ -313,6 +315,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="shutter as a share of a frame (0 off, 0.5 film standard); "
                    "default: off for preview, 0.5 for final and 4k")  # fmt: skip
     r.add_argument("--blur-samples", type=int, help="sub-frames per frame when blurring (4)")
+    r.add_argument("--workers", type=int,
+                   help="render processes (default: a quarter of the CPU threads, 1 to 4; "
+                   "1 renders in this process)")  # fmt: skip
     r.add_argument("--quiet", action="store_true")
     r.set_defaults(func=_cmd_render)
 

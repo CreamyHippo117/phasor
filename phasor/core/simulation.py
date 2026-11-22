@@ -140,7 +140,8 @@ class SimRunner:
         if path is not None:
             try:
                 path.parent.mkdir(parents=True, exist_ok=True)
-                tmp = path.with_suffix(".tmp.npz")
+                # a name of its own: render workers may write the same checkpoint at once
+                tmp = path.with_suffix(f".{os.getpid()}.tmp.npz")
                 np.savez(tmp, **state)
                 tmp.replace(path)
             except OSError:

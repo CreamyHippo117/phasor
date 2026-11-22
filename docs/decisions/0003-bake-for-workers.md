@@ -1,7 +1,8 @@
 # ADR 0003: how parallel render workers get the layout bake
 
-Status: **Proposed** (2026-11-22), waiting for the owner. Touches SPEC contract 7 ("Layout
-is baked": only `Engine` runs or applies the bake). Nothing here is built yet.
+Status: **Accepted** by the owner on 2026-11-22, option A. Touches SPEC contract 7 ("Layout
+is baked": only `Engine` runs or applies the bake); its text was updated in the same commit
+as the build (`Engine.worker_payload`, `Engine.from_payload`, `scene.parallel_frames`).
 
 ## Context
 

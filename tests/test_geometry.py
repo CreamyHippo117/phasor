@@ -259,3 +259,18 @@ def test_the_3d_basics_example_matches_its_golden():
     if not path.exists():
         pytest.skip(f"no {path.parent.name} golden yet; create with PHASOR_UPDATE_GOLDEN=1")
     assert ssim(sheet, np.asarray(Image.open(path).convert("RGB"))) >= 0.97
+
+
+def test_a_formula_is_compiled_once_and_gives_the_same_numbers():
+    """``compile_fn`` used to run SymPy's lambdify on every draw (7 s of loading
+    motion_gallery: GPU_SPEED.md, step 4). The compiled function is kept per (formula,
+    names); its results do not change."""
+    import numpy as np
+
+    from phasor.domains import geometry_math as gm
+
+    t = np.linspace(0.0, 6.0, 101)
+    a = gm.compile_fn("cos(3*t) * exp(-t/4)", ("t",))
+    assert gm.compile_fn("cos(3*t) * exp(-t/4)", ("t",)) is a
+    assert np.array_equal(a(t), np.cos(3 * t) * np.exp(-t / 4))
+    assert gm.compile_fn("2", ("t",))(t).shape == t.shape  # constants still broadcast

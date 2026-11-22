@@ -12,8 +12,11 @@ A script builds the base document. Every call here is one ``Engine.apply`` with
 
 from __future__ import annotations
 
+import contextlib
 import inspect
+import os
 import runpy
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -330,3 +333,160 @@ def load(path: str | Path, **engine_kwargs: Any) -> Engine:
     overrides = io.load_overrides(path.with_name(path.stem + io.OVERRIDES_SUFFIX))
     engine_kwargs.setdefault("base_dir", path.parent)
     return Engine(scenes[0].engine.base, overrides=overrides, **engine_kwargs)
+
+
+# ---------------------------------------------------------------- render workers (ADR 0003)
+
+# Frames a worker renders in a row. Frames are taken in order, stretch by stretch, so a worker
+# must be able to finish its next stretch while the others' are being taken: its queue holds
+# about two stretches. Short stretches keep that buffer small (30 frames each stalled every
+# worker but one: measured 2026-11-22). Blur samples never leave their frame's worker, and
+# simulations keep their checkpoints on disk, so short stretches cost nothing.
+WORKER_CHUNK = 4
+WORKER_BUFFER_BYTES = 256 * 1024**2  # at most this much finished video waiting per worker
+
+
+def default_workers() -> int:
+    """How many render workers to use by default: a quarter of the CPU threads, 1 to 4 (each
+    is a process with its own GL and CUDA context on the same card)."""
+    return max(1, min(4, (os.cpu_count() or 1) // 4))
+
+
+def parallel_frames(engine: Any, workers: int, *, chunk: int = WORKER_CHUNK,
+                    _fail_at: int | None = None, _on_start: Any = None,
+                    _slow: float = 0.0) -> Any:  # fmt: skip
+    """A frame source for ``render.job.render_file`` that renders in ``workers`` processes.
+
+    The engine bakes here, once; each worker gets its document and that bake
+    (``Engine.worker_payload``) and never bakes (ADR 0003). Worker w renders stretches w,
+    w + N, ... of ``chunk`` frames; frames come back in order, so the video is the one a
+    single process makes. A failed worker stops the render with its error; workers stop by
+    themselves if this process dies (the desktop app's Cancel kills it). ``_fail_at``,
+    ``_on_start`` and ``_slow`` are for tests."""
+    import multiprocessing
+
+    def source(times, size, fps, shutter, samples):
+        n = len(times)
+        stretches = [(a, min(a + chunk, n)) for a in range(0, n, chunk)]
+        count = max(1, min(workers, len(stretches)))
+        payload = engine.worker_payload()
+        ctx = multiprocessing.get_context("spawn")  # Windows has no fork; the same everywhere
+        frame_bytes = size[0] * size[1] * 3
+        depth = max(chunk + 1, min(2 * chunk, WORKER_BUFFER_BYTES // frame_bytes))
+        queues = [ctx.Queue(maxsize=depth) for _ in range(count)]
+        procs = [
+            ctx.Process(target=_render_worker, name=f"phasor-render-{w}", daemon=True,
+                        args=(payload, stretches[w::count], times, size, fps, shutter, samples,
+                              queues[w], 1.0 / count, _fail_at, _slow))
+            for w in range(count)
+        ]  # fmt: skip
+        with _workers_skip_main():
+            for p in procs:
+                p.start()
+        if _on_start is not None:
+            _on_start([p.pid for p in procs])
+        try:
+            for i, (a, b) in enumerate(stretches):
+                w = i % count
+                for k in range(a, b):
+                    msg = _receive(queues[w], procs[w])
+                    if msg[0] == "error":
+                        raise RuntimeError(f"render worker {w} failed: {msg[1]}")
+                    if msg[1] != k:
+                        raise RuntimeError(f"render worker {w} sent frame {msg[1]}, not {k}")
+                    yield msg[2]
+        finally:
+            for p in procs:
+                if p.is_alive():
+                    p.terminate()
+            for p in procs:
+                p.join(timeout=10)
+            for q in queues:
+                q.cancel_join_thread()
+                q.close()
+
+    return source
+
+
+@contextlib.contextmanager
+def _workers_skip_main() -> Any:
+    """Start spawned workers without re-running the parent's main script. Spawn re-imports
+    a script run as ``python scene.py`` in each child (to recreate its module); a scene script
+    without ``if __name__ == "__main__":`` would then run again, renders and all, in every
+    worker. Workers need nothing from it (their entry point is in this module), so the
+    script's path is hidden while they start. ``python -m ...`` and the packaged app are
+    already safe and left alone."""
+    main = sys.modules.get("__main__")
+    path = getattr(main, "__file__", None)
+    if main is None or getattr(main, "__spec__", None) is not None or path is None:
+        yield
+        return
+    del main.__file__
+    try:
+        yield
+    finally:
+        main.__file__ = path
+
+
+def _receive(q: Any, proc: Any) -> tuple:
+    import queue
+
+    while True:
+        try:
+            return q.get(timeout=1.0)
+        except queue.Empty:
+            if not proc.is_alive():
+                try:
+                    return q.get(timeout=1.0)
+                except queue.Empty:
+                    raise RuntimeError(
+                        f"{proc.name} stopped without a word (exit code {proc.exitcode})"
+                    ) from None
+
+
+def _render_worker(payload, stretches, times, size, fps, shutter, samples, q, share, fail_at,
+                   slow) -> None:  # fmt: skip
+    """A render worker's whole life: build the engine from the payload, render its
+    stretches, send each frame. Stops when the parent is gone."""
+    import multiprocessing
+    import queue
+    import time
+    import traceback
+
+    parent = multiprocessing.parent_process()
+
+    def orphaned() -> bool:
+        if parent is not None and not parent.is_alive():
+            q.cancel_join_thread()  # nobody will read what is still buffered
+            return True
+        return False
+
+    def send(msg) -> bool:
+        while True:
+            try:
+                q.put(msg, timeout=1.0)
+                return True
+            except queue.Full:
+                if orphaned():
+                    return False
+
+    try:
+        from phasor.engine import Engine
+        from phasor.render.gpu.budget import set_share
+        from phasor.render.job import render_frame
+
+        set_share(share)
+        engine = Engine.from_payload(payload)
+        for a, b in stretches:
+            for k in range(a, b):
+                if orphaned():
+                    return
+                if k == fail_at:
+                    raise RuntimeError(f"failed on purpose at frame {k}")
+                frame = render_frame(engine, times[k], fps, size, shutter, samples)
+                if slow:
+                    time.sleep(slow)
+                if not send(("frame", k, frame)):
+                    return
+    except BaseException:
+        send(("error", traceback.format_exc(limit=12)))

@@ -462,21 +462,9 @@ class ComplexMap(ObjectBase):
                 raise ValueError("lines is (vertical, horizontal), each 0 to 200, not both 0")
             return v
 
-    def _runs(self, p) -> list[tuple[int, np.ndarray]]:
-        """[(family 0 vertical / 1 horizontal, (K, 3) world points)]."""
-        from phasor.domains import cx_math as xm
-
-        f = _parse(p.function.strip()).numpy()
-        z0 = complex(*p.center)
-        shift = complex(p.pos[0], p.pos[1]) - z0
-        out = []
-        for k, line in enumerate(xm.grid_lines(z0, p.extent, p.lines, p.samples)):
-            fam = 0 if k < p.lines[0] else 1
-            w = xm.deform(f, line, p.amount)
-            for run in xm.split_runs(w, p.limit):
-                run = run + shift
-                out.append((fam, np.stack([run.real, run.imag, np.full(len(run), p.pos[2])], 1)))
-        return out
+    def _runs(self, p) -> tuple[tuple[int, np.ndarray], ...]:
+        """((family 0 vertical / 1 horizontal, (K, 3) world points), ...), read-only."""
+        return _map_runs(p)
 
     def world_bounds(self, state: SceneState) -> Bounds:
         p = self.me(state).params
@@ -505,3 +493,24 @@ class ComplexMap(ObjectBase):
         for fam, pts in self._runs(p):
             polyline(ctx, cam, pts, me.style["stroke"] * cam.units_per_height(pts),
                      color=cols[fam], glow=me.style["glow"])  # fmt: skip
+
+
+@functools.lru_cache(maxsize=32)
+def _map_runs(p) -> tuple[tuple[int, np.ndarray], ...]:
+    """The deformed grid of a ComplexMap's parameters, kept: bounds, semantics and drawing
+    all ask for it at every moment, and building it means evaluating f on every line."""
+    from phasor.domains import cx_math as xm
+
+    f = _parse(p.function.strip()).numpy()
+    z0 = complex(*p.center)
+    shift = complex(p.pos[0], p.pos[1]) - z0
+    out = []
+    for k, line in enumerate(xm.grid_lines(z0, p.extent, p.lines, p.samples)):
+        fam = 0 if k < p.lines[0] else 1
+        w = xm.deform(f, line, p.amount)
+        for run in xm.split_runs(w, p.limit):
+            run = run + shift
+            pts = np.stack([run.real, run.imag, np.full(len(run), p.pos[2])], 1)
+            pts.setflags(write=False)
+            out.append((fam, pts))
+    return tuple(out)

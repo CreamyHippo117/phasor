@@ -260,30 +260,30 @@ keeping fixed dt, the seed and the checkpoint cache (contract 3). Helps only tho
   switch is held to codec tolerance (PSNR > 45 dB at cq 19).
 - Record each step's bench numbers in the table below, with the commit.
 
-## Next session (written 2026-11-22, after batching, async readback, encoder thread)
+## Next session (written 2026-11-22, after step 4)
 
-Start here. Everything through the encoder thread is committed; the full suite is green on
-the owner's PC (emulator tests included).
+Start here. Step 4 (render workers, ADR 0003 accepted) is committed; the full suite is green.
 
-**Measure with wall clock, not only the frame bench.** The bench waits for the card at
-every stage boundary so each stage gets its own time; that also stops the overlaps the
-last two changes add. Time a plain `render_file` (60 frames, `final`) old vs new, back
-to back: the machine's speed drifted by about 20% over the 2026-11-21 session. Wall clock
-on 2026-11-22: motion_gallery about 76 ms/frame, prism_primes about 44.
+What was learned building it, worth keeping:
+- **Stretches must be short.** Frames are taken in order, stretch by stretch; with 30-frame
+  stretches and a 3-frame queue each worker but one sat waiting (4 workers ran at one
+  worker's speed). Now 4-frame stretches and a queue of about two stretches
+  (`scene.WORKER_CHUNK`, `WORKER_BUFFER_BYTES`).
+- **Spawn re-runs the parent's script** unless told not to: `scene._workers_skip_main`.
+- Two independent render processes on the RTX 4070 Ti each run at ~60 ms/frame (one alone:
+  ~54): the card and driver share well; per-process CPU work is what scales.
+- The fixed cost before the first frame was large: loading motion_gallery took 11.5 s,
+  mostly SymPy's `lambdify` run on every draw (`geometry_math.compile_fn`, now cached) and a
+  ComplexMap rebuilding its grid three times a moment (`cx._map_runs`, now cached). Load
+  5.5 s, bake 1.5 s now. Other examples may have the same kind of cost: profile `load`.
 
-1. **Owner decision pending: ADR 0003** (`docs/decisions/0003-bake-for-workers.md`,
-   Proposed). Recommended option A: the parent hands its bake to the workers (no disk
-   cache). Build step 4 (workers) only after it is accepted, with the tests listed there.
-2. Without the ADR, what is left inside one process:
-   - **Overlap the main thread with the GL thread across frames**: while the GL thread draws
-     frame k, the main thread could compute `state_at` for frame k+1 and run frame k-1's
-     post on the card. Needs `Engine` to start a frame and finish it later (a frame-level
-     version of `start_color_raw`), and `render_file` to keep two in flight, in order.
-   - **PyAV's RGB -> YUV conversion holds the GIL** (suspected: the bench's other stages
-     slowed while the encoder thread ran). Converting to YUV on the card before the copy,
-     or step 5's GPU encoder, would remove it; measure first.
-   - Stroke building is now small; the readback is about 15 ms of copying a frame.
-     Step 5's interop (GL texture straight into CUDA) removes it.
+Candidates next:
+- With 4 workers, motion_gallery's frames take ~17 s of a 34 s render; the rest is the
+  parent's load, bake and doctor, and workers starting. Profile `load` of the other
+  examples, and consider starting the workers while the parent bakes (they need the bake
+  only for their first frame).
+- In-process items from before (PyAV's RGB -> YUV holding the GIL; readback 15 ms) now
+  matter less: they are spread over 4 workers.
 
 Open items:
 - Done after step 2: sharp frames (`Engine.frame`: every frame where only life moves,
@@ -317,7 +317,7 @@ Open items:
 | 2 | widen + blur sum on the card | -200 to -260 ms | widen + blur sum 250 -> 12 ms, post 31 -> 3; frame 437 -> 164 / 238 -> 66 ms | done (sums on the card in float32; 8-bit output within 1 code value of the float64 host sum) |
 | 3 | batched, cached drawing | draw 264 -> 30-60 ms | 3a (reused GL buffers): draw 113 -> 92 ms, frame 164 -> 143 / 47 ms, pictures unchanged | 3a done; stroke builder rewritten (bit-identical): draw 92 -> 57 ms, frame 143 -> 105 ms; FlowParticles batched (pixels identical): draw 57 -> 40, frame 105 -> 99; 3b/3c not needed now |
 | 3+ | async readback, encoder thread | | readback 21 -> 15 ms, frame 99 -> 93 (bench); encoder thread: wall 82 -> 76 / 52 -> 44 ms | done (wall clock: the bench's waits hide overlap) |
-| 4 | parallel workers | x3 wall time | | to do: ADR 0003 proposed 2026-11-22 (recommends handing the parent's bake to workers) |
+| 4 | parallel workers | x3 wall time | full final render of motion_gallery 61.5 -> 33.8 s (4 workers, CLI), packaged app 50.6 -> 24.0 s; prism_primes 34.8 -> 23.7 s; steady 70.6 -> 23.2 ms/frame | done 2026-11-22 (ADR 0003 option A; default 4 workers: 6 and 8 were no faster) |
 | 5 | GL-CUDA interop, GPU encoder | small | | measure first; new dependency needs approval |
 | 6 | simulations on the card | those scenes only | | candidate: measure in step 0 |
 

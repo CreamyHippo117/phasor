@@ -103,6 +103,7 @@ Every object type implements the `SceneObject` protocol. A type missing any memb
 - Stage 2: label placer. Candidates = 8 compass slots around the anchor plus leader-line slots. Cost = overlap area + occlusion (from the ID buffer) + distance from anchor + movement since the previous key time.
 - Hysteresis: a label changes slot only when cost improves by more than 20%, so labels never jitter.
 - Constraints the solver cannot satisfy are returned as lint issues, never dropped silently.
+- A render worker process may apply the bake its parent `Engine` computed for the same document (`Engine.worker_payload` / `Engine.from_payload`, checked by a fingerprint of the document); it never bakes itself (ADR 0003, accepted 2026-11-22).
 - Layer order and dependency inversion for render output: `docs/decisions/0001-layers.md` (accepted).
 
 ## Scene document and semantic scene graph

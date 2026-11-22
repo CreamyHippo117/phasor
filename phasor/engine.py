@@ -128,6 +128,42 @@ class Engine:
         # The folder that files the document refers to (narration audio) are relative to.
         self.base_dir = Path(base_dir) if base_dir is not None else Path.cwd()
 
+    def fingerprint(self) -> str:
+        """A hash of the current document and overrides (canonical JSON): what a bake was
+        made for."""
+        import hashlib
+
+        text = io.dumps(self._snap.base) + io.dumps(self._snap.overrides)
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    def worker_payload(self) -> dict[str, Any]:
+        """What a render worker needs to draw this scene without baking it again (ADR 0003):
+        the document and overrides as canonical JSON, this engine's bake (baked here first
+        if need be) and the fingerprint it was made for. Plain data: it pickles."""
+        return {
+            "document": io.dumps(self._snap.base),
+            "overrides": io.dumps(self._snap.overrides),
+            "bake": self._bake(self._snap),
+            "fingerprint": self.fingerprint(),
+            "base_dir": str(self.base_dir),
+        }
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any], **kwargs: Any) -> Engine:
+        """The engine of a render worker: ``worker_payload``'s document with its parent's
+        bake applied as is, never baked here (ADR 0003). A bake made for another document is
+        refused."""
+        import json
+
+        doc = io.parse_document(json.loads(payload["document"]))
+        overrides = Overrides.model_validate_json(payload["overrides"])
+        kwargs.setdefault("base_dir", payload["base_dir"])
+        engine = cls(doc, overrides=overrides, **kwargs)
+        if engine.fingerprint() != payload["fingerprint"]:
+            raise ValueError("this bake was made for another document; bake it here instead")
+        engine._snap.bake = payload["bake"]
+        return engine
+
     def fork(self) -> Engine:
         """A private copy of this engine's current scene (document and overrides) with its own
         history: edit it freely (a player moving sliders) and this one never changes."""

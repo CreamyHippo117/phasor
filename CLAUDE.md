@@ -52,6 +52,7 @@ compounding. If this file and SPEC.md disagree, stop and ask.
 7. **Layout is baked.** Solver runs at markers + samples and writes tracks; renderers and
    inspector both read the bake. kiwisolver for linear relations, then the label placer
    (8 compass + leader slots, hysteresis 20%). Unsatisfiable constraints become lint issues.
+   A render worker applies its parent Engine's bake for the same document (ADR 0003).
 
 ## Conventions
 
