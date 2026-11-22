@@ -111,3 +111,6 @@ glow = "strong"
 
 [defaults.fixed_points.style]
 glow = "strong"
+
+[defaults.doppler.style]
+glow = "strong"

@@ -40,6 +40,7 @@ SCENES = [
     ("fourier_linalg", "Fourier series and linear algebra"),
     ("heat_dihedral", "the heat equation and the dihedral group"),
     ("room_acoustics", "a room, its echoes and the pressure wave"),
+    ("doppler", "wavefront compression, the sonic pileup, and the Mach cone"),
 ]
 
 

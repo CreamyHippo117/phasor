@@ -628,6 +628,28 @@ negative radius draws nothing, so `343 * (t - 0.5)` starts at 0.5 s), `ImageSour
 animate; semantics give `rt60`, `rt60_theory_eyring` and `rt60_reliable`), `PressureSlice(time=)`
 (a slice of the real wave-equation field). Materials and absorption: `ac_math.MATERIALS`.
 
+**`ac.Doppler(speed=, frequency=, time=, pos=, size=)`** draws wavefronts from a sound
+source traveling along +x. `speed` is the constant Mach number for the frame,
+`frequency` is in Hz, `time` is seconds from emission start, `pos` is the starting
+position, and `size` is the world distance sound travels in one second. Animate `time`
+to move the source. For a different constant speed, restart the run. In the prism look
+the rings fade with age and their hue encodes local apparent frequency. At Mach 1 the
+leading edges meet at the source. Above Mach 1 the lines show the planar section of
+the Mach cone. Inspector semantics use `None` for frequency ahead at and above Mach 1
+and report the cone half-angle in degrees for supersonic motion.
+
+```python
+from phasor import Scene, ac, expr
+
+doppler = Scene("doppler", look="prism", passes=None)
+doppler.add(ac.Doppler(id="source", speed=0.5, frequency=12, time=expr("t"), size=2))
+doppler.marker("end", 1.0)
+wave = doppler.engine.inspect(0.8, id="source")["objects"][0]["semantic"]
+assert wave["frequency_ahead"] == 24.0 and wave["frequency_behind"] == 8.0
+```
+
+Example: `examples/doppler.py`.
+
 ```python
 import numpy as np
 from phasor import Scene, ac, expr, fourier, linalg

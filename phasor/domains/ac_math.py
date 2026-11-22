@@ -1,4 +1,4 @@
-"""Room acoustics numerics (SPEC "Domain modules: acoustics"): pure NumPy, no drawing.
+"""Acoustics numerics (SPEC "Domain modules: acoustics"): pure NumPy, no drawing.
 
 - ``image_sources``: the image-source method for a shoebox room (exact for a rectangular room
   with frequency-independent walls).
@@ -33,6 +33,43 @@ MATERIALS = {  # broadband absorption coefficients (energy absorbed per reflecti
     "anechoic": 0.99,
 }
 MAX_IMAGES = 2_000_000
+
+
+def doppler_wavefronts(
+    mach: float, frequency: float, time: float, count: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return the latest emitted rings as (x centres, radii), oldest first.
+
+    Sound speed is one distance unit per second. The source starts at x=0, travels
+    along +x, and emits at integer multiples of the period starting at time zero.
+    """
+    phase = time * frequency
+    latest = math.floor(phase)
+    pulses = np.arange(max(0, latest - count + 1), latest + 1, dtype=np.float64)
+    age = (phase - pulses) / frequency
+    visible = age > 0
+    return mach * (pulses[visible] / frequency), age[visible]
+
+
+def doppler_frequency(mach: float, frequency: float, direction_cosine) -> np.ndarray:
+    """Local frequency along an emitted ray, given its angle cosine to +x.
+
+    The absolute value gives the frequency magnitude on either arrival branch,
+    including crests arriving in reverse order. At a caustic the ideal frequency
+    diverges. This function describes a ray that reaches a listener.
+    """
+    arrival_rate = np.abs(1 - mach * np.asarray(direction_cosine, dtype=np.float64))
+    with np.errstate(divide="ignore"):
+        return frequency / arrival_rate
+
+
+def mach_cone_rays(mach: float) -> np.ndarray:
+    """The two unit rays of the trailing Mach cone in the xy plane (empty for M <= 1)."""
+    if mach <= 1:
+        return np.empty((0, 2))
+    sine = 1 / mach
+    cosine = np.sqrt((1 - sine) * (1 + sine))
+    return np.array([[-cosine, sine], [-cosine, -sine]])
 
 
 def absorption_of(material: str, absorption: float = -1.0) -> float:
