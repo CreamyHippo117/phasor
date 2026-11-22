@@ -1285,6 +1285,49 @@ assert kinds == ["saddle", "stable spiral", "saddle"]
 Example: `examples/phase_portrait.py`. The prism looks make trajectories glow with the arrow
 field and nullclines kept faint.
 
+## Sound (opt-in)
+
+Sound is off. A render is silent, and nothing is synthesized, unless you ask: `phasor render
+SCENE --sound` (or `render_file(..., sound=True)`, or the `render` MCP tool's `sound`), or
+`phasor sound SCENE -o out.wav` to write only the audio (no GPU needed). It is mixed with any
+narration and is a pure function of the scene, so a click lands on the frame the picture shows.
+
+- `sound.Tone(hz=, gain=, harmonics=(1.0, 0.25))`: a continuous tone. `hz` and `gain` may be
+  `expr(...)` of `t`, so any number can be heard: a sweeping frequency, a sum converging. Gain 0
+  is silence, so a tone fades in by ramping its gain.
+- `sound.Cue(at=(seconds, ...), kind="click"|"pluck"|"bell", hz=0, gain=1.0)`: one-off sounds
+  (`hz=0`: the theme's click pitch). Neither draws anything.
+- `ac.Wavefront3D(..., listener="mic")` and `ac.Wavefront(..., listener="mic")`: a click each
+  time the expanding front reaches the `ac.Listener` named `mic`: the direct sound, then each
+  reflected front (image source) in turn, quieter and lower by `[sound] order_semitones` per
+  reflection, so you hear the impulse response arrive. `""` (the default): silent.
+- `ac.ImpulseResponse` clicks for each arrival as its `reveal` passes it (a panel that is
+  always fully revealed plays the arrivals in real time from 0).
+- `fourier.PartialSum(hz=220)`: its harmonics as additive tones: harmonic n sounds while `terms(t)
+  >= n`, so an `expr` that grows `terms` brightens the sound. `fourier.Epicycles(hz=110)`: circle k is
+  a partial at `hz * |k|`, weighted by its radius. `fourier.Spectrum`: its frequencies and amplitudes.
+- Loudness, click pitch and decay, the quietest echo kept (`floor_db`) and the control rate live
+  in the theme's `[sound]` table, never in a scene.
+- An object makes sound by defining `sounds(ctx) -> list[Sound]` (`phasor.core.sound`); it is
+  optional and not part of the object contract. Find *when* by sampling `ctx.state_at`.
+
+```python
+from phasor import Scene, ac, expr, sound
+
+s = Scene("heard", passes=None)
+s.add(ac.Room3D(id="room", size=(8, 5, 3)))
+s.add(ac.Listener(id="mic", pos=(6, 3.4, 1.4)))
+s.add(ac.Wavefront3D(id="front", room="room", source=(2.2, 2, 1.4), listener="mic",
+                     time=expr("t - 1"), speed=0.01, order=2))
+s.add(sound.Tone(id="hum", hz=expr("220 + 110 * t"), gain=expr("min(t / 2, 1)")))
+s.add(sound.Cue(id="ding", at=(0.5,), kind="bell", hz=660))
+s.marker("start", 0.0)
+s.marker("end", 4.0)
+assert s.engine.audio_track() is None                    # silent unless asked
+samples, rate = s.engine.audio_track(sound=True)         # int16 mono
+assert rate == 48000 and len(samples) == 4 * rate
+```
+
 ## Command line
 
 | Command | Status | Purpose |
@@ -1293,7 +1336,8 @@ field and nullclines kept faint.
 | `phasor inspect SCENE [--t T] [--id ID] [--detail brief\|standard\|full]` | M1 | What is on screen at time t |
 | `phasor lint SCENE [--fix] [--strict] [--json] [--step S]` | M2 | Lint; exit 1 on errors (`--strict`: on warnings too). `--fix` applies suggested fixes and saves them |
 | `phasor storyboard SCENE [-o PNG] [--t T]... [--marks] [--json]` | M2 | Keyframe contact sheet plus what the inspector sees |
-| `phasor render SCENE [-o OUT] [--preset preview\|final\|4k] [--fps F] [--start S] [--end E] [--frame T] [--workers N]` | M3 | Video (`.mp4`; `.mov` is ProRes; a folder or `%05d.png` is a PNG sequence) or one PNG with `--frame`. `--workers`: render processes (default a quarter of the CPU threads, 1 to 4); the result is the same file as one process makes |
+| `phasor render SCENE [-o OUT] [--preset preview\|final\|4k] [--fps F] [--start S] [--end E] [--frame T] [--workers N]` | M3 | Video (`.mp4`; `.mov` is ProRes; a folder or `%05d.png` is a PNG sequence) or one PNG with `--frame`. `--sound` adds what objects sound like (silent otherwise). `--workers`: render processes (default a quarter of the CPU threads, 1 to 4); the result is the same file as one process makes |
+| `phasor sound SCENE [-o OUT.wav] [--start S] [--end E]` | sound | Write the scene's sound (and narration) as a WAV; needs no GPU |
 | `phasor kit [FOLDER]` | kit | Set up or update a folder where an AI writes scenes (default `Documents/phasor`): `CLAUDE.md`, the AI docs, the examples sorted by kind, the `/scene` command, `TASTE.md`, and the phasor tools in `.mcp.json`. Your `TASTE.md`, `WISHLIST.md` and `scenes/` are never replaced |
 | `phasor bench [--width W] [--height H]` | M3 | ms per frame per kernel and peak VRAM; saved in `benchmarks/` |
 | `phasor bench --frames SCENE [--count N] [--preset P]` | GPU_SPEED.md | ms per final frame per stage (state, simulation, draw, gpu draw, readback, widen, blur sum, post, srgb, encode); saved in `benchmarks/` |

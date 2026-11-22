@@ -9,7 +9,7 @@ returns one issue per problem with the times it was seen. Rules in this mileston
 | contrast  | warning  | text too close in brightness to what is behind it              |
 | missing_glyph | warning | text with characters the font cannot draw (empty boxes)     |
 | tiny      | warning  | objects or text too small to read                              |
-| orphan    | warning  | an object that never appears                                   |
+| orphan    | warning  | an object that never appears (not one that is ``unseen``: sound) |
 | clutter   | warning  | too many objects changing at once in one block                 |
 | unsolved  | error    | a constraint that does not hold (from the bake, or a guard)    |
 | occluded_label | warning | 3D: a label partly hidden by something in front of it      |
@@ -352,6 +352,7 @@ def run(
         height = state.height
         shown = [e for e in fr.entries.values() if _shown(e)]
         ever_shown.update(e["id"] for e in shown)
+        ever_shown.update(e["id"] for e in fr.entries.values() if e["semantic"].get("unseen"))
         labels = [e for e in shown if _is_label(e)]
         persp = state.camera.perspective
 

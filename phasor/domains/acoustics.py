@@ -32,6 +32,7 @@ import numpy as np
 from pydantic import Field, field_validator
 
 from phasor.core import files
+from phasor.core import sound as snd
 from phasor.core.objects import Bounds, DrawContext, ObjectBase, ParamsBase, Pass, register
 from phasor.core.simulation import runner_for
 from phasor.core.state import SceneState
@@ -76,6 +77,35 @@ def _decay(size, source, listener, order, alpha, fs, length):
         return ac_math.rt60_fit(ir, fs)
     except ValueError:
         return None
+
+
+# ---------------------------------------------------------------- sound helpers
+
+
+def _heard(ctx: snd.SoundContext, t: np.ndarray, amp: np.ndarray, refl: np.ndarray,
+           label: str) -> list[snd.Sound]:  # fmt: skip
+    """One click per arrival: at scene time ``t``, loudness ``amp`` (relative to the
+    strongest, times the theme's ``click_gain``), pitch lower by ``order_semitones`` for each
+    reflection. Arrivals below the theme's ``floor_db`` (relative to the strongest) are
+    dropped."""
+    if not len(t):
+        return []
+    th = ctx.theme
+    rel = amp / max(float(np.max(amp)), 1e-300)
+    out = []
+    for k in np.flatnonzero(rel >= 10.0 ** (th["floor_db"] / 20.0)):
+        hz = th["click_hz"] * snd.semitones(th["order_semitones"] * float(refl[k]))
+        x = snd.click(ctx.rate, hz, th["click_tau"])
+        out.append(snd.Sound(float(t[k]), x, float(rel[k]) * th["click_gain"], f"{label} {k}"))
+    return out
+
+
+def _listener_pos(state: SceneState, name: str) -> np.ndarray | None:
+    """Where the ``Listener`` called ``name`` is, or None (no name, no such object, or not a
+    ``Listener``)."""
+    if not name or name not in state or not isinstance(state[name].impl, Listener):
+        return None
+    return np.asarray(state[name].params.pos, dtype=np.float64)
 
 
 # ---------------------------------------------------------------- Room
@@ -263,6 +293,7 @@ class Wavefront(ObjectBase):
         center: Vec3 = (0.0, 0.0, 0.0)
         radius: float = 0.0  # a negative radius means "not emitted yet": nothing is drawn
         rings: int = Field(6, ge=2, le=24)  # latitude rings; twice as many meridians
+        listener: str = ""  # id of a Listener ("" none): sounds a click when the front reaches it
 
     def world_bounds(self, state: SceneState) -> Bounds:
         p = self.me(state).params
@@ -277,6 +308,19 @@ class Wavefront(ObjectBase):
         p = self.me(state).params
         return {"kind": "wavefront", "radius": round(max(p.radius, 0.0), 4),
                 "center": list(p.center), "time_to_reach_center": 0.0}  # fmt: skip
+
+    def sounds(self, ctx: snd.SoundContext) -> list[snd.Sound]:
+        """One click, when the (rising) radius reaches the distance to the ``listener``;
+        none without one. The time is read from the document through ``ctx.state_at``."""
+        state0 = ctx.state_at(0.0)
+        me = self.me(state0)
+        pos = _listener_pos(state0, me.params.listener)
+        if pos is None:
+            return []
+        level = float(np.linalg.norm(pos - np.asarray(me.params.center, dtype=np.float64)))
+        radius = ctx.series(lambda s: self.me(s).params.radius)
+        hits = snd.crossings(ctx.times(), radius, level, rising=True)
+        return _heard(ctx, hits[:1], np.ones(len(hits[:1])), np.zeros(len(hits[:1])), "front")
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
         me = self.me(state)
@@ -379,6 +423,14 @@ class ImpulseResponse(ObjectBase):
     ``extent`` the (width, height), in frame heights). ``reveal`` (0-1) draws the first share
     of ``duration`` seconds, so you can animate arrivals dropping in; ``show_rt60`` (0-1) fades
     in the decay curve and its fitted line.
+
+    Sound (opt-in, ``Engine.sounds``): one click per arrival that the panel shows (arrivals
+    after ``duration`` are not heard). An arrival sounds at the scene time when
+    ``reveal * duration`` rises through its time, so the clicks drop in with the spikes. If
+    ``reveal`` has already passed an arrival at scene time 0 (a static panel, ``reveal`` held
+    at 1), nothing rises through it, so it sounds at scene time ``0 + its own arrival time``:
+    the panel then plays the impulse response in real time. The click's level follows the
+    arrival's amplitude, its pitch falls with the reflection count (theme ``[sound]``).
     """
 
     type: ClassVar[str] = "impulse_response"
@@ -463,6 +515,26 @@ class ImpulseResponse(ObjectBase):
         out["complete_until"] = round(complete, 4)
         out["rt60_reliable"] = bool(fit is not None and fit["rt60"] <= complete)
         return out
+
+    def sounds(self, ctx: snd.SoundContext) -> list[snd.Sound]:
+        state0 = ctx.state_at(0.0)
+        arr = self._arr(state0)
+        dur = float(self.me(state0).params.duration)
+        keep = np.flatnonzero(arr["time"] <= dur)
+        if not len(keep):
+            return []
+        heard = ctx.series(lambda s: self.me(s).params.reveal) * dur  # seconds of panel shown
+        when = np.full(len(keep), np.nan)
+        for j, k in enumerate(keep):
+            tk = float(arr["time"][k])
+            up = snd.crossings(ctx.times(), heard, tk, rising=True)
+            if len(up):
+                when[j] = up[0]
+            elif heard[0] >= tk:  # already shown at the start: play it in real time
+                when[j] = tk
+        ok = ~np.isnan(when)
+        return _heard(ctx, when[ok], arr["amplitude"][keep][ok],
+                      arr["reflections"][keep][ok], "arrival")  # fmt: skip
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
         me = self.me(state)
@@ -947,6 +1019,7 @@ class Wavefront3D(_InRoom):
         order: int = Field(2, ge=0, le=4)  # reflected fronts up to this many reflections
         shell: float = Field(0.12, ge=0, le=1)  # the fronts themselves, inside the room
         samples: int = Field(128, ge=16, le=1024)  # points around each circle
+        listener: str = ""  # id of a Listener ("" none): a click as each front reaches it
 
     def _fronts(self, state: SceneState):
         g, alpha = self._room(state)
@@ -954,6 +1027,34 @@ class Wavefront3D(_InRoom):
             return None, None
         p = self.me(state).params
         return g, _fronts(g.key, tuple(p.source), p.order, alpha)
+
+    def sounds(self, ctx: snd.SoundContext) -> list[snd.Sound]:
+        """A click each time a front reaches the ``listener`` (a ``Listener`` in the scene):
+        the direct front, then every image source's, when ``distance`` rises through that
+        image's distance to the listener. Loudness is the reflection factor over the distance
+        (as in ``ImpulseResponse``), pitch falls with the reflection count. In a room that is
+        not a shoebox only the direct front is heard, and only if the listener is in line of
+        sight of the source. No listener, or no room: no sound."""
+        state0 = ctx.state_at(0.0)
+        p = self.me(state0).params
+        pos = _listener_pos(state0, p.listener)
+        g, fronts = self._fronts(state0)
+        if pos is None or g is None:
+            return []
+        centers, refl, _ = fronts
+        keep = np.arange(len(centers))
+        if g.box is None:
+            src = np.asarray(p.source, dtype=np.float64)[None]
+            if not bool(ac_math.segments_clear(g.vertices, g.triangles, src, pos[None])[0]):
+                return []
+            keep = np.array([0])
+        d = np.linalg.norm(centers[keep] - pos, axis=1)
+        dist = ctx.series(self.distance)
+        ts = [snd.crossings(ctx.times(), dist, float(x), rising=True) for x in d]
+        has = np.array([len(c) > 0 for c in ts], dtype=bool)
+        when = np.array([c[0] if len(c) else 0.0 for c in ts])
+        gain = np.sqrt(1.0 - self._room(state0)[1]) ** refl[keep] / np.maximum(d, 1e-3)
+        return _heard(ctx, when[has], gain[has], refl[keep][has], "front")
 
     def _shown(self, g: Geometry, centers: np.ndarray, radius: float) -> np.ndarray:
         """Which fronts touch the room: closer to it than ``radius``, not yet past it."""
