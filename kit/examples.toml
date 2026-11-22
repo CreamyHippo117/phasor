@@ -126,3 +126,8 @@ why = "a Manim script, kept to test the importer"
 [examples.domain_coloring]
 tier = "hidden"
 why = "kernel-level demo, not a scene"
+
+[examples.room_3d]
+kind = "physics"
+tier = "technique"
+teaches = "Sound in a 3D room: rays and fronts bouncing off the walls, an orbiting camera, an impulse response filling in"

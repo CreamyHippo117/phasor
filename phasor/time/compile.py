@@ -67,6 +67,8 @@ class Compiled:
     order: tuple[str, ...]  # topological evaluation order
     objects: tuple[CompiledObject, ...]
     duration: float
+    # The scene's folder, for objects that read files (``Files``); set by the Engine.
+    base_dir: str = ""
 
 
 @functools.cache
@@ -340,4 +342,5 @@ def evaluate(c: Compiled, t: float, replace: Mapping[str, Any] | None = None) ->
         values=MappingProxyType(env),
         light=MappingProxyType(c.theme.light),
         strokes=MappingProxyType(_strokes(c)),
+        base_dir=c.base_dir,
     )

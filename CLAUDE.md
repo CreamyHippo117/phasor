@@ -36,6 +36,9 @@ compounding. If this file and SPEC.md disagree, stop and ask.
    IDs: `[a-z][a-z0-9_]*`, dots for children, never reused (removed ids go to
    `retired_ids`), named by meaning not counters.
 3. **Time is pure.** `Engine.state_at(t)` depends only on (document, t) and the occlusion oracle (ADR 0002), returns frozen data.
+   It may also depend on files the document names (an object's `Files` params, e.g. a
+   `Room3D` `.obj`), read only from inside the scene's folder, re-read when they change;
+   a missing one is lint `missing_file` (owner, 2026-11-22).
    Params are a DAG (constants, tracks, expressions); a cycle is a validation error.
    Narration is a separate `TimeMap`. Simulations use fixed dt, seed, cached checkpoints.
    Randomness only via `rng(object_id, seed)`.

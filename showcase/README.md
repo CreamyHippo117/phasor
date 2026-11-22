@@ -27,6 +27,7 @@ render only those: `uv run python showcase/render_all.py prism_primes deep_zoom`
 | `fourier_linalg` | Fourier series and linear algebra |
 | `heat_dihedral` | the heat equation and the dihedral group |
 | `room_acoustics` | a room, its echoes and the pressure wave |
+| `room_3d` | a 3D room with sound bouncing in it: rays and fronts reflecting, reverberation building |
 
 Narrated scenes have sound only where a speech engine is installed (espeak-ng); without one
 the timing is estimated and the video is silent.

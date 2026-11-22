@@ -10,6 +10,7 @@ none can be created the inspector runs in analytic mode (tier C).
 
 from __future__ import annotations
 
+import dataclasses
 from collections import OrderedDict
 from collections.abc import Callable
 from pathlib import Path
@@ -92,10 +93,11 @@ class _Snapshot:
     """One point in history: the document, plus what is derived from it. The layout bake
     and the lint result are filled in on first use and kept, so undo gets them back free."""
 
-    def __init__(self, base: Document, overrides: Overrides) -> None:
+    def __init__(self, base: Document, overrides: Overrides, base_dir: str = "") -> None:
         self.base, self.overrides = base, overrides
         effective, orphans = apply_overrides(base, overrides)
-        self.compiled: Compiled = compile_document(effective)
+        self.compiled: Compiled = dataclasses.replace(compile_document(effective),
+                                                      base_dir=base_dir)  # fmt: skip
         self.plan: Plan = compile_plan(self.compiled)
         self.orphans: tuple[Issue, ...] = tuple(orphans)
         self.bake: Bake | None = None
@@ -119,14 +121,14 @@ class Engine:
         base_dir: str | Path | None = None,
     ) -> None:
         base = document or Document(meta=Meta(title=title))
-        self._snap = _build(base, overrides or Overrides())
+        # The folder that files the document refers to (narration audio, meshes) are relative to.
+        self.base_dir = Path(base_dir) if base_dir is not None else Path.cwd()
+        self._snap = _build(base, overrides or Overrides(), str(self.base_dir))
         self._undo: list[_Snapshot] = []
         self._redo: list[_Snapshot] = []
         self._checkpoints: dict[str, _Snapshot] = {}  # named points to go back to
         self._version = 0
         self._passes = passes
-        # The folder that files the document refers to (narration audio) are relative to.
-        self.base_dir = Path(base_dir) if base_dir is not None else Path.cwd()
 
     def fingerprint(self) -> str:
         """A hash of the current document and overrides (canonical JSON): what a bake was
@@ -293,7 +295,8 @@ class Engine:
                 step=step,
             )
             snap.lint[step] = (*snap.orphans, *self._bake(snap).issues,
-                               *lint_rules.control_rules(snap.compiled), *visual)  # fmt: skip
+                               *lint_rules.control_rules(snap.compiled),
+                               *lint_rules.file_rules(snap.compiled), *visual)  # fmt: skip
         return snap.lint[step]
 
     def _oracle(self) -> PassOracle | None:
@@ -345,14 +348,14 @@ class Engine:
                 overrides = record_tweaks(old.overrides, parsed)
                 # Validate the ops against the effective document for precise errors.
                 apply_ops(old.compiled.doc, parsed)
-                new = _build(old.base, overrides)
+                new = _build(old.base, overrides, str(self.base_dir))
             else:
                 base = apply_ops(old.base, parsed)
                 overrides = old.overrides
                 if origin == "tweak":
                     # A direct edit supersedes an older override on the same target.
                     overrides = _drop_superseded(overrides, parsed)
-                new = _build(base, overrides)
+                new = _build(base, overrides, str(self.base_dir))
         except DocumentError as e:
             return PatchResult(False, self._version, errors=tuple(e.issues))
         if self._undo:  # keep evaluated caches only for the current and previous step
