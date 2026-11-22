@@ -1,4 +1,4 @@
-"""Dynamical systems (ANIMATIONS.md D1, D2): a planar system from formulas.
+"""Dynamical systems (ANIMATIONS.md D1, D2, D4): phase portraits and attractors.
 
     from phasor import dyn
 
@@ -23,6 +23,7 @@ import numpy as np
 from pydantic import Field, field_validator, model_validator
 
 from phasor.core.objects import Bounds, DrawContext, ObjectBase, ParamsBase, Pass, register
+from phasor.core.simulation import SimRunner
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
 from phasor.domains import dynamics_math as dm
@@ -323,3 +324,96 @@ class FixedPoints(ObjectBase):
             if p.labels:
                 ctx.text(dm.eigenvalue_label(c), at + cam.up * unit * 0.07, size,
                          color=with_alpha(me.style["text"], p.opacity), glow=1.0)  # fmt: skip
+
+
+@register
+class StrangeAttractor(ObjectBase):
+    """A 3D Lorenz, Rössler or Thomas trajectory, traced in simulation time."""
+
+    type: ClassVar[str] = "strange_attractor"
+    Style: ClassVar = {
+        "color": ("emphasis", "primary"),
+        "stroke": ("stroke", "hairline"),
+        "glow": ("glow", "none"),
+        "colormap": ("colormap", "spectrum"),
+    }
+
+    class Params(ParamsBase):
+        system: dm.AttractorSystem = "lorenz"
+        sigma: float = Field(10.0, gt=0, allow_inf_nan=False)
+        rho: float = Field(28.0, allow_inf_nan=False)
+        beta: float = Field(8 / 3, gt=0, allow_inf_nan=False)
+        seed: int = 0
+        t_end: float = Field(36.0, ge=dm.AttractorSimulation.dt, le=120.0)
+        progress: float = Field(1.0, ge=0, le=1)
+        pos: Vec3 = (0.0, 0.0, 0.0)
+        size: float = Field(6.0, gt=0, allow_inf_nan=False)
+
+    def _path(self, p) -> np.ndarray:
+        sim = dm.AttractorSimulation(
+            system=p.system, sigma=p.sigma, rho=p.rho, beta=p.beta, seed=p.seed, object_id=self.id
+        )
+        steps = round(p.t_end / sim.dt)
+        key = ("attractor", sim, steps)
+
+        def make():
+            runner = SimRunner(sim, cache_dir=False)
+            points = []
+            for i in range(steps + 1):
+                point = runner.state_at(i * sim.dt)["point"]
+                if not np.isfinite(point).all():
+                    break
+                points.append(point)
+            path = np.asarray(points)
+            # Scale before computing the span so extreme finite states cannot overflow it.
+            path /= max(1.0, float(np.abs(path).max()))
+            low, high = path.min(axis=0), path.max(axis=0)
+            span = float(np.max(high - low))
+            return (path - (low + high) / 2) / span if span > 0 else np.zeros_like(path)
+
+        return _memo(key, make)
+
+    def _visible(self, p) -> tuple[np.ndarray, float]:
+        path = self._path(p)
+        step = min(p.progress * round(p.t_end / dm.AttractorSimulation.dt), len(path) - 1)
+        whole = int(step)
+        visible = path[: whole + 1]
+        if step > whole:
+            head = path[whole] + (step - whole) * (path[whole + 1] - path[whole])
+            visible = np.vstack((visible, head))
+        return np.asarray(p.pos) + p.size * visible, step * dm.AttractorSimulation.dt
+
+    def world_bounds(self, state: SceneState) -> Bounds:
+        p = self.me(state).params
+        return Bounds.of_points(np.asarray(p.pos) + p.size * self._path(p))
+
+    def features(self, state: SceneState) -> dict[str, np.ndarray]:
+        p = self.me(state).params
+        visible, _ = self._visible(p)
+        return {"center": np.asarray(p.pos), "head": visible[-1]}
+
+    def semantics(self, state: SceneState) -> dict[str, Any]:
+        p = self.me(state).params
+        _, time = self._visible(p)
+        return {
+            "kind": "strange_attractor",
+            "system": p.system,
+            "seed": p.seed,
+            "progress": p.progress,
+            "simulated_time": time,
+        }
+
+    def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
+        me = self.me(state)
+        p = me.params
+        points, time = self._visible(p)
+        if len(points) < 2:
+            return
+        cam = state.camera_for(me)
+        width = me.style["stroke"] * cam.units_per_height(points)
+        times = np.minimum(np.arange(len(points)) * dm.AttractorSimulation.dt, time)
+        lut = me.style["colormap"]
+        rgb = _lut_at(lut, times / p.t_end)
+        colors = np.c_[rgb, np.full(len(points), p.opacity)]
+        polyline(ctx, cam, points, width, color=with_alpha(me.style["color"], p.opacity),
+                 glow=me.style["glow"], colors=colors)  # fmt: skip

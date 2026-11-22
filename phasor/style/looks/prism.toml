@@ -111,3 +111,10 @@ glow = "strong"
 
 [defaults.fixed_points.style]
 glow = "strong"
+
+[defaults.strange_attractor.params]
+dim = 0.9
+
+[defaults.strange_attractor.style]
+glow = "strong"
+colormap = "spectrum"
