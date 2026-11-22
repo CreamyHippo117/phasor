@@ -11,13 +11,17 @@ import json
 import sys
 
 from mcp import ClientSession
-from mcp.client.stdio import StdioServerParameters, stdio_client
+from mcp.client.stdio import StdioServerParameters, get_default_environment, stdio_client
 
 
 async def replay(calls: list[dict], workdir: str, show: int = 600) -> list[dict]:
     """Run ``calls`` in one server session; returns ``[{"tool", "args", "data", "error"}]``."""
+    # The session was recorded when new scenes were plain; since 2026-11-22 they get the
+    # prism look by default, so replay it plain, as it was made.
     params = StdioServerParameters(
-        command=sys.executable, args=["-m", "phasor.cli", "mcp", "--root", workdir]
+        command=sys.executable,
+        args=["-m", "phasor.cli", "mcp", "--root", workdir],
+        env={**get_default_environment(), "PHASOR_DEFAULT_LOOK": "none"},
     )
     out = []
     async with stdio_client(params) as (r, w), ClientSession(r, w) as session:

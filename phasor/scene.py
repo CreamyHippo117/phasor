@@ -35,7 +35,7 @@ from phasor.core.patch import (
 )
 from phasor.core.schema import Control, Document, ExprSpec, MarkerRef, Meta, ObjectSpec, Segment
 from phasor.engine import Engine
-from phasor.style.looks import DEFAULT_THEME, load_look
+from phasor.style.looks import DEFAULT_THEME, default_look, load_look
 from phasor.time import verbs as _verbs
 from phasor.time.narration import block_of, repace
 
@@ -193,12 +193,15 @@ class Scene:
         fps: float = 60.0,
         **engine_kwargs: Any,
     ) -> None:
-        """``look`` names a preset (``calm``, ``glow``, ``chalk``): it picks the theme and
-        ``life`` and supplies defaults for objects. ``theme`` and ``life`` you give win over
-        the look's. The theme is dark (``midnight_glow``) unless you or the look say else.
+        """``look`` names a preset (``prism``, ``prism_everywhere``, ``calm``, ``glow``,
+        ``chalk``): it picks the theme and ``life`` and supplies defaults for objects.
+        ``theme`` and ``life`` you give win over the look's. With neither a look nor a theme
+        the scene gets the default look, ``prism``; ``look="none"`` gives none (the dark
+        ``midnight_glow`` theme, plain objects).
         ``palette`` picks the colors run along strokes (``spectrum``, the prism rainbow,
         or ``moonlight``, ``gold``, ``glacier``, ``borealis``, ``rose``): in the prism looks
         it recolors every glowing curve and line and keeps the rest of the look."""
+        look = default_look(look, theme)
         self.look = load_look(look) if look else None
         theme = theme or (self.look.theme if self.look else DEFAULT_THEME)
         life = life or (self.look.life if self.look else "off")

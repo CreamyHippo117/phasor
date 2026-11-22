@@ -84,3 +84,43 @@ def ramp(colormap, dtype=np.float64) -> np.ndarray:
         lum = lut @ np.array([0.2126, 0.7152, 0.0722])
         lut = lut[: int(np.argmax(lum)) + 1]
     return lut.astype(dtype)
+
+
+def linear_to_oklab(rgb: np.ndarray) -> np.ndarray:
+    """Linear sRGB (..., 3) to OKLab (..., 3): a space where equal steps look equal."""
+    rgb = np.asarray(rgb, dtype=np.float64)
+    m = np.array([[0.4122214708, 0.5363325363, 0.0514459929],
+                  [0.2119034982, 0.6806995451, 0.1073969566],
+                  [0.0883024619, 0.2817188376, 0.6299787005]])  # fmt: skip
+    lms = np.cbrt(rgb @ m.T)
+    o = np.array([[0.2104542553, 0.7936177850, -0.0040720468],
+                  [1.9779984951, -2.4285922050, 0.4505937099],
+                  [0.0259040371, 0.7827717662, -0.8086757660]])  # fmt: skip
+    return lms @ o.T
+
+
+def oklab_to_linear(lab: np.ndarray) -> np.ndarray:
+    """OKLab (..., 3) back to linear sRGB (..., 3), clipped to 0..1."""
+    lab = np.asarray(lab, dtype=np.float64)
+    o = np.array([[1.0, 0.3963377774, 0.2158037573],
+                  [1.0, -0.1055613458, -0.0638541728],
+                  [1.0, -0.0894841775, -1.2914855480]])  # fmt: skip
+    lms = (lab @ o.T) ** 3
+    m = np.array([[4.0767416621, -3.3077115913, 0.2309699292],
+                  [-1.2684380046, 2.6097574011, -0.3413193965],
+                  [-0.0041960863, -0.7034186147, 1.7076147010]])  # fmt: skip
+    return np.clip(lms @ m.T, 0.0, 1.0)
+
+
+def smooth_cycle(stops: np.ndarray, n: int) -> np.ndarray:
+    """``n`` colours running once round the cyclic list of linear-RGB ``stops``, through
+    each stop, eased (smoothstep) between neighbours in OKLab: no corners at the stops, no
+    dull greyish mixtures between them (as straight blends in RGB give), and never outside
+    the stops' own colours (a spline would overshoot and tint a near-white palette)."""
+    lab = linear_to_oklab(np.asarray(stops, dtype=np.float64))
+    k = len(lab)
+    x = np.arange(n) / n * k
+    i = np.floor(x).astype(int)
+    t = (x - i)[:, None]
+    t = t * t * (3 - 2 * t)
+    return oklab_to_linear(lab[i % k] * (1 - t) + lab[(i + 1) % k] * t)

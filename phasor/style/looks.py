@@ -10,6 +10,7 @@ later even if the look file changes. Files live in ``style/looks/*.toml``.
 from __future__ import annotations
 
 import functools
+import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -19,7 +20,22 @@ from phasor.core.life import LEVELS
 from phasor.style.theme import ThemeError, available_themes
 
 LOOK_DIR = Path(__file__).parent / "looks"
-DEFAULT_THEME = "midnight_glow"  # the house look is dark, always
+DEFAULT_THEME = "midnight_glow"  # the theme when a scene has neither a look nor a theme
+# The look a new scene gets when it names neither a look nor a theme (owner, 2026-11-22: the
+# prism look is the default style). ``look="none"`` opts out; PHASOR_DEFAULT_LOOK overrides
+# it ("none" for plain; the test suite runs plain so its pictures stay what they check).
+DEFAULT_LOOK = "prism"
+
+
+def default_look(look: str | None, theme: str | None = None) -> str | None:
+    """The look a new scene uses: ``look`` as given ("none": no look); with no look and no
+    theme, the default look; with a theme but no look, none (the theme was a choice)."""
+    if look is not None:
+        return None if look in ("", "none") else look
+    if theme is not None:
+        return None
+    env = os.environ.get("PHASOR_DEFAULT_LOOK", DEFAULT_LOOK)
+    return None if env in ("", "none") else env
 
 
 class LookError(ValueError):

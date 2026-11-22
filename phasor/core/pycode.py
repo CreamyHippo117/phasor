@@ -15,7 +15,7 @@ from phasor.core.objects import registered_types
 from phasor.core.schema import Document, ExprSpec, MarkerRef
 
 # class module -> how the generated script reaches it
-_TOP = {"phasor.domains.basic"}
+_TOP = {"phasor.domains.basic", "phasor.domains.media"}  # from phasor import Dot, Image, ...
 _ALIAS = {
     "phasor.domains.cx": "cx",
     "phasor.domains.acoustics": "ac",
@@ -26,6 +26,8 @@ _ALIAS = {
     "phasor.domains.calc": "calc",
     "phasor.domains.geometry": "geo",
     "phasor.domains.cloud": "cloud",
+    "phasor.domains.network": "nw",
+    "phasor.domains.dynamics": "dyn",
 }
 
 

@@ -326,6 +326,91 @@ def test_the_prism_fractal_emits_light_on_its_edge_and_the_plain_one_does_not():
     assert emit[45, 90].max() < emit.max() * 0.05
 
 
+# ---------------------------------------------------------------- 5. pictures
+
+
+def _png(path: Path, w: int = 40, h: int = 20, alpha: bool = False) -> Path:
+    from PIL import Image as PILImage
+
+    a = np.zeros((h, w, 4), dtype=np.uint8)
+    a[..., 0] = 255  # red on the left half, blue on the right
+    a[:, w // 2 :, 0], a[:, w // 2 :, 2] = 0, 255
+    a[..., 3] = 255
+    if alpha:
+        a[: h // 2, :, 3] = 0  # the top half transparent
+    path.parent.mkdir(parents=True, exist_ok=True)
+    PILImage.fromarray(a, "RGBA").save(path)
+    return path
+
+
+def test_a_picture_is_found_next_to_the_scene_and_keeps_its_shape(tmp_path):
+    from phasor import Engine, Image
+    from phasor.core.schema import Document, Meta
+
+    _png(tmp_path / "art" / "flag.png", 40, 20)
+    s = Scene("pic", passes=None)
+    s.engine = Engine(Document(meta=Meta(title="pic")), passes=None, base_dir=tmp_path)
+    s.add(Image(id="flag", path="art/flag.png", width=4.0))
+    sem = s.engine.inspect(0.0, id="flag")["objects"][0]["semantic"]
+    assert sem["pixels"] == [40, 20] and sem["size"] == [4.0, 2.0]
+    b = s.engine.state_at(0.0)["flag"].impl.world_bounds(s.engine.state_at(0.0))
+    np.testing.assert_allclose([b.lo, b.hi], [(-2, -1, 0), (2, 1, 0)])
+
+
+def test_a_missing_picture_draws_nothing_and_lint_says_so(tmp_path):
+    """Contract 3 (owner, 2026-11-22): a file the scene names that is not there is lint
+    ``missing_file`` and the object draws nothing; a path outside the folder is refused."""
+    from phasor import Engine, Image
+    from phasor.core.issues import DocumentError
+    from phasor.core.schema import Document, Meta
+
+    s = Scene("pic", passes=None)
+    s.engine = Engine(Document(meta=Meta(title="pic")), passes=None, base_dir=tmp_path)
+    s.add(Image(id="x", path="nope.png"))
+    issues = [i for i in s.engine.lint() if i.code == "missing_file"]
+    assert issues and "nope.png" in issues[0].message and issues[0].severity == "warning"
+    assert s.engine.inspect(0.0, id="x")["objects"][0]["semantic"]["missing"]
+    with pytest.raises(DocumentError, match="notes.txt"):
+        s.add(Image(id="y", path="notes.txt"))
+    for outside in ("../secret.png", str(tmp_path / "abs.png")):
+        with pytest.raises(DocumentError, match="folder|absolute"):
+            s.add(Image(id="z", path=outside))
+
+
+@needs_gl
+def test_a_picture_draws_its_pixels_and_transparency_shows_the_background(tmp_path):
+    from phasor import Engine, Image
+    from phasor.core.schema import Document, Meta
+
+    _png(tmp_path / "half.png", 40, 20, alpha=True)
+    s = Scene("draw")
+    s.engine = Engine(Document(meta=Meta(title="draw")), base_dir=tmp_path)
+    s.set("camera.height", 2.0)
+    s.add(Image(id="p", path="half.png", width=4.0, height=2.0))
+    pic = s.engine.pass_runner().color(s.engine.state_at(0.0), (160, 90))[..., :3]
+    bg = np.asarray(s.engine.state_at(0.0).background[:3])
+    left, right = pic[70, 40], pic[70, 120]  # the opaque bottom half
+    assert left[0] > 0.8 and left[2] < 0.1 and right[2] > 0.8 and right[0] < 0.1
+    np.testing.assert_allclose(pic[20, 40], bg, atol=0.02)  # transparent: the background
+
+
+def test_the_ai_cannot_show_a_picture_from_outside_its_folder(tmp_path):
+    from phasor.workspace import ToolError, Workspace
+
+    _png(tmp_path / "outside.png")
+    root = tmp_path / "project"
+    _png(root / "inside.png")
+    ws = Workspace(root)
+    ws.scene_new("pics")
+    ok = ws.scene_edit({"op": "add_object", "object": {"id": "a", "type": "image",
+                        "params": {"path": "inside.png"}}})  # fmt: skip
+    assert ok["ok"]
+    with pytest.raises(ToolError, match="outside the workspace"):
+        ws.scene_edit({"op": "add_object", "object": {"id": "b", "type": "image",
+                       "params": {"path": "../outside.png"}}})  # fmt: skip
+    assert [o.id for o in ws.engine.document.objects] == ["a"]  # the edit was taken back
+
+
 @needs_gl
 @pytest.mark.slow
 def test_prism_fractal_golden_storyboard():
@@ -350,3 +435,46 @@ def test_the_domain_constant_a_animates_and_the_poles_follow():
     assert np.allclose(first, [-1, 1], atol=1e-6) and np.allclose(last, [-2, 2], atol=1e-6)
     with pytest.raises(Exception, match="DomainColoring only"):
         s.add(cx.ComplexMap(id="m", function="z + a"))
+
+
+def test_picture_golden_storyboard():
+    e = runpy.run_path(str(ROOT / "examples" / "picture.py"), run_name="x")["s"].engine
+    assert e.lint(strict=True) == []
+    sheet = e.storyboard([0.8, 2.6, 5.0], size=(320, 180))["image"]
+    _golden("picture", sheet, e.pass_runner().renderer_class())
+
+
+# ---------------------------------------------------------------- the prism default
+
+
+def test_new_scenes_get_the_prism_look_unless_they_say_otherwise(monkeypatch, tmp_path):
+    from phasor.workspace import Workspace
+
+    monkeypatch.delenv("PHASOR_DEFAULT_LOOK", raising=False)  # as outside the test suite
+    assert Scene("a", passes=None).engine.document.meta.look == "prism"
+    assert Scene("b", look="calm", passes=None).engine.document.meta.look == "calm"
+    plain = Scene("c", look="none", passes=None).engine.document.meta
+    assert plain.look is None and plain.theme == "midnight_glow"
+    themed = Scene("d", theme="paper", passes=None).engine.document.meta
+    assert themed.look is None and themed.theme == "paper"  # a chosen theme is kept as is
+    ws = Workspace(tmp_path)
+    ws.scene_new("e")
+    assert ws.engine.document.meta.look == "prism"
+    ws.scene_new("f", look="none")
+    assert ws.engine.document.meta.look is None
+
+
+def test_palettes_are_smooth_and_pass_through_their_colours():
+    from phasor.core.color import hex_to_linear, linear_to_oklab
+    from phasor.style.theme import load_theme
+
+    theme = load_theme("prism")
+    for name, stops in (("gold", ["#ffe3a3", "#ffc061", "#ff9a5c", "#ffd27a"]),
+                        ("rose", ["#ffb3c7", "#ff7aa2", "#c38bff", "#ff9a8a"])):  # fmt: skip
+        lut = np.asarray(theme.values["colormap"][name])
+        lab = linear_to_oklab(lut)
+        bend = np.abs(np.diff(np.vstack([lab, lab[:2]]), 2, axis=0)).max()
+        assert bend < 1e-3, name  # no corners anywhere, the seam included (straight: ~4e-3)
+        for k, h in enumerate(stops):  # it passes through every stop
+            np.testing.assert_allclose(lut[k * len(lut) // len(stops)], hex_to_linear(h)[:3],
+                                       atol=2e-3)  # fmt: skip

@@ -6,7 +6,7 @@
 
 ## Tools
 
-- `scene_new`: Start an empty scene (replaces the open one; save first if it matters). The theme is dark (`midnight_glow`) unless a `look` ("calm", "glow", "chalk", "prism", "prism_everywhere") or `theme` says otherwise; `life` ("off", "subtle", "lively") is the living motion; `palette` the colors run along strokes (`scene_palette`).
+- `scene_new`: Start an empty scene (replaces the open one; save first if it matters). It gets the default look, `prism`, unless a `look` ("prism_everywhere", "calm", "glow", "chalk", or "none" for plain) or a `theme` is given; `life` ("off", "subtle", "lively") is the living motion; `palette` the colors run along strokes (`scene_palette`).
 - `scene_open`: Open `name.phasor.json` (or a `.py` script when the server allows scripts; a script that imports `manim` is run through phasor's Manim stand-in and opens as a plain scene, with `notes` on what could not be carried over).
 - `scene_save`: Save the document (`name.phasor.json`); tweaks to a script scene go to its overrides file beside it.
 - `scene_edit`: Apply a patch (one op, a list of ops, or `{"ops": [...]}`). Atomic: if any op is invalid nothing changes. Returns the result and the lint issues it added or fixed. An `add_object` may name a `preset` (see `object_types`); the scene's look fills in what is left unset, and explicit values always win.
@@ -50,12 +50,14 @@
 - `eigen_lines`: flash, matrix, pos, length
 - `epicycles`: flash, points, terms, phase, trace
 - `equation`: flash, parts, colors, pos, write, drift, keys, from_parts, from_colors, from_keys, from_pos, from_id, morph, arc
+- `fixed_points`: flash, f, g, constants, pos, extent, rays, labels, ray_length, reveal, grid
 - `flow_lines`: flash, fp, fq, fr, pos, extent, seeds, steps, length, both, progress
 - `flow_particles`: flash, fp, fq, fr, pos, extent, count, speed, lifetime, tail, seed
 - `fractal`: flash, kind, c, pos, size, max_iter, density, hue, center, zoom, steady, radius, ambient
 - `galois_diagram`: flash, primes, pos, width, height, gap
 - `graph`: flash, function, xmin, xmax, pos
 - `homomorphism`: flash, n, m, a, pos, r, gap, progress
+- `image`: flash, path, pos, width, height, frame
 - `image_sources`: flash, size, source, order, material, absorption, r
 - `impulse_response`: flash, size, source, listener, order, material, absorption, pos, extent, duration, reveal, show_rt60
 - `limit`: flash, function, a, epsilon, xmin, xmax, pos, bands
@@ -63,6 +65,7 @@
 - `listener`: flash, pos, r
 - `loop_integral`: flash, p, q, measure, center, radius, pos, progress, arrows
 - `matrix`: flash, matrix, pos, digits
+- `network`: flash, path, edges, nodes, generator, branching, depth, rows, cols, n, p, k, cube_dim, symmetric, layout, dims, iterations, root, seed, pos, size, color_by, grow, node_size, hue, exposure, cross_edges
 - `parametric_curve`: flash, fx, fy, fz, t_range, samples, pos, scale, progress, color_by, hue, to_fx, to_fy, to_fz, blend
 - `parametric_surface`: flash, fx, fy, fz, u_range, v_range, res, pos, scale, color_by, color_expr, with_map, domain_pos, domain_size, morph, to_fx, to_fy, to_fz, blend
 - `partial_sum`: flash, kind, terms, pos, extent, reveal
@@ -72,12 +75,15 @@
 - `pde_slice`: flash, time, pos, side, cube, n, diffusivity, mode, axis, at, scale, smooth, isolines
 - `pde_surface`: flash, kind, time, pos, size, n, diffusivity, speed, mode, feed, kill, seed, scale, height
 - `permutation`: flash, perm, pos, spacing, progress
-- `point_cloud`: flash, source, degree, coefficients, kind, constants, max_iter, points, values, count, seed, pos, size, scale, point_size, exposure, hue, color_by
+- `phase_portrait`: flash, f, g, constants, pos, extent, seeds, n_seeds, t_end, steps, progress, backward, flow, flow_spacing, nullclines, hue_cycles, seed
+- `point_cloud`: flash, source, degree, coefficients, kind, constants, max_iter, points, values, count, seed, pos, size, scale, point_size, exposure, hue, color_by, twist, twinkle, white
 - `polygon`: flash, n, pos, r, rotation, flip, fill
 - `pressure_slice`: flash, size, origin, source, z, time, dx, material, absorption, frequency, gain, seed, smooth, isolines
 - `riemann_sum`: flash, function, a, b, n, rule, pos
 - `riemann_surface`: flash, kind, pos, radius, height, scale, rings, segments
 - `room`: flash, size, origin, material, absorption
+- `room3d`: flash, size, origin, path, scale, material, absorption, walls, edge_angle
+- `sound_rays`: flash, room, source, time, speed, hue_step, count, bounces, trail, seed
 - `source`: flash, pos, r
 - `spectrogram`: flash, f0, f1, duration, fs, nwin, pos, size, smooth, isolines
 - `spectrum`: flash, frequencies, amplitudes, window, samples, fs, pos, extent, bins
@@ -89,6 +95,7 @@
 - `vector_field`: flash, p, q, pos, extent, spacing, color_by_size, length_by
 - `vector_field_3d`: flash, fp, fq, fr, pos, extent, counts, spacing, color_by_size, length_by
 - `wavefront`: flash, center, radius, rings
+- `wavefront3d`: flash, room, source, time, speed, hue_step, order, shell, samples
 
 ## Docs
 
