@@ -162,7 +162,7 @@ def _cmd_render(args: argparse.Namespace) -> int:
         r = render_file(
             engine, args.out or default, preset=args.preset, fps=args.fps, start=args.start,
             end=args.end, frame=args.frame, progress=progress, shutter=args.shutter,
-            blur_samples=args.blur_samples, frame_source=source,
+            blur_samples=args.blur_samples, frame_source=source, sound=args.sound,
         )  # fmt: skip
     except (DocumentError, OSError, ValueError, RuntimeError, EncodeError) as e:
         print(f"\nphasor render: {e}", file=sys.stderr)
@@ -173,9 +173,40 @@ def _cmd_render(args: argparse.Namespace) -> int:
     if args.frame is not None:
         print(f"wrote {r['path']} ({w}x{h}, t = {args.frame:g} s)")
     else:
-        sound = ", with narration" if r["narration"] else ""
+        heard = [w for w, on in (("narration", r["narration"]), ("sound", r["sound"])) if on]
+        sound = f", with {' and '.join(heard)}" if heard else ""
         print(f"\nwrote {r['path']}: {r['frames']} frames, {w}x{h} at {r['fps']:g} fps, "
               f"{r['encoder']}{sound}")  # fmt: skip
+    return 0
+
+
+def _cmd_sound(args: argparse.Namespace) -> int:
+    """Write the scene's sound (with its narration, if any) as a WAV: no GPU needed."""
+    from pathlib import Path
+
+    from phasor.core.issues import DocumentError
+    from phasor.scene import load
+    from phasor.time.narration import write_wav
+
+    try:
+        engine = load(args.scene)
+    except (DocumentError, OSError, ValueError) as e:
+        print(f"phasor sound: {e}", file=sys.stderr)
+        return 1
+    track = engine.audio_track(sound=True)
+    if track is None:
+        print(
+            "phasor sound: this scene makes no sound (no object has any, and no narration)",
+            file=sys.stderr,
+        )
+        return 1
+    samples, rate = track
+    first = round((args.start or 0.0) * rate)
+    last = len(samples) if args.end is None else round(args.end * rate)
+    stem = Path(args.scene).name.split(".")[0]
+    out = args.out or stem + ".wav"
+    write_wav(out, samples[first:last], rate)
+    print(f"wrote {out}: {(last - first) / rate:g} s at {rate} Hz")
     return 0
 
 
@@ -335,8 +366,20 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--workers", type=int,
                    help="render processes (default: a quarter of the CPU threads, 1 to 4; "
                    "1 renders in this process)")  # fmt: skip
+    r.add_argument(
+        "--sound",
+        action="store_true",
+        help="also play what the scene's objects sound like (off by default)",
+    )
     r.add_argument("--quiet", action="store_true")
     r.set_defaults(func=_cmd_render)
+
+    so = sub.add_parser("sound", help="write what a scene sounds like as a WAV (no GPU needed)")
+    so.add_argument("scene", help="a .phasor.json document or a .py script that builds a Scene")
+    so.add_argument("-o", "--out", help="output WAV (default: <scene>.wav)")
+    so.add_argument("--start", type=float, help="first time in seconds (default 0)")
+    so.add_argument("--end", type=float, help="last time in seconds (default: the end)")
+    so.set_defaults(func=_cmd_sound)
 
     k = sub.add_parser("kit", help="set up (or update) a folder where an AI writes scenes")
     k.add_argument("folder", nargs="?",

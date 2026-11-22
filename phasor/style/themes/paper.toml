@@ -73,6 +73,22 @@ gap = 0.3
 pause_per_change = 0.25
 pause_max = 1.5
 
+# Sound (opt-in: only with `render --sound`). `master`: overall level; `control_hz`: how often
+# a smoothly changing pitch or distance is read; `click_*`: the tick for an arrival (pitch in
+# Hz, decay in seconds, level), each reflection `order_semitones` away from the direct sound
+# (negative: lower); `floor_db`: arrivals quieter than this, relative to the loudest, are
+# dropped; `tone_gain`/`cue_gain`: levels of a continuous tone and of a one-off cue.
+[sound]
+master = 0.8
+control_hz = 200
+click_hz = 1800
+click_tau = 0.005
+click_gain = 0.8
+order_semitones = -2
+floor_db = -50
+tone_gain = 0.4
+cue_gain = 0.6
+
 # 3D camera (SPEC "3D auto-cinematography"). `drift`: slow sway in azimuth, degrees either
 # way, over `drift_period` seconds. The camera solver: `fill` is the share of the frame
 # height the kept objects should span, `thirds` and `smooth` are the weights of those goals,

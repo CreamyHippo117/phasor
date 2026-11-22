@@ -56,11 +56,14 @@ def render_file(
     shutter: float | None = None,
     blur_samples: int | None = None,
     frame_source: FrameSource | None = None,
+    sound: bool = False,
 ) -> dict[str, Any]:
     """Render ``engine`` to ``out`` (.mp4/.mov, a folder or a ``%05d.png`` pattern; a PNG
     when ``frame`` is given). Returns what was written. Raises ``RuntimeError`` on a machine
     with no OpenGL, and ``EncodeError`` when no encoder works. ``frame_source`` makes the
-    frames instead of ``engine`` (``scene.parallel_frames``: several processes)."""
+    frames instead of ``engine`` (``scene.parallel_frames``: several processes). ``sound``
+    adds what the scene's objects sound like to the narration (off by default: a render stays
+    silent unless asked)."""
     meta = engine.document.meta
     w, h, preset_fps = PRESETS[preset]
     size = (w or meta.width, h or meta.height)
@@ -103,14 +106,20 @@ def render_file(
         frames.close()  # a frame source stops its workers
     with stage("encode"):  # the frames still queued
         writer.close()
-    track = engine.audio_track()
-    sound = track is not None and out.suffix in (".mp4", ".mov")
-    if sound:
+    track = engine.audio_track(sound=sound)
+    heard = track is not None and out.suffix in (".mp4", ".mov")
+    if heard:
         samples, rate = track
         first = round(start * rate)
         mux_audio(out, samples[first : first + round(count / fps * rate)], rate)
     return {
         "path": str(out), "size": size, "fps": fps, "frames": count, "encoder": writer.encoder,
-        "narration": bool(sound), "warnings": warnings,
+        "audio": bool(heard), "narration": bool(heard and _has_voice(engine)),
+        "sound": bool(heard and sound), "warnings": warnings,
         "motion_blur": shutter > 0 and blur_samples > 1,
     }  # fmt: skip
+
+
+def _has_voice(engine: Any) -> bool:
+    n = engine.document.narration
+    return n is not None and any(b.audio for b in n.blocks)
