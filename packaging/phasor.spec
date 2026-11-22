@@ -17,7 +17,10 @@ datas = copy_metadata("phasor")
 datas += collect_data_files("phasor", include_py_files=False)  # themes, looks, icons
 datas += collect_data_files("matplotlib", subdir="mpl-data")  # mathtext fonts
 datas += [(str(ROOT / "docs" / "ai"), "phasor/_docs/docs/ai"),
-          (str(ROOT / "examples"), "examples")]
+          (str(ROOT / "examples"), "examples"),
+          (str(ROOT / "kit"), "phasor/_docs/kit"),  # the AI kit (phasor kit)
+          (str(ROOT / "skills"), "phasor/_docs/skills"),
+          (str(ROOT / "STYLE.md"), "phasor/_docs")]
 hidden = collect_submodules("phasor") + ["moderngl", "glcontext", "av", "kiwisolver"]
 binaries = []
 excludes = ["cupy", "tkinter", "IPython", "ipywidgets", "notebook", "pytest"]

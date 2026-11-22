@@ -1,0 +1,108 @@
+# Every scene in examples/, sorted for the AI that writes scenes (`phasor kit` copies them to
+# kit/examples/<kind>/ and writes kit/examples/INDEX.md from this file).
+#
+# tier = "model":     the look and pacing to aim for. Must pass `phasor lint --aesthetic
+#                     --strict` with nothing left (tests/test_kit.py checks it).
+# tier = "technique": shows how to do something (narration, a 3D camera, the verbs). Copy
+#                     the technique, not the look: it still has taste warnings.
+# tier = "reference": a tour of a module's objects. For API usage only.
+# tier = "hidden":    not for the AI (deliberately bad scenes, developer demos). Not copied.
+#
+# A test fails if an example is missing here, so new examples must be sorted on arrival.
+#
+# For now (owner, 2026-11-22) these are placeholders: the milestone demos. Beautification
+# comes first, from the owner's reference images, then great examples replace them.
+
+[kinds]
+complex = "Complex analysis: domain coloring, poles and residues, contours, Riemann surfaces"
+fractals = "Fractals: the Mandelbrot and Julia sets, deep zooms"
+motion = "Motion: the verbs, morphing, tracing, counters, warped grids"
+three_d = "3D: axes, curves and surfaces in space, camera orbits"
+fourier_linalg = "Fourier series and linear algebra"
+physics = "Physics and PDEs: heat, waves, acoustics"
+basics = "The smallest scenes: one idea, a few objects"
+
+[examples.prism_primes]
+kind = "complex"
+tier = "model"
+teaches = "The reference look (prism): glowing strokes with a spectrum, typeset equations, calm pacing"
+
+[examples.deep_zoom]
+kind = "fractals"
+tier = "technique"
+teaches = "A dive into the Mandelbrot set to 1e-30: a kernel-drawn field, camera zoom over time"
+
+[examples.residue_theorem]
+kind = "complex"
+tier = "technique"
+teaches = "A narrated short: [[markers]] in the narration, every motion anchored to a marker with a verb"
+
+[examples.residues]
+kind = "complex"
+tier = "technique"
+teaches = "Domain coloring of a function with a glowing contour on top"
+
+[examples.riemann_sqrt]
+kind = "three_d"
+tier = "technique"
+teaches = "A Riemann surface in 3D; the camera orbits on its own and labels stay readable"
+
+[examples.motion_gallery]
+kind = "motion"
+tier = "technique"
+teaches = "One beat per verb: an equation becomes the next, a tracer, a counter, a warped grid, particles"
+
+[examples.basics_3d]
+kind = "three_d"
+tier = "technique"
+teaches = "3D basics: axes with ticks, a helix colored along its length, a formula surface, a vector field"
+
+[examples.room_acoustics]
+kind = "physics"
+tier = "technique"
+teaches = "A simulation (FDTD pressure wave) with the camera swinging while the wave crosses a room"
+
+[examples.fourier_linalg]
+kind = "fourier_linalg"
+tier = "reference"
+teaches = "The Fourier and linear-algebra objects: epicycles, partial sums, spectra, transform grids"
+
+[examples.heat_dihedral]
+kind = "physics"
+tier = "reference"
+teaches = "The heat equation and the dihedral group's objects"
+
+[examples.more_wave2]
+kind = "physics"
+tier = "reference"
+teaches = "One of each object added late in Milestone 9"
+
+[examples.julia_explorer]
+kind = "fractals"
+tier = "reference"
+teaches = "A Julia set with a slider for c (an interactive control)"
+
+[examples.moving_dot]
+kind = "basics"
+tier = "reference"
+teaches = "The smallest scene: a labeled dot crosses the frame and passes behind a disc"
+
+[examples.cluttered]
+tier = "hidden"
+why = "deliberately cluttered, to show the linter flagging it"
+
+[examples.rough_beauty]
+tier = "hidden"
+why = "deliberately rough, to show the critic improving it"
+
+[examples.sketch_contour]
+tier = "hidden"
+why = "the sketch milestone's demo (sketching is hidden for now)"
+
+[examples.manim_reverb]
+tier = "hidden"
+why = "a Manim script, kept to test the importer"
+
+[examples.domain_coloring]
+tier = "hidden"
+why = "kernel-level demo, not a scene"

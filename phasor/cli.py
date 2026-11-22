@@ -179,6 +179,23 @@ def _cmd_render(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_kit(args: argparse.Namespace) -> int:
+    from phasor.workspace.kit import KitError, install
+    from phasor.workspace.paths import scenes_folder
+
+    try:
+        r = install(args.folder or scenes_folder())
+    except (KitError, OSError) as e:
+        print(f"phasor kit: {e}", file=sys.stderr)
+        return 1
+    print(f"the AI kit is in {r['dest']}")
+    print("  written: " + ", ".join(r["written"]))
+    if r["kept"]:
+        print("  kept (yours): " + ", ".join(r["kept"]))
+    print(f'start an AI there: cd "{r["dest"]}" and run claude; then /scene <your idea>')
+    return 0
+
+
 def _cmd_style(args: argparse.Namespace) -> int:
     from pathlib import Path
 
@@ -320,6 +337,11 @@ def build_parser() -> argparse.ArgumentParser:
                    "1 renders in this process)")  # fmt: skip
     r.add_argument("--quiet", action="store_true")
     r.set_defaults(func=_cmd_render)
+
+    k = sub.add_parser("kit", help="set up (or update) a folder where an AI writes scenes")
+    k.add_argument("folder", nargs="?",
+                   help="where (default: Documents/phasor, the app's scenes folder)")  # fmt: skip
+    k.set_defaults(func=_cmd_kit)
 
     st = sub.add_parser("style", help="what your recorded choices say about your taste")
     st.add_argument("action", choices=["tune"], help="tune: tally style/choices.jsonl")

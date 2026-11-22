@@ -71,6 +71,9 @@ packages = ["phasor"]
 [tool.hatch.build.targets.wheel.force-include]
 "docs/ai" = "phasor/_docs/docs/ai"
 "examples" = "phasor/_docs/examples"
+"kit" = "phasor/_docs/kit"
+"skills" = "phasor/_docs/skills"
+"STYLE.md" = "phasor/_docs/STYLE.md"
 
 # ---------------------------------------------------------------- ruff
 [tool.ruff]
