@@ -7,7 +7,7 @@ or "thomas" to trace either of those flows with the same animation.
 from phasor import Scene, dyn
 
 s = Scene("strange_attractor", look="prism")
-s.use_camera("orbit", azimuth=-95, elevation=12, distance=11.5)
+s.use_camera("orbit", azimuth=-95, elevation=12, distance=13.5)
 trajectory = s.add(dyn.StrangeAttractor(id="trajectory", seed=7, t_end=30, progress=0.0))
 s.marker("start", 0.0)
 s.marker("trace", 0.5)
