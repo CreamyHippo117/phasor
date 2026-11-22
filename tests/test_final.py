@@ -39,7 +39,10 @@ REQUIRED = {
     "callout": {"target": "guide"},  # rings an object
     "sound_rays": {"time": 0.5},  # in a room; 0: the sound has not left
     "wavefront3d": {"time": 0.5},
+    "tone": {"hz": 440.0},
 }
+# Types that make sound and draw nothing (SPEC "Sound"): no style roles, no picture to compare.
+SILENT = {"tone", "cue"}
 # Types that point at another object: the scene gets a curve called "guide" for them.
 PARTNERED = {"tracer", "callout"}
 # Sound in a 3D room: the scene gets a Room3D called "room" for them.
@@ -100,7 +103,7 @@ def test_every_type_keeps_the_object_contract_and_has_docs():
     for name in TYPES:
         cls = registered_types()[name]
         assert all(hasattr(cls, m) for m in REQUIRED_MEMBERS), name
-        assert cls.Style, f"{name}: no style roles"
+        assert cls.Style or name in SILENT, f"{name}: no style roles"
         assert cls.__name__ in api, f"{name} ({cls.__name__}) is not in docs/ai/API.md"
 
 
@@ -127,6 +130,8 @@ def test_every_type_draws_something_in_2d_and_3d(name, camera, request):
         request.node.add_marker(m)
     if not gl_available():
         pytest.skip("needs OpenGL")
+    if name in SILENT:
+        pytest.skip("makes sound, draws nothing")
     e = _one(name, camera)
     # Hairlines are a fraction of a pixel in a tiny frame and vanish (see MILESTONE_11.md),
     # so judge at a size where a "hairline" is a line.

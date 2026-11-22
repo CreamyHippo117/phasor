@@ -15,6 +15,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 import phasor.domains  # noqa: F401  (registers the built-in object types)
 from phasor.core import io
 from phasor.core.issues import DocumentError, Issue
@@ -296,13 +298,39 @@ class Engine:
             ))  # fmt: skip
         return snap.aesthetic
 
-    def audio_track(self):
-        """The narration as one mono int16 track covering the scene, and its sample rate;
-        None when there is no recorded or synthesized audio."""
+    def sounds(self, rate: int | None = None) -> list[Any]:
+        """Every ``Sound`` the scene's objects make (``core/sound.py``), synthesized at
+        ``rate`` (default 48 kHz). A pure function of the document: sound is opt-in, but when
+        asked for it never depends on anything but the scene."""
+        from phasor.core import sound as snd
+
+        ctx = snd.SoundContext(self.state_at, self.duration, rate or snd.RATE,
+                               self._snap.compiled.theme.sound)  # fmt: skip
+        return snd.collect(self.state_at(0.0).objects, ctx)
+
+    def audio_track(self, *, sound: bool = False):
+        """The soundtrack as one mono int16 track covering the scene, and its sample rate;
+        None when there is nothing to hear. By default this is the narration alone (recorded
+        or synthesized audio). With ``sound=True`` the sounds the scene's objects make
+        (``Engine.sounds``) are mixed in, at the narration's sample rate if there is one."""
+        from phasor.core import sound as snd
         from phasor.time.narration import mix_track
 
         n = self.document.narration
-        return None if n is None else mix_track(n, self.base_dir, self.duration)
+        voice = None if n is None else mix_track(n, self.base_dir, self.duration)
+        if not sound:
+            return voice
+        rate = voice[1] if voice else snd.RATE
+        made = self.sounds(rate)
+        if not made:
+            return voice
+        theme = self._snap.compiled.theme.sound
+        track = snd.mix(made, self.duration, rate, theme["master"])
+        if voice:
+            samples = voice[0]
+            track = np.pad(track, (0, max(0, len(samples) - len(track))))
+            track[: len(samples)] += samples / 32768.0
+        return snd.to_int16(track), rate
 
     def _lint(self, snap: _Snapshot, step: float) -> tuple[Issue, ...]:
         if step not in snap.lint:

@@ -631,9 +631,10 @@ class Workspace:
 
     def render(
         self, preset: str = "preview", out: str | None = None, start: float | None = None,
-        end: float | None = None, frame: float | None = None,
+        end: float | None = None, frame: float | None = None, sound: bool = False,
     ) -> dict[str, Any]:  # fmt: skip
-        """Render a video (preset: preview 960x540@30, final, 4k) or one PNG (``frame``)."""
+        """Render a video (preset: preview 960x540@30, final, 4k) or one PNG (``frame``).
+        ``sound`` adds what the scene's objects sound like (silent by default)."""
         from phasor.render.encode import EncodeError
         from phasor.render.job import PRESETS, render_file
 
@@ -645,7 +646,8 @@ class Workspace:
         target = self._inside(out) if out else default
         target.parent.mkdir(parents=True, exist_ok=True)
         try:
-            return render_file(e, target, preset=preset, start=start, end=end, frame=frame)
+            return render_file(e, target, preset=preset, start=start, end=end, frame=frame,
+                               sound=sound)  # fmt: skip
         except (RuntimeError, EncodeError, OSError, ValueError) as err:
             raise ToolError(str(err)) from err
 

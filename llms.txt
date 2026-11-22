@@ -31,7 +31,7 @@
 - `free_space_near`: Empty label-sized places around `id` at `t`, nearest first (boxes are 0-1, top-left origin): where a label or note could go.
 - `hit_test`: Objects under an output-pixel point (origin top-left), topmost first.
 - `resolve`: Turn words like 'the pole on the left' or 'label of the loop' into object ids.
-- `render`: Render a video (preset: preview 960x540@30, final, 4k) or one PNG (`frame`).
+- `render`: Render a video (preset: preview 960x540@30, final, 4k) or one PNG (`frame`). `sound` adds what the scene's objects sound like (silent by default).
 - `docs_search`: Search the API reference, patterns, pitfalls and examples.
 - `object_types`: What a patch may add: object types (use these exact names in `add_object`) with their parameters and defaults and style keys (role group, default role), the role names each group accepts (style takes roles, never raw colors), and the themes.
 
@@ -45,10 +45,11 @@
 - `clock_diagram`: flash, n, step, pos, r, cosets
 - `complex_map`: flash, function, pos, center, extent, lines, samples, amount, limit
 - `counter`: flash, value, digits, prefix, suffix, math, pos, anchor
+- `cue`: flash, at, kind, hz, gain
 - `domain_coloring`: flash, function, pos, size, contour, softness, hue, radius, ambient, lines, a, to, blend, line_glow, light
 - `dot`: flash, pos, r
 - `eigen_lines`: flash, matrix, pos, length
-- `epicycles`: flash, points, terms, phase, trace
+- `epicycles`: flash, points, terms, phase, trace, hz
 - `equation`: flash, parts, colors, pos, write, drift, keys, from_parts, from_colors, from_keys, from_pos, from_id, morph, arc
 - `fixed_points`: flash, f, g, constants, pos, extent, rays, labels, ray_length, reveal, grid
 - `flow_lines`: flash, fp, fq, fr, pos, extent, seeds, steps, length, both, progress
@@ -68,7 +69,7 @@
 - `network`: flash, path, edges, nodes, generator, branching, depth, rows, cols, n, p, k, cube_dim, symmetric, layout, dims, iterations, root, seed, pos, size, color_by, grow, node_size, hue, exposure, cross_edges
 - `parametric_curve`: flash, fx, fy, fz, t_range, samples, pos, scale, progress, color_by, hue, to_fx, to_fy, to_fz, blend
 - `parametric_surface`: flash, fx, fy, fz, u_range, v_range, res, pos, scale, color_by, color_expr, with_map, domain_pos, domain_size, morph, to_fx, to_fy, to_fz, blend
-- `partial_sum`: flash, kind, terms, pos, extent, reveal
+- `partial_sum`: flash, kind, terms, pos, extent, reveal, hz
 - `pde_field`: flash, smooth, isolines, hue_cycles, hue, fade, ambient, contrast, kind, time, pos, size, n, diffusivity, speed, mode, feed, kill, seed, scale
 - `pde_modes`: flash, time, pos, extent, length, diffusivity, modes, count, boundary, components, ymax
 - `pde_profile`: flash, kind, time, pos, extent, length, n, diffusivity, speed, modes, potential, dt, exact, ymax, boundary, method
@@ -90,12 +91,13 @@
 - `subgroup_lattice`: flash, group, pos, width, height
 - `taylor`: flash, function, center, order, xmin, xmax, ymax, pos
 - `text`: flash, text, pos, anchor, leader, leader_on, write
+- `tone`: flash, hz, gain, harmonics
 - `tracer`: flash, path, progress, trail, r
 - `transform_grid`: flash, matrix, pos, extent, spacing, square, basis
 - `vector_field`: flash, p, q, pos, extent, spacing, color_by_size, length_by
 - `vector_field_3d`: flash, fp, fq, fr, pos, extent, counts, spacing, color_by_size, length_by
-- `wavefront`: flash, center, radius, rings
-- `wavefront3d`: flash, room, source, time, speed, hue_step, order, shell, samples
+- `wavefront`: flash, center, radius, rings, listener
+- `wavefront3d`: flash, room, source, time, speed, hue_step, order, shell, samples, listener
 
 ## Docs
 

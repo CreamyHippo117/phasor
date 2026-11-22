@@ -179,6 +179,20 @@ Only that pole contributes [[residue_glow]].
 - Auto-pause after an idea, sized by how much changed on screen (`Scene.pace()`, run after the verbs).
 - Lint warning when too many things change in one block.
 
+## Sound (opt-in)
+
+As built (owner request, 2026-11-22). Sound is a render option, never automatic: `render --sound`
+(`render_file(sound=True)`), `phasor sound` for a WAV, and `Engine.audio_track(sound=True)`; with
+no flag the soundtrack is the narration alone, as before, and a render has no audio stream.
+Objects make sound through an optional `sounds(ctx) -> list[Sound]` (`core/sound.py`, pure NumPy,
+found with `getattr`; contract 5's required members are unchanged). *When* a sound happens is found
+by sampling `Engine.state_at` on a control grid and interpolating crossings, so contract 3 holds
+for any expression-driven time. Loudness and pitch are the theme's `[sound]` table. Sonified:
+`ac.Wavefront3D`/`Wavefront` (`listener=`), `ac.ImpulseResponse`, `fr.PartialSum`, `fr.Epicycles`,
+`fr.Spectrum`, and the invisible `sound.Tone` and `sound.Cue` for anything else. Deviations: invisible
+objects carry `semantics["unseen"]` so lint's `orphan` rule does not flag them; `listener` is `""`
+for none (the document rejects `None`); `PartialSum.hz`/`Epicycles.hz` are params, not theme keys.
+
 ## Layout constraints, inspector and linter
 
 This is the part that lets an AI work with its eyes open: it states intent as constraints, then reads back exactly what is on screen.

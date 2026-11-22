@@ -21,11 +21,13 @@ from typing import Any, ClassVar, Literal
 import numpy as np
 from pydantic import Field, field_validator
 
+from phasor.core import sound as snd
 from phasor.core.color import ramp
 from phasor.core.objects import Bounds, DrawContext, ObjectBase, ParamsBase, Pass, register
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
 from phasor.domains import fourier_math as fm
+from phasor.domains import sound_math as sm
 from phasor.domains.heatmap import PRISM, HeatParams, heat_pixels, lut_colour, wheel_colour
 from phasor.domains.strokes import circle, disc, polyline, with_alpha
 
@@ -33,6 +35,11 @@ from phasor.domains.strokes import circle, disc, polyline, with_alpha
 def _ydir(me, state: SceneState) -> float:
     """+1 in a world layer, -1 on the overlay (y runs down): plots grow upward either way."""
     return 1.0 if state.camera_for(me).up[1] >= 0 else -1.0
+
+
+def _scaled(sound: snd.Sound, ctx: snd.SoundContext) -> snd.Sound:
+    """The sound at the theme's tone loudness."""
+    return snd.Sound(sound.t, sound.samples, ctx.theme["tone_gain"], sound.label)
 
 
 # ---------------------------------------------------------------- Epicycles
@@ -65,6 +72,7 @@ class Epicycles(ObjectBase):
         terms: int = Field(12, ge=1, le=400)
         phase: float = Field(0.0, ge=0, le=1)
         trace: float = Field(1.0, ge=0, le=1)  # share of the path drawn behind the tip
+        hz: float = Field(110.0, gt=0)  # pitch of frequency k = 1 (sound only; nothing is drawn)
 
         @field_validator("phase")
         @classmethod
@@ -106,6 +114,26 @@ class Epicycles(ObjectBase):
             "max_error": round(err, 6),
             "radii": radii,
         }
+
+    def sounds(self, ctx: snd.SoundContext) -> list[snd.Sound]:
+        """The curve's spectrum, heard: circle ``k`` is a partial at ``hz * |k|`` with weight
+        ``|c_k|`` (the centre, k = 0, is silent; ``-k`` and ``k`` share a pitch and add). Circles
+        come in as ``terms`` grows (an expr of ``t`` gives a curve that sharpens). ``phase`` is
+        ignored: the tone sustains for the whole scene."""
+        p = self.me(ctx.state_at(0.0)).params
+        terms = ctx.series(lambda s: s[self.id].params.terms)
+        top = _coeffs(tuple(p.points), int(terms.max()))  # biggest first; fewer is a prefix
+        # the circles that sound, by pitch: |k| -> summed weight and the first rank that has it
+        ranks: dict[int, tuple[float, int]] = {}
+        for rank, (k, c) in enumerate(top, start=1):
+            if k:
+                w, r = ranks.get(abs(k), (0.0, rank))
+                ranks[abs(k)] = (w + abs(c), min(r, rank))
+        ks = sorted(ranks)
+        on = terms[:, None] >= np.array([ranks[k][1] for k in ks])[None, :]
+        sound = sm.stack(ctx.rate, ctx.times(), [p.hz * k for k in ks],
+                         [ranks[k][0] for k in ks], on, "epicycles")  # fmt: skip
+        return [] if sound is None else [_scaled(sound, ctx)]
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
         me = self.me(state)
@@ -158,6 +186,7 @@ class PartialSum(ObjectBase):
         pos: Vec3 = (0.0, 0.0, 0.0)  # centre of the plot
         extent: tuple[float, float] = (6.0, 2.4)
         reveal: float = Field(1.0, ge=0, le=1)  # share of the period drawn
+        hz: float = Field(220.0, gt=0)  # the fundamental, for sound only (nothing is drawn)
 
     def _xs(self, p):
         return np.linspace(-math.pi, math.pi, 600)
@@ -192,6 +221,19 @@ class PartialSum(ObjectBase):
         return {"kind": "partial_sum", "series": p.kind, "terms": p.terms,
                 "gibbs_overshoot": round(fm.gibbs_overshoot(p.kind, p.terms), 5),
                 "max_error_away_from_jumps": round(float(err[away].max()), 5)}  # fmt: skip
+
+    def sounds(self, ctx: snd.SoundContext) -> list[snd.Sound]:
+        """The series as a tone on ``hz``: harmonic ``n`` of the shape (square: odd n at
+        1/n; sawtooth: every n at 1/n; triangle: odd n at 1/n^2) sounds once ``terms`` has
+        reached it, so a ``terms`` that grows with ``t`` brightens the tone as the plot
+        sharpens."""
+        p = self.me(ctx.state_at(0.0)).params
+        terms = ctx.series(lambda s: s[self.id].params.terms)
+        top = max(int(terms.max()), 1)
+        n, amp = sm.harmonic_series(p.kind, top)
+        on = terms[:, None] >= np.arange(1, top + 1)[None, :]
+        sound = sm.stack(ctx.rate, ctx.times(), p.hz * n, amp, on, "partial_sum")
+        return [] if sound is None else [_scaled(sound, ctx)]
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
         me = self.me(state)
@@ -282,6 +324,13 @@ class Spectrum(ObjectBase):
             "peak_hz": round(float(f[int(np.argmax(m))]), 4),
             "leakage": round(leak, 6),
         }
+
+    def sounds(self, ctx: snd.SoundContext) -> list[snd.Sound]:
+        """The sinusoids the bars are the spectrum of, played at their own frequencies (in Hz)
+        and amplitudes for the whole scene. The window and ``samples`` only change the picture."""
+        p = self.me(ctx.state_at(0.0)).params
+        sound = sm.stack(ctx.rate, ctx.times(), p.frequencies, p.amplitudes, None, "spectrum")
+        return [] if sound is None else [_scaled(sound, ctx)]
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
         me = self.me(state)

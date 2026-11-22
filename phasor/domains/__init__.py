@@ -15,7 +15,8 @@ from phasor.domains import (
     media,
     network,
     pde,
+    sound,
 )  # fmt: skip
 
 __all__ = ["acoustics", "algebra", "basic", "calc", "cloud", "cx", "dynamics", "fourier",
-           "geometry", "linalg", "media", "network", "pde"]  # fmt: skip
+           "geometry", "linalg", "media", "network", "pde", "sound"]  # fmt: skip
