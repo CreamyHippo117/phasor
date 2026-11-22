@@ -273,6 +273,8 @@ def _motion(theme: str, data: dict[str, Any]) -> dict[str, Any]:
         if key not in data:
             raise ThemeError(f"theme {theme!r} is missing [motion] {key}")
         out[key] = float(data[key])
+    # line heights a part arcs by when ``transform`` carries it past other parts
+    out["transform_arc"] = float(data.get("transform_arc", 0.9))
     for verb in VERBS:
         spec = data.get(verb)
         if not isinstance(spec, dict) or "duration" not in spec or "ease" not in spec:

@@ -13,7 +13,7 @@
 - `scene_palette`: Pick the colors run along strokes: `spectrum` (the prism rainbow), `moonlight` (white with a cool and warm shimmer), `gold`, `glacier`, `borealis`, `rose`, or None for the theme's own. In the prism looks it recolors every glowing curve and the lines the look runs a hue along; fringes, vignette and glow stay. One undo step.
 - `undo`: Revert the last edit (each patch, verb or narration is one step).
 - `redo`: Re-apply the edit that undo reverted.
-- `animate`: Animate with a choreography verb starting at a marker (or seconds). Timing comes from the theme. Returns when it starts and ends so the next step can follow it. `orbit` swings the 3D camera `value` degrees (default 360), until marker `until` if given. `transform` and `become` take `targets=[from, to]`; `sweep` takes `path` and `value`; `circumscribe` takes one target and `value` "circle" or "box".
+- `animate`: Animate with a choreography verb starting at a marker (or seconds). Timing comes from the theme. Returns when it starts and ends so the next step can follow it. `orbit` swings the 3D camera `value` degrees (default 360), until marker `until` if given; `morph` too runs until `until` if given. `transform` and `become` take `targets=[from, to]`; `sweep` takes `path` and `value`; `circumscribe` takes one target and `value` "circle" or "box".
 - `narrate`: Set the narration. `[[name]]` puts a marker at the next word. Every animation anchored to a marker follows the voice. `pace` adds breathing room after busy sentences.
 - `checkpoint`: Remember the current document under `name` (to compare or return to later).
 - `restore`: Go back to a checkpoint, as one step (undo brings you back again).
@@ -45,11 +45,11 @@
 - `clock_diagram`: flash, n, step, pos, r, cosets
 - `complex_map`: flash, function, pos, center, extent, lines, samples, amount, limit
 - `counter`: flash, value, digits, prefix, suffix, math, pos, anchor
-- `domain_coloring`: flash, function, pos, size, contour, softness, hue, radius, ambient, lines, a
+- `domain_coloring`: flash, function, pos, size, contour, softness, hue, radius, ambient, lines, a, to, blend, line_glow, light
 - `dot`: flash, pos, r
 - `eigen_lines`: flash, matrix, pos, length
 - `epicycles`: flash, points, terms, phase, trace
-- `equation`: flash, parts, colors, pos, write, from_parts, from_colors, from_pos, morph
+- `equation`: flash, parts, colors, pos, write, drift, keys, from_parts, from_colors, from_keys, from_pos, from_id, morph, arc
 - `flow_lines`: flash, fp, fq, fr, pos, extent, seeds, steps, length, both, progress
 - `flow_particles`: flash, fp, fq, fr, pos, extent, count, speed, lifetime, tail, seed
 - `fractal`: flash, kind, c, pos, size, max_iter, density, hue, center, zoom, steady, radius, ambient

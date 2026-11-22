@@ -118,9 +118,10 @@ class At:
         """Move the camera onto ``object_id``."""
         return self._verb("focus_pull", object_id, margin)
 
-    def morph(self, path: str, value: Any) -> At:
-        """Change any parameter smoothly, with the theme's morph timing."""
-        return self._verb("morph", path, value)
+    def morph(self, path: str, value: Any, until: str | None = None) -> At:
+        """Change any parameter smoothly, with the theme's morph timing, or until the
+        marker ``until``."""
+        return self._verb("morph", path, value, until)
 
     def settle(self, path: str, value: Any) -> At:
         """Move a parameter like a released spring."""

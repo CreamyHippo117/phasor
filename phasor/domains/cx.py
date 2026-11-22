@@ -38,15 +38,21 @@ def _parse(source: str):
 
 @functools.lru_cache(maxsize=256)
 def _zeros_and_poles(
-    source: str, a: complex = 0j
+    source: str, a: complex = 0j, to: str = "", blend: float = 0.0
 ) -> tuple[tuple[complex, ...], tuple[complex, ...]]:
-    """Zeros and poles of a rational function (with the constant ``a`` put in), with
-    multiplicity; () for anything else."""
+    """Zeros and poles of a rational function (with the constant ``a`` put in; with ``to``,
+    of the blend (1 - blend) f + blend g), with multiplicity; () for anything else."""
     import sympy as sp
 
     from phasor.render.gpu.codegen import A, Z
 
-    expr = _parse(source).expr.subs(A, sp.Float(a.real) + sp.I * sp.Float(a.imag))
+    expr = _parse(source).expr
+    if to.strip() and blend >= 1:
+        expr = _parse(to.strip()).expr
+    elif to.strip() and blend > 0:
+        b = sp.Float(blend)
+        expr = (1 - b) * expr + b * _parse(to.strip()).expr
+    expr = expr.subs(A, sp.Float(a.real) + sp.I * sp.Float(a.imag))
     num, den = sp.fraction(sp.cancel(sp.together(expr)))
     if not (num.is_polynomial(Z) and den.is_polynomial(Z)):
         return (), ()
@@ -121,12 +127,20 @@ class DomainColoring(_Plane):
         lines: int = Field(0, ge=0, le=64)  # prism look: glowing rays of phase per turn, + rings
         # the constant ``a`` the function may use, as (re, im): animate it to move zeros/poles
         a: tuple[float, float] = (0.0, 0.0)
+        # A second function and how far along to it (0: ``function``, 1: ``to``); between,
+        # (1 - blend) f + blend g. Animate ``blend`` to change one function into the other.
+        to: str = ""
+        blend: float = Field(0.0, ge=0, le=1)
+        line_glow: float = Field(0.6, ge=0, le=4)  # prism look: how bright rays and rings are
+        light: float = Field(1.0, ge=0, le=4)  # prism look: scales the light the glow role adds
 
-        @field_validator("function")
+        @field_validator("function", "to")
         @classmethod
-        def _check(cls, v: str) -> str:
+        def _check(cls, v: str, info) -> str:
             from phasor.render.gpu.codegen import FunctionError
 
+            if info.field_name == "to" and not v.strip():
+                return v  # no second function
             try:
                 _parse(v.strip())
             except FunctionError as e:
@@ -142,7 +156,8 @@ class DomainColoring(_Plane):
 
     def features(self, state: SceneState) -> dict[str, np.ndarray]:
         p = self.me(state).params
-        zeros, poles = _zeros_and_poles(p.function.strip(), complex(*p.a))
+        zeros, poles = _zeros_and_poles(p.function.strip(), complex(*p.a), p.to.strip(),
+                                        float(p.blend))  # fmt: skip
         return {
             "center": np.asarray(p.pos),
             "zeros": self._inside(state, zeros),
@@ -159,6 +174,15 @@ class DomainColoring(_Plane):
             "function": f.source,
             "a": [round(float(p.a[0]), 6), round(float(p.a[1]), 6)],
             "latex": f.latex(),
+            **(
+                {
+                    "to": p.to.strip(),
+                    "to_latex": _parse(p.to.strip()).latex(),
+                    "blend": round(float(p.blend), 6),
+                }
+                if p.to.strip()
+                else {}
+            ),
             "zeros": [[round(float(x), 6), round(float(y), 6)] for x, y, _ in feats["zeros"]],
             "poles": [[round(float(x), 6), round(float(y), 6)] for x, y, _ in feats["poles"]],
         }
@@ -170,6 +194,10 @@ class DomainColoring(_Plane):
         lut = np.asarray(me.style["colormap"], dtype=np.float32)
         lut = np.roll(lut, -round(p.hue * len(lut)), axis=0)
         f = _parse(p.function.strip())
+        # A second function only while it shows (blend 0 is the plain kernel, no extra cost)
+        blend = {"to": _parse(p.to.strip()), "blend": float(p.blend)} if (
+            p.to.strip() and p.blend > 0) else {}  # fmt: skip
+        lit = {"line_glow": float(p.line_glow)} if p.line_glow != 0.6 else {}  # 0.6: default
 
         def pixels(pw: int, ph: int, center: tuple[float, float], height: float) -> np.ndarray:
             from phasor.render import gpu
@@ -180,13 +208,16 @@ class DomainColoring(_Plane):
                 return gpu.render("domain_glow", pw, ph, supersample=SUPERSAMPLE, function=f,
                                   lut=lut, radius=p.radius, ambient=p.ambient,
                                   contour=p.contour, lines=p.lines, a=complex(*p.a),
-                                  **view)  # fmt: skip
+                                  **blend, **lit, **view)  # fmt: skip
             return gpu.render("domain", pw, ph, supersample=SUPERSAMPLE, function=f,
                               contour=p.contour, soft=p.softness, lut=lut, a=complex(*p.a),
-                              **view)  # fmt: skip
+                              **blend, **view)  # fmt: skip
 
+        glow = float(me.style.get("glow", 1.0))
+        if p.light != 1.0:  # more (or less) of the light the glow role adds
+            glow = 1.0 + max(glow - 1.0, 0.0) * p.light
         ctx.field(corner, r, u, pixels=pixels, opacity=p.opacity,
-                  glow=float(me.style.get("glow", 1.0)) if p.radius > 0 else 1.0)  # fmt: skip
+                  glow=glow if p.radius > 0 else 1.0)  # fmt: skip
 
 
 @functools.lru_cache(maxsize=64)

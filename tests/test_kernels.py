@@ -24,6 +24,7 @@ FULL = Tile.full(64, 64)
 OFFSET = Tile(8, 4, 48, 40, 64, 48)  # not at the origin, not square: catches index mix-ups
 F = ComplexFunction.parse("1/(z**2 + 1)")
 FA = ComplexFunction.parse("(z**3 - 1) / (z**2 + a)", constant=True)  # a: a run-time constant
+FB = ComplexFunction.parse("(z**5 - 1) / (z - a)", constant=True)  # a blend's second function
 
 
 def _rgba(seed=0, shape=(24, 32)):
@@ -73,6 +74,8 @@ CASES = {
         (FULL, {"function": F, "center": (0.0, 0.0), "height": 4.0, "soft": 0.8}),
 
         (FULL, {"function": FA, "center": (0.0, 0.0), "height": 4.0, "a": 0.3 + 0.7j}),
+        (OFFSET, {"function": FA, "center": (0.1, 0.0), "height": 3.0, "a": 0.6j, "to": FB,
+                  "blend": 0.4, "precision": "f64"}),
     ],
     "domain_glow": [
         (FULL, {"function": F, "center": (0.0, 0.0), "height": 4.0, "precision": "f64"}),
@@ -84,6 +87,8 @@ CASES = {
 
         (FULL, {"function": FA, "center": (0.0, 0.0), "height": 4.0, "lines": 12,
                 "a": -0.2 + 0.6j, "precision": "f64"}),
+        (FULL, {"function": FA, "center": (0.0, 0.0), "height": 4.0, "lines": 12,
+                "a": 0.6j, "to": FB, "blend": 0.65, "precision": "f64"}),
     ],
     "tonemap": [
         (IMAGE_TILE, {"image": IMAGE, "exposure": 1.7}),
@@ -566,3 +571,24 @@ def test_the_constant_a_is_a_kernel_argument_not_part_of_the_source():
     assert np.allclose(got, want, atol=1e-5)
     with pytest.raises(FunctionError):
         ComplexFunction.parse("z + a")  # only where the caller allows the constant
+
+
+@pytest.mark.parametrize("name", ["domain", "domain_glow"])
+def test_a_blend_ends_exactly_on_each_function_and_mixes_linearly_between(name):
+    """``to`` + ``blend``: at 0 the pixels are the first function's, at 1 the second's (to the
+    bit, poles included); in between, w = (1 - b) f + b g, the straight line between them."""
+    from phasor.render.gpu.kernels import domain_coloring as dc
+
+    k = get(name).reference
+    tile, kw = Tile.full(40, 30), {"center": (0.0, 0.0), "height": 4.0, "a": 0.6j}
+    np.testing.assert_array_equal(k(tile, FA, to=FB, blend=0.0, **kw), k(tile, FA, **kw))
+    np.testing.assert_array_equal(k(tile, FA, to=FB, blend=1.0, **kw), k(tile, FB, **kw))
+    z = np.array([0.3 + 0.2j, -1.1 + 0.4j])
+    w = dc.blended(FA, FB, 0.25)(z, 0.6j)
+    assert np.allclose(w, 0.75 * FA.numpy()(z, 0.6j) + 0.25 * FB.numpy()(z, 0.6j))
+    # without ``to`` the source is the one-function source, as before; the blend value is a
+    # kernel argument, never part of the source (an animated blend never recompiles)
+    one = dc.source_for(FA) if name == "domain" else dc.glow_source_for(FA)
+    assert "blend" not in one and "phasor_f(cplx z, cplx a) { return " + FA.c() in one
+    two = dc.source_for(FA, FB) if name == "domain" else dc.glow_source_for(FA, FB)
+    assert "double blend" in two and "0.25" not in two

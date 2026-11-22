@@ -23,6 +23,7 @@ def _cases(w: int, h: int) -> dict[str, dict[str, Any]]:
     field = gpu.run("escape", Tile.full(w, h), center=(-0.6, 0.0), height=2.6, max_iter=256,
                     backend="reference")  # fmt: skip
     f = ComplexFunction.parse("1/(z**2 + 1)")
+    fa = ComplexFunction.parse("(z**5 - 1)/(z**2 + a)", constant=True)
     # a 1e-20 view near a spiral of the Mandelbrot set: the perturbation path of a deep zoom
     # (for timing, a float64 orbit of the reference point is close enough)
     z, orbit = 0j, [0j]
@@ -34,6 +35,16 @@ def _cases(w: int, h: int) -> dict[str, dict[str, Any]]:
         "deep": {"center": (0.0, 0.0), "height": 1e-20, "orbit": orbit, "max_iter": 1000},
         "domain": {"function": f, "center": (0.0, 0.0), "height": 4.5},
         "domain_glow": {"function": f, "center": (0.0, 0.0), "height": 4.5, "lines": 12},
+        # two functions blended (prism_transitions): both are evaluated per pixel
+        "domain_glow:blend": {
+            "function": fa,
+            "to": ComplexFunction.parse("(z**3 - 1)/(z**2 + a)", constant=True),
+            "blend": 0.5,
+            "a": 0.6j,
+            "center": (0.0, 0.0),
+            "height": 4.5,
+            "lines": 12,
+        },
         "escape": {"center": (-0.6, 0.0), "height": 2.6, "max_iter": 256},
         "palette": {"field": field, "lut": phase_lut()},
         "fractal_glow": {"field": field, "lut": phase_lut(), "radius": 3.0},
@@ -69,7 +80,7 @@ def run_bench(width: int = 1920, height: int = 1080, repeats: int = 3) -> dict[s
             if cuda is not None:
                 cuda.cp.cuda.Device().synchronize()
             t0 = time.perf_counter()
-            gpu.run(name, tile, backend=backend, **params)
+            gpu.run(name.partition(":")[0], tile, backend=backend, **params)  # "kernel:variant"
             if cuda is not None:
                 cuda.cp.cuda.Device().synchronize()
             if k:

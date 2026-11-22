@@ -15,6 +15,7 @@ render only those: `uv run python showcase/render_all.py prism_primes deep_zoom`
 |---|---|
 | `prism_primes` | the prism look: primes heard through the zeta zeros, glowing rainbow strokes |
 | `prism_domain` | domain coloring in the prism look: glowing zeros, poles, rays and rings |
+| `prism_transitions` | transitions: a constant drifting, one function blending into another, equations solved |
 | `prism_heat` | heat maps in the prism look: a hot spot, a vibrating drum, a chirp |
 | `point_cloud` | a million polynomial roots as glowing points, falling toward z = i |
 | `prism_fractal` | fractals in the prism look: a morphing Julia set, then a dive, edges glowing |

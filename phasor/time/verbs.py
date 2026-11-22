@@ -230,13 +230,27 @@ class Verbs:
         s2, _ = self._segment(f"{cam}.height", float(height), "focus_pull", 0.0)
         return Motion((s1, s2), d1)
 
-    def morph(self, path: str, value: Any) -> Motion:
-        """Change any parameter (points of a curve, a constant, a color stop) smoothly."""
+    def morph(self, path: str, value: Any, until: str | None = None) -> Motion:
+        """Change any parameter (points of a curve, a constant, a color stop) smoothly, in
+        the theme's ``morph`` time, or slowly until the marker ``until`` (a long, calm change:
+        the constant of a function drifting while it is talked about)."""
         target = path.rpartition(".")[0]
         if self.c.doc.camera(target) is None:
             self._object(target)
         seg, done = self._segment(path, value, "morph", 0.0)
+        if until is not None:
+            done = self._until(until, "morph")
+            seg["segment"]["t1"] = {"marker": until, "offset": 0.0}
         return Motion((seg,), done)
+
+    def _until(self, until: str, verb: str) -> float:
+        """Seconds from the anchor to the marker ``until``, which must come after it."""
+        if until not in self.c.time_map.markers:
+            raise VerbError(f"no marker {until!r}; markers are {sorted(self.c.time_map.markers)}")
+        end = self.c.time_map.markers[until] - self.t
+        if end <= 0:
+            raise VerbError(f"marker {until!r} is not after the {verb} starts")
+        return end
 
     def settle(self, path: str, value: Any) -> Motion:
         """Move to ``value`` like a released spring: overshoot, then come to rest."""
@@ -265,11 +279,7 @@ class Verbs:
             duration = spec["duration"] * abs(degrees) / 360.0
             seg["segment"]["t1"] = _ref(shift(self.at, duration))
             return Motion((seg,), duration)
-        if until not in self.c.time_map.markers:
-            raise VerbError(f"no marker {until!r}; markers are {sorted(self.c.time_map.markers)}")
-        end = self.c.time_map.markers[until] - self.t
-        if end <= 0:
-            raise VerbError(f"marker {until!r} is not after the orbit starts")
+        end = self._until(until, "orbit")
         seg = {
             "t0": _ref(self.at),
             "t1": {"marker": until, "offset": 0.0},
@@ -318,14 +328,24 @@ class Verbs:
 
     def transform(self, source: str, target: str) -> Motion:
         """An equation becoming the next: parts that appear in both glide from their old
-        place (and color) to the new; the old one's other parts fade out, the new one's fade
-        in. ``target`` is hidden until now; ``source`` disappears as it starts."""
+        place (and color) to the new; parts with the same ``keys`` entry glide too, changing
+        their text on the way, and arc round the parts they are carried past (the theme's
+        ``transform_arc``); the old one's other parts fade out, the new one's fade in.
+        ``target`` is hidden until now; ``source`` disappears as it starts."""
         a = self._of_type(source, "transform", "equation")
         self._of_type(target, "transform", "equation")
         ops: list[dict[str, Any]] = [
             {"op": "set_param", "path": f"{target}.from_parts", "value": list(a.params.parts)},
             {"op": "set_param", "path": f"{target}.from_colors", "value": list(a.params.colors)},
-            {"op": "set_param", "path": f"{target}.from_pos", "value": list(a.params.pos)},
+            # the place the script gave it; life's drift is added when drawn (``from_id``)
+            {
+                "op": "set_param",
+                "path": f"{target}.from_pos",
+                "value": [float(v) for v in self.state.values[f"{source}.pos"]],
+            },
+            {"op": "set_param", "path": f"{target}.from_keys", "value": list(a.params.keys)},
+            {"op": "set_param", "path": f"{target}.from_id", "value": source},
+            {"op": "set_param", "path": f"{target}.arc", "value": self.motion["transform_arc"]},
         ]
         if self._starts_hidden(f"{target}.morph"):
             ops.append({"op": "set_param", "path": f"{target}.morph", "value": 0.0})

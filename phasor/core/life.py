@@ -12,7 +12,8 @@ What moves (amplitudes live in the theme's ``[life]``; the scene's ``life`` is `
 - glowing objects breathe: their glow swells and fades a little (strokes shimmer faster);
 - types that declare ``"hue"`` (color fields) turn their colors a few percent of the wheel (a
   field's geometry never moves: a pole stays at its computed place);
-- ``"float"`` (equations) drift their ``pos`` slowly by ``[life] float`` world units.
+- ``"float"`` (equations) drift their ``pos`` slowly by ``[life] float`` world units, times
+  their ``drift`` (a look sets it: ``prism_field`` lets equations over a field drift less).
 
 Each type says what may happen to it (``ObjectBase.Life``, glow only by default): guessing
 from parameter names once made polygons, clocks and acoustic sources drift.
@@ -88,11 +89,22 @@ def adjust(
             z,
         )
     if "float" in channels and "pos" in fields:  # an equation drifts slowly, a little
-        d = amp * float(th.get("float", 0.06))
-        x, y, z = values["pos"]
+        # ``drift`` (if the type has it) is the share of the theme's float this one takes
+        d = amp * float(th.get("float", 0.06)) * float(values.get("drift", 1.0))
         period = float(th.get("float_period", 9.0))
-        values["pos"] = (x + d * noise(object_id, seed, "fx", t, period),
-                         y + d * noise(object_id, seed, "fy", t, period * 1.3), z)  # fmt: skip
+
+        def offset(oid: str) -> tuple[float, float]:
+            return (d * noise(oid, seed, "fx", t, period),
+                    d * noise(oid, seed, "fy", t, period * 1.3))  # fmt: skip
+
+        dx, dy = offset(object_id)
+        src, m = values.get("from_id"), float(values.get("morph", 1.0))
+        if src and m < 1.0:  # mid-transform: from where the source was drifting to its own
+            sx, sy = offset(src)
+            dx, dy = sx + (dx - sx) * m, sy + (dy - sy) * m
+        for key in ("pos", "from_pos") if src else ("pos",):
+            x, y, z = values[key]
+            values[key] = (x + dx, y + dy, z)
     if (
         "hue" in channels and "hue" in fields
     ):  # a color field turns its colors by a few percent of the wheel
