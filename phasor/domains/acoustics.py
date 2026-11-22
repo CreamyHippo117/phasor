@@ -29,7 +29,7 @@ from phasor.core.simulation import runner_for
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
 from phasor.domains import ac_math
-from phasor.domains.heatmap import heat_pixels
+from phasor.domains.heatmap import PRISM, HeatParams, heat_pixels, wheel_colour
 from phasor.domains.strokes import circle, disc, polyline, with_alpha
 
 MAX_SHOWN = 800  # image sources drawn at most
@@ -501,13 +501,12 @@ class PressureSlice(ObjectBase):
 
     type: ClassVar[str] = "pressure_slice"
     Style: ClassVar = {"positive": ("emphasis", "highlight"), "negative": ("emphasis", "secondary"),
-                       "glow": ("glow", "none")}  # fmt: skip
-    Presets: ClassVar = {
-        # the prism look: smooth, glowing where strong, contour lines of light
-        "prism": {"params": {"smooth": True, "isolines": 8}, "style": {"glow": "soft"}},
-    }
+                       "glow": ("glow", "none"),
+                       "colormap": ("colormap", "spectrum")}  # fmt: skip  # with hue_cycles
+    Presets: ClassVar = {"prism": PRISM}  # glowing out of the dark in spectrum hues
+    Life: ClassVar = frozenset({"hue", "glow"})
 
-    class Params(ParamsBase):
+    class Params(HeatParams):
         size: Vec3 = (8.0, 5.0, 3.0)
         origin: Vec3 = (0.0, 0.0, 0.0)
         source: Vec3 = (2.0, 2.5, 1.5)
@@ -519,8 +518,6 @@ class PressureSlice(ObjectBase):
         frequency: float = Field(200.0, gt=1)
         gain: float = Field(1.0, gt=0)  # how strongly pressure turns into color
         seed: int = 0
-        smooth: bool = False  # bicubic between grid values (the prism look); else as before
-        isolines: int = Field(0, ge=0, le=64)  # contour levels drawn as thin light
 
         @field_validator("size")
         @classmethod
@@ -577,11 +574,14 @@ class PressureSlice(ObjectBase):
             return bg + (tint - bg) * np.abs(level)[..., None]
 
         glow = float(me.style.get("glow", 1.0))
+        level = lambda v: 0.5 + 0.5 * np.tanh(p.gain * 8.0 * v)  # noqa: E731
+        if p.hue_cycles > 0:  # prism: the hue of the level, brightness from the weight
+            wheel = wheel_colour(me.style["colormap"], p)
+            colour = lambda v: wheel(level(v))  # noqa: E731
         pixels = heat_pixels(
             slab, (p.size[0], p.size[1]), colour, cells=True,
-            how="smooth" if p.smooth else "linear", isolines=p.isolines,
-            level=lambda v: 0.5 + 0.5 * np.tanh(p.gain * 8.0 * v),
+            how="smooth" if p.smooth else "linear", level=level,
             weight=(lambda v: np.abs(np.tanh(p.gain * 8.0 * v))) if glow > 1 else None,
-            background=state.background,
+            background=state.background, **p.drawing(),
         )  # fmt: skip
         ctx.field(corner, right, up, pixels=pixels, opacity=p.opacity, glow=glow)

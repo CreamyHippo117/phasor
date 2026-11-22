@@ -27,7 +27,7 @@ from phasor.core.simulation import runner_for
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
 from phasor.domains import pde_math as pm
-from phasor.domains.heatmap import heat_pixels, lut_colour
+from phasor.domains.heatmap import PRISM, HeatParams, heat_pixels, lut_colour, wheel_colour
 from phasor.domains.strokes import disc, polyline, with_alpha
 
 CHECKPOINT_EVERY = 100
@@ -302,20 +302,22 @@ class _Plate(ObjectBase):
         return out
 
 
-def _heat(v: np.ndarray, lut: np.ndarray, size, p, glow: float, state, *, signed=None):
+def _heat(v: np.ndarray, colormap, size, p, glow: float, state, *, signed=None):
     """``ctx.field`` pixels for values ``v`` (0..1, at grid nodes) on a ``size`` rectangle,
-    plain or in the prism look (``p.smooth``, ``p.isolines``, a ``glow`` role above 1).
-    ``signed``: (positive, negative) colours for a wave, whose 0.5 is rest: in the prism look
-    both directions glow, each in its own colour."""
-    colour = lut_colour(lut, "linear" if p.smooth else "nearest")
+    plain or in the prism look (``HeatParams``, a ``glow`` role above 1). ``signed``:
+    (positive, negative) colours for a wave, whose 0.5 is rest: with glow both directions
+    glow, each in its own colour, or (``p.hue_cycles``) in the hue of their level."""
+    colour = lut_colour(ramp(colormap, np.float32), "linear" if p.smooth else "nearest")
     weight = (lambda x: x) if glow > 1 else None
     if signed is not None and glow > 1:
         pos, neg = (np.asarray(c[:3], dtype=np.float64) for c in signed)
         weight = lambda x: np.abs(2 * x - 1)  # noqa: E731
         colour = lambda x: np.where((x >= 0.5)[..., None], pos, neg)  # noqa: E731
+    if p.hue_cycles > 0:
+        colour = wheel_colour(colormap, p)
     return heat_pixels(
-        v, size, colour, how="smooth" if p.smooth else "linear", isolines=p.isolines,
-        weight=weight, background=state.background,
+        v, size, colour, how="smooth" if p.smooth else "linear", weight=weight,
+        background=state.background, **p.drawing(),
     )  # fmt: skip
 
 
@@ -329,15 +331,15 @@ class Field(_Plate):
     Style: ClassVar = {"colormap": ("colormap", "ember"), "glow": ("glow", "none"),
                        "positive": ("emphasis", "highlight"),
                        "negative": ("emphasis", "secondary")}  # fmt: skip
+    Life: ClassVar = frozenset({"hue", "glow"})
     Presets: ClassVar = {
         "heat": {"style": {"colormap": "ember"}},
         "drum": {"style": {"colormap": "ocean"}},
         "pattern": {"style": {"colormap": "sequential"}},
-        # the prism look: smooth, glowing where strong, contour lines of light
-        "prism": {"params": {"smooth": True, "isolines": 8}, "style": {"glow": "soft"}},
+        "prism": PRISM,  # glowing out of the dark in spectrum hues (heatmap.PRISM)
     }
 
-    class Params(ParamsBase):
+    class Params(HeatParams):
         kind: Literal["heat", "wave", "reaction"] = "heat"
         time: float = PField(0.0, ge=0)
         pos: Vec3 = (0.0, 0.0, 0.0)  # centre
@@ -350,8 +352,6 @@ class Field(_Plate):
         kill: float = PField(0.06, gt=0)
         seed: int = 0
         scale: float = PField(1.0, gt=0)
-        smooth: bool = False  # bicubic between grid values (the prism look); else as before
-        isolines: int = PField(0, ge=0, le=64)  # contour levels drawn as thin light
 
         @model_validator(mode="after")
         def _stable(self):
@@ -377,12 +377,11 @@ class Field(_Plate):
         me = self.me(state)
         p = me.params
         _, u = self._grid(state)
-        lut = ramp(me.style["colormap"], np.float32)
         v = np.clip(u / p.scale, 0, 1) if p.kind != "wave" else 0.5 + 0.5 * np.tanh(u / p.scale)
         corner, right, up = self._rect(p)
         glow = float(me.style.get("glow", 1.0))
         signed = (me.style["positive"], me.style["negative"]) if p.kind == "wave" else None
-        pixels = _heat(v, lut, p.size, p, glow, state, signed=signed)
+        pixels = _heat(v, me.style["colormap"], p.size, p, glow, state, signed=signed)
         ctx.field(corner, right, up, pixels=pixels, opacity=p.opacity, glow=glow)
 
 
@@ -580,11 +579,11 @@ class Slice(ObjectBase):
         "glow": ("glow", "none"),
     }
     Presets: ClassVar = {
-        # the prism look: smooth, glowing where strong, contour lines of light
-        "prism": {"params": {"smooth": True, "isolines": 8}, "style": {"glow": "soft"}},
+        "prism": PRISM,  # glowing out of the dark in spectrum hues (heatmap.PRISM)
     }
+    Life: ClassVar = frozenset({"hue", "glow"})
 
-    class Params(ParamsBase):
+    class Params(HeatParams):
         time: float = PField(0.0, ge=0)
         pos: Vec3 = (0.0, 0.0, 0.0)  # centre of the cube
         side: float = PField(4.0, gt=0)  # world size of the cube
@@ -595,8 +594,6 @@ class Slice(ObjectBase):
         axis: Literal["x", "y", "z"] = "z"
         at: float = PField(0.5, ge=0, le=1)
         scale: float = PField(0.0, ge=0)  # value shown at full color; 0: the cube's hottest now
-        smooth: bool = False  # bicubic between grid values (the prism look); else as before
-        isolines: int = PField(0, ge=0, le=64)  # contour levels drawn as thin light
 
         @model_validator(mode="after")
         def _stable(self):
@@ -654,10 +651,10 @@ class Slice(ObjectBase):
         _, u = self._u(p)
         top = p.scale or max(float(u.max()), 1e-12)
         v = np.clip(pm.slice3d(u, p.axis, p.at) / top, 0, 1)
-        lut = ramp(me.style["colormap"], np.float32)
         corner, r, up = self._plane(p)
         glow = float(me.style.get("glow", 1.0))
-        ctx.field(corner, r, up, pixels=_heat(v, lut, (p.side, p.side), p, glow, state),
+        ctx.field(corner, r, up, pixels=_heat(v, me.style["colormap"], (p.side, p.side), p,
+                                              glow, state),
                   opacity=p.opacity, glow=glow)  # fmt: skip
         c = np.asarray(p.pos, dtype=np.float64) - p.side / 2
         w = me.style["stroke"] * float(cam.units_per_height(np.asarray(p.pos)))

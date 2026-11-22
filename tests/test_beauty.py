@@ -216,6 +216,108 @@ def test_prism_heat_golden_storyboard():
     _golden("prism_heat", sheet, e.pass_runner().renderer_class())
 
 
+def _field_pixels(obj, look="prism", t=0.0, size=(200, 200)):
+    """What ``obj`` asks ``ctx.field`` to draw, as (pixels, background), over its whole
+    rectangle (the camera framing exactly that)."""
+    from phasor.render.passes import _Collector
+
+    s = Scene("f", look=look, passes=None)
+    s.add(obj)
+    st = s.engine.state_at(t)
+    c = _Collector()
+    st[obj.id].impl.draw(c, st, "color")
+    (cmd,) = [cmd for kind, cmd in c.commands if kind == "field"]
+    w, h = (np.linalg.norm(cmd["right"]), np.linalg.norm(cmd["up"]))
+    px = cmd["pixels"](size[0], size[1], (w / 2, h / 2), h)
+    return px, np.asarray(st.background[:3]), s.engine.document.object(obj.id)
+
+
+def _hue(rgb: np.ndarray) -> float:
+    import colorsys
+
+    return colorsys.rgb_to_hsv(*np.clip(rgb, 0, None) / max(float(rgb.max()), 1e-9))[0]
+
+
+def test_prism_heat_glows_in_spectrum_hues_and_fades_into_the_background():
+    from phasor.domains import pde
+
+    px, bg, doc = _field_pixels(pde.Field(id="f", kind="heat", mode=(0, 0), time=0.02,
+                                          scale=0.5, size=(3.0, 3.0)))  # fmt: skip
+    assert doc.params["hue_cycles"] > 0 and doc.params["fade"] > 0
+    assert doc.style["colormap"] == "spectrum"
+    assert px[100, 100, 3] > 0.5  # the hot middle emits light (alpha is the glow weight)
+    for edge in (px[0, :], px[-1, :], px[:, 0], px[:, -1]):  # no hard rectangle
+        assert np.abs(edge[:, :3] - bg).max() < 0.01 and edge[:, 3].max() < 0.01
+    quiet = px[30, 30]  # inside the panel, far from the heat: the dark ground
+    assert np.abs(quiet[:3] - bg).max() < 0.03
+
+
+def test_prism_isolines_take_the_hue_of_their_level():
+    from phasor.domains import pde
+
+    px, bg, _ = _field_pixels(pde.Field(id="f", kind="heat", mode=(0, 0), time=0.02,
+                                        scale=0.5, size=(3.0, 3.0)), size=(400, 400))  # fmt: skip
+    row = px[200, 200:, :]  # from the hot middle outwards
+    lit = row[:, 3]
+    peaks = [i for i in range(1, len(lit) - 1)
+             if lit[i] > lit[i - 1] and lit[i] >= lit[i + 1] and lit[i] > 0.2]  # fmt: skip
+    hues = [_hue(row[i, :3] - bg) for i in peaks]
+    assert len(peaks) >= 3  # several contour lines cross the row
+    assert np.ptp(hues) > 0.15  # ... each in its own colour
+
+
+def test_prism_drum_and_pressure_and_spectrogram_glow_in_many_hues():
+    from phasor.domains import acoustics, pde
+    from phasor.domains.fourier import Spectrogram
+
+    for obj in (pde.Field(id="d", kind="wave", mode=(2, 3), scale=1.2, time=0.0),
+                acoustics.PressureSlice(id="p", time=0.02),
+                Spectrogram(id="s", size=(6.0, 3.0))):  # fmt: skip
+        px, bg, _ = _field_pixels(obj)
+        lit = px[..., 3] > 0.3
+        assert lit.any() and px[..., 3].max() <= 1.0
+        hues = [_hue(c - bg) for c in px[lit][:: max(1, lit.sum() // 200), :3]]
+        bins = set((np.round(np.array(hues) * 12) % 12).tolist())  # twelfths of the wheel
+        assert len(bins) >= 5, obj.type  # not two flat tints (the plain drum has 2)
+        assert np.abs(px[0, :, :3] - bg).max() < 0.01  # the top edge melts into the ground
+
+
+def test_the_spectrogram_trace_runs_through_the_spectrum_as_it_rises():
+    from phasor.domains.fourier import Spectrogram
+
+    px, bg, _ = _field_pixels(Spectrogram(id="s", size=(6.0, 3.0)), size=(300, 150))
+    ridge = [int(np.argmax(px[:, x, 3])) for x in (60, 240)]  # the tone, early and late
+    assert ridge[1] < ridge[0]  # it rises (row 0 is the top)
+    early, late = (_hue(px[r, x, :3] - bg) for r, x in zip(ridge, (60, 240), strict=True))
+    assert abs(early - late) > 0.1
+
+
+def test_plain_heat_maps_are_unchanged_by_the_prism_colouring():
+    from phasor.domains import pde
+    from phasor.domains.heatmap import AMBIENT, HeatParams
+
+    p = HeatParams()
+    assert (p.hue_cycles, p.fade, p.ambient, p.contrast) == (0.0, 0.0, AMBIENT, 1.0)
+    px, _, doc = _field_pixels(pde.Field(id="f", kind="heat", mode=(0, 0), time=0.02),
+                               look=None)  # fmt: skip
+    assert doc.params.get("hue_cycles", 0) == 0
+    assert (px[..., 3] == 1).all()  # no glow weight: drawn exactly as before
+
+
+def test_prism_heat_maps_take_a_palette_and_drift_with_life():
+    from phasor.domains import pde
+    from phasor.style.looks import load_look
+
+    assert {"pde_field", "pde_slice", "pressure_slice", "spectrogram"} <= load_look(
+        "prism"
+    ).palette_targets()
+    s = Scene("p", look="prism", palette="glacier", passes=None)
+    s.add(pde.Field(id="f", kind="heat"))
+    assert s.engine.document.object("f").style["colormap"] == "glacier"
+    hues = {round(s.engine.state_at(t)["f"].params.hue, 6) for t in (0.0, 3.0, 7.0)}
+    assert len(hues) > 1  # lively: the colours turn a little
+
+
 # ---------------------------------------------------------------- 4. prism fractals
 
 
