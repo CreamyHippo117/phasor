@@ -23,6 +23,7 @@ OUT = Path(__file__).resolve().parent / "videos"
 # (example, what it shows). The order is a good watching order.
 SCENES = [
     ("prism_primes", "the prism look: primes heard through the zeta zeros, glowing strokes"),
+    ("prism_domain", "domain coloring in the prism look: glowing zeros, poles, rays and rings"),
     ("residue_theorem", "a narrated short: the residue theorem, every motion on a spoken cue"),
     ("riemann_sqrt", "3D: the Riemann surface of sqrt(z), the camera orbits on its own"),
     ("deep_zoom", "a dive into the Mandelbrot set down to 1e-30 (the GPU's favourite)"),

@@ -32,7 +32,7 @@ s.set("camera.height", 6)  # world units visible top to bottom
 | --- | --- | --- |
 | `Dot` | `pos`, `r` (world radius, default 0.1) | `color` (emphasis, primary), `glow` (glow, none) |
 | `Line` | `points` (2 or more), `progress`, `hue_along` (colormap cycles along the length; 0: one color), `hue` (shifts them) | `color` (emphasis, primary), `stroke` (stroke, regular), `glow` (glow, none), `colormap` (colormap, spectrum) |
-| `cx.DomainColoring` | `function` (e.g. `"1/(z**2 + 1)"`), `pos` (center), `size` (w, h), `contour` (0-1), `softness` (0-1, edge feathering), `hue` (turns the wheel) | `colormap` (colormap, phase) |
+| `cx.DomainColoring` | `function` (e.g. `"1/(z**2 + 1)"`), `pos` (center), `size` (w, h), `contour` (0-1), `softness` (0-1, edge feathering), `hue` (turns the wheel); the prism look: `radius` (> 0 turns it on: zeros and poles glow this far), `ambient` (0-1, light elsewhere), `lines` (glowing rays of phase per turn, plus a ring each time \|f\| doubles) | `colormap` (colormap, phase), `glow` (glow, none; used by the prism look) |
 | `cx.Fractal` | `kind` (`mandelbrot`/`julia`), `c` (Julia constant), `pos`, `size`, `max_iter`, `density`, `hue`, `center` (exact text `"re im"`), `zoom` (powers of ten, to 280), `steady` (hold the outer color in a dive) | `colormap` (colormap, sequential) |
 | `cx.RiemannSurface` | `kind` (`sqrt`/`cbrt`/`log`), `pos` (branch point), `radius`, `height` (`re`/`im`), `scale`, `rings`, `segments` | `colormap` (colormap, phase), `material` (surface, solid) |
 | `Text` | `text` (`$...$` is typeset math), `pos`, `anchor` (`center`/`left`/`right`), `leader`, `leader_on` (set by layout) | `color` (emphasis, primary), `size` (text, label), `leader` (stroke, hairline) |
@@ -402,6 +402,7 @@ assert field.shape == (90, 160) and (field == -1).any()  # -1 marks points in th
 | Kernel | Parameters | Returns |
 | --- | --- | --- |
 | `domain` | `function`, `center`, `height`, `contour=0.35`, `lut=None`, `precision="f32"` | RGBA: hue = phase, bands = each doubling of the modulus, poles white |
+| `domain_glow` | `function`, `center`, `height`, `lut=None`, `radius=0.3`, `ambient=0.08`, `contour=0.15`, `precision="f32"`, `lines=0`, `line_glow=0.6` | RGBA: hue = phase, lit near zeros and poles (Newton distance \|f/f'\|), rays and rings about a pixel wide; alpha = glow weight |
 | `escape` | `center`, `height`, `max_iter=256`, `julia=None`, `precision=None` | smooth escape count; Mandelbrot, or the Julia set of `julia=(re, im)` |
 | `tonemap` | `image`, `exposure=1.0` | ACES filmic curve, linear in and out (whole image) |
 | `gauss` | `image`, `sigma`, `axis` | one pass of a Gaussian blur along x (0) or y (1) (whole image) |
@@ -439,7 +440,7 @@ changes an old scene.
 `cx.DomainColoring(id="p", function="z", preset="soft_phase")`. Precedence: what you set
 yourself, then the preset, then the look, then the type's default. Presets: `dot`: `plain`,
 `glowing`, `beacon`; `line`: `ink`, `glowing`, `beam`, `hairline`; `domain_coloring`:
-`classic` (hard edges), `soft_phase` (restrained wheel, feathered), `vivid`; `fractal`:
+`classic` (hard edges), `soft_phase` (restrained wheel, feathered), `vivid`, `prism` (dark, glowing zeros and poles, rays and rings of light; the `prism` looks use it); `fractal`:
 `classic`, `ember`, `ocean`; `riemann_surface`: `glass`, `soft_glass`.
 
 **Palettes** are style roles (`colormap`): `phase` (the full wheel: use it where hue means
@@ -448,6 +449,22 @@ phase), `soft_phase` (three-hue wheel), `sequential`, `ember`, `ocean` (two-tone
 Fewer rainbows does not mean none: domain coloring keeps the full wheel.
 
 **Edges**: `cx.DomainColoring(softness=0..1)` feathers the modulus bands (0.5 by default).
+
+**Prism domain coloring**: `preset="prism"` (or the `prism` looks) draws the plane dark,
+lights each zero and pole with the phase round it as colour, and draws rays of constant
+phase and rings of constant size as thin light; the glow blooms and hazes like the strokes.
+
+```python
+from phasor import Scene, cx
+
+lit = Scene("lit poles", look="prism", passes=None)
+lit.add(cx.DomainColoring(id="plane", function="(z**3 - 1)/(z**2 + 0.5)", size=(8, 4.5)))
+assert lit.engine.document.object("plane").params["radius"] > 0
+```
+
+A kernel picture glows through its alpha channel: alpha is a per-pixel glow weight, and the
+object's `glow` role (above 1) turns it into light and bloom. Kernels that only paint leave
+alpha at 1 and the role at `none`.
 
 **Living motion** (`life`: `off`, `subtle`, `lively`): glow breathes, dots drift a fraction
 of their radius, color fields turn a few percent of the wheel, all a deterministic function

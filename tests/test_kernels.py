@@ -60,6 +60,14 @@ CASES = {
                   "precision": "f64"}),
         (FULL, {"function": F, "center": (0.0, 0.0), "height": 4.0, "soft": 0.8}),
     ],
+    "domain_glow": [
+        (FULL, {"function": F, "center": (0.0, 0.0), "height": 4.0, "precision": "f64"}),
+        (OFFSET, {"function": F, "center": (0.3, 0.8), "height": 1.5, "radius": 0.1,
+                  "ambient": 0.0, "contour": 0.4, "precision": "f64"}),
+        (FULL, {"function": F, "center": (0.0, 0.0), "height": 4.0}),
+        (FULL, {"function": F, "center": (0.0, 0.0), "height": 4.0, "lines": 12,
+                "precision": "f64"}),
+    ],
     "tonemap": [
         (IMAGE_TILE, {"image": IMAGE, "exposure": 1.7}),
         (IMAGE_TILE, {"image": IMAGE, "bloom": _rgba(5), "bloom_strength": 0.6, "knee": 0.7}),
@@ -96,7 +104,7 @@ def _close(name: str, got: np.ndarray, want: np.ndarray, *, strict: bool) -> Non
     if got.ndim == 3:
         err = err.max(axis=-1)
     tol, allowed = (1e-4, 0.0) if strict else (2e-2, 0.02)
-    if name == "domain":
+    if name in ("domain", "domain_glow"):
         allowed = max(allowed, 0.01)
     assert (err > tol).mean() <= allowed, (name, float(err.max()), float((err > tol).mean()))
 
@@ -111,6 +119,7 @@ def test_every_kernel_has_a_reference_and_a_signature():
         "bright",
         "deep",
         "domain",
+        "domain_glow",
         "escape",
         "fringe",
         "gauss",

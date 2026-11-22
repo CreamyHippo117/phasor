@@ -19,8 +19,14 @@ glow = "soft"
 [defaults.text.style]
 color = "primary"
 
-[defaults.domain_coloring.params]
-softness = 0.7
+[defaults.domain_coloring.params]  # the prism preset: glowing zeros, poles, rays and rings
+radius = 0.35
+ambient = 0.06
+contour = 0.0
+lines = 12
+
+[defaults.domain_coloring.style]
+glow = "strong"
 
 [defaults.fractal.style]
 colormap = "ocean"

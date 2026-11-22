@@ -87,13 +87,15 @@ class DrawContext(Protocol):
         *,
         pixels: Callable[[int, int, tuple[float, float], float], np.ndarray],
         opacity: float = 1.0,
+        glow: float = 1.0,
     ) -> None:
         """A quad whose color is computed per pixel (domain coloring, fractals). It is one
         object in the id and solo passes. For the color pass the renderer calls
         ``pixels(width_px, height_px, center, height)`` with the visible part of the quad as
         a view in quad coordinates (``center`` and ``height`` measured along ``right`` and
         ``up`` from ``corner``, in world units), and expects linear RGBA (h, w, 4) float32,
-        row 0 = top."""
+        row 0 = top. Alpha is a per-pixel glow weight (0-1): with ``glow`` above 1 a pixel
+        shines brighter and feeds the bloom by that weight; at ``glow`` 1 alpha is unused."""
         ...
 
     def surface(

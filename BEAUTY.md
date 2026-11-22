@@ -21,7 +21,7 @@ looks; it does not recreate anyone's videos.
 
 | # | What | Why this order | Status |
 |---|---|---|---|
-| 1 | **Prism domain coloring.** A `prism` preset for `cx.DomainColoring`: phase as hue from the palette, brightness from closeness to zeros and poles so structure glows out of darkness, contour bands as faint light, emission so it blooms and hazes like the strokes | the most visible change; touches only the domain kernel and its look | to do |
+| 1 | **Prism domain coloring.** A `prism` preset for `cx.DomainColoring`: phase as hue from the palette, brightness from closeness to zeros and poles so structure glows out of darkness, contour bands as faint light, emission so it blooms and hazes like the strokes | the most visible change; touches only the domain kernel and its look | **done** 2026-11-22: kernel `domain_glow`, preset `prism` (the prism looks use it), glowing rays and rings, `examples/prism_domain.py`; GPU golden to make on the PC |
 | 2 | **Heat maps.** `pde.Field`, `PressureSlice`, `Spectrogram`: prism colormaps, smooth (bicubic) sampling, glowing isolines, haze; optional height (3D) mode | same machinery as 1 (a field drawn by colour), so it reuses it | to do |
 | 3 | **Point clouds.** A `PointCloud` object: millions of points splatted additively on the GPU with hue and glow (polynomial root clouds, attractors, Buddhabrot-style fractals); plus a cloud mode for `cx.Fractal` | the new GPU feature; needs a splatting kernel (CUDA atomics) | to do |
 | 4 | **Fractals in the prism look.** Escape-time colour from the palette, glowing edges, haze; Julia and Mandelbrot | builds on 1 and 3 | to do |
