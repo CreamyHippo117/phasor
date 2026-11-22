@@ -39,6 +39,7 @@ SCENES = [
     ("residues", "domain coloring of 1/(z^2 + 1) with a glowing contour"),
     ("fourier_linalg", "Fourier series and linear algebra"),
     ("heat_dihedral", "the heat equation and the dihedral group"),
+    ("directivity", "polar patterns: beam steering, a baffled piston and a cardioid"),
     ("room_acoustics", "a room, its echoes and the pressure wave"),
 ]
 

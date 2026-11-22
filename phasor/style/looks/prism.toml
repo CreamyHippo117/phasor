@@ -111,3 +111,7 @@ glow = "strong"
 
 [defaults.fixed_points.style]
 glow = "strong"
+
+
+[defaults.directivity.style]
+glow = "strong"

@@ -244,3 +244,57 @@ class RoomFDTD:
         """The pressure at a point (nearest cell)."""
         i = [min(max(int(v / self.dx), 0), n - 1) for v, n in zip(point, self.shape, strict=True)]
         return float(state["p"][tuple(i)])
+
+
+# ---------------------------------------------------------------- Directivity
+
+
+def array_directivity(angle, elements: int, spacing: float, frequency: float, steer: float):
+    """Normalized pressure magnitude for a uniformly excited linear array along +y.
+
+    Angles are radians from +x (broadside), spacing is in meters, and frequency is in Hz.
+    """
+    cycles = (spacing * frequency / C) * (np.sin(angle) - np.sin(steer))
+    # Remove integer cycles before taking the sinc ratio, including at grating lobes.
+    cycles = cycles - np.rint(cycles)
+    return np.abs(np.sinc(elements * cycles) / np.sinc(cycles))
+
+
+def cardioid_directivity(angle):
+    """Normalized cardioid pressure magnitude at angles in radians from its axis."""
+    return np.square(np.cos(np.asarray(angle) / 2))
+
+
+_BESSEL_ANGLES = np.linspace(0, 2 * np.pi, 256, endpoint=False)
+
+
+def _piston_gain(x: np.ndarray) -> np.ndarray:
+    """Evaluate 2 J1(x)/x for nonnegative x using the Bessel integral and its asymptote."""
+    result = np.ones_like(x)
+    small = (x > 0) & (x <= 128)
+    if small.any():
+        y = x[small, None]
+        # In the integral for J1, the cos(t) term integrates to zero. Using
+        # sinc keeps 2 J1(x)/x well-conditioned as x approaches zero.
+        sine = np.sin(_BESSEL_ANGLES)
+        result[small] = np.mean(2 * sine**2 * np.sinc(y * sine / np.pi), axis=1)
+    large = x > 128
+    y = x[large]
+    inv = 1 / y
+    phase = y - 3 * np.pi / 4
+    even = 1 + 15 * inv**2 / 128
+    odd = 3 * inv / 8 - 315 * inv**3 / 3072
+    result[large] = (
+        2 * np.sqrt(2 * inv / np.pi) * inv * (even * np.cos(phase) - odd * np.sin(phase))
+    )
+    return result
+
+
+def piston_directivity(angle, radius: float, frequency: float):
+    """Normalized far-field pressure magnitude for a circular piston in an infinite baffle.
+
+    Angles are radians from the piston normal, radius is in meters, and frequency is in Hz.
+    """
+    angle = np.asarray(angle, dtype=np.float64)
+    x = 2 * np.pi * (radius * frequency / C) * np.abs(np.sin(angle))
+    return np.where(np.cos(angle) >= 0, np.abs(_piston_gain(x)), 0.0)

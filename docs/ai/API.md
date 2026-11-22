@@ -655,6 +655,24 @@ ir = room.engine.inspect(0.0, id="ir")["objects"][0]["semantic"]
 assert abs(ir["first_arrival_ms"] - 4.0311 / 343 * 1000) < 1e-3 and ir["arrivals"] > 1000
 ```
 
+**`ac.Directivity`** draws normalized pressure magnitude as a polar curve. Choose
+`kind="array"` (a uniform linear array), `"piston"` (a circular piston in an infinite
+baffle), or `"cardioid"`. `steer` is in degrees counterclockwise from +x. The array lies along y,
+so +x is broadside. Front/back symmetry can yield two equal peaks.
+`elements` and `spacing` (meters) set the array, `radius` (meters) sets the piston, and
+`frequency` (Hz) applies to both. `pos` sets the plot center and `size` is the radius of
+the unity-gain guide in world units. The prism look gives stronger lobes more glow.
+
+```python
+from phasor import Scene, ac
+
+beam = Scene("beam", look="prism", passes=None)
+beam.add(ac.Directivity(id="array", elements=8, spacing=0.1715, frequency=1000, steer=-25))
+beam.marker("turn", 1.0)
+beam.at("turn").sweep("array.steer", 25.0, show=False)
+assert beam.engine.inspect(0, id="array")["objects"][0]["semantic"]["peak_gain"] == 1.0
+```
+
 **Simulations** (`phasor.core.simulation`): a `Simulation` has a fixed `dt`, `params()` (the
 seed included), `initial()` and a pure `step(state, dt)`. `runner_for(sim).state_at(t)` is the
 nearest earlier checkpoint plus the remaining steps, cached in memory and under
