@@ -260,26 +260,30 @@ keeping fixed dt, the seed and the checkpoint cache (contract 3). Helps only tho
   switch is held to codec tolerance (PSNR > 45 dB at cq 19).
 - Record each step's bench numbers in the table below, with the commit.
 
-## Next session (written 2026-11-21, after the stroke builder)
+## Next session (written 2026-11-22, after batching, async readback, encoder thread)
 
-Start here. Steps 0, 1, 2, 3a and the faster stroke builder are committed; the full suite
-is green on the owner's PC (emulator tests included).
+Start here. Everything through the encoder thread is committed; the full suite is green on
+the owner's PC (emulator tests included).
 
-1. **Re-measure first**: `uv run phasor bench --frames motion_gallery` and `prism_primes`.
-   Expect about 105 and 47 ms/frame.
-2. **Where a motion_gallery color pass goes now** (profile, 1080p, about 30 ms a pass, four
-   passes a blurred frame): the GL readback, two `read_into` at about 6 ms each (it includes
-   waiting for the card to finish drawing); `strokes.polyline` about 5 ms (3,467 calls a
-   pass from `FlowParticles`, now mostly fixed per-call cost); everything else small.
-3. Candidates, measure each first:
-   - **Batch `FlowParticles`**: one stroke build and one draw for all particles instead of
-     ~145 (a batched `polyline` that joins nothing across particles). Saves most of the
-     5 ms a pass. Pictures should stay identical (same triangles in the same order); the
-     test compares the pixels, since the commands themselves change shape.
-   - **Readback**: the read waits for the card. Step 4 (workers) hides it; step 5's
-     interop removes it. Reading into a pixel-pack buffer and mapping it a frame later is a
-     cheaper middle path, to measure.
-   - 3b and 3c as planned are unlikely to pay now; measure before doing.
+**Measure with wall clock, not only the frame bench.** The bench waits for the card at
+every stage boundary so each stage gets its own time; that also stops the overlaps the
+last two changes add. Time a plain `render_file` (60 frames, `final`) old vs new, back
+to back: the machine's speed drifted by about 20% over the 2026-11-21 session. Wall clock
+on 2026-11-22: motion_gallery about 76 ms/frame, prism_primes about 44.
+
+1. **Owner decision pending: ADR 0003** (`docs/decisions/0003-bake-for-workers.md`,
+   Proposed). Recommended option A: the parent hands its bake to the workers (no disk
+   cache). Build step 4 (workers) only after it is accepted, with the tests listed there.
+2. Without the ADR, what is left inside one process:
+   - **Overlap the main thread with the GL thread across frames**: while the GL thread draws
+     frame k, the main thread could compute `state_at` for frame k+1 and run frame k-1's
+     post on the card. Needs `Engine` to start a frame and finish it later (a frame-level
+     version of `start_color_raw`), and `render_file` to keep two in flight, in order.
+   - **PyAV's RGB -> YUV conversion holds the GIL** (suspected: the bench's other stages
+     slowed while the encoder thread ran). Converting to YUV on the card before the copy,
+     or step 5's GPU encoder, would remove it; measure first.
+   - Stroke building is now small; the readback is about 15 ms of copying a frame.
+     Step 5's interop (GL texture straight into CUDA) removes it.
 
 Open items:
 - Done after step 2: sharp frames (`Engine.frame`: every frame where only life moves,
@@ -311,8 +315,9 @@ Open items:
 | 0 | frame bench | | 555 / 376 ms per frame (motion_gallery / prism_primes) | done |
 | 1 | sRGB on the card | -130 ms | srgb 133 -> 5-12 ms, post 17 -> 10; frame 555 -> 425 / 376 -> 238 ms | done (the kernel alone is 2.2 ms; in a render the card idles at low clocks between frames, which steps 2-4 should fix) |
 | 2 | widen + blur sum on the card | -200 to -260 ms | widen + blur sum 250 -> 12 ms, post 31 -> 3; frame 437 -> 164 / 238 -> 66 ms | done (sums on the card in float32; 8-bit output within 1 code value of the float64 host sum) |
-| 3 | batched, cached drawing | draw 264 -> 30-60 ms | 3a (reused GL buffers): draw 113 -> 92 ms, frame 164 -> 143 / 47 ms, pictures unchanged | 3a done; stroke builder rewritten (bit-identical): draw 92 -> 57 ms, frame 143 -> 105 ms; 3b/3c re-planned from a profile (Next session) |
-| 4 | parallel workers | x3 wall time | | to do (ADR 0003 for the bake cache first) |
+| 3 | batched, cached drawing | draw 264 -> 30-60 ms | 3a (reused GL buffers): draw 113 -> 92 ms, frame 164 -> 143 / 47 ms, pictures unchanged | 3a done; stroke builder rewritten (bit-identical): draw 92 -> 57 ms, frame 143 -> 105 ms; FlowParticles batched (pixels identical): draw 57 -> 40, frame 105 -> 99; 3b/3c not needed now |
+| 3+ | async readback, encoder thread | | readback 21 -> 15 ms, frame 99 -> 93 (bench); encoder thread: wall 82 -> 76 / 52 -> 44 ms | done (wall clock: the bench's waits hide overlap) |
+| 4 | parallel workers | x3 wall time | | to do: ADR 0003 proposed 2026-11-22 (recommends handing the parent's bake to workers) |
 | 5 | GL-CUDA interop, GPU encoder | small | | measure first; new dependency needs approval |
 | 6 | simulations on the card | those scenes only | | candidate: measure in step 0 |
 

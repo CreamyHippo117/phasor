@@ -14,7 +14,7 @@ from typing import Any
 
 from phasor.core.timing import stage
 from phasor.render.doctor import run_doctor
-from phasor.render.encode import mux_audio, open_writer
+from phasor.render.encode import BackgroundWriter, mux_audio, open_writer
 from phasor.render.output import save_png
 
 # name -> (width, height, fps); None means "the scene's own"
@@ -65,19 +65,26 @@ def render_file(
     start = start or 0.0
     end = engine.duration if end is None else end
     count = max(1, round((end - start) * fps))
-    writer = open_writer(out, *size, fps)
-    for k in range(count):
-        t = start + k / fps
-        srgb8 = (  # finished bytes, encoded on the card when there is one
-            engine.frame_blurred(t, fps, shutter=shutter, samples=blur_samples, size=size,
-                                 output="srgb8")
-            if shutter > 0 and blur_samples > 1 else engine.frame(t, size, output="srgb8")
-        )  # fmt: skip
-        with stage("encode"):
-            writer.write(srgb8)
-        if progress:
-            progress(k + 1, count)
-    writer.close()
+    # The encoder runs on its own thread: frame k is encoded while frame k+1 renders.
+    # "encode" then times only the hand-over (and any wait for a slow encoder).
+    writer = BackgroundWriter(open_writer(out, *size, fps))
+    try:
+        for k in range(count):
+            t = start + k / fps
+            srgb8 = (  # finished bytes, encoded on the card when there is one
+                engine.frame_blurred(t, fps, shutter=shutter, samples=blur_samples, size=size,
+                                     output="srgb8")
+                if shutter > 0 and blur_samples > 1 else engine.frame(t, size, output="srgb8")
+            )  # fmt: skip
+            with stage("encode"):
+                writer.write(srgb8)
+            if progress:
+                progress(k + 1, count)
+    except BaseException:
+        writer.abort()
+        raise
+    with stage("encode"):  # the frames still queued
+        writer.close()
     track = engine.audio_track()
     sound = track is not None and out.suffix in (".mp4", ".mov")
     if sound:

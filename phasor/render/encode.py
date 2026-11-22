@@ -12,9 +12,12 @@
 
 from __future__ import annotations
 
+import contextlib
 import functools
+import queue
 import shutil
 import subprocess
+import threading
 from fractions import Fraction
 from pathlib import Path
 from typing import Protocol
@@ -130,6 +133,59 @@ class FFmpegWriter:
         self._proc.stdin.close()
         if self._proc.wait() != 0:
             raise EncodeError(self._proc.stderr.read().decode(errors="replace"))
+
+
+class BackgroundWriter:
+    """Any ``Writer`` on its own thread: ``write`` hands the frame over and returns, so a
+    frame is encoded while the next one renders (PyAV, the ffmpeg pipe and PNG compression
+    all let go of Python's lock while they work). Frames reach ``inner`` in order, every one
+    of them; ``write`` waits only when the encoder is ``depth`` frames behind. An error in
+    the encoder is raised by the next ``write`` or by ``close``. ``abort`` stops without
+    writing what is still queued (a failed or cancelled render). The caller must not change
+    a frame after handing it over."""
+
+    def __init__(self, inner: Writer, depth: int = 2) -> None:
+        self.inner, self.path, self.encoder = inner, inner.path, inner.encoder
+        self._queue: queue.Queue = queue.Queue(maxsize=depth)
+        self._error: BaseException | None = None
+        self._stop = False
+        self._thread = threading.Thread(target=self._run, name="phasor-encode", daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        while (frame := self._queue.get()) is not None:
+            if self._error is None and not self._stop:
+                try:
+                    self.inner.write(frame)
+                except BaseException as e:  # handed to the caller's thread
+                    self._error = e
+
+    def write(self, frame: np.ndarray) -> None:
+        if self._error is not None:
+            raise self._error
+        self._queue.put(frame)
+
+    def _finish(self) -> BaseException | None:
+        self._queue.put(None)
+        self._thread.join()
+        return self._error
+
+    def close(self) -> None:
+        error = self._finish()
+        try:
+            self.inner.close()
+        except BaseException:
+            if error is None:
+                raise
+        if error is not None:
+            raise error
+
+    def abort(self) -> None:
+        self._stop = True
+        self._finish()
+        # The render already failed; its own error is the one to report.
+        with contextlib.suppress(Exception):
+            self.inner.close()
 
 
 def open_writer(path: str | Path, width: int, height: int, fps: float) -> Writer:
