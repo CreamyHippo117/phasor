@@ -41,6 +41,6 @@ Steps 3, 4 and 7 run on the owner's PC, three Claude Code sessions at once: see
   their colours, no grey mixtures between them).
 - **A little more transparency**: in the prism looks, glowing curves (`dim` 0.9) and colour
   fields (`dim` 0.88) let what is behind them glow through. Tune in `style/looks/prism*.toml`.
-- Types the prism look does not touch yet: `axes` (plain on purpose), `cayley_table`,
-  `clock_diagram`, `matrix` (no glow role), `parametric_surface`, `pde_surface`,
-  `riemann_surface` (lit 3D surfaces), `room` (2D acoustics), `image` (a photo stays true).
+- Everything is prismed except `axes` and `image` (plain on purpose, owner 2026-11-22):
+  Cayley tables, clock diagrams, matrices and rooms got a `glow` role; the 3D surfaces turn
+  to glass in the prism looks.

@@ -76,6 +76,7 @@ class Room(ObjectBase):
         "color": ("emphasis", "muted"),
         "stroke": ("stroke", "hairline"),
         "material": ("surface", "glass"),
+        "glow": ("glow", "none"),  # the prism look: the edges shine
     }
     Presets: ClassVar = {
         "glass": {},
@@ -165,7 +166,8 @@ class Room(ObjectBase):
                     b = corners[tuple(idx)]
                     mid = (a + b) / 2
                     w = me.style["stroke"] * float(cam.units_per_height(mid))
-                    polyline(ctx, cam, [a, b], w, color=edge_color, glow=1.0)
+                    polyline(ctx, cam, [a, b], w, color=edge_color,
+                             glow=float(me.style.get("glow", 1.0)))  # fmt: skip
 
 
 # ---------------------------------------------------------------- Source and Listener

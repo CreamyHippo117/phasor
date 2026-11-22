@@ -314,6 +314,7 @@ class Matrix(ObjectBase):
         "color": ("emphasis", "primary"),
         "size": ("text", "math"),
         "stroke": ("stroke", "hairline"),
+        "glow": ("glow", "none"),  # the prism look: brackets and entries shine
     }
 
     class Params(ParamsBase):
@@ -365,14 +366,15 @@ class Matrix(ObjectBase):
         me = self.me(state)
         cam, h, texts, cw, rh, c, w, hh = self._layout(state)
         color = with_alpha(me.style["color"], me.params.opacity)
+        gl = float(me.style.get("glow", 1.0))
         n = len(texts)
         for i, row in enumerate(texts):
             for j, t in enumerate(row):
                 pos = c + cam.right * ((j - (n - 1) / 2) * cw) - cam.up * ((i - (n - 1) / 2) * rh)
-                ctx.text(t, pos, h, color=color, anchor="center")
+                ctx.text(t, pos, h, color=color, anchor="center", glow=gl)
         width = me.style["stroke"] * float(cam.units_per_height(c)) * 2
         for sgn in (-1, 1):
             x = c + cam.right * (sgn * (w / 2 + 0.1))
             top, bot = x + cam.up * (hh / 2), x - cam.up * (hh / 2)
             tick = cam.right * (-sgn * 0.12)
-            polyline(ctx, cam, [top + tick, top, bot, bot + tick], width, color=color)
+            polyline(ctx, cam, [top + tick, top, bot, bot + tick], width, color=color, glow=gl)

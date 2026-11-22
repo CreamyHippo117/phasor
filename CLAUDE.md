@@ -16,7 +16,7 @@ compounding. If this file and SPEC.md disagree, stop and ask.
   coloring, heat maps, point clouds, fractals, image import, graph import, 3D acoustics).
   Keep `prism_primes`' look exactly. Steps 3, 4 and 7 are for Claude Code on the owner's PC:
   `pc_tasks/README.md`. Next animations (signal, waves, dynamics): `ANIMATIONS.md`. Changes
-  waiting for the owner's OK: `pending/`. Render speed (profile, keep frames on the card) and the finished
+  waiting for the owner's OK go in `pending/` (a patch and a before/after picture). Render speed (profile, keep frames on the card) and the finished
   Windows app come after, unless the owner says otherwise.
 - One milestone per branch. No work on milestone N+1 until N's exit demo and tests pass.
 - Before declaring a milestone done, run the `phasor-milestone-gate` skill.

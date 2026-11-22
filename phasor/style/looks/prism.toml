@@ -78,3 +78,25 @@ dim = 0.75  # graphs stack many edges: a little dimmer, so crossings do not pile
 
 [defaults.network.style]
 glow = "soft"
+
+# the rest of the prism look (owner, 2026-11-22): everything but axes and photos
+[defaults.cayley_table.style]
+glow = "soft"
+
+[defaults.clock_diagram.style]
+glow = "strong"
+
+[defaults.matrix.style]
+glow = "soft"
+
+[defaults.room.style]
+glow = "strong"
+
+[defaults.parametric_surface.style]
+material = "glass"
+
+[defaults.pde_surface.style]
+material = "glass"
+
+[defaults.riemann_surface.style]
+material = "glass"

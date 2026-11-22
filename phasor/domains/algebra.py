@@ -145,6 +145,7 @@ class CayleyTable(ObjectBase):
         "colormap": ("colormap", "phase"),
         "text": ("emphasis", "primary"),
         "size": ("text", "annotation"),
+        "glow": ("glow", "none"),  # the prism look: the cells shine
     }
     Presets: ClassVar = {"soft": {"style": {"colormap": "soft_phase"}}}
 
@@ -272,7 +273,8 @@ class CayleyTable(ObjectBase):
                 e = p.cell * 0.46
                 rx, uy = cam.right * e, cam.up * e
                 quad = np.array([c - rx - uy, c + rx - uy, c + rx + uy, c - rx + uy])
-                ctx.triangles(quad, np.array([[0, 1, 2], [0, 2, 3]]), color=cell_color(k))
+                ctx.triangles(quad, np.array([[0, 1, 2], [0, 2, 3]]), color=cell_color(k),
+                              glow=float(me.style.get("glow", 1.0)))  # fmt: skip
                 ctx.text(g.labels[k], c, size, color=(0.02, 0.02, 0.04, p.opacity))
 
 
@@ -293,6 +295,7 @@ class ClockDiagram(ObjectBase):
         "stroke": ("stroke", "hairline"),
         "size": ("text", "annotation"),
         "text": ("emphasis", "primary"),
+        "glow": ("glow", "none"),  # the prism look: circle, points and orbit shine
     }
 
     class Params(ParamsBase):
@@ -341,7 +344,9 @@ class ClockDiagram(ObjectBase):
         sub = self._sub(p)
         pts = self._pts(p)
         w = me.style["stroke"] * float(cam.units_per_height(np.asarray(p.pos)))
-        circle(ctx, cam, p.pos, p.r, w, color=with_alpha(me.style["color"], p.opacity * 0.6))
+        gl = float(me.style.get("glow", 1.0))
+        circle(ctx, cam, p.pos, p.r, w, color=with_alpha(me.style["color"], p.opacity * 0.6),
+               glow=gl)  # fmt: skip
         lut = np.asarray(me.style["colormap"], dtype=np.float64)
         cosets = g.left_cosets(sub)
         owner = {x: i for i, c in enumerate(cosets) for x in c}
@@ -352,7 +357,7 @@ class ClockDiagram(ObjectBase):
             if p.cosets > 0 and not in_sub:
                 rgb = lut[int(owner[k] / max(len(cosets), 1) * len(lut)) % len(lut)]
                 base = (*rgb, p.opacity * p.cosets)
-            disc(ctx, cam, pts[k], size * (0.4 if in_sub else 0.28), color=base)
+            disc(ctx, cam, pts[k], size * (0.4 if in_sub else 0.28), color=base, glow=gl)
             out = pts[k] + (pts[k] - np.asarray(p.pos)) / p.r * size * 1.1
             ctx.text(str(k), out, size, color=with_alpha(me.style["text"], p.opacity))
         orbit = [pts[x] for x in sorted(sub)]
@@ -363,6 +368,7 @@ class ClockDiagram(ObjectBase):
                 np.vstack([orbit, orbit[:1]]),
                 w * 2,
                 color=with_alpha(me.style["accent"], p.opacity * 0.8),
+                glow=gl,
             )
 
 
