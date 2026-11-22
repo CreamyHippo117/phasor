@@ -77,6 +77,8 @@
 - `riemann_sum`: flash, function, a, b, n, rule, pos
 - `riemann_surface`: flash, kind, pos, radius, height, scale, rings, segments
 - `room`: flash, size, origin, material, absorption
+- `room3d`: flash, size, origin, path, scale, material, absorption, walls, edge_angle
+- `sound_rays`: flash, room, source, time, speed, hue_step, count, bounces, trail, seed
 - `source`: flash, pos, r
 - `spectrogram`: flash, f0, f1, duration, fs, nwin, pos, size, smooth, isolines
 - `spectrum`: flash, frequencies, amplitudes, window, samples, fs, pos, extent, bins
@@ -88,6 +90,7 @@
 - `vector_field`: flash, p, q, pos, extent, spacing, color_by_size, length_by
 - `vector_field_3d`: flash, fp, fq, fr, pos, extent, counts, spacing, color_by_size, length_by
 - `wavefront`: flash, center, radius, rings
+- `wavefront3d`: flash, room, source, time, speed, hue_step, order, shell, samples
 
 ## Docs
 

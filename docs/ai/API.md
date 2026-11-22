@@ -758,6 +758,48 @@ hot = Scene("hot plate", look="prism", passes=None)
 hot.add(pde.Field(id="plate", kind="heat", mode=(0, 0), time=0.1, scale=0.3))
 assert hot.engine.document.object("plate").params["isolines"] == 8
 ```
+
+**A 3D room with sound bouncing in it** (`ac`, BEAUTY.md step 7). Give the scene an orbit
+camera.
+- `ac.Room3D(size=(8, 5, 3), origin=, material=)`: a shoebox, or any closed room read from a
+  Wavefront `.obj` file with `path="assets/l_room.obj"` (relative to the scene's folder, and
+  inside it: an absolute path or `..` is refused; `scale` turns file units into meters). Drawn
+  as faint glowing lines along its edges (for a mesh, its creases: `edge_angle`, so the
+  diagonals of flat walls stay hidden) and faint glass walls (`walls`, 0 for lines only;
+  `preset="outline"`). A file that is not there is lint `missing_file` and draws nothing.
+  Semantics: volume, surface area, walls, Sabine and Eyring RT60.
+- `ac.SoundRays(room="room", source=, time=expr("t - 1"), speed=0.01, count=1200,
+  bounces=6, trail=1.5)`: rays leaving the source evenly in every direction, reflecting off
+  the walls (angle in = angle out). `time` is scene seconds since the sound left, `speed`
+  the slow motion (seconds of sound per scene second): each ray is drawn up to
+  `343 * speed * time` meters along its path, as a streak `trail` meters long (0: the whole
+  path). Brightness is the energy left, (1 - absorption) ** reflections; color comes from the
+  `colormap` (the palette) by reflection count, `hue_step` apart. `seed` turns the ray set.
+  Semantics: distance, reflections so far, energy left.
+- `ac.Wavefront3D(room="room", source=, time=, speed=, order=2, shell=0.12)`: the expanding
+  front drawn where it meets the walls, with the reflected fronts (image sources up to
+  `order` reflections in a shoebox; one per wall, only where the sound really reaches, in
+  any other room). `shell` draws the fronts themselves inside the room, faintly.
+- The numerics are `ac_math`: `box_mesh`, `load_obj`, `feature_edges`, `mesh_stats`, `trace`
+  and `rays` (specular ray tracing: points, path lengths, energy per bounce),
+  `ray_segments` (what has been reached by a distance), `sphere_wall_arcs`, `front_visible`.
+
+An object type that reads files lists the parameters that name them in `Files = ("path",)`
+(`phasor.core.files`): validated to stay in the folder, checked by `missing_file`.
+
+```python
+from phasor import Scene, ac, expr
+
+room = Scene("clap", look="prism", passes=None)
+room.use_camera("orbit", target=(4, 2.5, 1.5), distance=15)
+room.add(ac.Room3D(id="room", size=(8, 5, 3), material="wood"))
+clap = dict(room="room", source=(2, 2, 1.5), time=expr("t - 1"), speed=0.01)
+room.add(ac.SoundRays(id="rays", count=500, bounces=8, **clap))
+room.add(ac.Wavefront3D(id="front", **clap))
+rays = room.engine.inspect(3.0, id="rays")["objects"][0]["semantic"]
+assert abs(rays["distance"] - 6.86) < 1e-6 and rays["reflections_so_far"] > 1
+assert room.engine.inspect(0.0, id="room")["objects"][0]["semantic"]["volume"] == 120.0
+```
 ## Space: axes, curves, surfaces and fields (`geo`)
 
 `from phasor import geo`. Give the scene an orbit camera (`s.use_camera("orbit")`) to turn

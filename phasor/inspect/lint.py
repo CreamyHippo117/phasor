@@ -13,6 +13,7 @@ returns one issue per problem with the times it was seen. Rules in this mileston
 | clutter   | warning  | too many objects changing at once in one block                 |
 | unsolved  | error    | a constraint that does not hold (from the bake, or a guard)    |
 | occluded_label | warning | 3D: a label partly hidden by something in front of it      |
+| missing_file | warning | a file an object reads (a mesh) is not in the scene's folder    |
 
 Under a perspective camera ``overlap`` only compares labels with labels and points with
 points: a label in front of a surface is fine, and one behind it is ``occluded_label``.
@@ -253,6 +254,28 @@ def control_rules(c: Compiled) -> list[Issue]:
                     fix_hint=f"remove_control {ctl.key}",
                 )
             )
+    return out
+
+
+def file_rules(c: Compiled) -> list[Issue]:
+    """``missing_file``: a parameter a type lists in ``Files`` (core/files.py) names a file
+    that is not in the scene's folder. The object draws nothing until the file is there."""
+    from phasor.core import files
+    from phasor.core.objects import get_type
+    from phasor.time.compile import Const
+
+    out = []
+    for o in c.objects:
+        for name in getattr(get_type(o.type), "Files", ()):
+            path = f"{o.id}.{name}"
+            node = c.nodes.get(path)
+            value = node.value if isinstance(node, Const) else None
+            if isinstance(value, str) and value and not files.exists(c.base_dir, value):
+                out.append(Issue(
+                    "missing_file", f"{path}: no file {value!r} in the scene's folder",
+                    severity="warning", ids=(o.id,), path=path, times=(0.0,),
+                    fix_hint=f"put {value!r} next to the scene, or set {path} to a file that is",
+                ))  # fmt: skip
     return out
 
 

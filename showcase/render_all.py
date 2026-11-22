@@ -34,6 +34,7 @@ SCENES = [
     ("fourier_linalg", "Fourier series and linear algebra"),
     ("heat_dihedral", "the heat equation and the dihedral group"),
     ("room_acoustics", "a room, its echoes and the pressure wave"),
+    ("room_3d", "a 3D room with sound bouncing in it: rays and fronts reflecting off the walls"),
 ]
 
 

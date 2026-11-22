@@ -59,3 +59,16 @@ isolines = 8
 
 [defaults.spectrogram.style]
 glow = "soft"
+
+# a 3D room with sound bouncing in it (BEAUTY.md item 7): faint glowing edges, rays and
+# fronts colored from the palette by reflection count
+[defaults.room3d.style]
+glow = "soft"
+
+[defaults.sound_rays.style]
+glow = "strong"
+colormap = "spectrum"
+
+[defaults.wavefront3d.style]
+glow = "strong"
+colormap = "spectrum"
