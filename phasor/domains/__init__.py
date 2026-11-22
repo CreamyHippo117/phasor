@@ -4,3 +4,6 @@ built-in types; Engine does that once at startup."""
 from phasor.domains import acoustics, algebra, basic, calc, cx, fourier, geometry, linalg, pde
 
 __all__ = ["acoustics", "algebra", "basic", "calc", "cx", "fourier", "geometry", "linalg", "pde"]
+from phasor.domains import cloud
+
+__all__ += ["cloud"]

@@ -34,6 +34,8 @@ static emu_dim3 blockIdx, threadIdx, blockDim;
 extern "C" void emu_set(unsigned b, unsigned t, unsigned d) {
     blockIdx.x = b; threadIdx.x = t; blockDim.x = d;
 }
+// Threads run one after another here, so an atomic add is a plain add (returns the old value).
+static inline float atomicAdd(float* a, float v) { float old = *a; *a = old + v; return old; }
 """
 _CTYPES = {np.int32: ctypes.c_int, np.float32: ctypes.c_float, np.float64: ctypes.c_double}
 _DIR = Path(tempfile.mkdtemp(prefix="phasor_emu_"))
@@ -72,11 +74,15 @@ class _StrictCupy:
         return np.empty(shape, dtype=dtype).view(DeviceArray)
 
     @staticmethod
+    def zeros(shape, dtype=np.float32):
+        return np.zeros(shape, dtype=dtype).view(DeviceArray)
+
+    @staticmethod
     def empty_like(a, dtype=None):
         return np.empty_like(a, dtype=dtype).view(DeviceArray)
 
     def __getattr__(self, name):
-        raise AttributeError(f"launchers may use only asarray, ascontiguousarray, empty, "
+        raise AttributeError(f"launchers may use only asarray, ascontiguousarray, empty, zeros, "
                              f"empty_like and dtypes from cp, not cp.{name}")  # fmt: skip
 
 

@@ -44,6 +44,14 @@ def _cases(w: int, h: int) -> dict[str, dict[str, Any]]:
         "tonemap": {"image": image, "bloom": image},
         "srgb8": {"image": np.ascontiguousarray(image / np.float32(3.0))},  # display range
         "accumulate": {"image": image.astype(np.float16), "weight": 0.25, "acc": image},
+        # a million points on the GPU; a few thousand for the NumPy reference (tests, no GPU)
+        "splat": {
+            "points": rng.normal(0.0, 0.6, (1_000_000 if gpu.default_gpu() else 4000, 2)),
+            "colors": (1.0, 0.6, 0.3),
+            "center": (0.0, 0.0),
+            "height": 2.6,
+            "gain": 4.0,
+        },
     }
 
 

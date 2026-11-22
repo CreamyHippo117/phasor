@@ -45,6 +45,12 @@ DEEP_ORBIT = fm.reference_orbit(fm.parse_point(
     128, 2000)  # fmt: skip
 EARLY_ORBIT = fm.reference_orbit(fm.parse_point("-0.75 0.2"), 64, 300)
 
+# Points for the splat kernel: a cloud round the origin, a few far off every tile.
+_SPLAT_RNG = np.random.default_rng(3)
+SPLAT_POINTS = np.r_[_SPLAT_RNG.normal(0.0, 0.45, (300, 2)), [[5.0, 5.0], [-9.0, 0.0]]]
+SPLAT_COLORS = _SPLAT_RNG.random((302, 3)).astype(np.float32)
+SPLAT_WEIGHTS = np.r_[_SPLAT_RNG.random(301), 0.0].astype(np.float32)
+
 # name -> list of (tile, params) cases every backend must agree on
 CASES = {
     "escape": [
@@ -102,6 +108,14 @@ CASES = {
         (IMAGE_TILE, {"image": IMAGE, "sigma": 1.5, "axis": 0}),
         (IMAGE_TILE, {"image": IMAGE, "sigma": 2.2, "axis": 1}),
     ],
+    "splat": [  # some points fall off the tile, some share pixels, one has no weight
+        (FULL, {"points": SPLAT_POINTS, "colors": SPLAT_COLORS, "center": (0.0, 0.0),
+                "height": 2.0}),
+        (OFFSET, {"points": SPLAT_POINTS, "colors": SPLAT_COLORS, "center": (0.1, -0.05),
+                  "height": 1.6, "weights": SPLAT_WEIGHTS, "sigma": 1.4, "gain": 3.0}),
+        (OFFSET, {"points": SPLAT_POINTS, "colors": (1.0, 0.5, 0.25), "center": (0.0, 0.0),
+                  "height": 2.0, "sigma": 0.7, "curve": False}),
+    ],
 }  # fmt: skip
 ALL_CASES = [(n, t, p) for n, cases in CASES.items() for t, p in cases]
 needs_compiler = pytest.mark.skipif(cuda_emu.compiler() is None, reason="no C++ compiler")
@@ -144,6 +158,7 @@ def test_every_kernel_has_a_reference_and_a_signature():
         "gauss",
         "palette",
         "resize",
+        "splat",
         "srgb8",
         "tonemap",
         "vignette",

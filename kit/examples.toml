@@ -97,6 +97,11 @@ kind = "physics"
 tier = "technique"
 teaches = "Heat maps in the prism look: a spreading hot spot, a drum mode, a spectrogram, glowing isolines"
 
+[examples.point_cloud]
+kind = "complex"
+tier = "technique"
+teaches = "A point cloud in the prism look: a million polynomial roots splatted as light, a slow camera fall into fine structure"
+
 [examples.cluttered]
 tier = "hidden"
 why = "deliberately cluttered, to show the linter flagging it"

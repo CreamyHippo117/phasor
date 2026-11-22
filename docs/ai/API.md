@@ -35,6 +35,7 @@ s.set("camera.height", 6)  # world units visible top to bottom
 | `cx.DomainColoring` | `function` (e.g. `"1/(z**2 + 1)"`), `pos` (center), `size` (w, h), `contour` (0-1), `softness` (0-1, edge feathering), `hue` (turns the wheel); the prism look: `radius` (> 0 turns it on: zeros and poles glow this far), `ambient` (0-1, light elsewhere), `lines` (glowing rays of phase per turn, plus a ring each time \|f\| doubles) | `colormap` (colormap, phase), `glow` (glow, none; used by the prism look) |
 | `cx.Fractal` | `kind` (`mandelbrot`/`julia`), `c` (Julia constant), `pos`, `size`, `max_iter`, `density`, `hue`, `center` (exact text `"re im"`), `zoom` (powers of ten, to 280), `steady` (hold the outer color in a dive) | `colormap` (colormap, sequential) |
 | `cx.RiemannSurface` | `kind` (`sqrt`/`cbrt`/`log`), `pos` (branch point), `radius`, `height` (`re`/`im`), `scale`, `rings`, `segments` | `colormap` (colormap, phase), `material` (surface, solid) |
+| `cloud.PointCloud` | `source` (`roots`/`attractor`/`buddhabrot`/`points`), `degree` and `coefficients` (roots), `kind` (`clifford`/`dejong`/`lorenz`) and `constants` (attractor), `max_iter` (buddhabrot), `points` and `values` (given directly), `count` (at most), `seed`, `pos` (centre and origin of the points), `size` (the rectangle it is seen in), `scale`, `point_size` (splat radius, px), `exposure`, `hue`, `color_by` (`source`/`phase`) | `colormap` (colormap, spectrum), `glow` (glow, none) |
 | `Text` | `text` (`$...$` is typeset math), `pos`, `anchor` (`center`/`left`/`right`), `leader`, `leader_on` (set by layout) | `color` (emphasis, primary), `size` (text, label), `leader` (stroke, hairline) |
 | `Equation` | `parts` (math or text, set on one baseline), `colors` (an emphasis role per part), `pos` | `color` (emphasis, primary), `size` (text, math), `glow` (glow, none) |
 
@@ -409,6 +410,7 @@ assert field.shape == (90, 160) and (field == -1).any()  # -1 marks points in th
 | `gauss` | `image`, `sigma`, `axis` | one pass of a Gaussian blur along x (0) or y (1) (whole image) |
 | `srgb8` | `image` | linear display RGBA (0..1) -> (h, w, 3) uint8 sRGB (whole image) |
 | `accumulate` | `image`, `weight=1.0`, `acc=None` | float32 `acc + weight * image`; `image` may be float16 (whole image, any channel count; the motion-blur sum) |
+| `splat` | `points` ((n, 2) plane coordinates), `colors` ((n, 3) linear RGB, or one), `center`, `height`, `weights=None`, `sigma=1.0` (px), `gain=1.0`, `curve=True` | each point adds a Gaussian of light (`atomicAdd`); rgb = mean colour x a, alpha a = 1 - exp(-gain x density); `curve=False`: the raw sums |
 
 - `center` and `height` describe the view like the 2D camera: the point at the middle of
   the frame and how many units the frame is tall.
@@ -757,6 +759,30 @@ from phasor.domains import pde
 hot = Scene("hot plate", look="prism", passes=None)
 hot.add(pde.Field(id="plate", kind="heat", mode=(0, 0), time=0.1, scale=0.3))
 assert hot.engine.document.object("plate").params["isolines"] == 8
+```
+
+**Point clouds.** `from phasor import cloud`. `cloud.PointCloud` splats many points (a
+million is fine on the GPU) as tiny Gaussians of light that add up, so dense regions glow and
+the structure at their edges shows. Sources: `roots` (the roots of every polynomial of
+`degree` with coefficients from `coefficients`, the leading one 1; a random sample when
+there are more than `count` roots), `attractor` (`kind` clifford, dejong or lorenz, fitted to
+[-1, 1]^2), `buddhabrot` (escaping orbits up to `max_iter`) or `points` given directly. A point
+sits at world `pos + scale * point`; the cloud is seen inside the `size` rectangle round `pos`
+and only the part on screen is splatted, so zooming in keeps it sharp. `exposure` is light
+per point against the mean density at the current zoom (resolution does not change it);
+`color_by="phase"` colours by each point's angle round `pos`, `source` by what the source
+says (the polynomial's place in the list). Presets `prism` (the `prism` looks use it) and
+`plain`. Points are cached per source parameters, so animating `hue`, `exposure` or the
+camera does not recompute them. Numerics: `phasor.domains.cloud_math`.
+
+```python
+from phasor import Scene, cloud
+
+sky = Scene("roots", look="prism", passes=None)
+sky.add(cloud.PointCloud(id="roots", source="roots", degree=8, size=(4.5, 2.6)))
+seen = sky.engine.inspect(0.0, id="roots")["objects"][0]["semantic"]
+assert seen["points"] == 2**8 * 8 and seen["backdrop"]  # every +-1 polynomial of degree 8
+assert sky.engine.document.object("roots").style["glow"] == "strong"
 ```
 ## Space: axes, curves, surfaces and fields (`geo`)
 
