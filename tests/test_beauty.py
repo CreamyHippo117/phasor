@@ -405,9 +405,14 @@ def test_the_ai_cannot_show_a_picture_from_outside_its_folder(tmp_path):
     ok = ws.scene_edit({"op": "add_object", "object": {"id": "a", "type": "image",
                         "params": {"path": "inside.png"}}})  # fmt: skip
     assert ok["ok"]
-    with pytest.raises(ToolError, match="outside the workspace"):
-        ws.scene_edit({"op": "add_object", "object": {"id": "b", "type": "image",
-                       "params": {"path": "../outside.png"}}})  # fmt: skip
+    # refused by the path rule itself (core/files.py: ".." leaves the folder), and by the
+    # workspace check behind it; either way nothing outside is shown
+    try:
+        r = ws.scene_edit({"op": "add_object", "object": {"id": "b", "type": "image",
+                           "params": {"path": "../outside.png"}}})  # fmt: skip
+        assert not r["ok"] and "folder" in str(r)
+    except ToolError as e:
+        assert "outside" in str(e)
     assert [o.id for o in ws.engine.document.objects] == ["a"]  # the edit was taken back
 
 

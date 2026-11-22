@@ -193,6 +193,10 @@ def test_the_ai_can_make_and_load_networks(tmp_path):
     ok = ws.scene_edit({"op": "add_object", "object": {"id": "g", "type": "network",
                         "params": {"path": "g.csv"}}})  # fmt: skip
     assert ok["ok"]
-    with pytest.raises(ToolError, match="outside the workspace"):
-        ws.scene_edit({"op": "add_object", "object": {"id": "h", "type": "network",
-                       "params": {"path": "../outside.csv"}}})  # fmt: skip
+    # refused by the path rule (core/files.py) or by the workspace check behind it
+    try:
+        r = ws.scene_edit({"op": "add_object", "object": {"id": "h", "type": "network",
+                           "params": {"path": "../outside.csv"}}})  # fmt: skip
+        assert not r["ok"] and "folder" in str(r)
+    except ToolError as e:
+        assert "outside" in str(e)
