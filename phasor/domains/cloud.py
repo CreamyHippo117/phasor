@@ -11,6 +11,11 @@ sits at world (x, y) = ``pos`` + ``scale`` * (the source's point), so with ``pos
 origin and ``scale`` 1 the roots are at their own places in the complex plane. The cloud is
 drawn through ``ctx.field`` inside the ``size`` rectangle round ``pos`` by the ``splat``
 kernel, which computes only the part on screen: zooming in keeps every point sharp.
+
+Three things keep a cloud from sitting still: ``twist`` (animatable) turns one coefficient
+of a root cloud round the origin, so every root glides and the fractal edge morphs;
+``twinkle`` flickers each point's light a little (life, a pure function of (id, seed, t));
+``white`` lets the densest parts run white-hot.
 """
 
 from __future__ import annotations
@@ -33,6 +38,7 @@ from phasor.domains import cloud_math as clm
 MIN_DENSITY = 0.02
 ZOOM_LIGHT = 0.7  # 1: brightness held as the camera zooms in; 0: each point's light fixed
 CACHE = 8  # point sets kept in memory (the latest ones)
+TWINKLE_PERIOD = 2.5  # seconds, typical; each point (each polynomial's roots) has its own
 
 
 @functools.lru_cache(maxsize=CACHE)
@@ -40,10 +46,10 @@ def _points(oid: str, seed: int, source: str, key: tuple) -> tuple[np.ndarray, n
     """(points (n, 2) float64, value (n,) in [0, 1)) for one source; cached per params."""
     gen = rng(oid, seed)
     if source == "roots":
-        degree, coefficients, count = key
+        degree, coefficients, count, twist = key
         total = clm.every_polynomial_count(degree, coefficients)
         polys = None if total * degree <= count else max(1, count // degree)
-        z, v = clm.polynomial_roots(degree, coefficients, polys, gen)
+        z, v = clm.polynomial_roots(degree, coefficients, polys, gen, twist=twist)
     elif source == "attractor":
         kind, constants, count = key
         z, v = clm.attractor(kind, count, gen, constants)
@@ -63,6 +69,13 @@ def _points(oid: str, seed: int, source: str, key: tuple) -> tuple[np.ndarray, n
     return out, v
 
 
+@functools.lru_cache(maxsize=CACHE)
+def _flicker(oid: str, seed: int, groups: int) -> tuple[np.ndarray, np.ndarray]:
+    """(frequency, phase) per group of points that flicker together, from the seed."""
+    gen = rng(f"{oid}/twinkle", seed)
+    return gen.uniform(0.5, 1.5, groups) / TWINKLE_PERIOD, gen.uniform(0.0, 1.0, groups)
+
+
 @register
 class PointCloud(ObjectBase):
     """Many points of light, splatted additively: where they crowd, light builds up and
@@ -78,14 +91,21 @@ class PointCloud(ObjectBase):
     ``source``: what the source says, e.g. the polynomial's place in the list; ``phase``:
     the point's angle round ``pos``), turned by ``hue``. ``point_size`` is the splat's
     radius in pixels, ``exposure`` how much light a point gives; ``glow`` makes the bright
-    parts shine and haze."""
+    parts shine and haze.
+
+    Motion: ``twist`` (roots) turns the last coefficient of the set by that share of a turn
+    (b -> b e^(2 pi i twist)); tween it with ``.to`` and every root glides continuously
+    while the fractal edge morphs. ``twinkle`` (0-1, life) flickers each point's light by
+    up to that share (the roots of one polynomial together), slowly and differently for
+    each; ``white`` (0-1) turns the densest parts white-hot."""
 
     type: ClassVar[str] = "point_cloud"
-    Life: ClassVar = frozenset({"hue", "glow"})
+    Life: ClassVar = frozenset({"hue", "glow", "twinkle"})
     Style: ClassVar = {"colormap": ("colormap", "spectrum"), "glow": ("glow", "none")}
     Presets: ClassVar = {
         # dark ground, palette hue, glow and haze (the look of the prism strokes)
-        "prism": {"params": {"exposure": 0.06, "point_size": 0.9},
+        "prism": {"params": {"exposure": 0.06, "point_size": 0.9, "white": 0.8,
+                             "twinkle": 0.6},
                   "style": {"colormap": "spectrum", "glow": "strong"}},
         "plain": {"params": {"exposure": 0.3, "point_size": 1.0},
                   "style": {"colormap": "sequential", "glow": "none"}},
@@ -109,6 +129,9 @@ class PointCloud(ObjectBase):
         exposure: float = Field(0.3, gt=0)  # light per point, against the mean density
         hue: float = 0.0  # turns the palette (a share of it); life adds a little
         color_by: Literal["source", "phase"] = "source"
+        twist: float = 0.0  # roots: turns the last coefficient by this share of a turn
+        twinkle: float = Field(0.0, ge=0, le=1)  # flicker of each point's light (life)
+        white: float = Field(0.0, ge=0, le=1)  # how white the densest parts run
 
         @field_validator("size")
         @classmethod
@@ -159,7 +182,7 @@ class PointCloud(ObjectBase):
         out: dict[str, Any] = {"kind": "point_cloud", "backdrop": True, "source": p.source,
                                "points": len(pts), "in_rectangle": int(inside.sum())}  # fmt: skip
         if p.source == "roots":
-            out.update(degree=p.degree, coefficients=list(p.coefficients))
+            out.update(degree=p.degree, coefficients=list(p.coefficients), twist=p.twist)
         elif p.source == "attractor":
             out.update(attractor=p.kind)
         elif p.source == "buddhabrot":
@@ -182,6 +205,12 @@ class PointCloud(ObjectBase):
 
             pts, v = self.cloud(state)
             inside = _inside(pts, corner, r, u)
+            weights = None
+            if p.twinkle > 0 and len(pts):
+                group = p.degree if p.source == "roots" else 1  # a polynomial's roots
+                freq, phase = _flicker(self.id, p.seed, -(-len(pts) // group))
+                w = 1.0 + p.twinkle * np.sin(2 * np.pi * (freq * state.t + phase))
+                weights = np.repeat(w, group)[: len(pts)][inside]
             pts = pts[inside] - corner[:2]  # quad coordinates, like ``center``
             v = v[inside]
             if p.color_by == "phase":
@@ -198,7 +227,8 @@ class PointCloud(ObjectBase):
             base = max(whole, MIN_DENSITY)
             gain = p.exposure / base * (base / max(per_px, MIN_DENSITY)) ** ZOOM_LIGHT
             out = gpu.render("splat", pw, ph, points=pts, colors=colors, center=center,
-                             height=height, sigma=p.point_size, gain=gain)  # fmt: skip
+                             height=height, sigma=p.point_size, gain=gain, weights=weights,
+                             white=p.white)  # fmt: skip
             out[..., :3] += bg * (1.0 - out[..., 3:4])  # light on the scene's ground
             return out
 
@@ -207,7 +237,7 @@ class PointCloud(ObjectBase):
 
 def _key(p) -> tuple:
     if p.source == "roots":
-        return (p.degree, tuple(p.coefficients), p.count)
+        return (p.degree, tuple(p.coefficients), p.count, float(p.twist))
     if p.source == "attractor":
         return (p.kind, tuple(p.constants), p.count)
     if p.source == "buddhabrot":

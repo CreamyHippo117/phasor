@@ -100,7 +100,7 @@ teaches = "Heat maps in the prism look: a spreading hot spot, a drum mode, a spe
 [examples.point_cloud]
 kind = "complex"
 tier = "technique"
-teaches = "A point cloud in the prism look: a million polynomial roots splatted as light, a slow camera fall into fine structure"
+teaches = "A point cloud in the prism look: a million polynomial roots splatted as light; a tweened twist makes the roots glide and the ring tear open, white-hot dense parts, twinkle, a slow camera fall into fine structure"
 
 [examples.prism_fractal]
 kind = "fractals"

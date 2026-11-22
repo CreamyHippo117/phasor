@@ -344,3 +344,133 @@ def test_point_cloud_golden_storyboard():
     if not path.exists():
         pytest.skip(f"no {klass} golden yet; create with PHASOR_UPDATE_GOLDEN=1")
     assert ssim(sheet, np.asarray(Image.open(path).convert("RGB"))) >= 0.98
+
+
+# ---------------------------------------------------------------- motion, twinkle, white
+
+
+def _matched_shift(a: np.ndarray, b: np.ndarray, degree: int) -> np.ndarray:
+    """Per root, how far it moved: the roots of each polynomial matched one to one (the
+    solver gives them in no set order) so the total move is least."""
+    from scipy.optimize import linear_sum_assignment
+
+    out = []
+    for k in range(len(a) // degree):
+        x, y = a[k * degree : (k + 1) * degree], b[k * degree : (k + 1) * degree]
+        cost = np.abs(x[:, None] - y[None, :])
+        r, c = linear_sum_assignment(cost)
+        out.append(cost[r, c])
+    return np.concatenate(out)
+
+
+def test_twist_moves_every_root_continuously_and_keeps_the_sample():
+    deg = 8
+    z0, v0 = clm.polynomial_roots(deg, count=60, gen=rng("t", 1), twist=0.02)
+    z1, v1 = clm.polynomial_roots(deg, count=60, gen=rng("t", 1), twist=0.0205)
+    np.testing.assert_array_equal(v0, v1)  # the same polynomials, the same colours
+    step = _matched_shift(z0, z1, deg)
+    assert step.max() < 0.05 and step.mean() > 1e-4  # they glide: small steps, but they move
+    # each root is a root of its twisted polynomial: a_d from (-1, e^(2 pi i twist))
+    w = np.exp(2j * np.pi * 0.02)
+    all_z, _ = clm.polynomial_roots(deg, twist=0.02)
+    for i in (0, 5, 200):
+        a = [(-1.0, w)[(i >> d) & 1] for d in range(deg)]
+        assert np.abs(np.polyval([1.0, *a[::-1]], all_z[i * deg : (i + 1) * deg])).max() < 1e-9
+    # no twist and a whole turn: the classic real cloud
+    plain, _ = clm.polynomial_roots(deg)
+    turned, _ = clm.polynomial_roots(deg, twist=1.0)
+    np.testing.assert_array_equal(plain, turned)
+
+
+def test_roots_solve_the_same_on_one_thread_and_many(monkeypatch):
+    many, _ = clm.polynomial_roots(12, twist=0.03)
+    monkeypatch.setattr(clm, "ROOT_THREADS", 1)
+    one, _ = clm.polynomial_roots(12, twist=0.03)
+    np.testing.assert_array_equal(many, one)
+
+
+def test_a_tweened_twist_glides_the_cloud_and_state_stays_pure():
+    s = Scene("tw", passes=None)
+    s.add(cloud.PointCloud(id="pts", degree=8, size=(4.5, 2.6)))
+    s.at(0.0).to("pts.twist", 0.1, duration=2.0)
+    e = s.engine
+
+    def pts(t):
+        st = e.state_at(t)
+        return st["pts"].impl.cloud(st)[0]
+
+    a, b = pts(1.0), pts(1.0 + 1 / 30)
+    np.testing.assert_array_equal(a, pts(1.0))  # the same t, the same points
+    za, zb = a[:, 0] + 1j * a[:, 1], b[:, 0] + 1j * b[:, 1]
+    step = _matched_shift(za, zb, 8)
+    assert step.mean() > 1e-4 and step.max() < 0.08  # a frame apart: every root a small step
+    sem = e.inspect(1.0, id="pts")["objects"][0]["semantic"]
+    assert 0 < sem["twist"] < 0.1
+
+
+def _scene_life(life, tags=(), **kw):
+    s = Scene("lf", passes=None, life=life)
+    s.set("camera.height", 4.5)
+    s.add(cloud.PointCloud(id="pts", degree=8, size=(4.5, 2.6), twinkle=0.8, tags=tags, **kw))
+    return s.engine
+
+
+def _pixels_at(e, t, pw=96, ph=54, zoom=1.0, at=(0.0, 0.0)):
+    st = e.state_at(t)
+    calls = []
+
+    class Ctx:
+        def field(self, corner, right, up, *, pixels, opacity=1.0, glow=1.0):
+            calls.append(pixels)
+
+    st["pts"].impl.draw(Ctx(), st, "color")
+    p = st["pts"].params
+    center = (p.size[0] / 2 + at[0], p.size[1] / 2 + at[1])  # quad coordinates
+    return calls[0](pw, ph, center, p.size[1] / zoom)
+
+
+def test_twinkle_flickers_points_purely_and_only_when_alive():
+    e = _scene_life("lively")
+    a, b = _pixels_at(e, 1.0), _pixels_at(e, 2.0)
+    np.testing.assert_array_equal(a, _pixels_at(e, 1.0))  # a pure function of t
+    assert np.abs(a - b).max() > 0.01  # it moves
+    assert a[..., 3].mean() == pytest.approx(b[..., 3].mean(), rel=0.15)  # not a pulse
+    assert e.state_at(1.0)["pts"].params.twinkle == pytest.approx(0.8)
+    for still in (_scene_life("off"), _scene_life("lively", tags=("exact",))):
+        assert still.state_at(1.0)["pts"].params.twinkle == 0.0
+        np.testing.assert_array_equal(_pixels_at(still, 1.0), _pixels_at(still, 2.0))
+
+
+def test_white_appears_only_where_the_light_is_dense():
+    g = np.random.default_rng(5)
+    pile = np.zeros((4000, 2))  # one dense spot in the middle
+    sparse = g.uniform(-1.5, 1.5, (300, 2))  # and a thin scatter round it
+    pts = np.r_[pile, sparse]
+    red = np.tile([[1.0, 0.05, 0.05]], (len(pts), 1)).astype(np.float32)
+    kw = {"center": (0.0, 0.0), "height": 3.0, "gain": 2.0}
+    plain = splat_ref(Tile.full(40, 40), pts, red, **kw)
+    white = splat_ref(Tile.full(40, 40), pts, red, white=0.8, **kw)
+    a = white[..., 3]
+    np.testing.assert_array_equal(a, plain[..., 3])  # white changes colour, never the light
+    assert (white[..., :3] <= a[..., None] + 1e-6).all()  # rgb stays within a: no flare
+    core = np.unravel_index(int(np.argmax(a)), a.shape)
+    assert white[core][1] / a[core] > 0.7  # the dense core runs white-hot
+    thin = (a > 0) & (a < 0.3)
+    assert thin.any()
+    assert (white[thin][:, 1] / white[thin][:, 3]).max() < 0.1  # thin light keeps its colour
+
+
+def test_zooming_in_neither_washes_out_nor_whitens_the_cloud():
+    """The camera fall of the example: light per point grows only as zoom^ZOOM_LIGHT, so
+    the close-up is no brighter than the whole cloud and its white-hot share fades."""
+    e = _scene_life("off", white=0.8, exposure=0.06)
+
+    def white_share(img):
+        a = img[..., 3]
+        lit = a > 0.02
+        return float((img[..., :3].min(-1)[lit] / a[lit]).mean()), float(a[lit].mean())
+
+    whole_white, whole_a = white_share(_pixels_at(e, 0.0, 192, 108))
+    close_white, close_a = white_share(_pixels_at(e, 0.0, 192, 108, zoom=8.0, at=(0.0, 1.0)))
+    assert close_a <= whole_a * 1.25 and close_a < 0.6
+    assert close_white <= whole_white

@@ -1,12 +1,15 @@
 """Point splatting: many points, each a tiny Gaussian of light, added together.
 
 Every point adds a normalised Gaussian footprint (``sigma`` pixels, cut off ``reach`` pixels
-from its nearest pixel) into an accumulation image with ``atomicAdd``: its colour times its
+from its nearest pixel) into an accumulation image with integer ``atomicAdd`` (fixed point, so the
+sum is the same bits whatever order the threads add in): its colour times its
 weight into rgb, its weight into a density channel. Dense regions build up light; a point's
 footprint always sums to its weight (light is conserved). A second pass per pixel applies
 the tone curve ``a = 1 - exp(-gain * density)``, so dense areas saturate softly instead of
 clipping: rgb becomes the mean colour of the points there times ``a``, and alpha = ``a`` is
-the glow weight (``DrawContext.field``). With ``curve=False`` the raw sums are returned.
+the glow weight (``DrawContext.field``). With ``white`` above 0 that colour turns toward
+white by ``white * a^4``, so only the densest parts run white-hot; rgb stays at most ``a``
+(for colours at most 1). With ``curve=False`` the raw sums are returned.
 
 Points are in the view's plane coordinates, like the pixels of the other kernels (the view
 is ``center`` and ``height``). A tile skips points whose footprint misses it, so tiles
@@ -24,6 +27,10 @@ from phasor.render.gpu.registry import KernelError, kernel
 
 MAX_REACH = 7  # footprint half-width the kernel's fixed arrays allow
 MAX_SIGMA = MAX_REACH / 2.5
+# Light is summed in 64-bit fixed point (units of 2^-32): integer atomic adds give the same
+# bits whatever order the threads run in (float atomics do not). A pixel holds up to 2^31
+# units of light, two billion points at full weight, and resolves 2.3e-10.
+FIXED = 2.0**32
 
 
 def splat_reach(sigma: float) -> int:
@@ -34,10 +41,13 @@ def splat_reach(sigma: float) -> int:
 SOURCE = (
     "#define MAXW "
     + str(2 * MAX_REACH + 1)
+    + "\n#define FIXED "
+    + repr(float(FIXED))
     + """
 extern "C" __global__ void phasor_splat(int n, int tile_x0, int tile_y0, int tile_w,
     int tile_h, int full_w, int full_h, double cx, double cy, double height,
-    const double* pts, const float* rgb, const float* wt, float sigma, int reach, float* acc)
+    const double* pts, const float* rgb, const float* wt, float sigma, int reach,
+    unsigned long long* acc)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
@@ -71,25 +81,38 @@ extern "C" __global__ void phasor_splat(int n, int tile_x0, int tile_y0, int til
             int px = bx + j;
             if (px < 0 || px >= tile_w) continue;
             float v = (float)(gx[j] * gy[l] * scale);
-            float* o = acc + 4 * ((long long)py * tile_w + px);
-            atomicAdd(o, v * r);
-            atomicAdd(o + 1, v * g);
-            atomicAdd(o + 2, v * b);
-            atomicAdd(o + 3, v);
+            unsigned long long* o = acc + 4 * ((long long)py * tile_w + px);
+            // fixed point: integer sums do not depend on the order threads add in
+            atomicAdd(o, (unsigned long long)llrint((double)(v * r) * FIXED));
+            atomicAdd(o + 1, (unsigned long long)llrint((double)(v * g) * FIXED));
+            atomicAdd(o + 2, (unsigned long long)llrint((double)(v * b) * FIXED));
+            atomicAdd(o + 3, (unsigned long long)llrint((double)v * FIXED));
         }
     }
 }
 
-extern "C" __global__ void phasor_splat_tone(int n, float gain, float* acc)
+extern "C" __global__ void phasor_splat_tone(int n, float gain, float white, int curve,
+    const unsigned long long* acc, float* out)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
-    float* o = acc + 4 * (long long)i;
-    float d = o[3];
-    if (!(d > 0.0f)) { o[0] = 0.0f; o[1] = 0.0f; o[2] = 0.0f; o[3] = 0.0f; return; }
-    float a = (float)(-expm1(-(double)gain * (double)d));
-    float f = a / d;
-    o[0] = o[0] * f; o[1] = o[1] * f; o[2] = o[2] * f; o[3] = a;
+    const unsigned long long* in = acc + 4 * (long long)i;
+    float* o = out + 4 * (long long)i;
+    double c[4];
+    for (int k = 0; k < 4; k++) c[k] = (double)(long long)in[k] / FIXED;
+    if (!curve) {
+        for (int k = 0; k < 4; k++) o[k] = (float)c[k];
+        return;
+    }
+    double d = c[3];
+    if (!(d > 0.0)) { o[0] = 0.0f; o[1] = 0.0f; o[2] = 0.0f; o[3] = 0.0f; return; }
+    double a = -expm1(-(double)gain * d);
+    double sw = (double)white * (a * a) * (a * a);  // white only where light nears the ceiling
+    for (int k = 0; k < 3; k++) {
+        double m = c[k] / d;  // the mean colour of the points here
+        o[k] = (float)((m + (1.0 - m) * sw) * a);
+    }
+    o[3] = (float)a;
 }
 """
 )
@@ -123,6 +146,7 @@ def splat_reference(
     sigma: float = 1.0,
     gain: float = 1.0,
     curve: bool = True,
+    white: float = 0.0,
 ) -> np.ndarray:
     _check_sigma(sigma)
     pts, rgb, wt = _inputs(points, colors, weights)
@@ -150,25 +174,28 @@ def splat_reference(
             if not on.any():
                 continue
             idx = (py * tile.w + px)[on]
-            v = (gx[on, jx] * gy[on, ly] * scale[on]).astype(np.float32).astype(np.float64)
+            v = (gx[on, jx] * gy[on, ly] * scale[on]).astype(np.float32)
+            # the kernel's fixed-point units: each float32 product rounded to a whole unit
             for c in range(3):
-                acc[c] += np.bincount(idx, v * rgb[on, c], minlength=tile.n)
-            acc[3] += np.bincount(idx, v, minlength=tile.n)
-    out = acc.T.reshape(tile.h, tile.w, 4)
+                units = np.rint((v * rgb[on, c]).astype(np.float64) * FIXED)
+                acc[c] += np.bincount(idx, units, minlength=tile.n)
+            acc[3] += np.bincount(idx, np.rint(v.astype(np.float64) * FIXED), minlength=tile.n)
+    out = acc.T.reshape(tile.h, tile.w, 4) / FIXED
     if curve:
         d = out[..., 3]
         with np.errstate(divide="ignore", invalid="ignore"):
-            a = -np.expm1(-float(gain) * d)
-            f = np.where(d > 0, a / d, 0.0)
-        out = np.concatenate([out[..., :3] * f[..., None], np.where(d > 0, a, 0.0)[..., None]],
-                             axis=-1)  # fmt: skip
+            a = np.where(d > 0, -np.expm1(-float(gain) * d), 0.0)
+            m = np.where(d[..., None] > 0, out[..., :3] / d[..., None], 0.0)
+        s = (float(white) * (a * a) * (a * a))[..., None]
+        out = np.concatenate([(m + (1.0 - m) * s) * a[..., None], a[..., None]], axis=-1)
     return out.astype(np.float32)
 
 
 @kernel(
     "splat",
-    "(tile, points, colors, center, height, weights=None, sigma=1.0, gain=1.0, curve=True) "
-    "-> float32[h, w, 4] rgb = mean colour * a, alpha a = 1 - exp(-gain * density)",
+    "(tile, points, colors, center, height, weights=None, sigma=1.0, gain=1.0, curve=True, "
+    "white=0.0) -> float32[h, w, 4] rgb = (mean colour toward white by white * a^4) * a, "
+    "alpha a = 1 - exp(-gain * density)",
     reference=splat_reference,
 )
 def splat(
@@ -182,12 +209,15 @@ def splat(
     sigma: float = 1.0,
     gain: float = 1.0,
     curve: bool = True,
+    white: float = 0.0,
 ):
     """Splat ``points`` ((n, 2) plane coordinates) with ``colors`` ((n, 3) linear RGB, or one)
-    and ``weights`` ((n,), default 1) as Gaussians ``sigma`` pixels wide over the view."""
+    and ``weights`` ((n,), default 1) as Gaussians ``sigma`` pixels wide over the view.
+    ``white`` (0-1) turns the colour toward white where the light nears the curve's ceiling
+    (by ``white * a^4``): a white-hot core in the densest parts, none in the sparse ones."""
     _check_sigma(sigma)
     pts, rgb, wt = _inputs(points, colors, weights)
-    acc = gpu.cp.zeros((tile.h, tile.w, 4), dtype=gpu.cp.float32)
+    acc = gpu.cp.zeros((tile.h, tile.w, 4), dtype=gpu.cp.uint64)
     if len(pts):
         compiled = gpu.compile(SOURCE, "phasor_splat")
         args = (np.int32(len(pts)), np.int32(tile.x0), np.int32(tile.y0), np.int32(tile.w),
@@ -196,7 +226,8 @@ def splat(
                 gpu.cp.asarray(pts), gpu.cp.asarray(rgb), gpu.cp.asarray(wt),
                 np.float32(sigma), np.int32(splat_reach(sigma)), acc)  # fmt: skip
         gpu.launch(compiled, len(pts), args)
-    if curve:
-        tone = gpu.compile(SOURCE, "phasor_splat_tone")
-        gpu.launch(tone, tile.n, (np.int32(tile.n), np.float32(gain), acc))
-    return acc
+    out = gpu.cp.empty((tile.h, tile.w, 4), dtype=gpu.cp.float32)
+    tone = gpu.compile(SOURCE, "phasor_splat_tone")
+    gpu.launch(tone, tile.n, (np.int32(tile.n), np.float32(gain), np.float32(white),
+                              np.int32(bool(curve)), acc, out))  # fmt: skip
+    return out

@@ -69,6 +69,8 @@ glow = "soft"
 [defaults.point_cloud.params]
 exposure = 0.06
 point_size = 0.9
+white = 0.8     # the densest parts run white-hot
+twinkle = 0.6   # each point's light flickers a little (life)
 
 [defaults.point_cloud.style]
 colormap = "spectrum"
