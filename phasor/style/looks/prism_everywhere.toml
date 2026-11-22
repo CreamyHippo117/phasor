@@ -193,3 +193,14 @@ material = "glass"
 
 [defaults.riemann_surface.style]
 material = "glass"
+
+# dynamical systems (ANIMATIONS.md D1, D2): trajectories glow, the arrow field and nullclines stay faint
+[defaults.phase_portrait.params]
+dim = 0.9
+flow = true
+
+[defaults.phase_portrait.style]
+glow = "strong"
+
+[defaults.fixed_points.style]
+glow = "strong"

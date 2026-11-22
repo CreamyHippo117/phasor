@@ -7,6 +7,7 @@ from phasor.domains import (
     basic,
     calc,
     cx,
+    dynamics,
     fourier,
     geometry,
     linalg,
@@ -14,5 +15,5 @@ from phasor.domains import (
     pde,
 )  # fmt: skip
 
-__all__ = ["acoustics", "algebra", "basic", "calc", "cx", "fourier", "geometry", "linalg",
-           "media", "network", "pde"]  # fmt: skip
+__all__ = ["acoustics", "algebra", "basic", "calc", "cx", "dynamics", "fourier", "geometry",
+           "linalg", "media", "network", "pde"]  # fmt: skip

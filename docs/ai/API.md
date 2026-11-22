@@ -1066,6 +1066,38 @@ assert free and set(free[0]) == {"slot", "box", "distance"}
 Events carry `t`, the `marker` being spoken, the `id`, `severity` (`warning` = a viewer
 would notice) and `fix_hints`.
 
+## Dynamical systems: phase portraits and fixed points
+
+`from phasor import dyn`. A planar system x' = f(x, y), y' = g(x, y) from formulas (read safely,
+never run as Python; named numbers go in `constants="mu=1.5, k=2"`). `pos` is the window's
+centre and `extent` its size; one unit of (x, y) is one world unit.
+
+- `dyn.PhasePortrait(f=, g=, extent=, seeds=((x, y), ...) or n_seeds=, t_end=, progress=,
+  backward=, flow=, nullclines=)`: trajectories from the seeds (RK4), their colour running
+  along time; `progress` 0 -> 1 traces them (`s.at("m").sweep("flow.progress", 1.0,
+  show=False)`); `flow` adds the small-arrow field and `nullclines` the curves where x' = 0
+  and y' = 0. Semantics: the number of trajectories and fixed points.
+- `dyn.FixedPoints(f=, g=, extent=, rays=, labels=, reveal=)`: every point where the system rests
+  (Newton from a grid), classified from the Jacobian's eigenvalues: `saddle`, `stable node`,
+  `unstable node`, `stable spiral`, `unstable spiral`, `centre`, `degenerate` or
+  `non-hyperbolic`. Each is a beacon coloured by its type, its real eigen-directions are rays
+  (cool where the motion comes in, warm where it goes out), with a label of the eigenvalues.
+  Semantics list each point's position, type, stability, eigenvalues, trace and determinant.
+  `reveal` 0 -> 1 shows them in order along x.
+
+```python
+from phasor import Scene, dyn
+
+s = Scene("pendulum", passes=None)
+s.add(dyn.PhasePortrait(id="flow", f="y", g="-sin(x) - 0.3 * y", extent=(9, 6), n_seeds=8))
+s.add(dyn.FixedPoints(id="rest", f="y", g="-sin(x) - 0.3 * y", extent=(9, 6)))
+kinds = [p["type"] for p in s.engine.inspect(0.0, id="rest")["objects"][0]["semantic"]["points"]]
+assert kinds == ["saddle", "stable spiral", "saddle"]
+```
+
+Example: `examples/phase_portrait.py`. The prism looks make trajectories glow with the arrow
+field and nullclines kept faint.
+
 ## Command line
 
 | Command | Status | Purpose |

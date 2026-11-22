@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from numpy.random import Generator
 
 FORMATS = ("edges (.csv .tsv .txt: one 'a,b[,weight]' per line)", "JSON (.json: node-link)",
            "GraphML (.graphml)")  # fmt: skip
@@ -164,7 +165,7 @@ def grid(rows: int, cols: int) -> Graph:
     return _build(names, pairs)
 
 
-def random_graph(n: int, p: float, rng: np.random.Generator) -> Graph:
+def random_graph(n: int, p: float, rng: Generator) -> Graph:
     """Erdos-Renyi: each pair joined with probability ``p``."""
     i, j = np.triu_indices(n, 1)
     keep = rng.random(len(i)) < p
@@ -174,7 +175,7 @@ def random_graph(n: int, p: float, rng: np.random.Generator) -> Graph:
     )
 
 
-def small_world(n: int, k: int, p: float, rng: np.random.Generator) -> Graph:
+def small_world(n: int, k: int, p: float, rng: Generator) -> Graph:
     """Watts-Strogatz: a ring where each node joins its ``k`` nearest, each edge rewired to a
     random node with probability ``p``."""
     pairs = []
@@ -268,7 +269,7 @@ GENERATORS = ("tree", "grid", "random", "small_world", "hypercube", "tictactoe")
 # ---------------------------------------------------------------- layouts
 
 
-def layout(g: Graph, kind: str, dims: int, rng: np.random.Generator, iterations: int = 200,
+def layout(g: Graph, kind: str, dims: int, rng: Generator, iterations: int = 200,
            root: int = 0) -> np.ndarray:  # fmt: skip
     """Node positions (n, 3), centred, fitting in [-1, 1] on the widest side.
 
@@ -392,7 +393,7 @@ def _radial(g: Graph, dims: int, root: int) -> np.ndarray:
     return np.c_[r * np.cos(ang), r * np.sin(ang), z]
 
 
-def _spring(g: Graph, dims: int, rng: np.random.Generator, iterations: int) -> np.ndarray:
+def _spring(g: Graph, dims: int, rng: Generator, iterations: int) -> np.ndarray:
     n = g.n
     pos = rng.uniform(-1, 1, (n, dims))
     k = 1.0 / np.sqrt(n)
