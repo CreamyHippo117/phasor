@@ -31,6 +31,7 @@ from phasor.domains import cloud_math as clm
 # at the current zoom): ``exposure`` 1 lights a uniform cloud to 1 - 1/e. The mean is held at
 # least this, so a sparse cloud seen close up keeps single points as soft dots, not flares.
 MIN_DENSITY = 0.02
+ZOOM_LIGHT = 0.7  # 1: brightness held as the camera zooms in; 0: each point's light fixed
 CACHE = 8  # point sets kept in memory (the latest ones)
 
 
@@ -191,7 +192,11 @@ class PointCloud(ObjectBase):
             t = (x - k0)[:, None].astype(np.float32)
             colors = lut[k0] * (1 - t) + lut[(k0 + 1) % len(lut)] * t
             per_px = len(pts) * (height / ph) ** 2 / (p.size[0] * p.size[1])
-            gain = p.exposure / max(per_px, MIN_DENSITY)
+            # zooming in spreads the points over more pixels; light per point grows only as
+            # the square root of that, so a dense region seen close up does not wash out
+            whole = len(pts) * (p.size[1] / ph) ** 2 / (p.size[0] * p.size[1])
+            base = max(whole, MIN_DENSITY)
+            gain = p.exposure / base * (base / max(per_px, MIN_DENSITY)) ** ZOOM_LIGHT
             out = gpu.render("splat", pw, ph, points=pts, colors=colors, center=center,
                              height=height, sigma=p.point_size, gain=gain)  # fmt: skip
             out[..., :3] += bg * (1.0 - out[..., 3:4])  # light on the scene's ground
