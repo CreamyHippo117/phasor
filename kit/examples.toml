@@ -156,3 +156,13 @@ why = "kernel-level demo, not a scene"
 kind = "physics"
 tier = "technique"
 teaches = "Sound in a 3D room: rays and fronts bouncing off the walls, an orbiting camera, an impulse response filling in"
+
+[examples.sound_winding]
+kind = "fourier_linalg"
+tier = "technique"
+teaches = "Sound (opt-in, `render --sound`): a tone that follows the winding frequency and the wound-up signal's centre of mass, peaking at each frequency in the signal"
+
+[examples.sound_series]
+kind = "fourier_linalg"
+tier = "technique"
+teaches = "Sound (opt-in): a Fourier partial sum brightening as terms are added"

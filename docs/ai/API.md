@@ -1317,14 +1317,23 @@ from phasor import Scene, ac, expr, sound
 s = Scene("heard", passes=None)
 s.add(ac.Room3D(id="room", size=(8, 5, 3)))
 s.add(ac.Listener(id="mic", pos=(6, 3.4, 1.4)))
-s.add(ac.Wavefront3D(id="front", room="room", source=(2.2, 2, 1.4), listener="mic",
-                     time=expr("t - 1"), speed=0.01, order=2))
+s.add(
+    ac.Wavefront3D(
+        id="front",
+        room="room",
+        source=(2.2, 2, 1.4),
+        listener="mic",
+        time=expr("t - 1"),
+        speed=0.01,
+        order=2,
+    )
+)
 s.add(sound.Tone(id="hum", hz=expr("220 + 110 * t"), gain=expr("min(t / 2, 1)")))
 s.add(sound.Cue(id="ding", at=(0.5,), kind="bell", hz=660))
 s.marker("start", 0.0)
 s.marker("end", 4.0)
-assert s.engine.audio_track() is None                    # silent unless asked
-samples, rate = s.engine.audio_track(sound=True)         # int16 mono
+assert s.engine.audio_track() is None  # silent unless asked
+samples, rate = s.engine.audio_track(sound=True)  # int16 mono
 assert rate == 48000 and len(samples) == 4 * rate
 ```
 
