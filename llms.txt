@@ -44,6 +44,7 @@
 - `cayley_table`: flash, group, pos, cell, reveal, subgroup, cosets
 - `clock_diagram`: flash, n, step, pos, r, cosets
 - `complex_map`: flash, function, pos, center, extent, lines, samples, amount, limit
+- `convolution`: flash, f, g, f_support, g_support, pos, extent, progress, ghost, shade, hue_cycles
 - `counter`: flash, value, digits, prefix, suffix, math, pos, anchor
 - `domain_coloring`: flash, function, pos, size, contour, softness, hue, radius, ambient, lines
 - `dot`: flash, pos, r

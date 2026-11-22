@@ -111,3 +111,10 @@ glow = "strong"
 
 [defaults.fixed_points.style]
 glow = "strong"
+
+# live convolution (ANIMATIONS.md S1): two glowing signals, the product lit, the output as light
+[defaults.convolution.params]
+dim = 0.92
+
+[defaults.convolution.style]
+glow = "strong"
