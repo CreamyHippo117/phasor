@@ -126,3 +126,98 @@ def test_polyline_still_rejects_a_width_per_point_of_the_wrong_length():
     with pytest.raises(ValueError):
         strokes.polyline(_Ctx(), _cameras()[0], [(0, 0, 0), (1, 0, 0), (2, 0, 0)], [0.1, 0.2],
                          color=(1, 1, 1, 1))  # fmt: skip
+
+
+@pytest.mark.parametrize("cam", _cameras(), ids=["2d", "3d"])
+@pytest.mark.parametrize("with_colors", [False, True])
+def test_many_strokes_at_once_are_the_strokes_one_by_one(cam, with_colors):
+    """``polylines`` (S strokes of N points, one draw) gives exactly the vertices, colors and
+    triangles of S ``polyline`` calls concatenated: what FlowParticles draws in one go."""
+    rng = np.random.default_rng(5)
+    for s, n in ((1, 2), (7, 8), (145, 8), (3, 50)):
+        pts = np.cumsum(rng.normal(size=(s, n, 3)), axis=1)
+        pts[0, 3:5] = pts[0, 2] if n > 5 else pts[0, 0]  # a zero-length segment
+        width = rng.random((s, n)) * 0.1
+        colors = rng.random((s, n, 4)) if with_colors else None
+        one = _Ctx()
+        for k in range(s):
+            strokes.polyline(one, cam, pts[k], width[k], color=(1, 1, 1, 0.5), glow=1.5,
+                             colors=None if colors is None else colors[k])  # fmt: skip
+        many = _Ctx()
+        strokes.polylines(many, cam, pts, width, color=(1, 1, 1, 0.5), glow=1.5, colors=colors)
+        ((pos, idx, color, glow, cols),) = many.calls
+        assert color == (1, 1, 1, 0.5) and glow == 1.5
+        offsets = np.cumsum([0] + [len(c[0]) for c in one.calls[:-1]])
+        assert np.array_equal(pos, np.concatenate([c[0] for c in one.calls]))
+        shifted = [c[1] + o for c, o in zip(one.calls, offsets, strict=True)]
+        assert np.array_equal(idx, np.concatenate(shifted))
+        if colors is None:
+            assert cols is None
+        else:
+            assert np.array_equal(cols, np.concatenate([c[4] for c in one.calls]))
+
+
+def test_polylines_with_nothing_to_draw_draws_nothing():
+    ctx = _Ctx()
+    strokes.polylines(ctx, _cameras()[0], np.zeros((0, 8, 3)), 0.1, color=(1, 1, 1, 1))
+    strokes.polylines(ctx, _cameras()[0], np.zeros((4, 1, 3)), 0.1, color=(1, 1, 1, 1))
+    assert ctx.calls == []
+
+
+def _flow_particles_one_by_one(self, ctx, state, pass_):
+    """FlowParticles.draw before batching: one stroke and one draw per particle."""
+    from phasor.domains import geometry_math as gm
+    from phasor.domains.geometry import ramp
+
+    me = self.me(state)
+    p = me.params
+    if p.opacity <= 0:
+        return
+    cam = state.camera_for(me)
+    paths, phase, strength = self._paths(me.id, p)
+    seg, alpha = gm.particles(paths, phase, state.t, p.lifetime, max(p.tail, 0.02))
+    top = float(np.nanmax(strength)) if np.isfinite(strength).any() else 1.0
+    rgb = gm.sample_ramp(ramp(me.style["colormap"]), gm.normalize01(strength, 0.0, top))
+    for pts, a, c in zip(seg, alpha, rgb, strict=True):
+        if a.max() <= 0.01 or np.linalg.norm(pts[-1] - pts[0]) < 1e-9:
+            continue
+        cols = np.empty((len(pts), 4))
+        cols[:, :3], cols[:, 3] = c, a * p.opacity
+        strokes.polyline(ctx, cam, pts, me.style["stroke"] * cam.units_per_height(pts),
+                         color=(*c, p.opacity), glow=me.style["glow"], colors=cols)  # fmt: skip
+
+
+@pytest.mark.gl
+@pytest.mark.parametrize("perspective", [False, True], ids=["2d", "3d"])
+def test_flow_particles_in_one_draw_look_exactly_as_one_draw_each(perspective, monkeypatch):
+    from phasor import Scene, geo
+    from phasor.domains.geometry import FlowParticles
+    from phasor.render.passes import GLRenderer
+    from tests.conftest import gl_available
+
+    if not gl_available():
+        pytest.skip("needs OpenGL")
+    s = Scene("flow_batch")
+    s.add(geo.FlowParticles(id="swirl", fp="-y", fq="x", fr="0.2", count=300, tail=0.3,
+                            style={"glow": "strong"}))  # fmt: skip
+    if perspective:  # widths then vary along each stroke with depth
+        s.use_camera("orbit")
+        s.set("camera.distance", 12.0)
+        s.set("camera.elevation", 30.0)
+    s.marker("end", 4.0)
+    e, size = s.engine, (320, 180)
+
+    def frames():
+        r = GLRenderer()  # fresh, so nothing is cached between the two versions
+        out = []
+        for t in (0.7, 2.1, 3.3):
+            st = e.state_at(t)
+            out += [c.copy() for c in r.color_and_emission_raw(st, size)]
+            out += [r.id_buffer(st, size), r.solo_mask(st, size, "swirl")]
+        return out
+
+    batched = frames()
+    assert all((ids != 0).sum() > 500 for ids in batched[2::4])  # particles on screen
+    monkeypatch.setattr(FlowParticles, "draw", _flow_particles_one_by_one)
+    for got, want in zip(batched, frames(), strict=True):
+        assert np.array_equal(got, want)
