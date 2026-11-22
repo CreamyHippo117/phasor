@@ -110,3 +110,107 @@ def test_prism_domain_golden_storyboard():
     assert e.lint(strict=True) == []
     sheet = e.storyboard([0.6, 2.0, 6.0], size=(320, 180))["image"]
     _golden("prism_domain", sheet, e.pass_runner().renderer_class())
+
+
+# ---------------------------------------------------------------- 2. heat maps
+
+
+def _old_heatmap(v, lut, size, pw, ph, center, height):
+    """The plain picture as it was drawn before the shared helper (kept to check it)."""
+    nx, ny = v.shape
+    sx, sy = size
+    half_w = height * pw / ph / 2
+    xs = center[0] + (np.arange(pw) + 0.5) / pw * 2 * half_w - half_w
+    ys = center[1] + (0.5 - (np.arange(ph) + 0.5) / ph) * height
+    gx = np.clip(xs / sx * (nx - 1), 0, nx - 1)
+    gy = np.clip(ys / sy * (ny - 1), 0, ny - 1)
+    x0, y0 = np.floor(gx).astype(int), np.floor(gy).astype(int)
+    x1, y1 = np.minimum(x0 + 1, nx - 1), np.minimum(y0 + 1, ny - 1)
+    fx, fy = (gx - x0)[None, :], (gy - y0)[:, None]
+    val = (v[x0][:, y0].T * (1 - fx) * (1 - fy) + v[x1][:, y0].T * fx * (1 - fy)
+           + v[x0][:, y1].T * (1 - fx) * fy + v[x1][:, y1].T * fx * fy)  # fmt: skip
+    return lut[np.clip((val * (len(lut) - 1)).astype(int), 0, len(lut) - 1)]
+
+
+def test_the_plain_heat_map_is_exactly_what_it_was():
+    from phasor.domains.heatmap import heat_pixels, lut_colour
+
+    rng = np.random.default_rng(3)
+    v = rng.random((17, 11))
+    lut = rng.random((64, 3)).astype(np.float32)
+    px = heat_pixels(v, (4.0, 3.0), lut_colour(lut))(80, 60, (2.0, 1.5), 3.0)
+    np.testing.assert_array_equal(px[..., :3], _old_heatmap(v, lut, (4.0, 3.0), 80, 60,
+                                                            (2.0, 1.5), 3.0))  # fmt: skip
+    assert (px[..., 3] == 1).all()
+
+
+def test_smooth_sampling_passes_through_the_grid_and_has_no_kinks():
+    from phasor.domains.heatmap import sample
+
+    x = np.linspace(0, 1, 9)
+    grid = np.sin(3 * x)[:, None] * np.ones((1, 4))
+    g = np.arange(9.0)
+    np.testing.assert_allclose(sample(grid, g, np.zeros(1), "smooth")[0], grid[:, 0])
+    fine = np.linspace(0, 8, 400)
+    smooth = sample(grid, fine, np.zeros(1), "smooth")[0]
+    linear = sample(grid, fine, np.zeros(1), "linear")[0]
+    kinks = lambda y: np.abs(np.diff(y, 2)).max()  # noqa: E731
+    assert kinks(smooth) < kinks(linear) / 5  # no corners at the grid points
+    inner = (fine > 1) & (fine < 7)  # the ends repeat the end value: less exact there
+    truth = np.sin(3 * fine / 8)
+    assert np.abs(smooth - truth)[inner].max() < np.abs(linear - truth)[inner].max()
+
+
+def test_isolines_are_about_a_pixel_wide_at_any_scale():
+    from phasor.domains.heatmap import isoline_weight
+
+    for n in (100, 400):
+        ramp_ = np.tile(np.linspace(0, 1, n), (8, 1))  # 0..1 across n pixels
+        lines = isoline_weight(ramp_, 4)[4]
+        lit = lines > 0.5
+        assert lit.sum() == pytest.approx(3 * 2, abs=3)  # 3 inner levels, about 2 px each
+        assert lines[n // 4 - 2 : n // 4 + 3].max() > 0.9
+
+
+def test_the_prism_heat_preset_and_looks():
+    from phasor.domains import pde
+
+    s = Scene("h", passes=None)
+    s.add(pde.Field(id="a", kind="heat", preset="prism"))
+    s.add(pde.Field(id="b", kind="heat"))
+    assert s.engine.document.object("a").params["isolines"] > 0
+    assert not s.engine.document.object("b").params.get("smooth", False)
+    t = Scene("look", look="prism", passes=None)
+    t.add(pde.Field(id="c", kind="wave"))
+    c = t.engine.document.object("c")
+    assert c.params["smooth"] and c.style["glow"] == "soft"
+
+
+@needs_gl
+def test_a_prism_heat_map_glows_where_hot_and_melts_into_the_background():
+    from phasor.domains import pde
+
+    def frame(**kw):
+        s = Scene("glow")
+        s.set("camera.height", 4.0)
+        s.add(pde.Field(id="f", kind="heat", mode=(0, 0), time=0.02, scale=0.3,
+                        size=(3.0, 3.0), **kw))  # fmt: skip
+        r = s.engine.pass_runner()
+        pic, emit = r.color_and_emission(s.engine.state_at(0.0), (120, 90))
+        return s, pic[..., :3], emit[..., :3]
+
+    s, _, emit = frame()
+    assert emit.max() == 0.0
+    s, pic, emit = frame(preset="prism")
+    assert emit[45, 60].sum() > 0.1  # the hot middle shines
+    corner = pic[10, 30]  # inside the plate, far from the heat
+    assert np.abs(corner - np.asarray(s.engine.state_at(0.0).background[:3])).max() < 0.05
+
+
+@needs_gl
+@pytest.mark.slow
+def test_prism_heat_golden_storyboard():
+    e = runpy.run_path(str(ROOT / "examples" / "prism_heat.py"), run_name="x")["s"].engine
+    assert e.lint(strict=True) == []
+    sheet = e.storyboard([0.5, 3.0, 7.0], size=(320, 180))["image"]
+    _golden("prism_heat", sheet, e.pass_runner().renderer_class())

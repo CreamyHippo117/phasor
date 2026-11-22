@@ -739,6 +739,22 @@ assert info("cosets")["normal"] and info("cosets")["quotient"]["order"] == 4
 assert info("green")["theorem_holds"]
 ```
 
+
+**Heat maps in the prism look.** `pde.Field`, `pde.Slice`, `acoustics.PressureSlice` and
+`fourier.Spectrogram` take `smooth` (bicubic between grid values) and `isolines` (that many
+contour levels drawn as thin light), and a `glow` style role: above `none`, strong parts
+shine and haze and quiet parts melt into the background. A wave glows both ways, warm for up
+and cool for down (`positive` and `negative` roles). `preset="prism"` sets all three; the
+`prism` looks use it. Plain pictures are unchanged.
+
+```python
+from phasor import Scene
+from phasor.domains import pde
+
+hot = Scene("hot plate", look="prism", passes=None)
+hot.add(pde.Field(id="plate", kind="heat", mode=(0, 0), time=0.1, scale=0.3))
+assert hot.engine.document.object("plate").params["isolines"] == 8
+```
 ## Space: axes, curves, surfaces and fields (`geo`)
 
 `from phasor import geo`. Give the scene an orbit camera (`s.use_camera("orbit")`) to turn

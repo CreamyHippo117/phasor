@@ -26,6 +26,7 @@ from phasor.core.objects import Bounds, DrawContext, ObjectBase, ParamsBase, Pas
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
 from phasor.domains import fourier_math as fm
+from phasor.domains.heatmap import heat_pixels, lut_colour
 from phasor.domains.strokes import circle, disc, polyline, with_alpha
 
 
@@ -321,7 +322,11 @@ class Spectrogram(ObjectBase):
     frequency up, brightness for strength. A backdrop: labels may sit on it."""
 
     type: ClassVar[str] = "spectrogram"
-    Style: ClassVar = {"colormap": ("colormap", "ocean")}
+    Style: ClassVar = {"colormap": ("colormap", "ocean"), "glow": ("glow", "none")}
+    Presets: ClassVar = {
+        # the prism look: smooth, glowing where strong, contour lines of light
+        "prism": {"params": {"smooth": True, "isolines": 8}, "style": {"glow": "soft"}},
+    }
 
     class Params(ParamsBase):
         f0: float = Field(200.0, gt=0)
@@ -331,6 +336,8 @@ class Spectrogram(ObjectBase):
         nwin: int = Field(256, ge=16, le=4096)
         pos: Vec3 = (0.0, 0.0, 0.0)  # centre
         size: tuple[float, float] = (6.0, 3.0)
+        smooth: bool = False  # bicubic between grid values (the prism look); else as before
+        isolines: int = Field(0, ge=0, le=64)  # contour levels drawn as thin light
 
     def _rect(self, p):
         c = np.asarray(p.pos, dtype=np.float64) - np.array([p.size[0] / 2, p.size[1] / 2, 0.0])
@@ -354,19 +361,14 @@ class Spectrogram(ObjectBase):
         sg = _sg(p.f0, p.f1, p.duration, p.fs, p.nwin)
         mag = sg["mag"] / max(float(sg["mag"].max()), 1e-12)
         lut = ramp(me.style["colormap"], np.float32)  # strongest = brightest (ocean is cyclic)
-        nf, nt = mag.shape
         corner, right, up = self._rect(p)
-
-        def pixels(pw: int, ph: int, center: tuple[float, float], height: float) -> np.ndarray:
-            half_w = height * pw / ph / 2
-            u = center[0] + (np.arange(pw) + 0.5) / pw * 2 * half_w - half_w
-            v = center[1] + (0.5 - (np.arange(ph) + 0.5) / ph) * height
-            ti = np.clip((u / p.size[0] * nt).astype(int), 0, nt - 1)
-            fi = np.clip((v / p.size[1] * nf).astype(int), 0, nf - 1)
-            val = mag[fi][:, ti]
-            idx = np.clip((np.sqrt(val) * (len(lut) - 1)).astype(int), 0, len(lut) - 1)
-            out = np.ones((ph, pw, 4), dtype=np.float32)
-            out[..., :3] = lut[idx]
-            return out
-
-        ctx.field(corner, right, up, pixels=pixels, opacity=p.opacity)
+        glow = float(me.style.get("glow", 1.0))
+        paint = lut_colour(lut, "linear" if p.smooth else "nearest")
+        pixels = heat_pixels(
+            mag.T, p.size, lambda v: paint(np.sqrt(np.clip(v, 0, 1))), cells=True,
+            how="smooth" if p.smooth else "nearest", isolines=p.isolines,
+            level=lambda v: np.sqrt(np.clip(v, 0, 1)),
+            weight=(lambda v: np.sqrt(np.clip(v, 0, 1))) if glow > 1 else None,
+            background=state.background,
+        )  # fmt: skip
+        ctx.field(corner, right, up, pixels=pixels, opacity=p.opacity, glow=glow)

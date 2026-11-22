@@ -15,6 +15,7 @@ render only those: `uv run python showcase/render_all.py prism_primes deep_zoom`
 |---|---|
 | `prism_primes` | the prism look: primes heard through the zeta zeros, glowing rainbow strokes |
 | `prism_domain` | domain coloring in the prism look: glowing zeros, poles, rays and rings |
+| `prism_heat` | heat maps in the prism look: a hot spot, a vibrating drum, a chirp |
 | `residue_theorem` | a narrated short: the residue theorem, every motion on a spoken cue |
 | `riemann_sqrt` | 3D: the Riemann surface of sqrt(z), the camera orbits on its own |
 | `deep_zoom` | a dive into the Mandelbrot set down to 1e-30 |

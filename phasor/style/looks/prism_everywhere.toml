@@ -123,3 +123,32 @@ glow = "strong"
 
 [defaults.callout.style]
 glow = "soft"
+
+# heat maps: smooth, glowing where strong, contour lines of light (BEAUTY.md item 2)
+[defaults.pde_field.params]
+smooth = true
+isolines = 8
+
+[defaults.pde_field.style]
+glow = "soft"
+
+[defaults.pde_slice.params]
+smooth = true
+isolines = 8
+
+[defaults.pde_slice.style]
+glow = "soft"
+
+[defaults.pressure_slice.params]
+smooth = true
+isolines = 8
+
+[defaults.pressure_slice.style]
+glow = "soft"
+
+[defaults.spectrogram.params]
+smooth = true
+isolines = 8
+
+[defaults.spectrogram.style]
+glow = "soft"
