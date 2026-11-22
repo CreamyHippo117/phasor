@@ -127,6 +127,11 @@ kind = "physics"
 tier = "technique"
 teaches = "A damped pendulum's phase portrait: trajectories flowing, then its rest points and their stability"
 
+[examples.filter_poles]
+kind = "fourier_linalg"
+tier = "technique"
+teaches = "A filter's poles and zeros on the z-plane, and the pole outside the unit circle that makes it unstable"
+
 [examples.game_tree]
 kind = "basics"
 tier = "technique"
