@@ -9,6 +9,8 @@ import pytest
 from phasor import Scene, ac, expr
 from phasor.domains import ac_math
 
+EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "doppler.py"
+
 
 @pytest.mark.parametrize("mach", [0.0, 0.4, 0.95])
 def test_observed_frequency_ahead_and_behind(mach):
@@ -58,13 +60,33 @@ def test_engine_doppler_is_deterministic_and_bounds_cover_the_fronts():
     assert bounds.hi == pytest.approx((2.52, 1.68, 0.0))
 
 
+@pytest.mark.parametrize(
+    ("time", "outgoing", "incoming"),
+    [(3.0, "subsonic", "sonic"), (6.0, "sonic", "supersonic")],
+)
+def test_showcase_matches_source_tips_and_staggers_captions(time, outgoing, incoming):
+    engine = runpy.run_path(str(EXAMPLE))["s"].engine
+    for offset in (-0.2, 0.0, 0.2):
+        state = engine.state_at(time + offset)
+        first, second = state[outgoing], state[incoming]
+        assert first.params.time == second.params.time
+        assert first.params.opacity > 0 and second.params.opacity > 0
+        assert first.params.opacity + second.params.opacity == pytest.approx(1.0)
+        np.testing.assert_allclose(
+            first.impl.features(state)["source"], second.impl.features(state)["source"]
+        )
+        captions = [state[f"{name}_caption"].params.opacity for name in (outgoing, incoming)]
+        assert sum(alpha > 1e-9 for alpha in captions) == int(offset != 0)
+        if offset != 0:
+            assert captions[int(offset > 0)] > 0
+
+
 @pytest.mark.gl
 @pytest.mark.slow
 def test_doppler_golden_storyboard():
     from tests.test_beauty import _golden
 
-    example = Path(__file__).resolve().parents[1] / "examples" / "doppler.py"
-    engine = runpy.run_path(str(example))["s"].engine
+    engine = runpy.run_path(str(EXAMPLE))["s"].engine
     assert engine.lint(strict=True) == []
-    sheet = engine.storyboard([2.8, 5.8, 8.8], size=(320, 180))["image"]
+    sheet = engine.storyboard([1.7, 3.0, 4.7, 6.0, 8.4], size=(320, 180))["image"]
     _golden("doppler", sheet, engine.pass_runner().renderer_class())
