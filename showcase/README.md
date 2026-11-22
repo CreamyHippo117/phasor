@@ -19,6 +19,8 @@ render only those: `uv run python showcase/render_all.py prism_primes deep_zoom`
 | `prism_drum_3d` | a vibrating drum in 3D, a net of glowing lines, orbiting |
 | `point_cloud` | a million polynomial roots as glowing points, falling toward z = i |
 | `prism_fractal` | fractals in the prism look: a morphing Julia set, then a dive, edges glowing |
+| `picture` | a picture placed in a scene: it fades in framed in light, a curve traces it |
+| `game_tree` | every game of tic-tac-toe: its 765 positions fanning out move by move |
 | `residue_theorem` | a narrated short: the residue theorem, every motion on a spoken cue |
 | `riemann_sqrt` | 3D: the Riemann surface of sqrt(z), the camera orbits on its own |
 | `deep_zoom` | a dive into the Mandelbrot set down to 1e-30 |
@@ -28,6 +30,7 @@ render only those: `uv run python showcase/render_all.py prism_primes deep_zoom`
 | `fourier_linalg` | Fourier series and linear algebra |
 | `heat_dihedral` | the heat equation and the dihedral group |
 | `room_acoustics` | a room, its echoes and the pressure wave |
+| `room_3d` | a 3D room with sound bouncing in it: rays and fronts reflecting, reverberation building |
 
 Narrated scenes have sound only where a speech engine is installed (espeak-ng); without one
 the timing is estimated and the video is silent.

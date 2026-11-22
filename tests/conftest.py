@@ -4,8 +4,13 @@ so the same suite runs on tier A, B and C machines (and in CI)."""
 from __future__ import annotations
 
 import functools
+import os
 
 import pytest
+
+# New scenes default to the prism look; the suite runs plain so every picture and position it
+# checks stays what it was written against. tests/test_beauty.py checks the default itself.
+os.environ.setdefault("PHASOR_DEFAULT_LOOK", "none")
 
 
 @functools.cache

@@ -36,6 +36,9 @@ extern "C" void emu_set(unsigned b, unsigned t, unsigned d) {
 }
 // Threads run one after another here, so an atomic add is a plain add (returns the old value).
 static inline float atomicAdd(float* a, float v) { float old = *a; *a = old + v; return old; }
+static inline unsigned long long atomicAdd(unsigned long long* a, unsigned long long v) {
+    unsigned long long old = *a; *a = old + v; return old;
+}
 """
 _CTYPES = {np.int32: ctypes.c_int, np.float32: ctypes.c_float, np.float64: ctypes.c_double}
 _DIR = Path(tempfile.mkdtemp(prefix="phasor_emu_"))
@@ -57,6 +60,7 @@ class _StrictCupy:
     to the device with ``asarray`` first."""
 
     float32, float64, int32, uint8 = np.float32, np.float64, np.int32, np.uint8
+    uint64 = np.uint64
 
     @staticmethod
     def asarray(a, dtype=None):
@@ -117,7 +121,12 @@ class EmuGpu:
             if isinstance(a, np.ndarray):
                 if not isinstance(a, DeviceArray):
                     raise TypeError("a host (NumPy) array passed to a kernel: cp.asarray it")
-                assert a.flags.c_contiguous and a.dtype in (np.float32, np.float64, np.uint8), (
+                assert a.flags.c_contiguous and a.dtype in (
+                    np.float32,
+                    np.float64,
+                    np.uint8,
+                    np.uint64,
+                ), (
                     a.dtype,
                     a.flags,
                 )

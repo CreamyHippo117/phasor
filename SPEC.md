@@ -65,7 +65,7 @@ These seven decisions are hard to change later. Build them exactly as written in
 
 **3. Time is a pure function**
 
-- `Engine.state_at(t) -> SceneState` depends only on (document, t), given the machine's occlusion oracle: the layout bake reads the real id pass where OpenGL exists and geometry where it does not, so a near-tie can place a label differently on two machines (ADR 0002). `SceneState` is immutable (frozen dataclasses) and holds every object's resolved parameters.
+- `Engine.state_at(t) -> SceneState` depends only on (document, t), given the machine's occlusion oracle: the layout bake reads the real id pass where OpenGL exists and geometry where it does not, so a near-tie can place a label differently on two machines (ADR 0002). It may also depend on files the document names: an object type lists its file-path params in `Files` (e.g. `Room3D.path`, a Wavefront `.obj`); paths are relative and stay inside the scene's folder (`core/files.py`), a changed file is re-read (cached on its mtime and size), and a missing one draws nothing and is lint `missing_file` (owner approved, 2026-11-22). `SceneState` is immutable (frozen dataclasses) and holds every object's resolved parameters.
 - Parameters form a DAG of constants, tracks (piecewise segments with easing) and expressions over other parameters. Evaluate in topological order; a cycle is a validation error.
 - Narration lives in a separate `TimeMap` (marker name to seconds). Tracks store marker-relative anchors. Re-recording audio rebuilds only the `TimeMap`.
 - Simulations (PDE, FDTD, particles) are `Simulation` objects with `step(state, dt)`, a fixed dt, a seed, and checkpoints every N steps cached in `.phasor_cache/` under a hash of their parameters. `state_at(t)` = nearest earlier checkpoint + remaining steps.
@@ -387,7 +387,7 @@ The AI handles structure, math and timing; the engine and your gallery hold the 
 | Surface | `solid`, `glass`, `wire`, `emissive` |
 
 - Ship three themes tuned by hand: `midnight_glow`, `aurora`, `paper`. Add more only after these look great.
-- **The dark theme is the default, always** (owner, 2026-11-18; replaces an earlier note asking for light defaults). `midnight_glow` stays the house look. Light and mid-tone themes are opt-in choices, and glow and bloom must still read on them (soft colored halos, not white blow-outs).
+- **The dark theme is the default, always** (owner, 2026-11-18; replaces an earlier note asking for light defaults). `midnight_glow` stays the house theme. **The `prism` look is the default style** (owner, 2026-11-22): a scene that names neither a look nor a theme gets it; `look="none"` gives plain `midnight_glow`. Light and mid-tone themes are opt-in choices, and glow and bloom must still read on them (soft colored halos, not white blow-outs).
 
 **Living motion: no frozen frames (owner, 2026-11-18)**
 

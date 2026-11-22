@@ -399,7 +399,7 @@ class Surface(_Plate):
     Presets: ClassVar = {
         # the prism look: a dark landscape in spectrum hues under a net of glowing lines
         "prism": {"params": {"hue_cycles": 1.6, "contrast": 1.5, "lines": 24},
-                  "style": {"colormap": "spectrum", "glow": "strong"}},
+                  "style": {"colormap": "spectrum", "glow": "strong", "material": "glass"}},
     }  # fmt: skip
 
     class Params(ParamsBase):

@@ -15,7 +15,9 @@ compounding. If this file and SPEC.md disagree, stop and ask.
 - Now (owner, 2026-11-22): the beauty plan in `BEAUTY.md`, in its order (prism domain
   coloring, heat maps, point clouds, fractals, image import, graph import, 3D acoustics).
   Keep `prism_primes`' look exactly. Steps 3, 4 and 7 run on the PC from `pc_tasks/`.
-  Render speed and the finished Windows app come after, unless the owner says otherwise.
+  Next animations (signal, waves, dynamics): `ANIMATIONS.md`. Changes waiting for the
+  owner's OK go in `pending/` (a patch and a before/after picture). Render speed and the
+  finished Windows app come after, unless the owner says otherwise.
 - Desktop app (owner, 2026-11-22): code-first, one shared script that the person, the AI and
   the app all edit. Plan: `APP_PLAN.md` (answered); ADR 0004 (tweaks inside the script,
   touches contract 2) accepted by the owner; phase 1 not started.
@@ -36,6 +38,9 @@ compounding. If this file and SPEC.md disagree, stop and ask.
    IDs: `[a-z][a-z0-9_]*`, dots for children, never reused (removed ids go to
    `retired_ids`), named by meaning not counters.
 3. **Time is pure.** `Engine.state_at(t)` depends only on (document, t) and the occlusion oracle (ADR 0002), returns frozen data.
+   It may also depend on files the document names (an object's `Files` params, e.g. a
+   `Room3D` `.obj`), read only from inside the scene's folder, re-read when they change;
+   a missing one is lint `missing_file` (owner, 2026-11-22).
    Params are a DAG (constants, tracks, expressions); a cycle is a validation error.
    Narration is a separate `TimeMap`. Simulations use fixed dt, seed, cached checkpoints.
    Randomness only via `rng(object_id, seed)`.
@@ -119,7 +124,9 @@ compounding. If this file and SPEC.md disagree, stop and ask.
   only camera parameters the document leaves unset. Lower layers get depth through the
   oracle's `depth` (ADR 0001 pattern); 3D labels are judged by what is in front of them.
 
-- Beauty: dark (`midnight_glow`) is the default theme, always; light themes are opt-in. Fewer
+- Beauty: new scenes get the `prism` look (owner, 2026-11-22; `look="none"` for plain, which
+  is the dark `midnight_glow` theme); dark always, light themes are opt-in. Tests run with
+  `PHASOR_DEFAULT_LOOK=none` (set in `tests/conftest.py`). Fewer
   rainbows is not no rainbows: hue that carries meaning (domain-coloring phase) keeps the
   wheel. Taste knobs are theme `[lint]`/`[life]` values, roles, looks and presets, never
   numbers typed into a scene. Life is a pure function of (id, seed, t); `exact` objects never

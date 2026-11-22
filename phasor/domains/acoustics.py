@@ -11,6 +11,12 @@
                              layer="overlay", pos=(0.2, 0.62), extent=(0.8, 0.3)))
     s.add(ac.PressureSlice(id="field", size=(8, 5, 3), source=(2, 2.5, 1.5), time=expr("t")))
 
+In 3D (BEAUTY.md step 7), a room of any shape and sound bouncing in it:
+
+    s.add(ac.Room3D(id="room", size=(8, 5, 3)))            # or path="assets/l_room.obj"
+    s.add(ac.SoundRays(id="rays", room="room", source=(2, 2.5, 1.5), time=expr("t - 1")))
+    s.add(ac.Wavefront3D(id="front", room="room", source=(2, 2.5, 1.5), time=expr("t - 1")))
+
 Everything is a pure function of its parameters (the numerics live in ``ac_math`` and the
 pressure field is a checkpointed ``Simulation``), so the same frame always renders the same.
 Walls are glass by default: translucent, so they never hide the source or the listener.
@@ -19,18 +25,20 @@ Walls are glass by default: translucent, so they never hide the source or the li
 from __future__ import annotations
 
 import functools
+from dataclasses import dataclass
 from typing import Any, ClassVar
 
 import numpy as np
 from pydantic import Field, field_validator
 
+from phasor.core import files
 from phasor.core.objects import Bounds, DrawContext, ObjectBase, ParamsBase, Pass, register
 from phasor.core.simulation import runner_for
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
 from phasor.domains import ac_math
 from phasor.domains.heatmap import PRISM, HeatParams, heat_pixels, wheel_colour
-from phasor.domains.strokes import circle, disc, polyline, with_alpha
+from phasor.domains.strokes import circle, disc, lut_colors, polyline, polylines, with_alpha
 
 MAX_SHOWN = 800  # image sources drawn at most
 CHECKPOINT_EVERY = 50  # FDTD steps between cached checkpoints
@@ -39,6 +47,12 @@ CHECKPOINT_EVERY = 50  # FDTD steps between cached checkpoints
 def _vec3_positive(v):
     if min(v) <= 0:
         raise ValueError("size must be positive in every direction")
+    return v
+
+
+def _known_material(v: str) -> str:
+    if v not in ac_math.MATERIALS:
+        raise ValueError(f"unknown material {v!r}; materials are {sorted(ac_math.MATERIALS)}")
     return v
 
 
@@ -76,6 +90,7 @@ class Room(ObjectBase):
         "color": ("emphasis", "muted"),
         "stroke": ("stroke", "hairline"),
         "material": ("surface", "glass"),
+        "glow": ("glow", "none"),  # the prism look: the edges shine
     }
     Presets: ClassVar = {
         "glass": {},
@@ -97,11 +112,7 @@ class Room(ObjectBase):
         @field_validator("material")
         @classmethod
         def _mat(cls, v):
-            if v not in ac_math.MATERIALS:
-                raise ValueError(
-                    f"unknown material {v!r}; materials are {sorted(ac_math.MATERIALS)}"
-                )
-            return v
+            return _known_material(v)
 
     def _lo_hi(self, state: SceneState):
         p = self.me(state).params
@@ -165,7 +176,8 @@ class Room(ObjectBase):
                     b = corners[tuple(idx)]
                     mid = (a + b) / 2
                     w = me.style["stroke"] * float(cam.units_per_height(mid))
-                    polyline(ctx, cam, [a, b], w, color=edge_color, glow=1.0)
+                    polyline(ctx, cam, [a, b], w, color=edge_color,
+                             glow=float(me.style.get("glow", 1.0)))  # fmt: skip
 
 
 # ---------------------------------------------------------------- Source and Listener
@@ -585,3 +597,440 @@ class PressureSlice(ObjectBase):
             background=state.background, **p.drawing(),
         )  # fmt: skip
         ctx.field(corner, right, up, pixels=pixels, opacity=p.opacity, glow=glow)
+
+
+# ---------------------------------------------------------------- 3D: a room of any shape
+
+RAY_DENSITY = 400  # rays drawn at full strength; more rays share the light between them
+FRONT_FADE = 0.12  # how fast a front dims as it spreads (per meter of radius)
+SHELL_RINGS = 7  # latitude rings of a front's sphere, and twice as many meridians
+
+
+@dataclass(frozen=True, eq=False)
+class Geometry:
+    """A room as a triangle mesh, and what tracing and drawing it need (read-only arrays)."""
+
+    vertices: np.ndarray  # (N, 3)
+    triangles: np.ndarray  # (M, 3)
+    edges: np.ndarray  # (E, 2) the feature edges drawn as lines
+    walls: tuple[np.ndarray, ...]  # the triangles grouped by plane
+    box: tuple | None  # (size, origin) for a shoebox, else None
+    key: tuple  # what it was made from (hashable)
+
+    @property
+    def lo(self) -> np.ndarray:
+        return self.vertices.min(axis=0)
+
+    @property
+    def hi(self) -> np.ndarray:
+        return self.vertices.max(axis=0)
+
+
+def _read_only(*arrays) -> None:
+    for a in arrays:
+        a.setflags(write=False)
+
+
+@functools.lru_cache(maxsize=16)
+def _geometry(key: tuple) -> Geometry:
+    if key[0] == "box":
+        _, size, origin, angle = key
+        v, f = ac_math.box_mesh(size, origin)
+        box = (size, origin)
+    else:
+        _, path, _mtime, _nbytes, scale, origin, angle = key  # mtime/size: re-read on change
+        v, f = ac_math.load_obj(path)
+        v = v * scale + np.asarray(origin, dtype=np.float64)
+        box = None
+    edges = ac_math.feature_edges(v, f, angle)
+    walls = tuple(ac_math.planes(v, f))
+    _read_only(v, f, edges, *walls)
+    return Geometry(v, f, edges, walls, box, key)
+
+
+def _relative(v: str) -> str:
+    return files.relative_path(v) if v else v
+
+
+@register
+class Room3D(ObjectBase):
+    """A room in 3D, drawn as faint glowing lines along its edges, with optional faint
+    glass walls. A shoebox (``size``, corner at ``origin``) or any closed mesh read from a
+    Wavefront ``.obj`` file (``path``, relative to the scene's folder, scaled by ``scale`` and
+    moved by ``origin``); for a mesh, the edges drawn are its creases (``edge_angle``), not
+    the diagonals that split flat walls into triangles. ``SoundRays`` and ``Wavefront3D``
+    name a room by its id and bounce off its walls."""
+
+    type: ClassVar[str] = "room3d"
+    Files: ClassVar = ("path",)
+    Style: ClassVar = {
+        "color": ("emphasis", "muted"),
+        "stroke": ("stroke", "hairline"),
+        "glow": ("glow", "soft"),
+        "material": ("surface", "glass"),
+    }
+    Presets: ClassVar = {
+        "glass": {},
+        "outline": {"params": {"walls": 0.0}},
+    }
+
+    class Params(ParamsBase):
+        size: Vec3 = (8.0, 5.0, 3.0)
+        origin: Vec3 = (0.0, 0.0, 0.0)
+        path: str = ""  # a Wavefront .obj next to the scene; empty: the shoebox ``size``
+        scale: float = Field(1.0, gt=0)  # mesh units to meters
+        material: str = "plaster"  # one of ``ac_math.MATERIALS``
+        absorption: float = -1.0  # 0-1; negative: take it from ``material``
+        walls: float = Field(0.25, ge=0, le=1)  # glass walls' share of the material; 0: lines
+        edge_angle: float = Field(20.0, gt=0, lt=180)  # degrees: a crease drawn as a line
+
+        @field_validator("size")
+        @classmethod
+        def _size(cls, v):
+            return _vec3_positive(v)
+
+        @field_validator("path")
+        @classmethod
+        def _path(cls, v):
+            return _relative(v)
+
+        @field_validator("material")
+        @classmethod
+        def _mat(cls, v):
+            return _known_material(v)
+
+    def geometry(self, state: SceneState) -> Geometry | None:
+        """The room's mesh, or None while its file is missing or cannot be read."""
+        p = self.me(state).params
+        if not p.path:
+            return _geometry(("box", tuple(p.size), tuple(p.origin), p.edge_angle))
+        try:
+            path = files.resolve(state.base_dir, p.path)
+            st = path.stat()
+            return _geometry(("mesh", str(path), st.st_mtime_ns, st.st_size, p.scale,
+                              tuple(p.origin), p.edge_angle))  # fmt: skip
+        except (OSError, ValueError):
+            return None
+
+    def alpha(self, state: SceneState) -> float:
+        p = self.me(state).params
+        return _material(p.material, p.absorption)
+
+    def world_bounds(self, state: SceneState) -> Bounds:
+        g = self.geometry(state)
+        if g is None:
+            p = self.me(state).params
+            lo = np.asarray(p.origin, dtype=np.float64)
+            return Bounds(tuple(lo), tuple(lo + np.asarray(p.size)))
+        return Bounds.of_points(g.vertices)
+
+    def features(self, state: SceneState) -> dict[str, np.ndarray]:
+        g = self.geometry(state)
+        if g is None:
+            return {}
+        return {"center": (g.lo + g.hi) / 2, "corners": np.asarray(g.vertices[:200])}
+
+    def semantics(self, state: SceneState) -> dict[str, Any]:
+        p = self.me(state).params
+        g = self.geometry(state)
+        out: dict[str, Any] = {"kind": "room", "shape": "mesh" if p.path else "box",
+                               "backdrop": True}  # fmt: skip
+        if g is None:
+            return {**out, "missing_file": p.path}
+        alpha = self.alpha(state)
+        vol, area = ac_math.mesh_stats(g.vertices, g.triangles)
+        return {**out, "volume": round(vol, 3), "surface_area": round(area, 3),
+                "walls": len(g.walls), "edges": len(g.edges), "triangles": len(g.triangles),
+                "material": p.material, "absorption": round(alpha, 4),
+                "rt60_sabine": round(ac_math.sabine_rt60(None, alpha, stats=(vol, area)), 4),
+                "rt60_eyring": round(ac_math.eyring_rt60(None, alpha, stats=(vol, area)), 4),
+                }  # fmt: skip
+
+    def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
+        me = self.me(state)
+        p = me.params
+        g = self.geometry(state)
+        if g is None:
+            return
+        cam = state.camera_for(me)
+        color = me.style["color"]
+        if p.walls > 0:  # flat-shaded: every triangle its own three vertices
+            tri = g.vertices[g.triangles]
+            normal = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+            normal /= np.maximum(np.linalg.norm(normal, axis=1, keepdims=True), 1e-300)
+            ctx.surface(tri.reshape(-1, 3), np.arange(3 * len(tri)).reshape(-1, 3),
+                        normals=np.repeat(normal, 3, axis=0),
+                        colors=np.tile(np.asarray(color), (3 * len(tri), 1)),
+                        material=me.roles["material"],
+                        opacity=p.opacity * p.walls * float(me.style["material"]))  # fmt: skip
+        segs = g.vertices[g.edges]  # (E, 2, 3)
+        width = me.style["stroke"] * cam.units_per_height(segs.reshape(-1, 3)).reshape(-1, 2)
+        polylines(ctx, cam, segs, width, color=with_alpha(color, p.opacity),
+                  glow=me.style["glow"])  # fmt: skip
+
+
+class _InRoom(ObjectBase):
+    """Sound inside a ``Room3D`` (named by ``room``), leaving ``source`` when ``time`` is 0.
+
+    ``time`` is in scene seconds since the sound left (usually ``expr("t - 1")``; negative:
+    not yet). ``speed`` is the slow motion: seconds of sound per scene second, so the sound
+    has travelled ``343 * speed * time`` meters."""
+
+    def _room(self, state: SceneState) -> tuple[Geometry | None, float]:
+        p = self.me(state).params
+        if p.room not in state or not isinstance(state[p.room].impl, Room3D):
+            return None, 0.0
+        room = state[p.room].impl
+        return room.geometry(state), room.alpha(state)
+
+    def distance(self, state: SceneState) -> float:
+        """Meters the sound has travelled (negative before it leaves)."""
+        p = self.me(state).params
+        return ac_math.C * p.speed * p.time
+
+    def world_bounds(self, state: SceneState) -> Bounds:
+        g, _ = self._room(state)
+        if g is None:
+            return Bounds.of_points([self.me(state).params.source])
+        return Bounds.of_points(g.vertices)
+
+    def _hues(self, state: SceneState, reflections) -> np.ndarray:
+        """(N, 4) the palette color of each reflection count."""
+        me = self.me(state)
+        return lut_colors(me.style["colormap"], np.asarray(reflections) * me.params.hue_step)
+
+    def _strokes(self, ctx, state, segs, colors) -> None:
+        me = self.me(state)
+        cam = state.camera_for(me)
+        width = me.style["stroke"] * cam.units_per_height(segs.reshape(-1, 3)).reshape(-1, 2)
+        polylines(ctx, cam, segs, width, color=with_alpha(me.style["color"], me.params.opacity),
+                  glow=me.style["glow"], colors=colors)  # fmt: skip
+
+
+class _SoundParams(ParamsBase):
+    room: str = Field("room", min_length=1)  # the id of a Room3D
+    source: Vec3 = (2.0, 2.5, 1.5)
+    time: float = 0.0  # scene seconds since the sound left; negative: not yet
+    speed: float = Field(0.01, gt=0)  # slow motion: seconds of sound per scene second
+    hue_step: float = 0.14  # share of the palette between one reflection and the next
+
+
+@functools.lru_cache(maxsize=16)
+def _ray_paths(gkey, source, count, bounces, alpha, seed, key):
+    g = _geometry(gkey)
+    out = ac_math.rays((g.vertices, g.triangles), source, count, bounces, alpha, seed, key)
+    _read_only(*out.values())
+    return out
+
+
+@register
+class SoundRays(_InRoom):
+    """Sound as rays: ``count`` rays leave ``source`` evenly in every direction and reflect
+    specularly off the room's walls (angle in = angle out) ``bounces`` times. Each is drawn
+    up to where the sound has got to, as a glowing streak ``trail`` meters long (0: the
+    whole path so far); its brightness is the energy left, (1 - absorption) ** reflections,
+    and its color comes from the palette by reflection count, so the late, reverberant
+    sound reads as a different color from the first."""
+
+    type: ClassVar[str] = "sound_rays"
+    Style: ClassVar = {
+        "color": ("emphasis", "secondary"),
+        "stroke": ("stroke", "hairline"),
+        "glow": ("glow", "strong"),
+        "colormap": ("colormap", "spectrum"),
+    }
+
+    class Params(_SoundParams):
+        count: int = Field(1200, ge=1, le=ac_math.MAX_RAYS)
+        bounces: int = Field(6, ge=0, le=ac_math.MAX_BOUNCES)
+        trail: float = Field(1.5, ge=0)  # meters of each ray shown behind the front; 0: all
+        seed: int = 0
+
+    def paths(self, state: SceneState) -> dict[str, np.ndarray] | None:
+        """The traced rays (``ac_math.trace``), or None without a room."""
+        g, alpha = self._room(state)
+        if g is None:
+            return None
+        p = self.me(state).params
+        return _ray_paths(g.key, tuple(p.source), p.count, p.bounces, alpha, p.seed, self.id)
+
+    def visible(self, state: SceneState) -> dict[str, np.ndarray] | None:
+        """What is drawn at this time: ``ac_math.ray_segments`` at the distance travelled."""
+        paths = self.paths(state)
+        p = self.me(state).params
+        if paths is None:
+            return None
+        return ac_math.ray_segments(paths, self.distance(state), p.trail)
+
+    def features(self, state: SceneState) -> dict[str, np.ndarray]:
+        vis = self.visible(state)
+        out = {"source": np.asarray(self.me(state).params.source, dtype=np.float64)}
+        if vis is not None and len(vis["ray"]):
+            head = vis["along"][:, 1] >= self.distance(state) - 1e-9
+            out["heads"] = vis["segments"][head, 1][:200]
+        return out
+
+    def semantics(self, state: SceneState) -> dict[str, Any]:
+        p = self.me(state).params
+        paths = self.paths(state)
+        out: dict[str, Any] = {"kind": "sound_rays", "count": p.count, "bounces": p.bounces,
+                               "distance": round(max(self.distance(state), 0.0), 4),
+                               "sound_time": round(max(p.speed * p.time, 0.0), 6)}  # fmt: skip
+        if paths is None:
+            return {**out, "room_missing": p.room}
+        d = self.distance(state)
+        reached = (paths["length"][:, 1:] <= d) & paths["alive"][:, 1:]
+        k = reached.sum(axis=1)  # reflections so far, per ray
+        lost = ~paths["alive"][:, -1]
+        return {**out, "reflections_so_far": round(float(k.mean()), 4),
+                "energy_left": round(float(np.mean(paths["energy"][np.arange(p.count), k])), 6),
+                "rays_lost": int(lost.sum()), "finished": bool(
+                    d > float(paths["length"][:, -1].max()) + p.trail)}  # fmt: skip
+
+    def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
+        vis = self.visible(state)
+        if vis is None or not len(vis["ray"]):
+            return
+        p = self.me(state).params
+        paths = self.paths(state)
+        d = self.distance(state)
+        share = min(1.0, (RAY_DENSITY / p.count) ** 0.5)
+        light = paths["energy"][vis["ray"], vis["bounce"]] * share
+        alpha = np.repeat(light[:, None], 2, axis=1)
+        if p.trail > 0:  # faint at the tail, bright at the head
+            alpha = alpha * np.clip((vis["along"] - (d - p.trail)) / p.trail, 0.0, 1.0) ** 1.5
+        colors = np.repeat(self._hues(state, vis["bounce"])[:, None], 2, axis=1)
+        colors[..., 3] = alpha
+        self._strokes(ctx, state, vis["segments"], colors)
+
+
+@functools.lru_cache(maxsize=32)
+def _fronts(gkey, source, order, alpha):
+    """Centres (K, 3), reflections (K,) and mirror wall (K,; -1 for the direct front) of the
+    fronts in a room: every image source up to ``order`` in a shoebox; in any other room
+    the direct front and, from ``order`` 1, one image per wall (checked for visibility)."""
+    g = _geometry(gkey)
+    src = np.asarray(source, dtype=np.float64)
+    if g.box is not None:
+        size, origin = g.box
+        o = np.asarray(origin, dtype=np.float64)
+        im = _images(tuple(size), tuple(src - o), order, alpha)
+        out = (im["pos"] + o, im["reflections"], np.full(len(im["pos"]), -1))
+    else:
+        mirrors = ac_math.mirror_images(g.vertices, g.triangles, g.walls, src)
+        n = len(mirrors) if order >= 1 else 0
+        out = (np.vstack([src[None], mirrors[:n]]), np.r_[0, np.ones(n, dtype=np.int64)],
+               np.r_[-1, np.arange(n)])  # fmt: skip
+    _read_only(*out)
+    return out
+
+
+@register
+class Wavefront3D(_InRoom):
+    """The expanding wavefront of a clap, drawn where it meets the walls: a circle on every
+    wall it reaches, and the circles of the reflected fronts (the spheres around the image
+    sources: every one up to ``order`` reflections in a shoebox, the first reflections off
+    each wall in a room of another shape, where only what the source can really reach is
+    drawn). ``shell`` (0-1) also draws the fronts themselves inside the room as faint wire
+    spheres. Fronts fade as they spread and with every reflection; their color comes from
+    the palette by reflection count, the same as ``SoundRays``."""
+
+    type: ClassVar[str] = "wavefront3d"
+    Style: ClassVar = {
+        "color": ("emphasis", "secondary"),
+        "stroke": ("stroke", "regular"),
+        "glow": ("glow", "strong"),
+        "colormap": ("colormap", "spectrum"),
+    }
+
+    class Params(_SoundParams):
+        order: int = Field(2, ge=0, le=4)  # reflected fronts up to this many reflections
+        shell: float = Field(0.12, ge=0, le=1)  # the fronts themselves, inside the room
+        samples: int = Field(128, ge=16, le=1024)  # points around each circle
+
+    def _fronts(self, state: SceneState):
+        g, alpha = self._room(state)
+        if g is None:
+            return None, None
+        p = self.me(state).params
+        return g, _fronts(g.key, tuple(p.source), p.order, alpha)
+
+    def _shown(self, g: Geometry, centers: np.ndarray, radius: float) -> np.ndarray:
+        """Which fronts touch the room: closer to it than ``radius``, not yet past it."""
+        near = np.linalg.norm(np.maximum(0.0, np.maximum(g.lo - centers, centers - g.hi)), axis=1)
+        corners = Bounds(tuple(g.lo), tuple(g.hi)).corners()
+        far = np.linalg.norm(centers[:, None] - corners[None], axis=2).max(axis=1)
+        return np.flatnonzero((near < radius) & (far > radius))
+
+    def features(self, state: SceneState) -> dict[str, np.ndarray]:
+        return {"center": np.asarray(self.me(state).params.source, dtype=np.float64)}
+
+    def semantics(self, state: SceneState) -> dict[str, Any]:
+        p = self.me(state).params
+        r = self.distance(state)
+        out: dict[str, Any] = {"kind": "wavefront", "radius": round(max(r, 0.0), 4),
+                               "center": list(p.source), "order": p.order}  # fmt: skip
+        g, fronts = self._fronts(state)
+        if g is None:
+            return {**out, "room_missing": p.room}
+        shown = self._shown(g, fronts[0], r) if r > 0 else np.zeros(0, dtype=np.int64)
+        return {**out, "fronts": len(fronts[0]), "fronts_in_room": len(shown),
+                "deepest_reflection": int(fronts[1][shown].max()) if len(shown) else 0}  # fmt: skip
+
+    def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
+        r = self.distance(state)
+        g, fronts = self._fronts(state)
+        if g is None or r <= 1e-6:
+            return
+        p = self.me(state).params
+        centers, refl, mirror = fronts
+        keep = self._shown(g, centers, r)
+        if not len(keep):
+            return
+        v, f = g.vertices, g.triangles
+        fade = 1.0 / (1.0 + FRONT_FADE * r)
+        kept = 1.0 - self._room(state)[1]  # energy kept per reflection
+        segs, who = ac_math.sphere_wall_arcs(v, f, centers[keep], r, p.samples, g.walls)
+        who = keep[who]
+        if g.box is None and len(segs):  # another shape: only what the sound can reach
+            ok = ac_math.front_visible(v, f, g.walls, p.source, mirror[who], segs.mean(axis=1))
+            segs, who = segs[ok], who[ok]
+        parts = [(segs, who, 1.0)]
+        if p.shell > 0:
+            parts.append((*self._shell(g, centers, keep, r, p.source), p.shell))
+        for pieces, owner, share in parts:
+            if not len(pieces):
+                continue
+            light = share * fade * kept ** refl[owner]
+            colors = np.repeat(self._hues(state, refl[owner])[:, None], 2, axis=1)
+            colors[..., 3] = light[:, None]
+            self._strokes(ctx, state, pieces, colors)
+
+    def _shell(self, g: Geometry, centers, keep, r: float, source):
+        """The fronts' spheres as wire (latitude rings and meridians), cut to the inside of
+        the room: (S, 2, 3) pieces and the front each belongs to. In a room that is not a
+        shoebox only the direct front is drawn, where the source can see it."""
+        if g.box is None:
+            keep = keep[keep == 0]
+        if not len(keep):
+            return np.zeros((0, 2, 3)), np.zeros(0, dtype=np.int64)
+        a = np.linspace(0, 2 * np.pi, 65)
+        lat = [np.stack([np.sin(th) * np.cos(a), np.sin(th) * np.sin(a),
+                         np.full_like(a, np.cos(th))], axis=1)
+               for th in np.pi * np.arange(1, SHELL_RINGS) / SHELL_RINGS]  # fmt: skip
+        b = np.linspace(0, np.pi, 33)
+        lon = [np.stack([np.sin(b) * np.cos(ph), np.sin(b) * np.sin(ph), np.cos(b)], axis=1)
+               for ph in np.pi * np.arange(2 * SHELL_RINGS) / SHELL_RINGS]  # fmt: skip
+        unit = np.concatenate([np.stack([c[:-1], c[1:]], axis=1) for c in lat + lon])  # (U, 2, 3)
+        pieces = centers[keep][:, None, None, :] + r * unit[None]  # (K, U, 2, 3)
+        flat = pieces.reshape(-1, 3)
+        if g.box is not None:
+            ok = np.all((flat >= g.lo - 1e-9) & (flat <= g.hi + 1e-9), axis=1)
+        else:
+            ok = ac_math.inside(g.vertices, g.triangles, flat)
+            ok[ok] = ac_math.segments_clear(g.vertices, g.triangles,
+                                            np.broadcast_to(np.asarray(source), (int(ok.sum()), 3)),
+                                            flat[ok])  # fmt: skip
+        ok = ok.reshape(len(keep), -1, 2).all(axis=2)
+        k, u = np.nonzero(ok)
+        return pieces[k, u], keep[k]

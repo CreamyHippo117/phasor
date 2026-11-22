@@ -3,6 +3,7 @@ theme = "prism_vivid"
 life = "lively"
 
 [defaults.line.params]
+dim = 0.9  # a little see-through: what is behind glows through
 hue_along = 0.8
 
 [defaults.line.style]
@@ -20,6 +21,7 @@ glow = "soft"
 color = "primary"
 
 [defaults.domain_coloring.params]  # the prism preset: glowing zeros, poles, rays and rings
+dim = 0.88  # a little see-through: what is behind glows through
 radius = 0.35
 ambient = 0.06
 contour = 0.0
@@ -133,6 +135,7 @@ glow = "soft"
 # run with the value, contour lines of light, edges melting into the dark
 # (BEAUTY.md item 2; the same values as heatmap.PRISM)
 [defaults.pde_field.params]
+dim = 0.88  # a little see-through: what is behind glows through
 smooth = true
 isolines = 8
 hue_cycles = 1.6
@@ -145,6 +148,7 @@ glow = "soft"
 colormap = "spectrum"
 
 [defaults.pde_slice.params]
+dim = 0.88  # a little see-through: what is behind glows through
 smooth = true
 isolines = 8
 hue_cycles = 1.6
@@ -157,6 +161,7 @@ glow = "soft"
 colormap = "spectrum"
 
 [defaults.pressure_slice.params]
+dim = 0.88  # a little see-through: what is behind glows through
 smooth = true
 isolines = 8
 hue_cycles = 1.6
@@ -169,6 +174,7 @@ glow = "soft"
 colormap = "spectrum"
 
 [defaults.spectrogram.params]
+dim = 0.88  # a little see-through: what is behind glows through
 smooth = true
 isolines = 8
 hue_cycles = 1.6
@@ -190,12 +196,71 @@ lines = 24
 [defaults.pde_surface.style]
 colormap = "spectrum"
 glow = "strong"
+material = "glass"
 
 # point clouds: palette hue, glow and haze (BEAUTY.md item 3)
 [defaults.point_cloud.params]
 exposure = 0.06
 point_size = 0.9
+white = 0.8     # the densest parts run white-hot
+twinkle = 0.6   # each point's light flickers a little (life)
 
 [defaults.point_cloud.style]
 colormap = "spectrum"
+glow = "strong"
+
+# a 3D room with sound bouncing in it (BEAUTY.md item 7): faint glowing edges, rays and
+# fronts colored from the palette by reflection count
+[defaults.room3d.style]
+glow = "soft"
+
+[defaults.sound_rays.style]
+glow = "strong"
+colormap = "spectrum"
+
+[defaults.wavefront3d.style]
+glow = "strong"
+colormap = "spectrum"
+
+[defaults.counter.style]
+glow = "soft"
+
+[defaults.flow_particles.style]
+glow = "strong"
+
+[defaults.network.params]
+color_by = "depth"
+dim = 0.75  # graphs stack many edges: a little dimmer, so crossings do not pile up to white
+
+[defaults.network.style]
+glow = "soft"
+
+# the rest of the prism look (owner, 2026-11-22): everything but axes and photos
+[defaults.cayley_table.style]
+glow = "soft"
+
+[defaults.clock_diagram.style]
+glow = "strong"
+
+[defaults.matrix.style]
+glow = "soft"
+
+[defaults.room.style]
+glow = "strong"
+
+[defaults.parametric_surface.style]
+material = "glass"
+
+[defaults.riemann_surface.style]
+material = "glass"
+
+# dynamical systems (ANIMATIONS.md D1, D2): trajectories glow, the arrow field and nullclines stay faint
+[defaults.phase_portrait.params]
+dim = 0.9
+flow = true
+
+[defaults.phase_portrait.style]
+glow = "strong"
+
+[defaults.fixed_points.style]
 glow = "strong"

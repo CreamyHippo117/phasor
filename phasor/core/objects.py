@@ -152,6 +152,9 @@ class ObjectBase:
     # "wander" (a point drifts by a share of its radius ``r``), "hue" (colors turn). Only
     # glow by default: geometry that means something (a polygon, a source) never drifts.
     Life: ClassVar[frozenset[str]] = frozenset({"glow"})
+    # The parameters that name files the type reads (core/files.py): relative to the scene's
+    # folder and inside it; a missing one is the lint issue ``missing_file``.
+    Files: ClassVar[tuple[str, ...]] = ()
 
     def __init__(
         self,
@@ -207,6 +210,9 @@ def register(cls: type) -> type:
     for m in REQUIRED_MEMBERS[1:]:
         if not callable(getattr(cls, m)):
             raise RegistrationError(f"{cls.__name__}.{m} must be a method")
+    bad = [f for f in getattr(cls, "Files", ()) if f not in cls.Params.model_fields]
+    if bad:
+        raise RegistrationError(f"{cls.__name__}.Files names {bad}, which are not parameters")
     if name in _REGISTRY and _REGISTRY[name] is not cls:
         raise RegistrationError(f"object type {name!r} is already registered")
     _REGISTRY[name] = cls
