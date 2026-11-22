@@ -374,6 +374,7 @@ Each issue has `code`, `severity`, `message`, `ids`, `times`, `fix_hint`, and `f
 | `raw_motion` | warning, strict only | a transition written with raw `to()` instead of a verb |
 | `orphan_override` | error | a tweak whose object is gone |
 | `missing_file` | warning | a file an object reads (a room's `.obj`) is not in the scene's folder; it draws nothing |
+| `unstable_filter` | warning | a `filt.PoleZero` has a pole at or beyond the theme's `[lint] pole_radius` (the unit circle); no fix, the poles are the design |
 
 `engine.autofix()` applies every `fix` the linter offers (add `near` for a child label that
 overlaps, `on_screen` for something cut by the frame), lints again, and returns
@@ -1284,6 +1285,29 @@ assert kinds == ["saddle", "stable spiral", "saddle"]
 
 Example: `examples/phase_portrait.py`. The prism looks make trajectories glow with the arrow
 field and nullclines kept faint.
+
+## Digital filters: poles and zeros
+
+`from phasor import filt`. `filt.PoleZero(kind=, cutoff=, q=, poles=, zeros=, gain=, pos=, radius=)`
+draws the unit circle with poles as crosses and zeros as rings. `kind` is `lowpass`, `highpass`,
+`bandpass` or `notch` (a second-order section from `cutoff`, a share of the sampling rate below
+0.5, and `q`), or `custom` with `poles` and `zeros` as (re, im) points, which may lie anywhere.
+Semantics: `poles`, `zeros`, `max_pole_radius` and `stable` (every pole strictly inside the unit
+circle). An unstable pole is drawn in the danger colour and the linter reports
+`unstable_filter` with the times it is seen.
+
+```python
+from phasor import Scene, filt
+
+s = Scene("filters", passes=None)
+s.add(filt.PoleZero(id="ok", kind="lowpass", cutoff=0.1))
+s.add(filt.PoleZero(id="bad", kind="custom", poles=((1.2, 0.0),)))
+sem = s.engine.inspect(0.0, id="bad")["objects"][0]["semantic"]
+assert sem["stable"] is False
+assert [i.ids for i in s.engine.lint() if i.code == "unstable_filter"] == [("bad",)]
+```
+
+Example: `examples/filter_poles.py`.
 
 ## Command line
 

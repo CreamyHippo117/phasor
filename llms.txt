@@ -77,6 +77,7 @@
 - `permutation`: flash, perm, pos, spacing, progress
 - `phase_portrait`: flash, f, g, constants, pos, extent, seeds, n_seeds, t_end, steps, progress, backward, flow, flow_spacing, nullclines, hue_cycles, seed
 - `point_cloud`: flash, source, degree, coefficients, kind, constants, max_iter, points, values, count, seed, pos, size, scale, point_size, exposure, hue, color_by, twist, twinkle, white
+- `pole_zero`: flash, kind, poles, zeros, cutoff, q, gain, pos, radius
 - `polygon`: flash, n, pos, r, rotation, flip, fill
 - `pressure_slice`: flash, smooth, isolines, hue_cycles, hue, fade, ambient, contrast, size, origin, source, z, time, dx, material, absorption, frequency, gain, seed
 - `riemann_sum`: flash, function, a, b, n, rule, pos
