@@ -536,12 +536,19 @@ class Engine:
             raise RuntimeError("no OpenGL renderer on this machine (run `phasor doctor`)")
         weight = 1.0 / len(times)
         pic = glow = None
-        for ts in times:
-            p, g = runner.color_and_emission_raw(self.state_at(ts), size)
-            with stage("blur sum" if len(times) > 1 else "widen", sync=card_sync):
-                tile = Tile.full(p.shape[1], p.shape[0])
-                pic = run("accumulate", tile, image=p, weight=weight, acc=pic)
-                glow = run("accumulate", tile, image=g, weight=weight, acc=glow)
+        # Start every sample before collecting any: the card copies one sample off while
+        # the next is drawn (asynchronous readback). Same samples, same order of the sum.
+        pending = [runner.start_color_raw(self.state_at(ts), size) for ts in times]
+        try:
+            for job in pending:
+                p, g = job.collect()
+                with stage("blur sum" if len(times) > 1 else "widen", sync=card_sync):
+                    tile = Tile.full(p.shape[1], p.shape[0])
+                    pic = run("accumulate", tile, image=p, weight=weight, acc=pic)
+                    glow = run("accumulate", tile, image=g, weight=weight, acc=glow)
+        finally:
+            for job in pending:
+                job.release()
         # rows bottom-up as GL stores them -> top-down (a view, wherever the sum is)
         return finish(pic[::-1], self._snap.compiled.theme, glow[::-1], output=output)
 

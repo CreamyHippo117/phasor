@@ -283,6 +283,31 @@ class _Collector:
         )  # fmt: skip
 
 
+class PendingRead:
+    """A color pass on its way off the card (``GLRenderer.start_color_raw``)."""
+
+    def __init__(self, renderer: GLRenderer, packs: list, size: tuple[int, int]) -> None:
+        self._renderer, self._packs, self.size = renderer, packs, size
+
+    def collect(self) -> tuple[np.ndarray, np.ndarray]:
+        """Wait for the copy; the picture and emission as (h, w, 4) float16, rows
+        bottom-up, read-only. The pack buffers go back to the renderer's pool."""
+        if self._packs is None:
+            raise RuntimeError("this read was already collected or released")
+        packs, self._packs = self._packs, None
+        w, h = self.size
+        with stage("readback"):
+            data = self._renderer._finish_read(packs, self.size, read=True)
+        pic, glow = (np.frombuffer(d, dtype=np.float16).reshape(h, w, 4) for d in data)
+        return pic, glow
+
+    def release(self) -> None:
+        """Give the buffers back unread (after an error). Harmless once collected."""
+        if self._packs is not None:
+            packs, self._packs = self._packs, None
+            self._renderer._finish_read(packs, self.size, read=False)
+
+
 ARENA_MIN_BYTES = 64 * 1024  # first size of a reused vertex or index buffer; it doubles
 
 
@@ -310,6 +335,7 @@ class GLRenderer:
         self._emit_clear: dict[tuple[int, int], Any] = {}
         self._bridge = None
         self._arena: dict[tuple, tuple] = {}  # (program, layout, indexed) -> (vao, vbos, ibo)
+        self._free_packs: dict[tuple[int, int], list] = {}  # size -> free pack-buffer pairs
 
     # ------------------------------------------------------------ resources
 
@@ -605,21 +631,22 @@ class GLRenderer:
             self._draw_deferred(state, deferred, size, zoom)
         if resolved is not target:
             ctx.copy_framebuffer(resolved, target)
-        # Measured runs only: wait for the card to finish drawing here, so the read below
-        # is charged for the copy alone (a read otherwise waits for the drawing too).
-        with stage("gpu draw", sync=ctx.finish):
-            pass
+        if raw != "async":
+            # Measured runs only: wait for the card to finish drawing here, so the read
+            # below is charged for the copy alone (a read otherwise waits for the drawing
+            # too). An asynchronous read must not wait: that is its point.
+            with stage("gpu draw", sync=ctx.finish):
+                pass
         return self._read(resolved, pass_, size, raw=raw)
 
     def _read(self, resolved, pass_, size, raw=False):
         w, h = size
         if pass_ == "color" and raw:  # as stored: float16, rows bottom-up, not widened
-            with stage("readback"):
-                return tuple(
-                    np.frombuffer(resolved.read(components=4, dtype="f2", attachment=a),
-                                  dtype=np.float16).reshape(h, w, 4)
-                    for a in (0, 1)
-                )  # fmt: skip
+            free = self._free_packs.setdefault(size, [])
+            packs = free.pop() if free else [self.ctx.buffer(reserve=w * h * 8) for _ in (0, 1)]
+            for buffer, attachment in zip(packs, (0, 1), strict=True):  # returns at once
+                resolved.read_into(buffer, components=4, dtype="f2", attachment=attachment)
+            return PendingRead(self, packs, size)
         if pass_ == "color":
             out = []
             for attachment in (0, 1):
@@ -687,8 +714,26 @@ class GLRenderer:
         """``color_and_emission`` as the targets store it: (h, w, 4) float16, rows
         bottom-up (row 0 = the bottom of the frame), read-only. For sums made on the card
         (``Engine.frame_blurred``), which widen and flip there instead of on the host."""
+        return self.start_color_raw(state, size).collect()
+
+    def start_color_raw(
+        self, state: SceneState, size: tuple[int, int] | None = None
+    ) -> PendingRead:
+        """Draw the color pass and start copying both targets off the card, without
+        waiting: ``collect()`` on the result gives what ``color_and_emission_raw`` gives.
+        Start several before collecting any, and the card copies one frame while the next
+        is being built. Every started read must be collected (or ``release``d)."""
         size = size or (state.width, state.height)
-        return self._render(state, "color", size, raw=True)
+        return self._render(state, "color", size, raw="async")
+
+    def _finish_read(self, packs: list, size, read: bool) -> list[bytes] | None:
+        def run():
+            with self.ctx:
+                data = [b.read() for b in packs] if read else None
+            self._free_packs.setdefault(size, []).append(packs)
+            return data
+
+        return on_gl_thread(run)
 
     def id_buffer(self, state, size, force: frozenset[str] = frozenset()) -> np.ndarray:
         return self._cached(
