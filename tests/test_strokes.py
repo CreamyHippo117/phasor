@@ -94,7 +94,9 @@ def _cases():
 
 
 @pytest.mark.parametrize("cam", _cameras(), ids=["2d", "3d"])
-@pytest.mark.parametrize(("name", "pts", "width", "kw"), list(_cases()), ids=lambda v: v if isinstance(v, str) else "")
+@pytest.mark.parametrize(
+    ("name", "pts", "width", "kw"), list(_cases()), ids=lambda v: v if isinstance(v, str) else ""
+)
 def test_polyline_is_bit_identical_to_the_version_it_replaced(cam, name, pts, width, kw):
     kw = dict(kw)
     hue = kw.pop("_hue", None)
