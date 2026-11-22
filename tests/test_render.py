@@ -208,7 +208,8 @@ def test_bench_times_every_kernel(tmp_path, capsys):
                  "--dir", str(tmp_path)]) == 0  # fmt: skip
     (saved,) = tmp_path.iterdir()
     result = json.loads(saved.read_text(encoding="utf-8"))
-    assert sorted(result["kernels"]) == sorted(gpu.registered())
+    # every kernel is timed; "name:variant" entries time a kernel with other options
+    assert {k.split(":")[0] for k in result["kernels"]} == set(gpu.registered())
     assert all(r["ms"] >= 0 for r in result["kernels"].values())
     assert "escape" in capsys.readouterr().out
 
