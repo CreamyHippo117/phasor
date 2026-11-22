@@ -278,3 +278,117 @@ def palette(gpu, tile: Tile, field, lut, density=0.35, offset=0.0, inside=(0.0, 
             np.float32(density), np.float32(offset), gpu.cp.asarray(inside_rgb), out)  # fmt: skip
     gpu.launch(compiled, int(src.size), args)
     return out
+
+
+# ---------------------------------------------------------------- the prism look
+#
+# Light along the edge of the set (BEAUTY.md, item 4). The smooth count is nu = 1 - log2(G)
+# plus a constant, with G = log|z_n| / 2^n the potential, and the distance to the set is about
+# G / |grad G| (exact for the unit circle, the Julia set of c = 0). So the distance in pixels is
+# d = 1 / (ln 2 |grad nu|), with grad nu in counts per pixel: no derivative carried through the
+# iteration, and the same for the ``escape`` and ``deep`` fields. Weight w = 1 / (1 + (d / r)^2),
+# 1 on the edge and a long soft tail (the haze); a pixel next to the set has w = 1. Colour is the
+# palette ramp, as in ``palette``, at ambient + (1 - ambient) w; alpha carries w, the glow weight
+# the renderer turns into light and bloom. Points in the set take ``inside`` and alpha 0.
+
+GLOW = """
+extern "C" __global__ void phasor_fractal_glow(int n, int w, int h, const float* field,
+                                               const float* lut, int lut_n, float density,
+                                               float offset, const float* inside, float radius,
+                                               float ambient, float* out)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    float* o = out + 4 * (long long)i;
+    float f = field[i];
+    if (f < 0.0f) { o[0] = inside[0]; o[1] = inside[1]; o[2] = inside[2]; o[3] = 0.0f; return; }
+    int x = i % w, y = i / w;
+    int l = x > 0 ? i - 1 : i, r = x < w - 1 ? i + 1 : i;
+    int u = y > 0 ? i - w : i, d = y < h - 1 ? i + w : i;
+    float fl = field[l], fr = field[r], fu = field[u], fd = field[d];
+    float wt = 1.0f;
+    if (fl >= 0.0f && fr >= 0.0f && fu >= 0.0f && fd >= 0.0f) {
+        int sx = (x > 0) + (x < w - 1), sy = (y > 0) + (y < h - 1);
+        float gx = sx > 0 ? (fr - fl) / (float)sx : 0.0f;
+        float gy = sy > 0 ? (fd - fu) / (float)sy : 0.0f;
+        float g = sqrtf(gx * gx + gy * gy);
+        wt = 0.0f;
+        if (g > 0.0f) {
+            float q = 1.0f / (0.6931472f * g) / radius;
+            wt = 1.0f / (1.0f + q * q);
+        }
+    }
+    float t = sqrtf(f) * density + offset;
+    t = t - floorf(t);
+    float s = t * (float)lut_n;
+    int k0 = (int)s;
+    if (k0 >= lut_n) k0 = lut_n - 1;
+    int k1 = (k0 + 1) % lut_n;
+    float v = s - (float)k0;
+    float shade = ambient + (1.0f - ambient) * wt;
+    for (int c = 0; c < 3; c++) o[c] = shade * (lut[3 * k0 + c] * (1.0f - v) + lut[3 * k1 + c] * v);
+    o[3] = wt;
+}
+"""
+
+
+def fractal_glow_reference(
+    tile: Tile,
+    field: np.ndarray,
+    lut: np.ndarray,
+    density: float = 0.35,
+    offset: float = 0.0,
+    inside: tuple[float, float, float] = (0.0, 0.0, 0.0),
+    radius: float = 2.0,
+    ambient: float = 0.08,
+) -> np.ndarray:
+    if radius <= 0:
+        raise ValueError("radius must be positive")
+    f32 = np.float32
+    f = np.asarray(field, dtype=np.float32)
+    h, w = f.shape
+    # neighbours, clamped at the picture's edges (a one-sided difference there)
+    fl, fr = f[:, np.r_[0, 0 : w - 1]], f[:, np.r_[1:w, w - 1]]
+    fu, fd = f[np.r_[0, 0 : h - 1]], f[np.r_[1:h, h - 1]]
+    xs, ys = np.arange(w), np.arange(h)
+    sx = ((xs > 0).astype(np.int32) + (xs < w - 1))[None, :].astype(np.float32)
+    sy = ((ys > 0).astype(np.int32) + (ys < h - 1))[:, None].astype(np.float32)
+    with np.errstate(all="ignore"):
+        gx = np.where(sx > 0, (fr - fl) / sx, f32(0))
+        gy = np.where(sy > 0, (fd - fu) / sy, f32(0))
+        g = np.sqrt(gx * gx + gy * gy)
+        q = f32(1) / (f32(0.6931472) * g) / f32(radius)
+        wt = np.where(g > 0, f32(1) / (f32(1) + q * q), f32(0)).astype(np.float32)
+    edge = (fl < 0) | (fr < 0) | (fu < 0) | (fd < 0)
+    wt = np.where(edge, f32(1), wt)
+    out = palette_reference(tile, f, lut, density, offset, inside)
+    shade = (f32(ambient) + (f32(1) - f32(ambient)) * wt)[..., None]
+    inside_ = (f < 0)[..., None]
+    out[..., :3] = np.where(inside_, out[..., :3], shade * out[..., :3])
+    out[..., 3] = np.where(f < 0, f32(0), wt)
+    return out
+
+
+@kernel(
+    "fractal_glow",
+    "(tile, field, lut, density=0.35, offset=0.0, inside=(0,0,0), radius=2.0, ambient=0.08) "
+    "-> float32[h, w, 4] linear RGB, alpha = glow",
+    reference=fractal_glow_reference,
+)
+def fractal_glow(gpu, tile: Tile, field, lut, density=0.35, offset=0.0, inside=(0.0, 0.0, 0.0),
+                 radius=2.0, ambient=0.08):  # fmt: skip
+    """The prism look of an escape field (from ``escape`` or ``deep``): the palette ramp as
+    in ``palette``, lit along the edge of the set out to about ``radius`` pixels and
+    ``ambient`` far from it; points in the set get ``inside``; alpha is the glow weight."""
+    if radius <= 0:
+        raise ValueError("radius must be positive")
+    table, inside_rgb = _palette_args(field, lut, inside)
+    src = gpu.cp.ascontiguousarray(gpu.cp.asarray(field))
+    h, w = src.shape
+    out = gpu.cp.empty((h, w, 4), dtype=gpu.cp.float32)
+    compiled = gpu.compile(GLOW, "phasor_fractal_glow")
+    args = (np.int32(src.size), np.int32(w), np.int32(h), src, gpu.cp.asarray(table),
+            np.int32(len(table)), np.float32(density), np.float32(offset),
+            gpu.cp.asarray(inside_rgb), np.float32(radius), np.float32(ambient), out)  # fmt: skip
+    gpu.launch(compiled, int(src.size), args)
+    return out

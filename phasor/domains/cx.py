@@ -235,15 +235,23 @@ class Fractal(_Plane):
     size (SPEC "Precision policy"): float32, then float64 under 1e-5, then perturbation
     against an arbitrary-precision reference orbit under 1e-10 per pixel (Mandelbrot only),
     good to a zoom of about 1e280. For a dive, animate ``zoom`` and set ``steady=True``.
+
+    With ``radius`` above 0 (the ``prism`` preset) it is the prism look instead: the set
+    dark (the background), the edge of the set glowing out to about ``radius`` world units
+    (of the rectangle as drawn, so the glow keeps its size on screen through a dive), and
+    ``ambient`` light far from it; the ``glow`` style role sets how bright the light is and
+    how much it blooms.
     """
 
     type: ClassVar[str] = "fractal"
     Life: ClassVar = frozenset({"hue", "glow"})
-    Style: ClassVar = {"colormap": ("colormap", "sequential")}
+    Style: ClassVar = {"colormap": ("colormap", "sequential"), "glow": ("glow", "none")}
     Presets: ClassVar = {
         "classic": {"style": {"colormap": "sequential"}},
         "ember": {"style": {"colormap": "ember"}, "params": {"density": 0.3}},
         "ocean": {"style": {"colormap": "ocean"}, "params": {"density": 0.3}},
+        # the set dark, its edge glowing with haze (the look of the prism strokes)
+        "prism": {"params": {"radius": 0.01, "ambient": 0.03}, "style": {"glow": "soft"}},
     }  # fmt: skip
 
     class Params(ParamsBase):
@@ -259,6 +267,8 @@ class Fractal(_Plane):
         # Keep the outermost color fixed as counts grow (a dive's colors then stay put while
         # the structure flows); off: colors cycle with the escape count itself.
         steady: bool = False
+        radius: float = Field(0.0, ge=0)  # > 0: the prism look, the edge lit this far
+        ambient: float = Field(0.05, ge=0, le=1)  # prism look: light far from the edge
 
         @field_validator("center")
         @classmethod
@@ -303,7 +313,8 @@ class Fractal(_Plane):
             from phasor.render import gpu
             from phasor.render.gpu.bridge import to_host
 
-            field = _escape_field(p, c, k, pw, ph, center, height)
+            s = SUPERSAMPLE if p.radius > 0 else 1  # the glowing edge is anti-aliased
+            field = _escape_field(p, c, k, pw * s, ph * s, center, height)
             offset = p.hue
             if p.steady:  # hold the color of the rectangle's outermost (lowest) count
                 w, h = p.size
@@ -311,11 +322,19 @@ class Fractal(_Plane):
                                        (w / 2, h / 2), h)  # fmt: skip
                 out_ = coarse[coarse >= 0]
                 offset -= p.density * float(np.sqrt(out_.min())) if out_.size else 0.0
-            out = gpu.run("palette", gpu.Tile.full(pw, ph), field=field, lut=lut,
-                          density=p.density, offset=offset, inside=inside)  # fmt: skip
-            return to_host(out)
+            if p.radius <= 0:
+                out = gpu.run("palette", gpu.Tile.full(pw, ph), field=field, lut=lut,
+                              density=p.density, offset=offset, inside=inside)  # fmt: skip
+                return to_host(out)
+            out = to_host(gpu.run("fractal_glow", gpu.Tile.full(pw * s, ph * s), field=field,
+                                  lut=lut, density=p.density, offset=offset, inside=inside,
+                                  radius=p.radius / height * ph * s,  # world units -> pixels
+                                  ambient=p.ambient))  # fmt: skip
+            return out.reshape(ph, s, pw, s, 4).mean(axis=(1, 3), dtype=np.float64).astype(
+                np.float32)  # fmt: skip
 
-        ctx.field(corner, r, u, pixels=pixels, opacity=p.opacity)
+        ctx.field(corner, r, u, pixels=pixels, opacity=p.opacity,
+                  glow=float(me.style.get("glow", 1.0)) if p.radius > 0 else 1.0)  # fmt: skip
 
 
 # ---------------------------------------------------------------- Riemann surfaces

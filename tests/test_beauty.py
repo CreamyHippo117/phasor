@@ -214,3 +214,125 @@ def test_prism_heat_golden_storyboard():
     assert e.lint(strict=True) == []
     sheet = e.storyboard([0.5, 3.0, 7.0], size=(320, 180))["image"]
     _golden("prism_heat", sheet, e.pass_runner().renderer_class())
+
+
+# ---------------------------------------------------------------- 4. prism fractals
+
+
+def _glow_distance(out: np.ndarray, radius: float) -> np.ndarray:
+    """The distance in pixels the glow weight stands for: w = 1 / (1 + (d / r)^2)."""
+    with np.errstate(divide="ignore"):
+        return radius * np.sqrt(1 / out[..., 3].astype(np.float64) - 1)
+
+
+def test_the_glow_distance_is_the_distance_to_the_unit_circle():
+    """The Julia set of c = 0 is the unit circle, and there the estimate G / |grad G| from
+    the escape count is |z| log|z|: the true distance |z| - 1 to first order."""
+    tile = Tile.full(201, 201)
+    field = get("escape").reference(tile, (0.0, 0.0), 4.0, 200, julia=(0.0, 0.0),
+                                    precision="f64")  # fmt: skip
+    out = get("fractal_glow").reference(tile, field, np.eye(3, dtype=np.float32), radius=5.0)
+    px = 4.0 / 201
+    x, y = np.meshgrid((np.arange(201) - 100) * px, (100 - np.arange(201)) * px)
+    r = np.hypot(x, y)
+    near = (r > 1.04) & (r < 1.25)  # two pixels and more from the circle
+    est = _glow_distance(out, 5.0)[near] * px
+    truth = r[near] * np.log(r[near])
+    np.testing.assert_allclose(est, truth, rtol=0.1)  # a central difference over 2 pixels
+    assert np.median(np.abs(est / truth - 1)) < 0.02
+    np.testing.assert_allclose(est, (r - 1)[near], rtol=0.15)
+    assert (out[..., 3][r < 0.97] == 0).all()  # inside: no light, the background
+    assert (out[..., :3][r < 0.97] == 0).all()
+
+
+def test_the_mandelbrot_glow_matches_the_distance_estimate_and_lights_the_edge():
+    """Against the classic estimate |z| log|z| / |dz/dc| with the derivative carried through
+    the iteration: the escape count's gradient gives the same distances, within a little."""
+    n, height, centre = 160, 3.0, (-0.6, 0.0)
+    tile = Tile.full(n, n)
+    field = get("escape").reference(tile, centre, height, 500, precision="f64")
+    out = get("fractal_glow").reference(tile, field, np.eye(3, dtype=np.float32), radius=2.0)
+    from phasor.render.gpu.registry import plane
+
+    x, y = (a.ravel() for a in plane(tile, centre, height))
+    c = x + 1j * y
+    z, dz = np.zeros_like(c), np.zeros_like(c)
+    live = np.ones(c.shape, dtype=bool)
+    for _ in range(500):
+        dz[live] = 2 * z[live] * dz[live] + 1
+        z[live] = z[live] ** 2 + c[live]
+        live &= np.abs(z) <= 256
+    with np.errstate(all="ignore"):
+        de = (np.abs(z) * np.log(np.abs(z)) / np.abs(dz)).reshape(n, n) / (height / n)
+    est = _glow_distance(out, 2.0)
+    ok = (field > 0) & (de > 3) & (de < 30)  # away from the set, where pixels resolve it
+    ratio = est[ok] / de[ok]
+    assert ok.sum() > 500 and 0.8 < np.median(ratio) < 1.25
+    assert (np.abs(np.log(ratio)) < np.log(1.6)).mean() > 0.9
+    w = out[..., 3]
+    edge = (field > 0) & (de < 0.5)
+    assert w[edge].mean() > 0.6  # the edge is lit
+    assert (w[field < 0] == 0).all()  # the inside is not
+    assert w[(field > 0) & (de > 40)].max() < 0.01  # nor the far outside
+
+
+def test_a_deep_field_glows_too():
+    """The glow reads only the escape field, so the perturbation path at 1e-20 lights its
+    edges like any other."""
+    from tests.test_kernels import DEEP_ORBIT
+
+    tile = Tile.full(96, 96)
+    field = get("deep").reference(tile, (0.0, 0.0), 1e-20, DEEP_ORBIT, 2000)
+    out = get("fractal_glow").reference(tile, field, np.eye(3, dtype=np.float32), radius=2.0)
+    w = out[..., 3]
+    assert (field > 0).all()  # the spiral's filaments: no pixel wholly inside at this size
+    assert w.max() > 0.95 and 0.05 < (w > 0.5).mean() < 0.9  # lit filaments, not a wash
+
+
+def test_the_prism_fractal_preset_and_looks():
+    s = Scene("f", passes=None)
+    s.add(cx.Fractal(id="a", preset="prism"))
+    s.add(cx.Fractal(id="b"))
+    a, b = s.engine.document.object("a"), s.engine.document.object("b")
+    assert a.params["radius"] > 0 and a.style["glow"] == "soft"
+    assert b.params.get("radius", 0) == 0  # the plain picture stays the default
+    for look in ("prism", "prism_everywhere"):
+        t = Scene("q", look=look, passes=None)
+        t.add(cx.Fractal(id="c", kind="julia"))
+        assert t.engine.document.object("c").params["radius"] > 0, look
+    p = Scene("p", look="prism", palette="gold", passes=None)
+    p.add(cx.Fractal(id="d"))
+    assert p.engine.document.object("d").style["colormap"] == "gold"  # palettes still apply
+
+
+@needs_gl
+def test_the_prism_fractal_emits_light_on_its_edge_and_the_plain_one_does_not():
+    def frame(**kw):
+        s = Scene("e")
+        s.set("camera.center", (0.0, 0.0, 0.0))
+        s.set("camera.height", 4.5)
+        s.add(cx.Fractal(id="f", pos=(0, 0, 0), size=(8, 4.5), center="-0.6 0", zoom=0.25,
+                         max_iter=200, **kw))  # fmt: skip
+        r = s.engine.pass_runner()
+        pic, emit = r.color_and_emission(s.engine.state_at(0.0), (160, 90))
+        return s, pic[..., :3], emit[..., :3]
+
+    _, _, emit = frame()
+    assert emit.max() == 0.0  # as before: the plain picture emits nothing
+    s, pic, emit = frame(preset="prism")
+    assert emit.max() > 0.3
+    bg = np.asarray(s.engine.state_at(0.0).background[:3])
+    assert np.abs(pic[45, 90] - bg).max() < 0.02  # the main cardioid: the background
+    assert emit[45, 90].max() < emit.max() * 0.05
+
+
+@needs_gl
+@pytest.mark.slow
+def test_prism_fractal_golden_storyboard():
+    e = runpy.run_path(str(ROOT / "examples" / "prism_fractal.py"), run_name="x")["s"].engine
+    # the slow drift of c and the dive are raw to() transitions, as in deep_zoom: a verb's
+    # timing is the theme's, a second or two
+    assert {i.code for i in e.lint(strict=True)} <= {"raw_motion"}
+    assert e.lint() == []
+    sheet = e.storyboard([1.2, 4.5, 13.5], size=(320, 180))["image"]
+    _golden("prism_fractal", sheet, e.pass_runner().renderer_class())
