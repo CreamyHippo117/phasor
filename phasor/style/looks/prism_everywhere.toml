@@ -29,12 +29,12 @@ lines = 12
 glow = "strong"
 
 [defaults.fractal.params]  # the prism preset: the set dark, its edge glowing (BEAUTY.md item 4)
-radius = 0.02
-ambient = 0.05
+radius = 0.01
+ambient = 0.03
 
 [defaults.fractal.style]
 colormap = "ocean"
-glow = "strong"
+glow = "soft"  # owner 2026-11-22: strong glow whited out the dense filaments of a dive
 
 [defaults.epicycles.style]
 glow = "strong"

@@ -294,7 +294,7 @@ def test_the_prism_fractal_preset_and_looks():
     s.add(cx.Fractal(id="a", preset="prism"))
     s.add(cx.Fractal(id="b"))
     a, b = s.engine.document.object("a"), s.engine.document.object("b")
-    assert a.params["radius"] > 0 and a.style["glow"] == "strong"
+    assert a.params["radius"] > 0 and a.style["glow"] == "soft"
     assert b.params.get("radius", 0) == 0  # the plain picture stays the default
     for look in ("prism", "prism_everywhere"):
         t = Scene("q", look=look, passes=None)

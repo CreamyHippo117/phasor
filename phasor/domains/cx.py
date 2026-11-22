@@ -251,7 +251,7 @@ class Fractal(_Plane):
         "ember": {"style": {"colormap": "ember"}, "params": {"density": 0.3}},
         "ocean": {"style": {"colormap": "ocean"}, "params": {"density": 0.3}},
         # the set dark, its edge glowing with haze (the look of the prism strokes)
-        "prism": {"params": {"radius": 0.02, "ambient": 0.05}, "style": {"glow": "strong"}},
+        "prism": {"params": {"radius": 0.01, "ambient": 0.03}, "style": {"glow": "soft"}},
     }  # fmt: skip
 
     class Params(ParamsBase):
