@@ -7,7 +7,7 @@ fifth roots of 1 + a) and two poles at z = +-sqrt(-a). Then, beat by beat:
    "+a" travels over the "=" and becomes "-a", the "z^2" becomes "z";
 2. the imaginary part of a goes from 0.6 to 0.7: the poles and zeros shift a little, and
    "0.6 i" turns into "0.7 i" in place;
-3. the real part of a sweeps slowly from 0 to 0.5, with its value counting beside it;
+3. the real part of a sweeps slowly from 0 to 0.5, the value of a counting as it goes;
 4. the function blends into (z^3 - 1 - a) / (z^2 + a): w = (1 - s) f + s g, so every frame
    is a true picture of a function, two zeros run off to infinity and the poles stay put; the
    equation opens up into the blend, then settles on the new function.
@@ -49,8 +49,9 @@ s.add(Equation(id="a_06", pos=(-2.9, 1.8, 0.0), parts=("$a$", "$=$", r"$0.6\,i$"
 s.add(Equation(id="a_07", pos=(-2.9, 1.8, 0.0), parts=("$a$", "$=$", r"$0.7\,i$"), keys=A_KEYS))
 s.add(Equation(id="a_end", pos=(-2.9, 1.8, 0.0), parts=("$a$", "$=$", r"$0.5 + 0.7\,i$"),
                keys=A_KEYS))  # fmt: skip
-s.add(Counter(id="re_a", value=expr("plane.a[0]"), prefix=r"\mathrm{Re}\,a = ",
-              pos=(-2.9, 1.25, 0.0), opacity=0.0))  # fmt: skip
+# while the real part sweeps, a live readout of a in the same place
+s.add(Counter(id="a_live", value=expr("plane.a[0]"), prefix="a = ", suffix=r" + 0.7\,i",
+              pos=(-2.9, 1.8, 0.0), opacity=0.0, style={"size": "math"}))  # fmt: skip
 
 # The poles, top right, solved step by step.
 POLES = (2.9, 1.8, 0.0)
@@ -90,10 +91,9 @@ s.at("lift").morph("plane.a", (0.0, 0.7), until="lift_done")
 s.at("lift").transform("a_06", "a_07")
 
 # 3. the real part sweeps, its value counting beside it
-s.at("sweep").reveal("re_a")
+s.at("sweep").exit("a_07").reveal("a_live")
 s.at("sweep").morph("plane.a", (0.5, 0.7), until="sweep_done")
-s.at("sweep_done").transform("a_07", "a_end")
-s.at("sweep_done").exit("re_a")
+s.at("sweep_done").exit("a_live").reveal("a_end")
 
 # 4. one function becomes another
 s.at("blend").transform("f_eq", "mix_eq")

@@ -265,13 +265,16 @@ _RELATIONS = (
     "\\ne",
 )
 THICK = 5 / 18
+# Relations mathtext sets with a space before them even alone (measured: about 0.2 em of
+# left margin); a lone "+", "-", "\cdot" or "\times" is set tight, like a sign.
+_SET_APART = tuple(r for r in _RELATIONS if r not in ("+", "-", "\\cdot", "\\times"))
 
 
 def _spaced(a: str, b: str) -> bool:
     """Whether a relation sits where part ``a`` meets part ``b``. A part that is only a
     relation (``"$=$"``, kept apart so ``transform`` can carry terms across it) is already
     set with TeX's space before it, so it takes the extra space only after it."""
-    if _edge(b, False) in _RELATIONS:
+    if _edge(b, False) in _SET_APART:
         return False
     return _edge(a, True).endswith(_RELATIONS) or _edge(b, False).startswith(_RELATIONS)
 
