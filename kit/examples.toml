@@ -107,6 +107,21 @@ kind = "fractals"
 tier = "technique"
 teaches = "Fractals in the prism look: a Julia set morphing as c drifts, a short Mandelbrot dive, the edge of the set glowing"
 
+[examples.picture]
+kind = "basics"
+tier = "technique"
+teaches = "A picture in a scene: a PNG next to the script, placed, sized, framed and animated like any object"
+
+[examples.phase_portrait]
+kind = "physics"
+tier = "technique"
+teaches = "A damped pendulum's phase portrait: trajectories flowing, then its rest points and their stability"
+
+[examples.game_tree]
+kind = "basics"
+tier = "technique"
+teaches = "A network: every tic-tac-toe position joined to the next, laid out and grown edge by edge"
+
 [examples.cluttered]
 tier = "hidden"
 why = "deliberately cluttered, to show the linter flagging it"

@@ -106,7 +106,9 @@ def _toposort(nodes: dict[str, Node]) -> tuple[tuple[str, ...], list[str]]:
     return tuple(order), sorted(p for p, n in pending.items() if n > 0)
 
 
-def compile_document(doc: Document) -> Compiled:
+def compile_document(doc: Document, base_dir: str = "") -> Compiled:
+    """Validate and resolve ``doc``. ``base_dir``: the scene's folder, which the files it
+    names are relative to (``core/files.py``; a missing one is lint ``missing_file``)."""
     issues: list[Issue] = []
     add = issues.append
 
@@ -241,7 +243,7 @@ def compile_document(doc: Document) -> Compiled:
     if doc.meta.duration is not None:
         duration = doc.meta.duration
     compiled = Compiled(doc, theme, time_map, MappingProxyType(nodes), order, tuple(objects),
-                        duration)  # fmt: skip
+                        duration, str(base_dir))  # fmt: skip
     evaluate(compiled, 0.0)  # surfaces type errors from expressions before anything is saved
     return compiled
 

@@ -15,7 +15,9 @@ compounding. If this file and SPEC.md disagree, stop and ask.
 - Now (owner, 2026-11-22): the beauty plan in `BEAUTY.md`, in its order (prism domain
   coloring, heat maps, point clouds, fractals, image import, graph import, 3D acoustics).
   Keep `prism_primes`' look exactly. Steps 3, 4 and 7 run on the PC from `pc_tasks/`.
-  Render speed and the finished Windows app come after, unless the owner says otherwise.
+  Next animations (signal, waves, dynamics): `ANIMATIONS.md`. Changes waiting for the
+  owner's OK go in `pending/` (a patch and a before/after picture). Render speed and the
+  finished Windows app come after, unless the owner says otherwise.
 - Desktop app (owner, 2026-11-22): code-first, one shared script that the person, the AI and
   the app all edit. Plan: `APP_PLAN.md` (answered); ADR 0004 (tweaks inside the script,
   touches contract 2) accepted by the owner; phase 1 not started.
@@ -122,7 +124,9 @@ compounding. If this file and SPEC.md disagree, stop and ask.
   only camera parameters the document leaves unset. Lower layers get depth through the
   oracle's `depth` (ADR 0001 pattern); 3D labels are judged by what is in front of them.
 
-- Beauty: dark (`midnight_glow`) is the default theme, always; light themes are opt-in. Fewer
+- Beauty: new scenes get the `prism` look (owner, 2026-11-22; `look="none"` for plain, which
+  is the dark `midnight_glow` theme); dark always, light themes are opt-in. Tests run with
+  `PHASOR_DEFAULT_LOOK=none` (set in `tests/conftest.py`). Fewer
   rainbows is not no rainbows: hue that carries meaning (domain-coloring phase) keeps the
   wheel. Taste knobs are theme `[lint]`/`[life]` values, roles, looks and presets, never
   numbers typed into a scene. Life is a pure function of (id, seed, t); `exact` objects never

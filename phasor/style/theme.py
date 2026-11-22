@@ -14,7 +14,7 @@ from typing import Any
 
 import numpy as np
 
-from phasor.core.color import hex_to_linear, phase_lut
+from phasor.core.color import hex_to_linear, phase_lut, smooth_cycle
 
 THEME_DIR = Path(__file__).parent / "themes"
 
@@ -131,6 +131,9 @@ def _colormap(theme: str, role: str, spec: Any) -> tuple[tuple[float, float, flo
         return tuple(tuple(float(v) for v in row) for row in lut)
     if not isinstance(spec, list) or len(spec) < 2:
         raise ThemeError(f"theme {theme!r}: colormap {role!r} must be 'oklch' or 2+ hex stops")
+    if role in PALETTES:  # palettes run along curves: smooth, no corners, no grey middles
+        lut = smooth_cycle(np.array([hex_to_linear(h)[:3] for h in spec]), LUT_SIZE)
+        return tuple(tuple(float(v) for v in row) for row in lut)
     stops = np.array([hex_to_linear(h)[:3] for h in spec] + [hex_to_linear(spec[0])[:3]])
     x = np.linspace(0, len(spec), LUT_SIZE, endpoint=False)
     k = np.minimum(x.astype(int), len(spec) - 1)

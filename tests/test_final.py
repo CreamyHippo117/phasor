@@ -27,6 +27,8 @@ TYPES = sorted(registered_types())
 # The fewest parameters each type needs (the rest have defaults).
 REQUIRED = {
     "domain_coloring": {"function": "1/(z**2+1)"},
+    "network": {"generator": "tree", "branching": 2, "depth": 3},
+    "image": {"path": "examples/assets/sunset.png"},  # relative: tests run from the repo root
     "epicycles": {"points": [[1, 0, 0], [0, 1, 0], [-1, 0, 0], [0, -1, 0]]},
     "equation": {"parts": ["$e^{i\\pi}$", "$+1=0$"]},
     "line": {"points": [[0, 0, 0], [1, 1, 0]]},
@@ -52,7 +54,7 @@ SLOW = {"deep_zoom", "residue_theorem", "riemann_sqrt"}
 
 
 def _one(name: str, camera: str, passes="auto"):
-    s = Scene(f"one {name}", passes=passes)
+    s = Scene(f"one {name}", passes=passes, base_dir=ROOT)  # files (a picture) from the repo
     if camera == "orbit":
         s.use_camera("orbit")
     if name in PARTNERED:
@@ -168,9 +170,12 @@ def test_every_example_survives_save_and_load(name, tmp_path):
 @pytest.mark.parametrize("name", _examples())
 def test_every_example_round_trips_through_its_python_code(name, tmp_path):
     """The Code tab's promise: the generated script rebuilds the same document."""
+    import shutil
+
     from tests.test_pycode import plain, rebuild
 
     e = _example(name)
+    shutil.copytree(ROOT / "examples" / "assets", tmp_path / "assets")  # files beside a scene
     d = diff_documents(plain(e.document), plain(rebuild(e.document, tmp_path)))
     assert d["same"], d["changes"][:3]
 

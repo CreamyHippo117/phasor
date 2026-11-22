@@ -202,3 +202,58 @@ def field_arrows(ctx: DrawContext, cam: Camera, centers, vectors, spacing: float
 
 def with_alpha(color, opacity: float):
     return (color[0], color[1], color[2], color[3] * opacity)
+
+
+def segment_batch(ctx: DrawContext, cam: Camera, a, b, width, *, colors, glow: float = 1.0,
+                  opacity: float = 1.0) -> None:  # fmt: skip
+    """Many straight strokes in one draw call (thousands of graph edges): ``a`` and ``b``
+    are (N, 3) ends, ``width`` a share of the frame height (as stroke roles are), ``colors``
+    one RGBA or (N, 4) per stroke, or (N, 2, 4) per end (a hue running along each edge).
+    Each stroke is a ribbon facing the camera."""
+    a = np.asarray(a, dtype=np.float64).reshape(-1, 3)
+    b = np.asarray(b, dtype=np.float64).reshape(-1, 3)
+    if len(a) == 0:
+        return
+    mid = (a + b) / 2
+    view = (mid - cam.eye) if cam.perspective else np.broadcast_to(cam.forward, a.shape)
+    side = np.cross(b - a, view)
+    n = np.linalg.norm(side, axis=1, keepdims=True)
+    side = np.where(n > 1e-12, side / np.maximum(n, 1e-12), cam.right)
+    wa = (width * np.asarray(cam.units_per_height(a)) / 2).reshape(-1, 1)
+    wb = (width * np.asarray(cam.units_per_height(b)) / 2).reshape(-1, 1)
+    pos = np.stack([a - side * wa, a + side * wa, b + side * wb, b - side * wb], axis=1)
+    k = np.arange(len(a))[:, None] * 4
+    tris = np.concatenate([k + np.array([0, 1, 2]), k + np.array([0, 2, 3])], axis=0)
+    cols = np.asarray(colors, dtype=np.float64)
+    if cols.ndim == 1:
+        per_vertex = np.broadcast_to(cols, (len(a), 4, 4))
+    elif cols.ndim == 2:
+        per_vertex = np.repeat(cols[:, None, :], 4, axis=1)
+    else:
+        per_vertex = cols[:, [0, 0, 1, 1], :]
+    per_vertex = np.array(per_vertex, dtype=np.float64)
+    ctx.triangles(pos.reshape(-1, 3), tris, color=(1.0, 1.0, 1.0, opacity), glow=glow,
+                  colors=per_vertex.reshape(-1, 4))  # fmt: skip
+
+
+def disc_batch(ctx: DrawContext, cam: Camera, centers, radius, *, colors, glow: float = 1.0,
+               opacity: float = 1.0) -> None:  # fmt: skip
+    """Many discs facing the camera in one draw call: ``centers`` (N, 3), ``radius`` world
+    units (one, or one per disc), ``colors`` one RGBA or (N, 4)."""
+    c = np.asarray(centers, dtype=np.float64).reshape(-1, 3)
+    if len(c) == 0:
+        return
+    seg = 12
+    ang = np.linspace(0, 2 * np.pi, seg, endpoint=False)
+    r = np.broadcast_to(np.asarray(radius, dtype=np.float64), (len(c),))[:, None, None]
+    ring = (np.cos(ang)[:, None] * cam.right + np.sin(ang)[:, None] * cam.up)[None] * r
+    pos = np.concatenate([c[:, None, :], c[:, None, :] + ring], axis=1)  # (N, 1 + seg, 3)
+    base = (np.arange(len(c)) * (seg + 1))[:, None]
+    k = np.arange(seg)
+    tris = np.stack([np.zeros(seg, int), 1 + k, 1 + (k + 1) % seg], axis=1)
+    tris = (base[:, None, :] + tris[None]).reshape(-1, 3)
+    cols = np.asarray(colors, dtype=np.float64)
+    cols = np.broadcast_to(cols if cols.ndim == 2 else cols[None], (len(c), 4))
+    per_vertex = np.repeat(cols[:, None, :], seg + 1, axis=1).reshape(-1, 4)
+    ctx.triangles(pos.reshape(-1, 3), tris, color=(1.0, 1.0, 1.0, opacity), glow=glow,
+                  colors=np.ascontiguousarray(per_vertex))  # fmt: skip

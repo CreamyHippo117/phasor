@@ -12,7 +12,7 @@ Status: through Milestone 9. This file is the Python API; to drive phasor from a
 ```python
 from phasor import Dot, Line, Scene, Text, expr
 
-s = Scene("residues")  # 1920x1080, 60 fps, theme "midnight_glow"
+s = Scene("residues")  # 1920x1080, 60 fps, the default look "prism" (look="none": plain)
 s.add(Line(id="axis", points=[(-6, 0), (6, 0)], style={"color": "muted"}))
 s.add(Dot(id="pole_i", pos=(0, 1), r=0.15, style={"color": "highlight"}, tags=["key"]))
 s.add(Text(id="pole_i_label", text="i", pos=expr("pole_i.pos + vec(0.4, 0, 0)")))
@@ -36,6 +36,8 @@ s.set("camera.height", 6)  # world units visible top to bottom
 | `cx.Fractal` | `kind` (`mandelbrot`/`julia`), `c` (Julia constant), `pos`, `size`, `max_iter`, `density`, `hue`, `center` (exact text `"re im"`), `zoom` (powers of ten, to 280), `steady` (hold the outer color in a dive); the prism look: `radius` (> 0 turns it on: the edge of the set glows this far, in world units of the rectangle), `ambient` (0-1, light far from the edge) | `colormap` (colormap, sequential), `glow` (glow, none; used by the prism look) |
 | `cx.RiemannSurface` | `kind` (`sqrt`/`cbrt`/`log`), `pos` (branch point), `radius`, `height` (`re`/`im`), `scale`, `rings`, `segments` | `colormap` (colormap, phase), `material` (surface, solid) |
 | `cloud.PointCloud` | `source` (`roots`/`attractor`/`buddhabrot`/`points`), `degree` and `coefficients` (roots), `kind` (`clifford`/`dejong`/`lorenz`) and `constants` (attractor), `max_iter` (buddhabrot), `points` and `values` (given directly), `count` (at most), `seed`, `pos` (centre and origin of the points), `size` (the rectangle it is seen in), `scale`, `point_size` (splat radius, px), `exposure`, `hue`, `color_by` (`source`/`phase`), `twist` (roots: turns of the last coefficient, animatable), `twinkle` (0-1, life), `white` (0-1, white-hot dense parts) | `colormap` (colormap, spectrum), `glow` (glow, none) |
+
+| `Image` | `path` (a PNG/JPEG/WebP file, relative to the scene's folder), `pos` (centre), `width`, `height` (0: keep the picture's shape), `frame` (an outline of light) | `glow` (glow, none: bright parts shine), `frame` (emphasis, muted), `stroke` (stroke, hairline). Presets `plain`, `framed`, `luminous`. A missing file is issue `missing_file`; transparent parts show the background; an AI may only name files inside its folder |
 | `Text` | `text` (`$...$` is typeset math), `pos`, `anchor` (`center`/`left`/`right`), `leader`, `leader_on` (set by layout) | `color` (emphasis, primary), `size` (text, label), `leader` (stroke, hairline) |
 | `Equation` | `parts` (math or text, set on one baseline), `colors` (an emphasis role per part), `pos` | `color` (emphasis, primary), `size` (text, math), `glow` (glow, none) |
 
@@ -429,8 +431,11 @@ assert field.shape == (90, 160) and (field == -1).any()  # -1 marks points in th
 
 ## Looks, presets, living motion and taste
 
-Start a scene from a **look**: a theme plus a few choices, by name. The default is dark
-(`midnight_glow`); light is opt-in.
+Start a scene from a **look**: a theme plus a few choices, by name. A new scene gets the
+**`prism` look** unless it names another look or a theme (owner, 2026-11-22); `look="none"`
+gives a plain scene on the dark `midnight_glow` theme. Everything stays dark by default;
+light is opt-in. (The test suite sets `PHASOR_DEFAULT_LOOK=none`, so its own examples here
+run plain.)
 
 | Look | Theme | Life | Character |
 | --- | --- | --- | --- |
@@ -853,6 +858,50 @@ rays = room.engine.inspect(3.0, id="rays")["objects"][0]["semantic"]
 assert abs(rays["distance"] - 6.86) < 1e-6 and rays["reflections_so_far"] > 1
 assert room.engine.inspect(0.0, id="room")["objects"][0]["semantic"]["volume"] == 120.0
 ```
+
+## Graphs and networks (`nw`)
+
+`nw.Network` draws a graph: nodes joined by edges, thousands of them in one draw call. Give
+one source: `path` (a file next to the scene: an edge list `.csv`/`.tsv`/`.txt` with
+`a,b[,weight]` per line, node-link `.json` whose extra node fields become attributes, or
+`.graphml`), `edges` (pairs of node names, with optional `nodes` for their order), or a
+`generator`: `tree` (`branching`, `depth`), `grid` (`rows`, `cols`), `random` (`n`, `p`),
+`small_world` (`n`, `k`, `p`), `hypercube` (`cube_dim`), `tictactoe` (every position of the
+game: 765 up to rotation and reflection, or all 5,478 with `symmetric=False`; node
+attributes `move` and `outcome` under perfect play).
+
+`layout`: `spring` (force-directed), `radial` (the root in the middle, each move a ring
+further out, every node a wedge of angle in proportion to what grows from it: branches fan
+out as rays; game trees), `layers` (breadth first from `root`, a level per move, ordered by
+their parents), `circle`, `random`;
+`dims` 2 or 3 (3D wants an orbit camera); `size` (world half-width), `pos`. `color_by`:
+`depth`, `degree`, or a node attribute; `hue` turns the palette. `grow` (0-1) shows that share
+of the edges, nearest the root first (morph it to grow the graph); `node_size` draws dots.
+`exposure` is the light per edge: a dense graph shares its light out so it builds up where
+edges crowd instead of burning out. `cross_edges` (0-1) dims the edges off the breadth-first
+spanning tree (in a game: the same position reached by another order of moves); 0 hides them. Styles: `colormap` (spectrum), `edge`, `node`, `glow`,
+`stroke`. Presets `plain`, `prism` (the prism looks use it). A missing file is
+`missing_file`; an AI may only load files inside its folder.
+
+```python
+from phasor import Scene
+from phasor.domains import network as nw
+
+g = Scene("graphs", passes=None)
+g.add(nw.Network(id="tree", generator="tree", branching=2, depth=5, layout="layers"))
+g.add(
+    nw.Network(
+        id="ring",
+        edges=(("a", "b"), ("b", "c"), ("c", "a")),
+        layout="circle",
+        pos=(5, 0, 0),
+        size=1.0,
+    )
+)
+sem = g.engine.inspect(0, id="tree")["objects"][0]["semantic"]
+assert (sem["nodes"], sem["edges"], sem["depth"]) == (63, 62, 5)
+```
+
 ## Space: axes, curves, surfaces and fields (`geo`)
 
 `from phasor import geo`. Give the scene an orbit camera (`s.use_camera("orbit")`) to turn
@@ -1116,6 +1165,38 @@ assert free and set(free[0]) == {"slot", "box", "distance"}
 
 Events carry `t`, the `marker` being spoken, the `id`, `severity` (`warning` = a viewer
 would notice) and `fix_hints`.
+
+## Dynamical systems: phase portraits and fixed points
+
+`from phasor import dyn`. A planar system x' = f(x, y), y' = g(x, y) from formulas (read safely,
+never run as Python; named numbers go in `constants="mu=1.5, k=2"`). `pos` is the window's
+centre and `extent` its size; one unit of (x, y) is one world unit.
+
+- `dyn.PhasePortrait(f=, g=, extent=, seeds=((x, y), ...) or n_seeds=, t_end=, progress=,
+  backward=, flow=, nullclines=)`: trajectories from the seeds (RK4), their colour running
+  along time; `progress` 0 -> 1 traces them (`s.at("m").sweep("flow.progress", 1.0,
+  show=False)`); `flow` adds the small-arrow field and `nullclines` the curves where x' = 0
+  and y' = 0. Semantics: the number of trajectories and fixed points.
+- `dyn.FixedPoints(f=, g=, extent=, rays=, labels=, reveal=)`: every point where the system rests
+  (Newton from a grid), classified from the Jacobian's eigenvalues: `saddle`, `stable node`,
+  `unstable node`, `stable spiral`, `unstable spiral`, `centre`, `degenerate` or
+  `non-hyperbolic`. Each is a beacon coloured by its type, its real eigen-directions are rays
+  (cool where the motion comes in, warm where it goes out), with a label of the eigenvalues.
+  Semantics list each point's position, type, stability, eigenvalues, trace and determinant.
+  `reveal` 0 -> 1 shows them in order along x.
+
+```python
+from phasor import Scene, dyn
+
+s = Scene("pendulum", passes=None)
+s.add(dyn.PhasePortrait(id="flow", f="y", g="-sin(x) - 0.3 * y", extent=(9, 6), n_seeds=8))
+s.add(dyn.FixedPoints(id="rest", f="y", g="-sin(x) - 0.3 * y", extent=(9, 6)))
+kinds = [p["type"] for p in s.engine.inspect(0.0, id="rest")["objects"][0]["semantic"]["points"]]
+assert kinds == ["saddle", "stable spiral", "saddle"]
+```
+
+Example: `examples/phase_portrait.py`. The prism looks make trajectories glow with the arrow
+field and nullclines kept faint.
 
 ## Command line
 

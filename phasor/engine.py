@@ -10,7 +10,6 @@ none can be created the inspector runs in analytic mode (tier C).
 
 from __future__ import annotations
 
-import dataclasses
 from collections import OrderedDict
 from collections.abc import Callable
 from pathlib import Path
@@ -96,8 +95,7 @@ class _Snapshot:
     def __init__(self, base: Document, overrides: Overrides, base_dir: str = "") -> None:
         self.base, self.overrides = base, overrides
         effective, orphans = apply_overrides(base, overrides)
-        self.compiled: Compiled = dataclasses.replace(compile_document(effective),
-                                                      base_dir=base_dir)  # fmt: skip
+        self.compiled: Compiled = compile_document(effective, base_dir)
         self.plan: Plan = compile_plan(self.compiled)
         self.orphans: tuple[Issue, ...] = tuple(orphans)
         self.bake: Bake | None = None
@@ -186,11 +184,33 @@ class Engine:
         """Write the base document, and the overrides file when there are any tweaks.
         An emptied overrides file is removed so stale tweaks cannot come back."""
         io.save(path, self._snap.base)
+        self._bring_files(Path(path).parent)
         opath = io.overrides_path(path)
         if not self._snap.overrides.is_empty():
             io.save(opath, self._snap.overrides)
         elif opath.exists():
             opath.unlink()
+
+    def _bring_files(self, folder: Path) -> None:
+        """Files the scene names by a relative path (pictures) go with it when it is saved
+        into another folder, so they are found next to it there."""
+        import shutil
+
+        from phasor.core import files
+        from phasor.core.objects import get_type
+
+        for spec in self.document.objects:
+            for name in getattr(get_type(spec.type), "Files", ()):
+                raw = spec.params.get(name)
+                if not isinstance(raw, str) or not raw:
+                    continue
+                try:
+                    src, dst = files.resolve(self.base_dir, raw), folder / files.relative_path(raw)
+                except ValueError:
+                    continue
+                if src.is_file() and src.resolve() != dst.resolve():
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src, dst)
 
     # ------------------------------------------------------------ read
 

@@ -27,6 +27,12 @@ SCENES = [
     ("prism_heat", "heat maps in the prism look: a hot spot, a vibrating drum, a chirp"),
     ("point_cloud", "a million polynomial roots that glide and tear open, falling toward z = i"),
     ("prism_fractal", "fractals in the prism look: a morphing Julia set, a dive, glowing edges"),
+    ("picture", "a picture placed in a scene: it fades in framed in light, a curve traces it"),
+    ("game_tree", "every game of tic-tac-toe: its 765 positions fanning out move by move"),
+    (
+        "phase_portrait",
+        "a damped pendulum: trajectories tracing the flow, then its rest points classified",
+    ),
     ("residue_theorem", "a narrated short: the residue theorem, every motion on a spoken cue"),
     ("riemann_sqrt", "3D: the Riemann surface of sqrt(z), the camera orbits on its own"),
     ("deep_zoom", "a dive into the Mandelbrot set down to 1e-30 (the GPU's favourite)"),
