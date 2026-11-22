@@ -79,13 +79,40 @@ def test_object_reports_full_bounds_and_progress():
 def test_showcase_curve_has_room_throughout_the_camera_orbit():
     scene = runpy.run_path(str(ROOT / "examples" / "strange_attractor.py"), run_name="x")
     engine = scene["s"].engine
-    trajectory = scene["trajectory"]
-    for time in np.linspace(0, engine.duration, 211):
+    for time in np.linspace(0, engine.duration, 339):
         state = engine.state_at(time)
         obj = state["trajectory"]
-        points, _ = trajectory._visible(obj.params)
+        points = obj.impl.path_points(state)
+        tip = state["moving_tip"]
+        if tip.params.opacity > 0:
+            points = np.vstack((points, tip.impl.world_bounds(state).corners()))
         screen = state.camera_for(obj).to_screen(points, 1, 1)
         assert ((screen > 0.08) & (screen < 0.92)).all(), f"tight framing at {time:.2f}s"
+
+
+def test_showcase_tip_tracks_the_lobe_crossing_and_fades_for_the_hold():
+    engine = runpy.run_path(str(ROOT / "examples" / "strange_attractor.py"), run_name="x")[
+        "s"
+    ].engine
+
+    for time in (2.85, 3.83, 5.35, 7.5):
+        state = engine.state_at(time)
+        trace, tip = state["trajectory"], state["moving_tip"]
+        assert tip.params.opacity == 1
+        np.testing.assert_allclose(
+            tip.impl.features(state)["tip"], trace.impl.features(state)["head"]
+        )
+
+    crossing = engine.state_at(3.83)
+    assert crossing["trajectory"].params.progress * 30 == pytest.approx(14.34, abs=0.03)
+    assert crossing.values["camera.azimuth"] == engine.state_at(0).values["camera.azimuth"]
+    settled = engine.state_at(9.25)
+    end = engine.state_at(engine.duration)
+    for state in (settled, end):
+        assert state["trajectory"].params.progress == 1
+        assert state["moving_tip"].params.opacity == 0
+    assert settled.values["camera.azimuth"] == end.values["camera.azimuth"]
+    assert engine.duration - 9.25 >= 2
 
 
 @needs_gl
@@ -95,8 +122,8 @@ def test_strange_attractor_golden_storyboard():
 
     e = runpy.run_path(str(ROOT / "examples" / "strange_attractor.py"), run_name="x")["s"].engine
     assert e.lint(strict=True) == []
-    state = e.state_at(6.5)
+    state = e.state_at(3.83)
     _, emission = e.pass_runner().color_and_emission(state, (160, 90))
     assert emission[..., :3].max() > 0.2
-    sheet = e.storyboard([1.15, 1.65, 6.5], size=(320, 180))["image"]
+    sheet = e.storyboard([0.0, 2.1, 3.83, 5.2, 7.2, 10.7], size=(320, 180))["image"]
     _golden("strange_attractor", sheet, e.pass_runner().renderer_class())

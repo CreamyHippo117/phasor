@@ -383,6 +383,11 @@ class StrangeAttractor(ObjectBase):
             visible = np.vstack((visible, head))
         return np.asarray(p.pos) + p.size * visible, step * dm.AttractorSimulation.dt
 
+    def path_points(self, state: SceneState) -> np.ndarray:
+        """The visible trajectory, so a Tracer at progress 1 follows its head."""
+        points, _ = self._visible(self.me(state).params)
+        return points
+
     def world_bounds(self, state: SceneState) -> Bounds:
         p = self.me(state).params
         return Bounds.of_points(np.asarray(p.pos) + p.size * self._path(p))
