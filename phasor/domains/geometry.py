@@ -659,7 +659,8 @@ class FlowParticles(ObjectBase):
         for pts, a, c in zip(seg, alpha, rgb, strict=True):
             if a.max() <= 0.01 or np.linalg.norm(pts[-1] - pts[0]) < 1e-9:
                 continue
-            cols = np.c_[np.tile(c, (len(pts), 1)), a * p.opacity]
+            cols = np.empty((len(pts), 4))
+            cols[:, :3], cols[:, 3] = c, a * p.opacity
             polyline(ctx, cam, pts, me.style["stroke"] * cam.units_per_height(pts),
                      color=(*c, p.opacity), glow=me.style["glow"], colors=cols)  # fmt: skip
 

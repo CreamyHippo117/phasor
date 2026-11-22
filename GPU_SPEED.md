@@ -260,27 +260,26 @@ keeping fixed dt, the seed and the checkpoint cache (contract 3). Helps only tho
   switch is held to codec tolerance (PSNR > 45 dB at cq 19).
 - Record each step's bench numbers in the table below, with the commit.
 
-## Next session (written 2026-11-21, after step 3a)
+## Next session (written 2026-11-21, after the stroke builder)
 
-Start here. Steps 0, 1, 2 and 3a are committed; the full suite is green on the owner's PC
-(emulator tests included).
+Start here. Steps 0, 1, 2, 3a and the faster stroke builder are committed; the full suite
+is green on the owner's PC (emulator tests included).
 
 1. **Re-measure first**: `uv run phasor bench --frames motion_gallery` and `prism_primes`.
-   Expect about 143 and 47 ms/frame.
-2. **Stroke building, not GL, is what is left of `draw`** (profile after 3a, motion_gallery
-   at 1080p): about 17 ms per color pass goes to `FlowParticles.draw`
-   (`domains/geometry.py`), which makes about 145 `strokes.polyline` calls per pass, each
-   spending most of its time in `np.r_`/`np.c_` (`numpy/lib/_index_tricks_impl.py`). A
-   blurred frame does four passes: about 70 ms of its 92 ms draw. The GL readback (two
-   `read_into`, about 6 ms each, includes waiting for the card) is the next biggest.
-   So, in order:
-   - **Vectorize `strokes.polyline`** (no `np.r_`/`np.c_`; one array build per stroke) and,
-     if still needed, let `FlowParticles` hand all its particles to one batched call.
-     Bit-identical test first: the same commands (positions, indices, colors) before and after
-     for every stroke-drawing type in `examples/`.
-   - **3c (cache an object's commands)** only if the above is not enough: flow particles
-     move every sample, so the cache would not help this scene anyway.
-   - **3b (one draw per object and kind)**: GL is no longer the cost; measure before doing.
+   Expect about 105 and 47 ms/frame.
+2. **Where a motion_gallery color pass goes now** (profile, 1080p, about 30 ms a pass, four
+   passes a blurred frame): the GL readback, two `read_into` at about 6 ms each (it includes
+   waiting for the card to finish drawing); `strokes.polyline` about 5 ms (3,467 calls a
+   pass from `FlowParticles`, now mostly fixed per-call cost); everything else small.
+3. Candidates, measure each first:
+   - **Batch `FlowParticles`**: one stroke build and one draw for all particles instead of
+     ~145 (a batched `polyline` that joins nothing across particles). Saves most of the
+     5 ms a pass. Pictures should stay identical (same triangles in the same order); the
+     test compares the pixels, since the commands themselves change shape.
+   - **Readback**: the read waits for the card. Step 4 (workers) hides it; step 5's
+     interop removes it. Reading into a pixel-pack buffer and mapping it a frame later is a
+     cheaper middle path, to measure.
+   - 3b and 3c as planned are unlikely to pay now; measure before doing.
 
 Open items:
 - Done after step 2: sharp frames (`Engine.frame`: every frame where only life moves,
@@ -312,7 +311,7 @@ Open items:
 | 0 | frame bench | | 555 / 376 ms per frame (motion_gallery / prism_primes) | done |
 | 1 | sRGB on the card | -130 ms | srgb 133 -> 5-12 ms, post 17 -> 10; frame 555 -> 425 / 376 -> 238 ms | done (the kernel alone is 2.2 ms; in a render the card idles at low clocks between frames, which steps 2-4 should fix) |
 | 2 | widen + blur sum on the card | -200 to -260 ms | widen + blur sum 250 -> 12 ms, post 31 -> 3; frame 437 -> 164 / 238 -> 66 ms | done (sums on the card in float32; 8-bit output within 1 code value of the float64 host sum) |
-| 3 | batched, cached drawing | draw 264 -> 30-60 ms | 3a (reused GL buffers): draw 113 -> 92 ms, frame 164 -> 143 / 47 ms, pictures unchanged | 3a done; 3b/3c re-planned from a profile (Next session) |
+| 3 | batched, cached drawing | draw 264 -> 30-60 ms | 3a (reused GL buffers): draw 113 -> 92 ms, frame 164 -> 143 / 47 ms, pictures unchanged | 3a done; stroke builder rewritten (bit-identical): draw 92 -> 57 ms, frame 143 -> 105 ms; 3b/3c re-planned from a profile (Next session) |
 | 4 | parallel workers | x3 wall time | | to do (ADR 0003 for the bake cache first) |
 | 5 | GL-CUDA interop, GPU encoder | small | | measure first; new dependency needs approval |
 | 6 | simulations on the card | those scenes only | | candidate: measure in step 0 |
