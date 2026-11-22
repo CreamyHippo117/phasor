@@ -17,3 +17,4 @@ examples/out/
 
 # full-quality showcase renders are made locally (showcase/README.md)
 /showcase/videos/
+.claude/worktrees/
