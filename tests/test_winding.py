@@ -51,5 +51,5 @@ def test_fourier_winding_golden_storyboard():
     example = Path(__file__).resolve().parents[1] / "examples" / "fourier_winding.py"
     engine = runpy.run_path(str(example), run_name="x")["s"].engine
     assert engine.lint(strict=True) == []
-    sheet = engine.storyboard([2.4, 4.3, 7.5], size=(320, 180))["image"]
+    sheet = engine.storyboard([2.35, 6.3, 13.8], size=(320, 180))["image"]
     _golden("fourier_winding", sheet, engine.pass_runner().renderer_class())

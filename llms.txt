@@ -91,7 +91,7 @@
 - `vector_field`: flash, p, q, pos, extent, spacing, color_by_size, length_by
 - `vector_field_3d`: flash, fp, fq, fr, pos, extent, counts, spacing, color_by_size, length_by
 - `wavefront`: flash, center, radius, rings
-- `winding`: flash, frequencies, amplitudes, fs, samples, freq, max_freq, progress, size, pos, hue_along
+- `winding`: flash, frequencies, amplitudes, fs, samples, freq, max_freq, progress, size, pos, hue_along, spectrum_guide
 
 ## Docs
 

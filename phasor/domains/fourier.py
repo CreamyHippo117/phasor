@@ -349,6 +349,7 @@ class Winding(ObjectBase):
         size: float = Field(2.0, gt=0, allow_inf_nan=False)
         pos: Vec3 = (0.0, 0.0, 0.0)  # centre of the winding diagram
         hue_along: float = Field(0.0, ge=0, allow_inf_nan=False)
+        spectrum_guide: bool = True
 
         @model_validator(mode="after")
         def _signal(self):
@@ -430,9 +431,10 @@ class Winding(ObjectBase):
 
         circle(ctx, cam, p.pos, p.size, width, color=guide)
         x, y, z = p.pos
-        origin = self._spectrum_points(p, ydir, 0.0, 0.0)
-        end = self._spectrum_points(p, ydir, p.max_freq, 0.0)
-        polyline(ctx, cam, [end, origin, (origin[0], y + ydir * p.size, z)], width, color=guide)
+        if p.spectrum_guide:
+            origin = self._spectrum_points(p, ydir, 0.0, 0.0)
+            end = self._spectrum_points(p, ydir, p.max_freq, 0.0)
+            polyline(ctx, cam, [end, origin, (origin[0], y + ydir * p.size, z)], width, color=guide)
         disc(ctx, cam, (x, y, z), width, color=guide)
 
         if p.progress > 0:
