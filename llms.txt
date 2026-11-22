@@ -62,6 +62,7 @@
 - `impulse_response`: flash, size, source, listener, order, material, absorption, pos, extent, duration, reveal, show_rt60
 - `limit`: flash, function, a, epsilon, xmin, xmax, pos, bands
 - `line`: flash, points, progress, hue_along, hue
+- `linear_system`: flash, matrix, pos, extent, seeds, n_seeds, t_end, steps, progress, backward, labels, hue_cycles, seed
 - `listener`: flash, pos, r
 - `loop_integral`: flash, p, q, measure, center, radius, pos, progress, arrows
 - `matrix`: flash, matrix, pos, digits
@@ -87,7 +88,7 @@
 - `taylor`: flash, function, center, order, xmin, xmax, ymax, pos
 - `text`: flash, text, pos, anchor, leader, leader_on, write
 - `tracer`: flash, path, progress, trail, r
-- `transform_grid`: flash, matrix, pos, extent, spacing, square, basis
+- `transform_grid`: flash, matrix, pos, extent, spacing, square, basis, flow, flow_time
 - `vector_field`: flash, p, q, pos, extent, spacing, color_by_size, length_by
 - `vector_field_3d`: flash, fp, fq, fr, pos, extent, counts, spacing, color_by_size, length_by
 - `wavefront`: flash, center, radius, rings

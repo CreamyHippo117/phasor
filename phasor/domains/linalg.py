@@ -60,14 +60,21 @@ class TransformGrid(ObjectBase):
         spacing: float = Field(1.0, gt=0)
         square: float = Field(0.35, ge=0, le=1)  # opacity of the filled unit square/cube
         basis: float = Field(1.0, ge=0, le=1)  # opacity of the basis arrows
+        # A system x' = flow x: when set, the grid shows its flow e^(flow * flow_time) instead
+        # of ``matrix`` (animate ``flow_time`` for the grid being carried along, exactly).
+        flow: Matrix3 = ()  # empty: off
+        flow_time: float = Field(0.0, ge=0, le=50)
 
-        @field_validator("matrix")
+        @field_validator("matrix", "flow")
         @classmethod
         def _m(cls, v):
-            return _check_matrix(v)
+            return v if not v else _check_matrix(v)
 
     def _m(self, state):
-        return lm.matrix(self.me(state).params.matrix)
+        p = self.me(state).params
+        if p.flow:
+            return lm.expm(p.flow, p.flow_time)
+        return lm.matrix(p.matrix)
 
     def _map(self, state, pts):
         p = self.me(state).params
@@ -102,6 +109,7 @@ class TransformGrid(ObjectBase):
         ev = lm.eigen(m)["values"]
         return {
             "kind": "transform_grid",
+            **({"backdrop": True} if self.me(state).params.flow else {}),  # a flow is a field
             "dimension": int(m.shape[0]),
             "matrix": m.round(6).tolist(),
             "determinant": round(lm.determinant(m), 6),

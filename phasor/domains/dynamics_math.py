@@ -14,6 +14,7 @@ from dataclasses import dataclass
 import numpy as np
 import sympy as sp
 
+from phasor.domains.linalg_math import expm
 from phasor.render.gpu.codegen import FunctionError, parse_expression
 
 __all__ = [
@@ -22,6 +23,7 @@ __all__ = [
     "System",
     "classify",
     "fixed_points",
+    "linear_paths",
     "nullcline_segments",
     "trajectories",
 ]  # fmt: skip
@@ -296,3 +298,20 @@ def hash_seeds(n: int, extent, seed: int = 0) -> np.ndarray:
     wobble = np.c_[(k * 0.6180339887) % 1.0, (k * 0.7548776662) % 1.0] - 0.5
     pts = pts + wobble * np.array([0.6 / cols, 0.6 / rows])
     return (pts - 0.5) * np.array([w, h])
+
+
+# ---------------------------------------------------------------- linear systems (D5)
+# (the matrix exponential, ``expm``, lives in linalg_math)
+
+
+def linear_paths(A, seeds, t_end: float, steps: int, bounds, direction: float = 1.0) -> np.ndarray:
+    """Exact trajectories ``e^(tA) x0`` of x' = A x, shape (seeds, steps + 1, 2); a point
+    outside ``bounds`` (x0, x1, y0, y1), and every later one, is NaN."""
+    seeds = np.asarray(seeds, dtype=np.float64).reshape(-1, 2)
+    ts = np.linspace(0.0, t_end * direction, steps + 1)
+    paths = np.stack([seeds @ expm(A, t).T for t in ts], axis=1)
+    x0, x1, y0, y1 = bounds
+    out = (paths[..., 0] < x0) | (paths[..., 0] > x1) | (paths[..., 1] < y0) | (paths[..., 1] > y1)
+    out = np.logical_or.accumulate(out, axis=1)
+    paths[out] = np.nan
+    return paths

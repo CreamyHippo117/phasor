@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import scipy.linalg
 
 TOL = 1e-9
 
@@ -72,3 +73,9 @@ def project(v, onto) -> np.ndarray:
     """The projection of ``v`` onto the line through ``onto``."""
     v, d = np.asarray(v, dtype=np.float64), np.asarray(onto, dtype=np.float64)
     return (v @ d) / (d @ d) * d
+
+
+def expm(m, t: float = 1.0) -> np.ndarray:
+    """The matrix exponential e^(t m): the flow of x' = m x for time ``t`` (it carries every
+    start point to where it is after ``t``; its determinant is e^(trace t))."""
+    return scipy.linalg.expm(float(t) * matrix(m))
