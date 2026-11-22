@@ -8,9 +8,9 @@ them: the direct front first, then the reflected fronts from the image sources b
 walls. Panel at the top: the impulse response at the listener filling in as the arrivals
 reach it. The camera orbits the room. Time runs at 1/100 of real speed.
 
-The L-shaped room in ``examples/assets/l_room.obj`` works the same way: set
-``path="assets/l_room.obj"`` on the room (the panel then no longer matches; it is for a
-shoebox).
+A room of another shape works the same way: put a Wavefront ``.obj`` next to the scene and
+set ``path`` on the room (the repository has an L-shaped one, ``examples/assets/l_room.obj``;
+the panel is for a shoebox only).
 
 Run:  uv run python examples/room_3d.py      (prints the rays and fronts at a few times)
 """

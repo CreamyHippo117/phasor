@@ -326,6 +326,7 @@ Each issue has `code`, `severity`, `message`, `ids`, `times`, `fix_hint`, and `f
 | `unsolved` | error | a constraint or guard does not hold |
 | `raw_motion` | warning, strict only | a transition written with raw `to()` instead of a verb |
 | `orphan_override` | error | a tweak whose object is gone |
+| `missing_file` | warning | a file an object reads (a room's `.obj`) is not in the scene's folder; it draws nothing |
 
 `engine.autofix()` applies every `fix` the linter offers (add `near` for a child label that
 overlaps, `on_screen` for something cut by the frame), lints again, and returns
