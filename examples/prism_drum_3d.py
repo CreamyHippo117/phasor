@@ -15,7 +15,7 @@ from phasor.domains import pde
 s = Scene("prism_drum_3d", look="prism")
 s.use_camera("orbit")
 s.set("camera.target", (0.0, 0.0, 0.0))
-s.set("camera.distance", 14.0)
+s.set("camera.distance", 16.0)
 s.set("camera.elevation", 30.0)
 s.set("camera.azimuth", -50.0)
 s.add(pde.Surface(id="drum", kind="wave", mode=(2, 3), scale=1.2, height=1.6, n=64,
