@@ -50,10 +50,13 @@
 - `eigen_lines`: flash, matrix, pos, length
 - `epicycles`: flash, points, terms, phase, trace
 - `equation`: flash, parts, colors, pos, write, from_parts, from_colors, from_pos, morph
+- `filtered_signal`: flash, kind, order, cutoff, cutoff2, fs, radius, zeros, poles, gain, pos, extent, frequencies, amplitudes, duration, progress
+- `filtered_spectrum`: flash, kind, order, cutoff, cutoff2, fs, radius, zeros, poles, gain, pos, extent, frequencies, amplitudes, window, samples, fade, envelope
 - `fixed_points`: flash, f, g, constants, pos, extent, rays, labels, ray_length, reveal, grid
 - `flow_lines`: flash, fp, fq, fr, pos, extent, seeds, steps, length, both, progress
 - `flow_particles`: flash, fp, fq, fr, pos, extent, count, speed, lifetime, tail, seed
 - `fractal`: flash, kind, c, pos, size, max_iter, density, hue, center, zoom, steady
+- `frequency_response`: flash, kind, order, cutoff, cutoff2, fs, radius, zeros, poles, gain, pos, extent, plot, scale, floor_db, reveal
 - `galois_diagram`: flash, primes, pos, width, height, gap
 - `graph`: flash, function, xmin, xmax, pos
 - `homomorphism`: flash, n, m, a, pos, r, gap, progress
@@ -75,6 +78,7 @@
 - `pde_surface`: flash, kind, time, pos, size, n, diffusivity, speed, mode, feed, kill, seed, scale, height
 - `permutation`: flash, perm, pos, spacing, progress
 - `phase_portrait`: flash, f, g, constants, pos, extent, seeds, n_seeds, t_end, steps, progress, backward, flow, flow_spacing, nullclines, hue_cycles, seed
+- `pole_zero`: flash, kind, order, cutoff, cutoff2, fs, radius, zeros, poles, gain, pos, size, scale, probe
 - `polygon`: flash, n, pos, r, rotation, flip, fill
 - `pressure_slice`: flash, size, origin, source, z, time, dx, material, absorption, frequency, gain, seed, smooth, isolines
 - `riemann_sum`: flash, function, a, b, n, rule, pos
