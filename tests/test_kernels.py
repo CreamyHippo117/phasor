@@ -132,6 +132,8 @@ CASES = {
                   "height": 1.6, "weights": SPLAT_WEIGHTS, "sigma": 1.4, "gain": 3.0}),
         (OFFSET, {"points": SPLAT_POINTS, "colors": (1.0, 0.5, 0.25), "center": (0.0, 0.0),
                   "height": 2.0, "sigma": 0.7, "curve": False}),
+        (FULL, {"points": SPLAT_POINTS, "colors": SPLAT_COLORS, "center": (0.0, 0.0),
+                "height": 2.0, "weights": SPLAT_WEIGHTS, "gain": 4.0, "white": 0.8}),
     ],
 }  # fmt: skip
 ALL_CASES = [(n, t, p) for n, cases in CASES.items() for t, p in cases]

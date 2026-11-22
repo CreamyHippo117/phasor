@@ -35,7 +35,7 @@ s.set("camera.height", 6)  # world units visible top to bottom
 | `cx.DomainColoring` | `function` (e.g. `"1/(z**2 + 1)"`; it may use the constant `a`), `a` ((re, im), the value of `a`: animate it with `.to("id.a", (re, im))` and the zeros and poles move, nothing recompiles), `pos` (center), `size` (w, h), `contour` (0-1), `softness` (0-1, edge feathering), `hue` (turns the wheel); the prism look: `radius` (> 0 turns it on: zeros and poles glow this far), `ambient` (0-1, light elsewhere), `lines` (glowing rays of phase per turn, plus a ring each time \|f\| doubles) | `colormap` (colormap, phase), `glow` (glow, none; used by the prism look) |
 | `cx.Fractal` | `kind` (`mandelbrot`/`julia`), `c` (Julia constant), `pos`, `size`, `max_iter`, `density`, `hue`, `center` (exact text `"re im"`), `zoom` (powers of ten, to 280), `steady` (hold the outer color in a dive); the prism look: `radius` (> 0 turns it on: the edge of the set glows this far, in world units of the rectangle), `ambient` (0-1, light far from the edge) | `colormap` (colormap, sequential), `glow` (glow, none; used by the prism look) |
 | `cx.RiemannSurface` | `kind` (`sqrt`/`cbrt`/`log`), `pos` (branch point), `radius`, `height` (`re`/`im`), `scale`, `rings`, `segments` | `colormap` (colormap, phase), `material` (surface, solid) |
-| `cloud.PointCloud` | `source` (`roots`/`attractor`/`buddhabrot`/`points`), `degree` and `coefficients` (roots), `kind` (`clifford`/`dejong`/`lorenz`) and `constants` (attractor), `max_iter` (buddhabrot), `points` and `values` (given directly), `count` (at most), `seed`, `pos` (centre and origin of the points), `size` (the rectangle it is seen in), `scale`, `point_size` (splat radius, px), `exposure`, `hue`, `color_by` (`source`/`phase`) | `colormap` (colormap, spectrum), `glow` (glow, none) |
+| `cloud.PointCloud` | `source` (`roots`/`attractor`/`buddhabrot`/`points`), `degree` and `coefficients` (roots), `kind` (`clifford`/`dejong`/`lorenz`) and `constants` (attractor), `max_iter` (buddhabrot), `points` and `values` (given directly), `count` (at most), `seed`, `pos` (centre and origin of the points), `size` (the rectangle it is seen in), `scale`, `point_size` (splat radius, px), `exposure`, `hue`, `color_by` (`source`/`phase`), `twist` (roots: turns of the last coefficient, animatable), `twinkle` (0-1, life), `white` (0-1, white-hot dense parts) | `colormap` (colormap, spectrum), `glow` (glow, none) |
 | `Text` | `text` (`$...$` is typeset math), `pos`, `anchor` (`center`/`left`/`right`), `leader`, `leader_on` (set by layout) | `color` (emphasis, primary), `size` (text, label), `leader` (stroke, hairline) |
 | `Equation` | `parts` (math or text, set on one baseline), `colors` (an emphasis role per part), `pos` | `color` (emphasis, primary), `size` (text, math), `glow` (glow, none) |
 
@@ -412,7 +412,7 @@ assert field.shape == (90, 160) and (field == -1).any()  # -1 marks points in th
 | `gauss` | `image`, `sigma`, `axis` | one pass of a Gaussian blur along x (0) or y (1) (whole image) |
 | `srgb8` | `image` | linear display RGBA (0..1) -> (h, w, 3) uint8 sRGB (whole image) |
 | `accumulate` | `image`, `weight=1.0`, `acc=None` | float32 `acc + weight * image`; `image` may be float16 (whole image, any channel count; the motion-blur sum) |
-| `splat` | `points` ((n, 2) plane coordinates), `colors` ((n, 3) linear RGB, or one), `center`, `height`, `weights=None`, `sigma=1.0` (px), `gain=1.0`, `curve=True` | each point adds a Gaussian of light (`atomicAdd`); rgb = mean colour x a, alpha a = 1 - exp(-gain x density); `curve=False`: the raw sums |
+| `splat` | `points` ((n, 2) plane coordinates), `colors` ((n, 3) linear RGB, or one), `center`, `height`, `weights=None`, `sigma=1.0` (px), `gain=1.0`, `curve=True`, `white=0.0` | each point adds a Gaussian of light (integer `atomicAdd` in fixed point, so the same bits every run); rgb = mean colour (toward white by white x a^4) x a, alpha a = 1 - exp(-gain x density); `curve=False`: the raw sums |
 
 - `center` and `height` describe the view like the 2D camera: the point at the middle of
   the frame and how many units the frame is tall.
@@ -790,6 +790,16 @@ says (the polynomial's place in the list). Presets `prism` (the `prism` looks us
 `plain`. Points are cached per source parameters, so animating `hue`, `exposure` or the
 camera does not recompute them. Numerics: `phasor.domains.cloud_math`.
 
+Motion: `twist` (roots) turns the last coefficient of the set round the origin by that share
+of a turn (b -> b e^(2 pi i twist); the leading coefficient stays), so tweening it with
+`.to("id.twist", 0.06)` makes every root glide and the fractal edge tear and morph; the same
+polynomials are used at every value, so colours stay with them. A million roots solve in about
+half a second (LAPACK on all cores) per new value. `twinkle` flickers each point's light by up
+to that share (the roots of one polynomial together), slowly; it is life: `lively` gives the
+full amount, `subtle` half, `off` or an `exact` tag none. `white` turns the colour of the
+densest parts toward white (by `white * a^4`, a the tone curve's light), never the light
+itself. The `prism` preset sets `white` 0.8 and `twinkle` 0.6.
+
 ```python
 from phasor import Scene, cloud
 
@@ -798,6 +808,8 @@ sky.add(cloud.PointCloud(id="roots", source="roots", degree=8, size=(4.5, 2.6)))
 seen = sky.engine.inspect(0.0, id="roots")["objects"][0]["semantic"]
 assert seen["points"] == 2**8 * 8 and seen["backdrop"]  # every +-1 polynomial of degree 8
 assert sky.engine.document.object("roots").style["glow"] == "strong"
+sky.at(0.5).to("roots.twist", 0.05, duration=3.0)  # the roots glide; the ring tears open
+assert 0 < sky.engine.state_at(2.0)["roots"].params.twist < 0.05
 ```
 
 **A 3D room with sound bouncing in it** (`ac`, BEAUTY.md step 7). Give the scene an orbit
