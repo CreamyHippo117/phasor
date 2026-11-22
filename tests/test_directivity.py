@@ -67,5 +67,5 @@ def test_directivity_golden_storyboard():
     scene = runpy.run_path(str(ROOT / "examples" / "directivity.py"))["s"]
     engine = scene.engine
     assert engine.lint(strict=True) == []
-    sheet = engine.storyboard([0.5, 2, 3.5], size=(320, 180))["image"]
+    sheet = engine.storyboard([0.9, 3.65, 5.0, 7.75, 10.5], size=(320, 180))["image"]
     _golden("directivity", sheet, engine.pass_runner().renderer_class())
