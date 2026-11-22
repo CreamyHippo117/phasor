@@ -36,6 +36,7 @@ def _cases(w: int, h: int) -> dict[str, dict[str, Any]]:
         "domain_glow": {"function": f, "center": (0.0, 0.0), "height": 4.5, "lines": 12},
         "escape": {"center": (-0.6, 0.0), "height": 2.6, "max_iter": 256},
         "palette": {"field": field, "lut": phase_lut()},
+        "fractal_glow": {"field": field, "lut": phase_lut(), "radius": 3.0},
         "bright": {"image": image, "threshold": 1.0},
         "fringe": {"image": image, "amount": 0.004},
         "vignette": {"image": image, "strength": 0.3},

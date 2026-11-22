@@ -28,8 +28,13 @@ lines = 12
 [defaults.domain_coloring.style]
 glow = "strong"
 
+[defaults.fractal.params]  # the prism preset: the set dark, its edge glowing (BEAUTY.md item 4)
+radius = 0.02
+ambient = 0.05
+
 [defaults.fractal.style]
 colormap = "ocean"
+glow = "strong"
 
 [defaults.epicycles.style]
 glow = "strong"

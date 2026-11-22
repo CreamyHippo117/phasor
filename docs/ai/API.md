@@ -33,7 +33,7 @@ s.set("camera.height", 6)  # world units visible top to bottom
 | `Dot` | `pos`, `r` (world radius, default 0.1) | `color` (emphasis, primary), `glow` (glow, none) |
 | `Line` | `points` (2 or more), `progress`, `hue_along` (colormap cycles along the length; 0: one color), `hue` (shifts them) | `color` (emphasis, primary), `stroke` (stroke, regular), `glow` (glow, none), `colormap` (colormap, spectrum) |
 | `cx.DomainColoring` | `function` (e.g. `"1/(z**2 + 1)"`), `pos` (center), `size` (w, h), `contour` (0-1), `softness` (0-1, edge feathering), `hue` (turns the wheel); the prism look: `radius` (> 0 turns it on: zeros and poles glow this far), `ambient` (0-1, light elsewhere), `lines` (glowing rays of phase per turn, plus a ring each time \|f\| doubles) | `colormap` (colormap, phase), `glow` (glow, none; used by the prism look) |
-| `cx.Fractal` | `kind` (`mandelbrot`/`julia`), `c` (Julia constant), `pos`, `size`, `max_iter`, `density`, `hue`, `center` (exact text `"re im"`), `zoom` (powers of ten, to 280), `steady` (hold the outer color in a dive) | `colormap` (colormap, sequential) |
+| `cx.Fractal` | `kind` (`mandelbrot`/`julia`), `c` (Julia constant), `pos`, `size`, `max_iter`, `density`, `hue`, `center` (exact text `"re im"`), `zoom` (powers of ten, to 280), `steady` (hold the outer color in a dive); the prism look: `radius` (> 0 turns it on: the edge of the set glows this far, in world units of the rectangle), `ambient` (0-1, light far from the edge) | `colormap` (colormap, sequential), `glow` (glow, none; used by the prism look) |
 | `cx.RiemannSurface` | `kind` (`sqrt`/`cbrt`/`log`), `pos` (branch point), `radius`, `height` (`re`/`im`), `scale`, `rings`, `segments` | `colormap` (colormap, phase), `material` (surface, solid) |
 | `Text` | `text` (`$...$` is typeset math), `pos`, `anchor` (`center`/`left`/`right`), `leader`, `leader_on` (set by layout) | `color` (emphasis, primary), `size` (text, label), `leader` (stroke, hairline) |
 | `Equation` | `parts` (math or text, set on one baseline), `colors` (an emphasis role per part), `pos` | `color` (emphasis, primary), `size` (text, math), `glow` (glow, none) |
@@ -405,6 +405,7 @@ assert field.shape == (90, 160) and (field == -1).any()  # -1 marks points in th
 | `domain` | `function`, `center`, `height`, `contour=0.35`, `lut=None`, `precision="f32"` | RGBA: hue = phase, bands = each doubling of the modulus, poles white |
 | `domain_glow` | `function`, `center`, `height`, `lut=None`, `radius=0.3`, `ambient=0.08`, `contour=0.15`, `precision="f32"`, `lines=0`, `line_glow=0.6` | RGBA: hue = phase, lit near zeros and poles (Newton distance \|f/f'\|), rays and rings about a pixel wide; alpha = glow weight |
 | `escape` | `center`, `height`, `max_iter=256`, `julia=None`, `precision=None` | smooth escape count; Mandelbrot, or the Julia set of `julia=(re, im)` |
+| `fractal_glow` | `field` (from `escape` or `deep`), `lut`, `density=0.35`, `offset=0.0`, `inside=(0,0,0)`, `radius=2.0` (pixels), `ambient=0.08` | RGBA: the palette ramp by sqrt(count), lit along the edge of the set (distance from the count's gradient, 1 / (ln 2 \|grad\|)); inside = `inside`, alpha 0; alpha = glow weight |
 | `tonemap` | `image`, `exposure=1.0` | ACES filmic curve, linear in and out (whole image) |
 | `gauss` | `image`, `sigma`, `axis` | one pass of a Gaussian blur along x (0) or y (1) (whole image) |
 | `srgb8` | `image` | linear display RGBA (0..1) -> (h, w, 3) uint8 sRGB (whole image) |
@@ -444,7 +445,7 @@ changes an old scene.
 yourself, then the preset, then the look, then the type's default. Presets: `dot`: `plain`,
 `glowing`, `beacon`; `line`: `ink`, `glowing`, `beam`, `hairline`; `domain_coloring`:
 `classic` (hard edges), `soft_phase` (restrained wheel, feathered), `vivid`, `prism` (dark, glowing zeros and poles, rays and rings of light; the `prism` looks use it); `fractal`:
-`classic`, `ember`, `ocean`; `riemann_surface`: `glass`, `soft_glass`.
+`classic`, `ember`, `ocean`, `prism` (the set dark, its edge glowing; the `prism` looks use it); `riemann_surface`: `glass`, `soft_glass`.
 
 **Palettes** are style roles (`colormap`): `phase` (the full wheel: use it where hue means
 phase), `soft_phase` (three-hue wheel), `sequential`, `ember`, `ocean` (two-tone ramps),
@@ -468,6 +469,19 @@ assert lit.engine.document.object("plane").params["radius"] > 0
 A kernel picture glows through its alpha channel: alpha is a per-pixel glow weight, and the
 object's `glow` role (above 1) turns it into light and bloom. Kernels that only paint leave
 alpha at 1 and the role at `none`.
+
+**Prism fractals**: `cx.Fractal(preset="prism")` (or the `prism` looks) keeps the set dark
+(the background), colours the outside from the palette by escape time, and lights the edge
+of the set out to `radius` world units, with haze. The glow is sized on screen, so it stays
+as fine through a deep zoom (the perturbation path glows too). Palettes still apply.
+
+```python
+from phasor import Scene, cx
+
+edge = Scene("glowing edge", look="prism", passes=None)
+edge.add(cx.Fractal(id="j", kind="julia", c=(-0.7741, 0.1501), size=(8, 4.5)))
+assert edge.engine.document.object("j").params["radius"] > 0
+```
 
 **Living motion** (`life`: `off`, `subtle`, `lively`): glow breathes, dots drift a fraction
 of their radius, color fields turn a few percent of the wheel, all a deterministic function

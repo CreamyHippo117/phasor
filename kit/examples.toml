@@ -97,6 +97,11 @@ kind = "physics"
 tier = "technique"
 teaches = "Heat maps in the prism look: a spreading hot spot, a drum mode, a spectrogram, glowing isolines"
 
+[examples.prism_fractal]
+kind = "fractals"
+tier = "technique"
+teaches = "Fractals in the prism look: a Julia set morphing as c drifts, a short Mandelbrot dive, the edge of the set glowing"
+
 [examples.cluttered]
 tier = "hidden"
 why = "deliberately cluttered, to show the linter flagging it"
