@@ -248,7 +248,7 @@ class Convolution(ObjectBase):
             col = np.tile(col, (live.sum(), 1))
             col[:, 3] *= 0.35 + 0.65 * np.abs(pr[live]) / max(float(np.abs(pr).max()), 1e-12)
             pitch = (fr.x(sg[1]) - fr.x(sg[0])) / unit * 1.05 if len(sg) > 1 else w
-            segment_batch(ctx, cam, a, b, pitch, colors=col, glow=1.0)
+            segment_batch(ctx, cam, a, b, pitch, colors=col, glow=1.0 + (glow - 1.0) * 0.4)
             full = fr.pts(sg, fr.y_top(pr))
             polyline(ctx, cam, full, w * 0.8, color=with_alpha(me.style["product"], alpha),
                      glow=glow)  # fmt: skip
