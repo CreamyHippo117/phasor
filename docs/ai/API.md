@@ -200,6 +200,50 @@ assert me.inspect(4.0, id="comet.count")["objects"][0]["semantic"]["text"] == "$
 assert "after.ring" in [o.id for o in me.document.objects]
 ```
 
+**Smooth transitions** (`examples/prism_transitions.py`).
+
+- *Solving and rearranging.* Give each part of an `Equation` a name with `keys` (`""` for
+  none). In a `transform`, the part with the same key in the source becomes that part
+  wherever it was, even when its text changes: `+a` on the left becomes `-a` on the right,
+  and `0.6 i` turns into `0.7 i` in place. The text changes while the part moves. Parts
+  without keys pair by equal text, in order, as before.
+- *Carried parts arc.* A part carried past others travels round them by the theme's
+  `[motion] transform_arc` line heights: over them going right, under them going left. The
+  parts that keep their order go straight.
+- *Semantics.* Mid-transform they report `matched`, `changed` (pairs whose text differs)
+  and `carried_over` (pairs that arc).
+- *A function changing into another.* `cx.DomainColoring(to="...", blend=0..1)` shows
+  w = (1 - blend) f + blend g, a straight line between the two functions. Every frame is
+  then a true picture of a function: zeros glide, a pole of g grows out of a point, and
+  there are no seams. A blend in log space would cut the plane along the branch cuts of
+  log f and log g. At 0 and 1 you get exactly f and g. Both `blend` and `a` are kernel
+  arguments, so animating them never recompiles.
+- *Slow changes.* `morph(path, value, until="marker")` runs a change until a marker instead
+  of the theme's `morph` time: a constant drifting slowly while it is talked about.
+
+```python
+from phasor import Equation, Scene, cx
+
+tr = Scene("solve", passes=None)
+tr.add(
+    cx.DomainColoring(
+        id="plane",
+        function="(z**5 - 1 - a)/(z**2 + a)",
+        to="(z**3 - 1 - a)/(z**2 + a)",
+        a=(0.0, 0.6),
+    )
+)
+tr.add(Equation(id="step1", parts=("$z^2$", r"$+\,a$", "$=$", "$0$"), keys=("z", "a", "eq", "")))
+tr.add(Equation(id="step2", parts=("$z^2$", "$=$", "$-a$"), keys=("z", "eq", "a")))
+for name, t in (("solve", 1.0), ("blend", 3.0), ("done", 9.0)):
+    tr.marker(name, t)
+tr.at("solve").transform("step1", "step2").morph("plane.a", (0.5, 0.7), until="blend")
+tr.at("blend").morph("plane.blend", 1.0, until="done")
+mid = tr.engine.inspect(1.5, id="step2")["objects"][0]["semantic"]
+assert (mid["matched"], mid["changed"], mid["carried_over"]) == (3, 1, 1)
+assert len(tr.engine.inspect(9.0, id="plane")["objects"][0]["semantic"]["zeros"]) == 3
+```
+
 ## Animate by hand
 
 ```python
@@ -557,6 +601,19 @@ epicycles, parametric curves, contours, the algebra and PDE drawings. Its theme
 `prism_vivid` starts from `prism` (`base = "prism"`) and adds `[strokes] hue_along`, which
 any theme may set. Strokes that do not glow (axes, grids) keep their color, and objects that
 color by meaning (flow lines by speed, fields by strength) keep theirs.
+
+**The prism look on a field** (`look="prism_field"`, for domain coloring scenes) is `prism`
+with two changes, and `prism_domain` and `prism_transitions` use it:
+
+- Equations drift less. `Equation(drift=)` is the share of the theme's `[life] float` that
+  an equation drifts; the look sets it to 0.6.
+- The field is more see-through, with more light. A shorter haze (`radius`), a darker wash
+  (`ambient`), brighter rays and rings (`line_glow`, 0.6 by default) and more emitted light
+  (`light`, which scales what the glow role adds; 1 by default).
+
+A look file may start from another with `base = "prism"` and change only what it names.
+During a `transform`, an equation's drift passes from the source's to the target's, so
+nothing jumps.
 
 **Palettes within the prism looks.** The lens and glow stay; the colors are a choice:
 `Scene(..., look="prism_everywhere", palette="moonlight")`. `spectrum` is the prism rainbow

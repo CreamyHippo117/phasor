@@ -321,7 +321,8 @@ class Workspace:
         """Animate with a choreography verb starting at a marker (or seconds). Timing comes
         from the theme. Returns when it starts and ends so the next step can follow it.
         ``orbit`` swings the 3D camera ``value`` degrees (default 360), until marker ``until``
-        if given. ``transform`` and ``become`` take ``targets=[from, to]``; ``sweep`` takes
+        if given; ``morph`` too runs until ``until`` if given. ``transform`` and
+        ``become`` take ``targets=[from, to]``; ``sweep`` takes
         ``path`` and ``value``; ``circumscribe`` takes one target and ``value`` "circle" or
         "box"."""
         if verb not in VERBS:
@@ -336,7 +337,7 @@ class Workspace:
         if verb in ("morph", "settle"):
             if path is None or value is None:
                 raise ToolError(f"{verb} needs path and value, e.g. path='dot.pos', value=[1, 2]")
-            args: tuple = (path, value)
+            args: tuple = (path, value, until) if verb == "morph" else (path, value)
         elif verb == "orbit":
             args = (360.0 if value is None else float(value), until)
         elif verb == "focus_pull":

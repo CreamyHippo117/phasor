@@ -4,7 +4,9 @@ f(z) = (z^5 - 1) / (z^2 + 0.6 i) has five zeros on the unit circle and two poles
 Each zero and pole is a point of light with the phase of f wrapped round it as colour (the
 colours run one way round a zero and the other way round a pole); rays of constant phase and
 rings where |f| doubles are drawn as thin light; the rest is near-dark, with a faint wash of
-phase. The look is lively, so the colours drift a little round the wheel.
+phase. The look is lively, so the colours drift a little round the wheel. It is
+``prism_field``: prism with the equation drifting less and the field more see-through, its
+lines carrying more light (owner, 2026-11-22). ``examples/prism_transitions.py`` animates it.
 
 Run:  uv run python examples/prism_domain.py      (prints the zeros and poles it shows)
 """
@@ -13,7 +15,7 @@ from phasor import Equation, Scene, cx
 
 F = "(z**5 - 1)/(z**2 + 0.6j)"
 
-s = Scene("prism_domain", look="prism")
+s = Scene("prism_domain", look="prism_field")
 s.set("camera.center", (0.0, 0.0, 0.0))
 s.set("camera.height", 4.5)
 s.add(cx.DomainColoring(id="plane", function=F, size=(8.0, 4.5), radius=0.2))

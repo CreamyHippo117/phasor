@@ -92,6 +92,11 @@ kind = "complex"
 tier = "technique"
 teaches = "Domain coloring in the prism look: zeros and poles as points of light, phase rays and modulus rings as thin light"
 
+[examples.prism_transitions]
+kind = "complex"
+tier = "technique"
+teaches = "Smooth transitions: a constant drifting (zeros and poles glide), one function blending into another, equations rearranging as they are solved (keys, arcs, morph until a marker)"
+
 [examples.prism_heat]
 kind = "physics"
 tier = "technique"

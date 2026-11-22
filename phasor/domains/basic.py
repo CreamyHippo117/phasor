@@ -9,6 +9,7 @@ units through the camera, so they look the same at any zoom.
 from __future__ import annotations
 
 import itertools
+import math
 from typing import Any, ClassVar, Literal
 
 import numpy as np
@@ -264,10 +265,17 @@ _RELATIONS = (
     "\\ne",
 )
 THICK = 5 / 18
+# Relations mathtext sets with a space before them even alone (measured: about 0.2 em of
+# left margin); a lone "+", "-", "\cdot" or "\times" is set tight, like a sign.
+_SET_APART = tuple(r for r in _RELATIONS if r not in ("+", "-", "\\cdot", "\\times"))
 
 
 def _spaced(a: str, b: str) -> bool:
-    """Whether a relation sits where part ``a`` meets part ``b``."""
+    """Whether a relation sits where part ``a`` meets part ``b``. A part that is only a
+    relation (``"$=$"``, kept apart so ``transform`` can carry terms across it) is already
+    set with TeX's space before it, so it takes the extra space only after it."""
+    if _edge(b, False) in _SET_APART:
+        return False
     return _edge(a, True).endswith(_RELATIONS) or _edge(b, False).startswith(_RELATIONS)
 
 
@@ -299,12 +307,21 @@ class Equation(ObjectBase):
         colors: tuple[str, ...] = ()  # an emphasis role per part; missing ones use ``color``
         pos: Vec3 = (0.0, 0.0, 0.0)  # center of the equation, on its baseline's middle
         write: float = Field(1.0, ge=0, le=1)  # share written in, left to right (``write``)
-        # Becoming this equation from another (the ``transform`` verb): its parts, colors and
-        # place, and how far along (1: done). Parts that match glide over; the rest fade.
+        drift: float = Field(1.0, ge=0)  # share of the theme's ``[life] float`` it drifts
+        # A name per part ("" for none): in a ``transform`` the part with the same key in the
+        # source becomes this one wherever it was, even with other text ("+a" -> "-a" moving
+        # across the "="), and the text changes as it travels.
+        keys: tuple[str, ...] = ()
+        # Becoming this equation from another (the ``transform`` verb): its parts, colors,
+        # keys and place, and how far along (1: done). Parts that match glide over (a part
+        # carried past others arcs ``arc`` line heights round them); the rest fade.
         from_parts: tuple[str, ...] = ()
         from_colors: tuple[str, ...] = ()
+        from_keys: tuple[str, ...] = ()
         from_pos: Vec3 = (0.0, 0.0, 0.0)
+        from_id: str = ""  # the source: life's drift passes from its to this one's, no jump
         morph: float = Field(1.0, ge=0, le=1)
+        arc: float = Field(0.0, ge=0)
 
         @field_validator("parts", "from_parts")
         @classmethod
@@ -380,7 +397,9 @@ class Equation(ObjectBase):
                 {
                     "transforming_from": list(p.from_parts),
                     "morph": round(p.morph, 6),
-                    "matched": len(match_parts(p.from_parts, p.parts)),
+                    "matched": len(pairs := pair_parts(p.from_parts, p.parts, p.from_keys, p.keys)),
+                    "changed": sum(p.from_parts[i] != p.parts[j] for i, j in pairs),
+                    "carried_over": sum(crossing(pairs, p.from_parts, p.parts)),
                 }
                 if self._transforming(p)
                 else {}
@@ -410,16 +429,40 @@ class Equation(ObjectBase):
         # the source's other parts fade out in the first half, this one's fade in after.
         m = p.morph
         before = self._layout(state, p.from_parts, p.from_pos)[0]
-        pairs = dict((j, i) for i, j in match_parts(p.from_parts, p.parts))
+        matched = pair_parts(p.from_parts, p.parts, p.from_keys, p.keys)
+        over = crossing(matched, p.from_parts, p.parts)
+        pairs = dict((j, i) for i, j in matched)
+        cam = state.camera_for(me)
+        right, up = np.asarray(cam.right), np.asarray(cam.up)
+        for k, (i, j) in enumerate(matched):
+            part, origin, h = layout[j]
+            old = p.from_parts[i]
+            # centers glide (parts of different widths stay centered on each other)
+            wa, wb = text_metrics.aspect(old) * h, text_metrics.aspect(part) * h
+            c0, c1 = before[i][1] + right * wa / 2, origin + right * wb / 2
+            center = c0 * (1 - m) + c1 * m
+            if over[k]:  # carried past other parts: over them going right, under going left
+                side = 1.0 if float((c1 - c0) @ right) >= 0 else -1.0
+                center = center + up * (side * p.arc * h * math.sin(math.pi * m))
+            a = np.asarray(self._color(me, p.from_colors, i), dtype=np.float64)
+            b = np.asarray(self._color(me, p.colors, j), dtype=np.float64)
+            color = tuple(a * (1 - m) + b * m)
+            if old == part:
+                ctx.text(part, center - right * wb / 2, h, color=_rgba(color, p.opacity),
+                         anchor="left", glow=glow)  # fmt: skip
+                continue
+            u = min(max((m - 0.2) / 0.6, 0.0), 1.0)  # the text changes mid-way, as it travels
+            u = u * u * (3 - 2 * u)
+            if u < 1:
+                ctx.text(old, center - right * wa / 2, h, color=_rgba(color, p.opacity * (1 - u)),
+                         anchor="left", glow=glow)  # fmt: skip
+            if u > 0:
+                ctx.text(part, center - right * wb / 2, h, color=_rgba(color, p.opacity * u),
+                         anchor="left", glow=glow)  # fmt: skip
         for j, (part, origin, h) in enumerate(layout):
             if j in pairs:
-                i = pairs[j]
-                at = before[i][1] * (1 - m) + origin * m
-                a = np.asarray(self._color(me, p.from_colors, i), dtype=np.float64)
-                b = np.asarray(self._color(me, p.colors, j), dtype=np.float64)
-                ctx.text(part, at, h, color=_rgba(tuple(a * (1 - m) + b * m), p.opacity),
-                         anchor="left", glow=glow)  # fmt: skip
-            elif m > 0.5:
+                continue
+            if m > 0.5:
                 ctx.text(part, origin, h, color=_rgba(self._color(me, p.colors, j),
                          p.opacity * (2 * m - 1)), anchor="left", glow=glow)  # fmt: skip
         gone = {i for i in pairs.values()}
@@ -449,6 +492,43 @@ def match_parts(a, b) -> list[tuple[int, int]]:
         else:
             j += 1
     return out
+
+
+def pair_parts(a, b, a_keys=(), b_keys=()) -> list[tuple[int, int]]:
+    """Which part ``a[i]`` of the old equation becomes part ``b[j]`` of the new, as (i, j)
+    sorted by j. Parts with the same key pair first, in any order and whatever their text
+    (an equation being solved: ``+a`` on the left becomes ``-a`` on the right); the others
+    pair by equal text in order (``match_parts``)."""
+    keyed: dict[int, int] = {}
+    for j, key in enumerate(b_keys[: len(b)]):
+        if key:
+            i = next((i for i, k in enumerate(a_keys[: len(a)]) if k == key
+                      and i not in keyed.values()), None)  # fmt: skip
+            if i is not None:
+                keyed[j] = i
+    ra = [i for i in range(len(a)) if i not in keyed.values()]
+    rb = [j for j in range(len(b)) if j not in keyed]
+    plain = {rb[q]: ra[p] for p, q in match_parts([a[i] for i in ra], [b[j] for j in rb])}
+    return sorted(((i, j) for j, i in {**keyed, **plain}.items()), key=lambda ij: ij[1])
+
+
+def crossing(pairs, a_parts=(), b_parts=()) -> list[bool]:
+    """For each pair of ``pair_parts`` (sorted by j): whether it is carried past other parts
+    (the order changes), so it should travel round them, not through them. The parts that
+    keep their order are the largest set that can (unchanged text counts double, so ``=``
+    stays put and ``+a`` goes round it); the rest arc."""
+    n = len(pairs)
+    weight = [2.0 if a_parts[i] == b_parts[j] else 1.0 for i, j in pairs] if a_parts else [1.0] * n
+    best, prev = list(weight), [-1] * n  # heaviest increasing run of i ending at each pair
+    for k in range(n):
+        for q in range(k):
+            if pairs[q][0] < pairs[k][0] and best[q] + weight[k] > best[k]:
+                best[k], prev[k] = best[q] + weight[k], q
+    keep, k = set(), max(range(n), key=lambda q: best[q]) if n else -1
+    while k >= 0:
+        keep.add(k)
+        k = prev[k]
+    return [k not in keep for k in range(n)]
 
 
 # ---------------------------------------------------------------- motion helpers

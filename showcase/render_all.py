@@ -24,6 +24,10 @@ OUT = Path(__file__).resolve().parent / "videos"
 SCENES = [
     ("prism_primes", "the prism look: primes heard through the zeta zeros, glowing strokes"),
     ("prism_domain", "domain coloring in the prism look: glowing zeros, poles, rays and rings"),
+    (
+        "prism_transitions",
+        "transitions: a constant drifting, a function blending, equations solved",
+    ),
     ("prism_heat", "heat maps in the prism look: a hot spot, a vibrating drum, a chirp"),
     ("prism_drum_3d", "a vibrating drum in 3D, a net of glowing lines, orbiting"),
     ("point_cloud", "a million polynomial roots that glide and tear open, falling toward z = i"),
