@@ -9,6 +9,11 @@ import sys
 def main() -> int:
     multiprocessing.freeze_support()
     import os
+    import warnings
+
+    # CuPy looks for a system CUDA install and warns when there is none; the app carries
+    # its own NVRTC and CUDA runtime (packaging/phasor.spec), so the warning is noise.
+    warnings.filterwarnings("ignore", message="CUDA path could not be detected")
 
     for name in ("stdout", "stderr"):  # a windowed app has none: printing must not crash
         if getattr(sys, name) is None:
