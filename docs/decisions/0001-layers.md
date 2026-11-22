@@ -56,7 +56,7 @@ Import direction from contract 6 is kept exactly; nothing in a lower layer impor
 - Lower layers stay GPU-free and testable on any machine, as contract 6 requires.
 - Tests for the label placer and camera solver use fake oracles, so they are fast and exact.
 - Tier C needs an analytic inspector mode. The spec says tier C keeps "inspector" working,
-  which is only true in this degraded sense. See MILESTONE_0.md, contradiction 3.
+  which is only true in this degraded sense. See docs/milestones/MILESTONE_0.md, contradiction 3.
 
 ## Amendment (owner-approved 2026-11-19)
 

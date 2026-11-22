@@ -11,7 +11,7 @@ every step below passes. Report honestly; never mark an item passed that you did
 ## Steps
 
 1. **Identify the milestone.** Read the "Roadmap and milestones" table in `SPEC.md` and the
-   current `MILESTONE_N.md`. Write down its scope and its exit demo.
+   current `docs/milestones/MILESTONE_N.md`. Write down its scope and its exit demo.
 
 2. **Run the mechanical gates** and paste the summary lines:
    ```bash
@@ -30,7 +30,7 @@ every step below passes. Report honestly; never mark an item passed that you did
    `SPEC.md` "Core architecture contracts", `CLAUDE.md` and the branch diff
    (`git diff main...HEAD` or since the previous milestone tag) and ask:
    "List every deviation from the seven contracts, with file:line. For each, say whether it
-   is recorded in MILESTONE_N.md under Deviations." Check in particular:
+   is recorded in docs/milestones/MILESTONE_N.md under Deviations." Check in particular:
    - any write path other than `Engine.apply`;
    - any state that depends on something other than (document, t);
    - any lower-layer import of render/GPU code (even via protocol leakage);
@@ -40,7 +40,7 @@ every step below passes. Report honestly; never mark an item passed that you did
 5. **Docs and artifacts.** Confirm, for this milestone:
    - `docs/ai/API.md` covers every new public name, one example each, and those blocks run;
    - `examples/` has the demo scene; golden frames exist where rendering exists;
-   - `MILESTONE_N.md` lists Built / Deferred / Deviations / Untested-on-hardware;
+   - `docs/milestones/MILESTONE_N.md` lists Built / Deferred / Deviations / Untested-on-hardware;
    - any SPEC disagreement was fixed in SPEC in the same commit (contract changes need the owner).
 
 6. **Verdict.** Output a table: step, result (pass / fail / not verified here), evidence.

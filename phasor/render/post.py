@@ -8,7 +8,7 @@
 and cool rims on the glow, darker corners. Paint is never fringed.
 
 The tone curve is identity below the theme's knee, so paint colors look exactly as the
-theme defines them; only glow is compressed (MILESTONE_3.md, deviation 5).
+theme defines them; only glow is compressed (docs/milestones/MILESTONE_3.md, deviation 5).
 
 ``render.output.encode_srgb8`` then encodes sRGB, also once (SPEC contract 4). Every step is
 a registered kernel, so this runs on CUDA when there is a device and on the NumPy

@@ -130,7 +130,7 @@ def test_rebasing_repairs_glitches_near_a_minibrot():
     """Near a minibrot at 1e-14, thousands of steps in: without rebasing (``rebase=False``)
     pixels whose orbit passes nearer 0 than the reference does lose their precision. With it,
     every pixel agrees with the exact orbit except a few on the set's edge, where rounding the
-    reference to float64 decides (an exact reference fixes those too; see MILESTONE_9.md)."""
+    reference to float64 decides (an exact reference fixes those too; see docs/milestones/MILESTONE_9.md)."""
     tile = Tile.full(48, 27)
     h, n = 1e-14, 8000
     c, bits, fixed = _deep(SEAHORSE, tile, (0.0, 0.0), h, n, rebase=True)
