@@ -27,6 +27,7 @@ TYPES = sorted(registered_types())
 # The fewest parameters each type needs (the rest have defaults).
 REQUIRED = {
     "domain_coloring": {"function": "1/(z**2+1)"},
+    "image": {"path": str(Path(__file__).resolve().parents[1] / "examples/assets/sunset.png")},
     "epicycles": {"points": [[1, 0, 0], [0, 1, 0], [-1, 0, 0], [0, -1, 0]]},
     "equation": {"parts": ["$e^{i\\pi}$", "$+1=0$"]},
     "line": {"points": [[0, 0, 0], [1, 1, 0]]},
@@ -160,9 +161,12 @@ def test_every_example_survives_save_and_load(name, tmp_path):
 @pytest.mark.parametrize("name", _examples())
 def test_every_example_round_trips_through_its_python_code(name, tmp_path):
     """The Code tab's promise: the generated script rebuilds the same document."""
+    import shutil
+
     from tests.test_pycode import plain, rebuild
 
     e = _example(name)
+    shutil.copytree(ROOT / "examples" / "assets", tmp_path / "assets")  # files beside a scene
     d = diff_documents(plain(e.document), plain(rebuild(e.document, tmp_path)))
     assert d["same"], d["changes"][:3]
 

@@ -91,10 +91,10 @@ class _Snapshot:
     """One point in history: the document, plus what is derived from it. The layout bake
     and the lint result are filled in on first use and kept, so undo gets them back free."""
 
-    def __init__(self, base: Document, overrides: Overrides) -> None:
+    def __init__(self, base: Document, overrides: Overrides, base_dir: str = "") -> None:
         self.base, self.overrides = base, overrides
         effective, orphans = apply_overrides(base, overrides)
-        self.compiled: Compiled = compile_document(effective)
+        self.compiled: Compiled = compile_document(effective, base_dir)
         self.plan: Plan = compile_plan(self.compiled)
         self.orphans: tuple[Issue, ...] = tuple(orphans)
         self.bake: Bake | None = None
@@ -118,14 +118,15 @@ class Engine:
         base_dir: str | Path | None = None,
     ) -> None:
         base = document or Document(meta=Meta(title=title))
-        self._snap = _build(base, overrides or Overrides())
+        # The folder that files the document refers to (narration audio, pictures) are
+        # relative to.
+        self.base_dir = Path(base_dir) if base_dir is not None else Path.cwd()
+        self._snap = _build(base, overrides or Overrides(), str(self.base_dir))
         self._undo: list[_Snapshot] = []
         self._redo: list[_Snapshot] = []
         self._checkpoints: dict[str, _Snapshot] = {}  # named points to go back to
         self._version = 0
         self._passes = passes
-        # The folder that files the document refers to (narration audio) are relative to.
-        self.base_dir = Path(base_dir) if base_dir is not None else Path.cwd()
 
     def fork(self) -> Engine:
         """A private copy of this engine's current scene (document and overrides) with its own
@@ -147,11 +148,35 @@ class Engine:
         """Write the base document, and the overrides file when there are any tweaks.
         An emptied overrides file is removed so stale tweaks cannot come back."""
         io.save(path, self._snap.base)
+        self._bring_files(Path(path).parent)
         opath = io.overrides_path(path)
         if not self._snap.overrides.is_empty():
             io.save(opath, self._snap.overrides)
         elif opath.exists():
             opath.unlink()
+
+    def _bring_files(self, folder: Path) -> None:
+        """Files the scene names by a relative path (pictures) go with it when it is saved
+        into another folder, so they are found next to it there."""
+        import shutil
+
+        from phasor.core.objects import get_type
+        from phasor.time.compile import resolve_file
+
+        for spec in self.document.objects:
+            for name in getattr(get_type(spec.type), "Files", ()):
+                raw = spec.params.get(name)
+                if (
+                    not isinstance(raw, str)
+                    or not raw
+                    or Path(raw).is_absolute()
+                    or ".." in Path(raw).parts
+                ):
+                    continue
+                src, dst = resolve_file(raw, str(self.base_dir)), folder / raw
+                if src.is_file() and src.resolve() != dst.resolve():
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src, dst)
 
     # ------------------------------------------------------------ read
 
@@ -307,14 +332,14 @@ class Engine:
                 overrides = record_tweaks(old.overrides, parsed)
                 # Validate the ops against the effective document for precise errors.
                 apply_ops(old.compiled.doc, parsed)
-                new = _build(old.base, overrides)
+                new = _build(old.base, overrides, str(self.base_dir))
             else:
                 base = apply_ops(old.base, parsed)
                 overrides = old.overrides
                 if origin == "tweak":
                     # A direct edit supersedes an older override on the same target.
                     overrides = _drop_superseded(overrides, parsed)
-                new = _build(base, overrides)
+                new = _build(base, overrides, str(self.base_dir))
         except DocumentError as e:
             return PatchResult(False, self._version, errors=tuple(e.issues))
         if self._undo:  # keep evaluated caches only for the current and previous step

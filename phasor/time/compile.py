@@ -11,6 +11,7 @@ import functools
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from types import MappingProxyType
 from typing import Annotated, Any
 
@@ -67,6 +68,14 @@ class Compiled:
     order: tuple[str, ...]  # topological evaluation order
     objects: tuple[CompiledObject, ...]
     duration: float
+    base_dir: str = ""  # the folder files named in the document (pictures) are relative to
+
+
+def resolve_file(path: str, base_dir: str = "") -> Path:
+    """A file named in a document: absolute as given, else relative to ``base_dir`` (the
+    scene's folder), else to the current folder."""
+    p = Path(path).expanduser()
+    return p if p.is_absolute() else Path(base_dir or ".") / p
 
 
 @functools.cache
@@ -104,7 +113,9 @@ def _toposort(nodes: dict[str, Node]) -> tuple[tuple[str, ...], list[str]]:
     return tuple(order), sorted(p for p, n in pending.items() if n > 0)
 
 
-def compile_document(doc: Document) -> Compiled:
+def compile_document(doc: Document, base_dir: str = "") -> Compiled:
+    """Validate and resolve ``doc``. ``base_dir``: where relative file paths in it (a
+    picture's ``path``) are found; every such file must exist (issue ``missing_file``)."""
     issues: list[Issue] = []
     add = issues.append
 
@@ -156,6 +167,12 @@ def compile_document(doc: Document) -> Compiled:
                       f"registered: {sorted(registered_types())}", ids=(spec.id,)))  # fmt: skip
             continue
         add_params(spec.id, cls.Params, spec.params)
+        for name in getattr(cls, "Files", ()):  # parameters naming a file next to the scene
+            raw = spec.params.get(name, cls.Params.model_fields[name].default)
+            if isinstance(raw, str) and raw and not resolve_file(raw, base_dir).is_file():
+                add(Issue("missing_file", f"{spec.id}.{name}: no file {raw!r} (looked in "
+                          f"{base_dir or 'the current folder'})", ids=(spec.id,),
+                          path=f"{spec.id}.{name}"))  # fmt: skip
         style, roles = {}, {}
         for key in spec.style:
             if key not in cls.Style:
@@ -239,7 +256,7 @@ def compile_document(doc: Document) -> Compiled:
     if doc.meta.duration is not None:
         duration = doc.meta.duration
     compiled = Compiled(doc, theme, time_map, MappingProxyType(nodes), order, tuple(objects),
-                        duration)  # fmt: skip
+                        duration, str(base_dir))  # fmt: skip
     evaluate(compiled, 0.0)  # surfaces type errors from expressions before anything is saved
     return compiled
 
@@ -340,4 +357,5 @@ def evaluate(c: Compiled, t: float, replace: Mapping[str, Any] | None = None) ->
         values=MappingProxyType(env),
         light=MappingProxyType(c.theme.light),
         strokes=MappingProxyType(_strokes(c)),
+        assets=c.base_dir,
     )

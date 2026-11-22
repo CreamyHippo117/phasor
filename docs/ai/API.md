@@ -12,7 +12,7 @@ Status: through Milestone 9. This file is the Python API; to drive phasor from a
 ```python
 from phasor import Dot, Line, Scene, Text, expr
 
-s = Scene("residues")  # 1920x1080, 60 fps, theme "midnight_glow"
+s = Scene("residues")  # 1920x1080, 60 fps, the default look "prism" (look="none": plain)
 s.add(Line(id="axis", points=[(-6, 0), (6, 0)], style={"color": "muted"}))
 s.add(Dot(id="pole_i", pos=(0, 1), r=0.15, style={"color": "highlight"}, tags=["key"]))
 s.add(Text(id="pole_i_label", text="i", pos=expr("pole_i.pos + vec(0.4, 0, 0)")))
@@ -35,6 +35,7 @@ s.set("camera.height", 6)  # world units visible top to bottom
 | `cx.DomainColoring` | `function` (e.g. `"1/(z**2 + 1)"`), `pos` (center), `size` (w, h), `contour` (0-1), `softness` (0-1, edge feathering), `hue` (turns the wheel); the prism look: `radius` (> 0 turns it on: zeros and poles glow this far), `ambient` (0-1, light elsewhere), `lines` (glowing rays of phase per turn, plus a ring each time \|f\| doubles) | `colormap` (colormap, phase), `glow` (glow, none; used by the prism look) |
 | `cx.Fractal` | `kind` (`mandelbrot`/`julia`), `c` (Julia constant), `pos`, `size`, `max_iter`, `density`, `hue`, `center` (exact text `"re im"`), `zoom` (powers of ten, to 280), `steady` (hold the outer color in a dive) | `colormap` (colormap, sequential) |
 | `cx.RiemannSurface` | `kind` (`sqrt`/`cbrt`/`log`), `pos` (branch point), `radius`, `height` (`re`/`im`), `scale`, `rings`, `segments` | `colormap` (colormap, phase), `material` (surface, solid) |
+| `Image` | `path` (a PNG/JPEG/WebP file, relative to the scene's folder), `pos` (centre), `width`, `height` (0: keep the picture's shape), `frame` (an outline of light) | `glow` (glow, none: bright parts shine), `frame` (emphasis, muted), `stroke` (stroke, hairline). Presets `plain`, `framed`, `luminous`. A missing file is issue `missing_file`; transparent parts show the background; an AI may only name files inside its folder |
 | `Text` | `text` (`$...$` is typeset math), `pos`, `anchor` (`center`/`left`/`right`), `leader`, `leader_on` (set by layout) | `color` (emphasis, primary), `size` (text, label), `leader` (stroke, hairline) |
 | `Equation` | `parts` (math or text, set on one baseline), `colors` (an emphasis role per part), `pos` | `color` (emphasis, primary), `size` (text, math), `glow` (glow, none) |
 
@@ -422,8 +423,11 @@ assert field.shape == (90, 160) and (field == -1).any()  # -1 marks points in th
 
 ## Looks, presets, living motion and taste
 
-Start a scene from a **look**: a theme plus a few choices, by name. The default is dark
-(`midnight_glow`); light is opt-in.
+Start a scene from a **look**: a theme plus a few choices, by name. A new scene gets the
+**`prism` look** unless it names another look or a theme (owner, 2026-11-22); `look="none"`
+gives a plain scene on the dark `midnight_glow` theme. Everything stays dark by default;
+light is opt-in. (The test suite sets `PHASOR_DEFAULT_LOOK=none`, so its own examples here
+run plain.)
 
 | Look | Theme | Life | Character |
 | --- | --- | --- | --- |

@@ -3,6 +3,7 @@ theme = "prism"
 life = "lively"
 
 [defaults.line.params]
+dim = 0.9  # a little see-through: what is behind glows through
 hue_along = 0.8
 
 [defaults.line.style]
@@ -20,6 +21,7 @@ glow = "soft"
 color = "primary"
 
 [defaults.domain_coloring.params]  # the prism preset: glowing zeros, poles, rays and rings
+dim = 0.88  # a little see-through: what is behind glows through
 radius = 0.35
 ambient = 0.06
 contour = 0.0
@@ -33,6 +35,7 @@ colormap = "ocean"
 
 # heat maps: smooth, glowing where strong, contour lines of light (BEAUTY.md item 2)
 [defaults.pde_field.params]
+dim = 0.88  # a little see-through: what is behind glows through
 smooth = true
 isolines = 8
 
@@ -40,6 +43,7 @@ isolines = 8
 glow = "soft"
 
 [defaults.pde_slice.params]
+dim = 0.88  # a little see-through: what is behind glows through
 smooth = true
 isolines = 8
 
@@ -47,6 +51,7 @@ isolines = 8
 glow = "soft"
 
 [defaults.pressure_slice.params]
+dim = 0.88  # a little see-through: what is behind glows through
 smooth = true
 isolines = 8
 
@@ -54,8 +59,15 @@ isolines = 8
 glow = "soft"
 
 [defaults.spectrogram.params]
+dim = 0.88  # a little see-through: what is behind glows through
 smooth = true
 isolines = 8
 
 [defaults.spectrogram.style]
 glow = "soft"
+
+[defaults.counter.style]
+glow = "soft"
+
+[defaults.flow_particles.style]
+glow = "strong"

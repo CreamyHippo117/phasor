@@ -14,8 +14,9 @@ compounding. If this file and SPEC.md disagree, stop and ask.
   the owner's RTX 4070 Ti, 2026-11-21; C gaps to do).
 - Now (owner, 2026-11-22): the beauty plan in `BEAUTY.md`, in its order (prism domain
   coloring, heat maps, point clouds, fractals, image import, graph import, 3D acoustics).
-  Keep `prism_primes`' look exactly. Render speed (profile, keep frames on the card) and the
-  finished Windows app come after, unless the owner says otherwise.
+  Keep `prism_primes`' look exactly. Steps 3, 4 and 7 are for Claude Code on the owner's PC:
+  `pc_tasks/README.md`. Render speed (profile, keep frames on the card) and the finished
+  Windows app come after, unless the owner says otherwise.
 - One milestone per branch. No work on milestone N+1 until N's exit demo and tests pass.
 - Before declaring a milestone done, run the `phasor-milestone-gate` skill.
 
@@ -111,7 +112,9 @@ compounding. If this file and SPEC.md disagree, stop and ask.
   only camera parameters the document leaves unset. Lower layers get depth through the
   oracle's `depth` (ADR 0001 pattern); 3D labels are judged by what is in front of them.
 
-- Beauty: dark (`midnight_glow`) is the default theme, always; light themes are opt-in. Fewer
+- Beauty: new scenes get the `prism` look (owner, 2026-11-22; `look="none"` for plain, which
+  is the dark `midnight_glow` theme); dark always, light themes are opt-in. Tests run with
+  `PHASOR_DEFAULT_LOOK=none` (set in `tests/conftest.py`). Fewer
   rainbows is not no rainbows: hue that carries meaning (domain-coloring phase) keeps the
   wheel. Taste knobs are theme `[lint]`/`[life]` values, roles, looks and presets, never
   numbers typed into a scene. Life is a pure function of (id, seed, t); `exact` objects never

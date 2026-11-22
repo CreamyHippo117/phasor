@@ -23,7 +23,7 @@ from phasor.core.objects import get_type, registered_types
 from phasor.core.schema import Document, Meta
 from phasor.engine import Engine
 from phasor.scene import Scene, load
-from phasor.style.looks import DEFAULT_THEME, available_looks, load_look
+from phasor.style.looks import DEFAULT_THEME, available_looks, default_look, load_look
 from phasor.style.theme import ROLE_GROUPS, available_themes
 from phasor.time import verbs as _verbs
 from phasor.workspace import docs
@@ -149,17 +149,18 @@ class Workspace:
         life: str | None = None, width: int = 1920, height: int = 1080, fps: float = 60.0,
         palette: str | None = None,
     ) -> dict[str, Any]:  # fmt: skip
-        """Start an empty scene (replaces the open one; save first if it matters). The theme
-        is dark (``midnight_glow``) unless a ``look`` ("calm", "glow", "chalk", "prism",
-        "prism_everywhere") or ``theme`` says otherwise; ``life`` ("off", "subtle",
+        """Start an empty scene (replaces the open one; save first if it matters). It gets
+        the default look, ``prism``, unless a ``look`` ("prism_everywhere", "calm", "glow",
+        "chalk", or "none" for plain) or a ``theme`` is given; ``life`` ("off", "subtle",
         "lively") is the living motion; ``palette`` the colors run along strokes
         (``scene_palette``)."""
 
         def go():
-            chosen = load_look(look) if look else None
+            name = default_look(look, theme)
+            chosen = load_look(name) if name else None
             meta = Meta(
                 title=title, theme=theme or (chosen.theme if chosen else DEFAULT_THEME),
-                life=life or (chosen.life if chosen else "off"), look=look, width=width,
+                life=life or (chosen.life if chosen else "off"), look=name, width=width,
                 height=height, fps=fps, palette=palette,
             )  # fmt: skip
             self._engine = Engine(Document(meta=meta), base_dir=self.root)
@@ -240,7 +241,27 @@ class Workspace:
         An ``add_object`` may name a ``preset`` (see ``object_types``); the scene's look fills
         in what is left unset, and explicit values always win."""
         r = self.engine.apply(self._with_defaults(patch), origin="tweak")
+        if r.ok:
+            try:
+                self._files_inside()
+            except ToolError:
+                self.engine.undo()  # the edit named a file outside the folder: take it back
+                raise
         return {**_slim_result(r.to_dict()), "objects": len(self.engine.document.objects)}
+
+    def _files_inside(self) -> None:
+        """Every file the scene names (a picture's ``path``) is inside the workspace folder:
+        the AI may show only what is in its folder."""
+        from phasor.core.objects import get_type
+        from phasor.time.compile import resolve_file
+
+        e = self.engine
+        for spec in e.document.objects:
+            cls = get_type(spec.type)
+            for name in getattr(cls, "Files", ()):
+                raw = spec.params.get(name)
+                if isinstance(raw, str) and raw:
+                    self._inside(resolve_file(raw, str(e.base_dir)))
 
     def _with_defaults(self, patch: Any) -> Any:
         """The patch as a list of ops, with ``preset`` and the scene's look resolved in every

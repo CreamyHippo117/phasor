@@ -25,8 +25,22 @@ looks; it does not recreate anyone's videos.
 | 2 | **Heat maps.** `pde.Field`, `PressureSlice`, `Spectrogram`: prism colormaps, smooth (bicubic) sampling, glowing isolines, haze; optional height (3D) mode | same machinery as 1 (a field drawn by colour), so it reuses it | **done** 2026-11-22: shared helper `domains/heatmap.py` (bicubic, isolines a pixel wide, glow weight, fade into the background), preset `prism` on all four types, prism looks use it, two-colour waves, `examples/prism_heat.py`. The 3D height mode exists already as `pde.Surface`; giving it the prism look is left for the PC session |
 | 3 | **Point clouds.** A `PointCloud` object: millions of points splatted additively on the GPU with hue and glow (polynomial root clouds, attractors, Buddhabrot-style fractals); plus a cloud mode for `cx.Fractal` | the new GPU feature; needs a splatting kernel (CUDA atomics) | to do |
 | 4 | **Fractals in the prism look.** Escape-time colour from the palette, glowing edges, haze; Julia and Mandelbrot | builds on 1 and 3 | to do |
-| 5 | **Imports: pictures.** An `Image` object: any PNG/JPG (the Mona Lisa) placed, sized and animated like any object, with optional glow or a frame | small, and needed by 6 and 7 | to do |
+| 5 | **Imports: pictures.** An `Image` object: any PNG/JPG (the Mona Lisa) placed, sized and animated like any object, with optional glow or a frame | small, and needed by 6 and 7 | **done** 2026-11-22: `Image` (`domains/media.py`), files next to the scene (`missing_file` if absent), presets `plain`/`framed`/`luminous`, the AI kept to its folder, `examples/picture.py` |
 | 6 | **Imports: graphs.** A `Network` object loaded from a file (edge list, CSV, JSON, GraphML) or built in a script: 2D or 3D force layout computed once, glowing additive edges coloured by an attribute, thousands of nodes (a game tree of Connect 4 positions, say). Graph-theory types (Cayley graph and friends) gain the same look | big; the layout solver and edge batching are the work | to do |
 | 7 | **3D acoustics.** A 3D room (box, or a mesh imported from OBJ) drawn as faint glowing wire outlines, with sound as rays and expanding wavefronts that bounce off the walls (image-source and ray tracing, on the GPU where it pays) | biggest; uses 5 (meshes) and the 3D camera | to do |
 
 After each item: a showcase scene in `showcase/` so the owner can watch it.
+
+Steps 3, 4 and 7 run on the owner's PC, three Claude Code sessions at once: see
+`pc_tasks/README.md` (one instruction file per step, a branch and folder each).
+
+## Also decided (owner, 2026-11-22)
+
+- **Prism is the default look** for new scenes (`look="none"` for plain).
+- **Smoother palettes**: the six palettes run round a smooth curve in OKLab (no corners at
+  their colours, no grey mixtures between them).
+- **A little more transparency**: in the prism looks, glowing curves (`dim` 0.9) and colour
+  fields (`dim` 0.88) let what is behind them glow through. Tune in `style/looks/prism*.toml`.
+- Types the prism look does not touch yet: `axes` (plain on purpose), `cayley_table`,
+  `clock_diagram`, `matrix` (no glow role), `parametric_surface`, `pde_surface`,
+  `riemann_surface` (lit 3D surfaces), `room` (2D acoustics), `image` (a photo stays true).

@@ -21,6 +21,7 @@ _LAZY = {
     "Text": "phasor.domains.basic",
     "Equation": "phasor.domains.basic",
     "Tracer": "phasor.domains.basic",
+    "Image": "phasor.domains.media",
     "Callout": "phasor.domains.basic",
     "Counter": "phasor.domains.basic",
     "to_latex": "phasor.core.texconv",
