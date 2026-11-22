@@ -8,6 +8,7 @@ generator handed in, which the object makes with ``rng(object_id, seed)`` (contr
 from __future__ import annotations
 
 import numpy as np
+from numpy.random import Generator  # the type only; generators come from core.rng
 
 ROOT_CHUNK = 65_536  # polynomials per batched eigenvalue solve
 ATTRACTORS = {  # kind -> the classic constants
@@ -23,7 +24,7 @@ def polynomial_roots(
     degree: int,
     coefficients: tuple[float, ...] = (-1.0, 1.0),
     count: int | None = None,
-    gen: np.random.Generator | None = None,
+    gen: Generator | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """The roots of polynomials of ``degree`` whose lower coefficients all come from
     ``coefficients``; the leading one is 1 if the set has 1, else its first nonzero entry
@@ -73,7 +74,7 @@ def polynomial_roots(
 def attractor(
     kind: str,
     n: int,
-    gen: np.random.Generator,
+    gen: Generator,
     constants: tuple[float, ...] = (),
 ) -> tuple[np.ndarray, np.ndarray]:
     """``n`` points on a strange attractor, centred and scaled to fit the square
@@ -142,7 +143,7 @@ def attractor(
 def buddhabrot(
     n: int,
     max_iter: int,
-    gen: np.random.Generator,
+    gen: Generator,
     min_iter: int = 8,
 ) -> tuple[np.ndarray, np.ndarray]:
     """``n`` points of the Buddhabrot: the orbits z -> z^2 + c (from z = 0) of random c in
