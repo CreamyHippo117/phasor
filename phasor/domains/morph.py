@@ -42,6 +42,7 @@ from phasor.domains.morph_math import Group, Look, Shape
 from phasor.domains.path import FLATNESS, _cached
 
 MAX_GROUPS = 2000  # groups an outline is matched by; the rest of a composite's are left out
+MAX_FILL_RING = 4096  # points of one ring the in-between's fill is triangulated through
 
 
 @dataclass(frozen=True)
@@ -321,6 +322,15 @@ def _matching(src: Shape, dst: Shape, m: float, tol: float, arc: float) -> list[
     return items
 
 
+def _thin(ring: np.ndarray) -> np.ndarray:
+    """A ring to fill, with at most ``MAX_FILL_RING`` points (every k-th kept). Only the
+    in-between makes such rings (the pieces of one subpath joined along it, 40 000 points
+    at most); triangulating one that crosses itself grows faster than its size."""
+    if len(ring) <= MAX_FILL_RING:
+        return ring
+    return ring[:: -(-len(ring) // MAX_FILL_RING)]
+
+
 def paint(ctx, state: SceneState, me: ObjectState, items: Sequence[Item]) -> None:
     """Draw items as a path draws itself: the fill (plain paint, never glowing), then the
     stroke (mitered; a closed loop's seam too)."""
@@ -339,7 +349,7 @@ def paint(ctx, state: SceneState, me: ObjectState, items: Sequence[Item]) -> Non
         if it.fill_from is not None and it.blend < 1.0:
             layers.insert(0, (it.fill_from, "evenodd", 1.0 - it.blend))
         for rings_, rule, share in layers:
-            rings = [q for q in rings_ if len(q) >= 3]
+            rings = [_thin(q) for q in rings_ if len(q) >= 3]
             if f[3] * a * share > 0 and rings:
                 pos, tris = pm.fill(rings, rule)
                 if len(tris):

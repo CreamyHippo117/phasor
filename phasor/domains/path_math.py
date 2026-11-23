@@ -34,6 +34,7 @@ RULES = ("nonzero", "evenodd")
 OPS = ("union", "intersection", "difference", "exclusion")
 CROSSING_LIMIT = 20000  # segments: above this, a fill is not checked for crossings
 CROSSING_BLOCK = 256  # segments compared with all others at once
+INSIDE_BLOCK = 1 << 20  # point-edge tests done at once when a fill finds which rings nest
 SVG_MAX_BYTES = 8 * 1024 * 1024  # an SVG larger than this is not read
 
 
@@ -390,6 +391,22 @@ def inside(point: np.ndarray, ring: np.ndarray) -> bool:
     return bool(np.count_nonzero(cross & (x < xs)) % 2)
 
 
+def _inside_many(points: np.ndarray, ring: np.ndarray) -> np.ndarray:
+    """``inside`` for many 2D points at once (the same arithmetic, element by element), the
+    points taken in chunks so a ring of very many edges stays within ``INSIDE_BLOCK``."""
+    xi, yi = ring[:, 0], ring[:, 1]
+    xj, yj = np.roll(xi, 1), np.roll(yi, 1)
+    out = np.zeros(len(points), dtype=bool)
+    step = max(1, INSIDE_BLOCK // max(len(ring), 1))
+    for start in range(0, len(points), step):
+        x, y = points[start : start + step, :1], points[start : start + step, 1:2]
+        cross = (yi > y) != (yj > y)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            xs = (xj - xi) * (y - yi) / (yj - yi) + xi
+        out[start : start + step] = np.count_nonzero(cross & (x < xs), axis=1) % 2 == 1
+    return out
+
+
 def _probe(ring: np.ndarray) -> np.ndarray:
     """A point just inside a ring, near its first edge (for nesting tests)."""
     a, b = ring[0], ring[1]
@@ -441,12 +458,17 @@ def region(polys: Sequence[np.ndarray], rule: str = "nonzero") -> Region:
             rings.append(ring)
     n = len(rings)
     orient = [1 if signed_area(r) > 0 else -1 for r in rings]
-    probes = [_probe(r) for r in rings]
-    contains = [[j != i and inside(probes[i], rings[j]) for j in range(n)] for i in range(n)]
+    probes = np.array([_probe(r) for r in rings]).reshape(n, 2)
+    # contains[i, j]: ring i's probe is inside ring j (one vectorised test per ring)
+    contains = np.zeros((n, n), dtype=bool)
+    for j in range(n):
+        contains[:, j] = _inside_many(probes, rings[j])
+    np.fill_diagonal(contains, False)
+    winds = contains.astype(np.int64) @ np.asarray(orient, dtype=np.int64) if n else []
+    depths = contains.sum(axis=1)
     filled = []
     for i in range(n):
-        wind = sum(orient[j] for j in range(n) if contains[i][j])
-        depth = sum(contains[i])
+        wind, depth = int(winds[i]), int(depths[i])
         if rule == "nonzero":
             fin, fout = (wind + orient[i]) != 0, wind != 0
         else:
