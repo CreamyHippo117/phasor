@@ -263,21 +263,26 @@ def map_function(map: str) -> tuple[Callable, Callable]:
     return wrap(expr), wrap(sp.diff(expr, x))
 
 
-def orbits(map: str, r, n: int, x0: float = 0.5) -> np.ndarray:
+def orbits(map: str, r, n: int, x0: float = 0.5, start: int = 0) -> np.ndarray:
     """The orbit x_0 = ``x0``, x_(k+1) = f(r, x_k) for every value of ``r`` side by side:
-    ``(n + 1, len(r))``, row k is x_k. An orbit that escapes (past ``ESCAPE``, or not a
-    number) is nan from there on. Each column is computed on its own, element by element,
-    so a column's orbit has the same bits whatever other columns run beside it."""
+    ``(n + 1 - start, len(r))``, row k is x_(start + k) (the iterates before ``start`` are
+    run but not kept). An orbit that escapes (past ``ESCAPE``, or not a number) is nan from
+    there on. Each column is computed on its own, element by element, so a column's orbit
+    has the same bits whatever other columns run beside it."""
+    if not 0 <= start <= n:
+        raise ValueError(f"start must be 0 to n ({n}), got {start}")
     f, _ = map_function(map)
     r = np.ascontiguousarray(r, dtype=np.float64).reshape(-1)
-    out = np.empty((n + 1, len(r)))
+    out = np.empty((n + 1 - start, len(r)))
     x = np.full(len(r), float(x0))
-    out[0] = x
+    if start == 0:
+        out[0] = x
     for k in range(1, n + 1):
         x = f(r, x)
         with np.errstate(invalid="ignore"):
             x = np.where(np.abs(x) <= ESCAPE, x, np.nan)
-        out[k] = x
+        if k >= start:
+            out[k - start] = x
     return out
 
 
@@ -318,7 +323,7 @@ def bifurcation(
     if n_r < 1:
         raise ValueError("n_r must be at least 1")
     r = np.linspace(float(r0), float(r1), int(n_r))
-    xs = orbits(map, r, n_iter, x0)[n_iter - n_keep + 1 :]  # x_(n_iter - n_keep + 1) .. x_n_iter
+    xs = orbits(map, r, n_iter, x0, start=n_iter - n_keep + 1)  # the last n_keep iterates
     value = np.broadcast_to(lyapunov_value(lyapunov(map, r, xs)), xs.shape)
     pts = (r[None, :] + 1j * xs).T.reshape(-1)
     value = value.T.reshape(-1)

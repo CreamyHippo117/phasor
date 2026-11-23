@@ -309,3 +309,12 @@ def test_bifurcation_golden_storyboard():
     if not path.exists():
         pytest.skip(f"no {klass} golden yet; create with PHASOR_UPDATE_GOLDEN=1")
     assert ssim(sheet, np.asarray(Image.open(path).convert("RGB"))) >= 0.98
+
+
+def test_orbits_can_skip_storing_the_transient():
+    r = np.linspace(2.9, 3.95, 37)
+    whole = clm.orbits("logistic", r, 500)
+    np.testing.assert_array_equal(clm.orbits("logistic", r, 500, start=420), whole[420:])
+    np.testing.assert_array_equal(clm.orbits("logistic", r, 500, start=0), whole)
+    with pytest.raises(ValueError, match="start"):
+        clm.orbits("logistic", r, 10, start=11)

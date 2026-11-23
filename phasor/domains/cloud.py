@@ -377,7 +377,7 @@ def _orbit_block(map: str, x0: float, n_iter: int, n_keep: int, level: int, bloc
         step = LATTICE / 2.0**level
         j = (np.asarray(missing, dtype=np.int64)[:, None] * CHUNK + np.arange(CHUNK)).reshape(-1)
         r = j * step
-        xs = clm.orbits(map, r, n_iter + rows - n_keep, x0)[n_iter - n_keep + 1 :]
+        xs = clm.orbits(map, r, n_iter + rows - n_keep, x0, start=n_iter - n_keep + 1)
         value = clm.lyapunov_value(clm.lyapunov(map, r, xs[:n_keep]))
         with _orbit_lock:
             for i, b in enumerate(missing):
