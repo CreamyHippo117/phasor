@@ -194,6 +194,18 @@ Post is the biggest or second stage in both. Not measured, and
 not claimable from this machine: anything with CUDA, and 14.3's worker counts on the RTX 4070
 Ti (`pc_tasks/`).
 
+## Milestone 14 result (2026-11-23)
+
+The same box and command as the baseline, back to back on a quiet box; the reference rerun
+matches the baseline above. CUDA not available.
+
+| stage (ms/frame) | prism_primes ref -> cpu | prism_domain ref -> cpu |
+| --- | --- | --- |
+| draw | 26 -> 27 | 482 -> 157 |
+| post | 465 -> 58 | 451 -> 57 |
+| srgb | 26 -> 9 | 24 -> 10 |
+| **total** | **542 -> 121 (4.5x)** | **985 -> 250 (3.9x)** |
+
 ## 14.4 findings (2026-11-23; written investigation, nothing built)
 
 The question: how phasor can render where there is no OpenGL 4.3. That covers every Mac
@@ -260,6 +272,6 @@ too) and Windows machines whose driver lacks 4.3.
 
 | Milestone | Status |
 | --- | --- |
-| 14 CPU | approved; baseline first, then built |
+| 14 CPU | built 2026-11-23 (`MILESTONE_14.md`): 4.5x / 3.9x per frame on this 4-core box; the CUDA worker count waits for `pc_tasks/cpu_workers.md` |
 | 15 contract | ADR 0005 accepted; building |
 | 16-20 | planned (16-19 wait for 15) |

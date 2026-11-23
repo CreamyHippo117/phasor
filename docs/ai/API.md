@@ -471,6 +471,20 @@ assert field.shape == (90, 160) and (field == -1).any()  # -1 marks points in th
   `backend="cpu"` the CPU backend, `backend="reference"` forces NumPy. `gpu.run(...,
   threads=n)`, `phasor.render.cpu.set_threads(n)` or `PHASOR_THREADS` set the CPU threads
   (default: every core); results are the same bits at any thread count.
+
+```python
+import numpy as np
+
+from phasor.render import cpu, gpu
+from phasor.render.gpu.registry import active_backend
+
+print(active_backend(), cpu.threads(), cpu.find_compiler())  # e.g. "cpu", 4, g++ 13.3
+if cpu.find_compiler() is not None:
+    lit = np.ones((4, 8, 4), dtype=np.float32)
+    one = gpu.run("vignette", gpu.Tile.full(8, 4), image=lit, backend="cpu", threads=1)
+    all_cores = gpu.run("vignette", gpu.Tile.full(8, 4), image=lit, backend="cpu")
+    assert np.array_equal(one, all_cores)  # the thread count never changes a result
+```
 - `escape` picks float64 by itself once `height` is under 1e-5.
 - Formulas may use `z`, `i`, `pi`, `e`, numbers, `+ - * / **` and
   `exp log sqrt sin cos tan sinh cosh tanh conj abs`. Anything else is a `FunctionError`.
