@@ -1210,16 +1210,25 @@ from phasor.domains import path_math as pm
 
 s = Scene("shapes_demo", passes=None)
 s.add(shapes.Circle(id="disc", r=1.2, style={"fill": "soft", "glow": "soft"}))
-s.add(shapes.Rectangle(id="card", pos=(3.5, 0), width=2.5, height=1.5, corner_radius=0.3,
-                       style={"dash": "dashed"}))
+s.add(
+    shapes.Rectangle(
+        id="card", pos=(3.5, 0), width=2.5, height=1.5, corner_radius=0.3, style={"dash": "dashed"}
+    )
+)
 s.add(shapes.Arc(id="swing", pos=(-3.5, 0), r=1.0, start=0, angle=200, tips="end"))
 s.add(shapes.Brace(id="span", start=(-1.2, -1.5), end=(1.2, -1.5)))
 s.add(Text(id="span.label", text="2.4"))
 s.constrain("label(span) below span")
 # path_math builds subpaths (circle, arc, rectangle, sector, brace, polyline, ...)
 outer, inner = pm.circle((0, 2.6, 0), 0.6), pm.circle((0, 2.6, 0), 0.3)
-s.add(shapes.Path(id="ring", rule="evenodd", style={"fill": "solid"},
-                  subpaths=[outer.tolist(), inner.tolist()]))
+s.add(
+    shapes.Path(
+        id="ring",
+        rule="evenodd",
+        style={"fill": "solid"},
+        subpaths=[outer.tolist(), inner.tolist()],
+    )
+)
 s.at(0.2).trace("disc", "swing")
 e = s.engine
 seen = {o["id"]: o["semantic"] for o in e.inspect(2.0)["objects"]}
@@ -1243,8 +1252,15 @@ assert seen["lens"]["area"] < 1.3 < seen["moon"]["area"]
 
 ```python no-run
 # needs a file: an .svg next to the scene (examples/vector_toolkit.py runs this)
-s.add(shapes.SVG(id="emblem", path="assets/emblem.svg", pos=(0, -2), height=3,
-                 style={"fill": "soft", "fill_color": "highlight"}))
+s.add(
+    shapes.SVG(
+        id="emblem",
+        path="assets/emblem.svg",
+        pos=(0, -2),
+        height=3,
+        style={"fill": "soft", "fill_color": "highlight"},
+    )
+)
 # parts: emblem.ring, emblem.star, emblem.badge_1, emblem.wave
 ```
 
