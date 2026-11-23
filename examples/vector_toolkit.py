@@ -31,8 +31,8 @@ for op, x in zip(ops, xs, strict=True):
                       style={"color": "muted", "stroke": "hairline", "dash": "dashed"})  # fmt: skip
     s.add(a)
     s.add(b)
-    s.add(getattr(shapes, op)(a, b, id=op, style={"color": "secondary", "glow": "soft",
-                                                  "fill": "soft", "fill_color": "secondary"}))  # fmt: skip
+    look = {"color": "secondary", "glow": "soft", "fill": "soft", "fill_color": "secondary"}
+    s.add(getattr(shapes, op)(a, b, id=op, style=look))
     s.add(Text(id=f"{op}.label", text=op, style={"size": "annotation"}))
     s.constrain(f"label({op}) below {op} gap 0.25")
 
