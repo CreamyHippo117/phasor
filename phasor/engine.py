@@ -124,8 +124,9 @@ _LOADING: set[str] = set()  # modules being run now (a scene script that builds 
 # an attached MCP client) never see a half-loaded module. Re-entrant: a module the engine
 # runs may build its own Scene.
 _CODE_LOCK = threading.RLock()
-REFUSED = ("refused: scripts may not run here (open the scene with allow_scripts=True, or "
-           "start the MCP server with --allow-scripts)")  # fmt: skip
+REFUSED = ("refused: scripts may not run here (open the scene with allow_scripts=True, "
+           "start the MCP server with --allow-scripts, or in the desktop editor trust the "
+           "scene's code: Editor.trust_scene_code)")  # fmt: skip
 
 
 def needs_code(doc: Document, scope: CodeScope) -> bool:
@@ -319,11 +320,14 @@ class Engine:
         engine._snap.bake = payload["bake"]
         return engine
 
-    def fork(self) -> Engine:
+    def fork(self, *, allow_scripts: bool | None = None) -> Engine:
         """A private copy of this engine's current scene (document and overrides) with its own
-        history: edit it freely (a player moving sliders) and this one never changes."""
+        history: edit it freely (a player moving sliders) and this one never changes. It has
+        this engine's permission to run the scene's code unless ``allow_scripts`` says
+        otherwise (the editor's ``trust_scene_code``: only on the person's request)."""
+        allow = self.allow_scripts if allow_scripts is None else allow_scripts
         return Engine(self._snap.base, overrides=self._snap.overrides, passes=self._passes,
-                      base_dir=self.base_dir, allow_scripts=self.allow_scripts)  # fmt: skip
+                      base_dir=self.base_dir, allow_scripts=allow)  # fmt: skip
 
     # ------------------------------------------------------------ files
 
@@ -523,10 +527,10 @@ class Engine:
             if origin == "tweak" and self.scripted:
                 overrides = record_tweaks(old.overrides, parsed)
                 # Validate the ops against the effective document for precise errors.
-                apply_ops(old.compiled.doc, parsed)
+                apply_ops(old.compiled.doc, parsed, old.compiled.scope)
                 new = _build(old.base, overrides, str(self.base_dir), self.allow_scripts)
             else:
-                base = apply_ops(old.base, parsed)
+                base = apply_ops(old.base, parsed, old.compiled.scope)
                 overrides = old.overrides
                 if origin == "tweak":
                     # A direct edit supersedes an older override on the same target.

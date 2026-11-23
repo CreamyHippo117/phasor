@@ -15,7 +15,6 @@ from __future__ import annotations
 import json
 import keyword
 import re
-from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -845,20 +844,11 @@ QStatusBar { color: #8a93a8; }
 
 
 def make_workspace(path: str | None, root: str | None = None):
-    """A workspace with ``path`` open (a .phasor.json, or a .py builder script: the person
-    at the keyboard may open code; an attached AI still may not), or a new scene."""
-    from phasor.workspace import Workspace
+    """A workspace with ``path`` open, or a new scene (``controller.open_workspace``: a .py
+    the person opens runs; a .phasor.json opens without running the modules it names)."""
+    from phasor.gui.controller import open_workspace
 
-    ws = Workspace(root or (Path(path).parent if path else Path.cwd()))
-    if path:
-        ws.allow_scripts = True  # only for this one call, made by the person
-        try:
-            ws.scene_open(str(Path(path).resolve()))
-        finally:
-            ws.allow_scripts = False
-    else:
-        ws.scene_new("untitled")
-    return ws
+    return open_workspace(path, root)
 
 
 def start_ai_server(ws, lock):

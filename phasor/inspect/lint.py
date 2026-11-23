@@ -243,10 +243,13 @@ def control_rules(c: Compiled) -> list[Issue]:
     from phasor.core.patch import param_value
 
     out = []
+    missing = {object_id for object_id, _ in c.missing}  # missing_type says why already
     for ctl in c.doc.controls:
         try:
-            value = param_value(c.doc, ctl.path)
+            value = param_value(c.doc, ctl.path, c.scope)
         except KeyError:
+            if ctl.path.rpartition(".")[0] in missing:
+                continue
             out.append(
                 Issue(
                     "orphan_control",
@@ -299,7 +302,9 @@ def type_rules(c: Compiled) -> list[Issue]:
     return [
         Issue("missing_type", f"{object_id}: {why}", severity="error", ids=(object_id,),
               times=(0.0,), fix_hint="put the module next to the scene, or open it where "
-              "scripts may run (allow_scripts=True, or the MCP server with --allow-scripts)")
+              "scripts may run (allow_scripts=True; the MCP server with --allow-scripts; in "
+              "the desktop editor, the person trusts the scene's code: "
+              "Editor.trust_scene_code)")
         for object_id, why in c.missing
     ]  # fmt: skip
 

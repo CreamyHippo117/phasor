@@ -46,9 +46,20 @@ class Player:
 
     def __init__(self, engine: Engine) -> None:
         self._engine = engine.fork()
-        self.controls: tuple[Control, ...] = tuple(self._engine.document.controls)
+        # A slider whose parameter cannot be read (its object's type is missing here: the
+        # scene's code may not run) is left out; lint says why (missing_type).
+        self.controls: tuple[Control, ...] = tuple(
+            c for c in self._engine.document.controls if self._readable(c)
+        )
         self._by_key = {c.key: c for c in self.controls}
         self._initial = {c.key: self._read(c) for c in self.controls}
+
+    def _readable(self, c: Control) -> bool:
+        try:
+            self._read(c)
+        except (KeyError, IndexError, TypeError, ValueError):
+            return False
+        return True
 
     @property
     def engine(self) -> Engine:
@@ -62,7 +73,8 @@ class Player:
             raise KeyError(f"no control {k!r}; controls are {sorted(self._by_key)}") from None
 
     def _read(self, c: Control) -> float:
-        raw = param_value(self._engine.document, c.path)
+        e = self._engine
+        raw = param_value(e.document, c.path, e.code_scope)
         return float(raw if c.component is None else raw[c.component])
 
     @property
@@ -81,7 +93,7 @@ class Player:
         if c.component is None:
             new: Any = v
         else:
-            cur = list(param_value(self._engine.document, c.path))
+            cur = list(param_value(self._engine.document, c.path, self._engine.code_scope))
             cur[c.component] = v
             new = cur
         r = self._engine.apply({"op": "set_param", "path": c.path, "value": new})

@@ -247,9 +247,11 @@ def box_features(bounds: Bounds, right, up) -> dict[str, np.ndarray]:
     half = (np.asarray(bounds.hi) - np.asarray(bounds.lo)) / 2
     along_r = float(np.abs(half) @ np.abs(right))  # the box's half extent across the view
     along_u = float(np.abs(half) @ np.abs(up))
-    out = {"center": center}
+    out = {"center": np.array(center, dtype=np.float64)}
     for name, (dx, dy) in COMPASS.items():
         out[name] = center + dx * along_r * right + dy * along_u * up
+    for a in out.values():  # read-only like the recording's own points: nobody writes to one
+        a.flags.writeable = False
     return out
 
 

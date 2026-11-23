@@ -13,7 +13,7 @@ from pydantic import Field, TypeAdapter, ValidationError
 from phasor.core.constraints import normalize_rule, rule_ids
 from phasor.core.ids import split_path
 from phasor.core.issues import DocumentError, Issue
-from phasor.core.objects import get_type
+from phasor.core.objects import CodeScope, get_type
 from phasor.core.schema import (
     CameraSpec,
     ConstraintSpec,
@@ -207,14 +207,16 @@ def _set_param(doc: Document, path: str, value: Any) -> Document:
     raise _fail("unknown_id", f"no object or camera {target!r}", ids=(target,), path=path)
 
 
-def param_value(doc: Document, path: str) -> Any:
-    """The raw value of parameter ``path`` as the document holds it (``KeyError`` if none)."""
+def param_value(doc: Document, path: str, scope: CodeScope | None = None) -> Any:
+    """The raw value of parameter ``path`` as the document holds it, or its type's default
+    (``KeyError`` if none). ``scope``: the document's own code (``Engine.code_scope``), so a
+    type one of its modules defines gives its defaults too."""
     target, param = split_path(path)
     for item in (*doc.objects, *doc.cameras):
         if item.id == target:
             if param in item.params:
                 return item.params[param]
-            cls = get_type(item.type) if hasattr(item, "type") else None
+            cls = get_type(item.type, scope) if hasattr(item, "type") else None
             field = cls.Params.model_fields.get(param) if cls is not None else None
             if field is not None:  # not set in the document: the type's own default
                 return field.get_default(call_default_factory=True)
@@ -222,11 +224,11 @@ def param_value(doc: Document, path: str) -> Any:
     raise KeyError(path)
 
 
-def _check_controllable(doc: Document, c: Control) -> None:
+def _check_controllable(doc: Document, c: Control, scope: CodeScope | None = None) -> None:
     """A control needs a constant numeric parameter (or entry of a vector): not an expression,
     not something animated by a track."""
     try:
-        value = param_value(doc, c.path)
+        value = param_value(doc, c.path, scope)
     except KeyError:
         raise _fail("bad_control", f"no parameter {c.path!r} to control", path=c.path) from None
     if c.path in doc.timeline.tracks:
@@ -256,7 +258,7 @@ def _replace_object(doc: Document, object_id: str, **update: Any) -> Document:
     raise _fail("unknown_id", f"no object {object_id!r}", ids=(object_id,))
 
 
-def _apply_op(doc: Document, op: Any) -> Document:
+def _apply_op(doc: Document, op: Any, scope: CodeScope | None = None) -> Document:
     tl = doc.timeline
     match op:
         case AddObject():
@@ -335,7 +337,7 @@ def _apply_op(doc: Document, op: Any) -> Document:
                 update={"cameras": tuple(new if c.id == op.id else c for c in cams)}
             )
         case AddControl():
-            _check_controllable(doc, op.control)
+            _check_controllable(doc, op.control, scope)
             kept = tuple(c for c in doc.controls if c.key != op.control.key)
             return doc.model_copy(update={"controls": (*kept, op.control)})
         case RemoveControl():
@@ -355,11 +357,12 @@ def _apply_op(doc: Document, op: Any) -> Document:
     raise _fail("unknown_op", f"unsupported op {op!r}")  # pragma: no cover
 
 
-def apply_ops(doc: Document, patch: Patch) -> Document:
+def apply_ops(doc: Document, patch: Patch, scope: CodeScope | None = None) -> Document:
     """Pure: returns a new, shape-validated document. Raises DocumentError and changes nothing
-    on failure. ``model_copy`` skips validation, so the result is re-validated as a whole."""
+    on failure. ``model_copy`` skips validation, so the result is re-validated as a whole.
+    ``scope``: the document's own code (a control may target a default of its own type)."""
     for op in patch.ops:
-        doc = _apply_op(doc, op)
+        doc = _apply_op(doc, op, scope)
     try:
         return Document.model_validate(doc.model_dump(warnings=False))
     except ValidationError as e:

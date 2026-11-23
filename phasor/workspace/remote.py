@@ -84,7 +84,9 @@ class RemoteServer:
         method, params = req.get("method"), req.get("params") or {}
         if method not in allowed or not isinstance(params, dict):
             return {"ok": False, "error": f"no tool {method!r}", "issues": []}
-        with self.lock:
+        # The caller is an AI: it never makes new code run (``Workspace._no_new_code``), and
+        # opens documents without their code, whatever the person allowed in the editor.
+        with self.lock, self.workspace._as_ai():
             before = self._version()
             try:
                 result = getattr(self.workspace, method)(**params)

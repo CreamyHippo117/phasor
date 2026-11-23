@@ -1338,12 +1338,16 @@ def test_audit_x10_cached_geometry_is_read_only():
     s = _scene(Stroke(id="st"))
     state = s.engine.state_at(0)
     f = state["st"].impl.features(state)
-    for name in ("start", "end", "curve"):
-        assert not f[name].flags.writeable
+    # Every derived feature is read-only (re-audit): the stroke's points are the recording's
+    # own (shared), and the box's points are made read-only too, so nobody writes to one.
+    assert {"start", "end", "curve", "center", "top", "bottom_right"} <= set(f)
+    for name in f:
+        assert not f[name].flags.writeable, name
         with pytest.raises(ValueError):
             f[name][...] = 99
     again = state["st"].impl.features(state)
     np.testing.assert_allclose(again["end"], [2, 1, 0])
+    np.testing.assert_allclose(again["center"], f["center"])
 
 
 def _lifted(t, look):
@@ -1386,3 +1390,275 @@ def test_audit_only_plain_names_are_adopted_as_updaters(tmp_path):
         io.save(tmp_path / "u.phasor.json", doc)
         e = Engine.open(tmp_path / "u.phasor.json", passes=None, allow_scripts=True)
         assert _missing(e) == missing
+
+
+# ---------------------------------------------------------------- 8. the re-audit
+# Re-audit of the allow_scripts fix (2026-11-23), repro scripts r1, r3b and r5. Code runs only
+# on the person's request: the desktop editor runs a .py the person opened (their own script)
+# but opens a .phasor.json without running the modules it names, until the person trusts
+# them (``Editor.trust_scene_code``); an attached AI never makes new code run. Files named
+# ``ran_*.txt`` prove what ran.
+
+TRUST_MODULE = """
+import pathlib
+from typing import ClassVar
+
+import numpy as np
+
+from phasor.core.objects import ObjectBase, ParamsBase, register
+from phasor.core.values import Vec3
+
+HERE = pathlib.Path(__file__).parent
+(HERE / "ran_{name}.txt").write_text("ran", encoding="utf-8")
+
+
+@register
+class Gem(ObjectBase):
+    type: ClassVar[str] = "m15_trust_{name}"
+
+    class Params(ParamsBase):
+        pos: Vec3 = (0.0, 0.0, 0.0)
+        r: float = 0.5
+
+    def draw(self, ctx, state):
+        x, y, z = self.me(state).params.pos
+        r = self.me(state).params.r
+        ctx.triangles(np.array([[x, y, z], [x + r, y, z], [x, y + r, z]]), color=(1, 1, 1, 1))
+
+
+def spin(t, look):
+    return {"pos": (t, 0.0, 0.0)}
+"""
+
+
+def _trust_folder(root):
+    """A folder with the person's plain document ``plain.phasor.json`` (no code), a document
+    ``gem.phasor.json`` that names ``gem.py``, and ``other.py`` that nobody asked to run."""
+    from phasor.core import io
+    from phasor.core.schema import Document, Meta, ObjectSpec
+
+    folder = root / "w"
+    folder.mkdir()
+    for name in ("gem", "other"):
+        (folder / f"{name}.py").write_text(TRUST_MODULE.replace("{name}", name), "utf-8")
+    io.save(folder / "plain.phasor.json",
+            Document(meta=Meta(title="plain"), objects=(ObjectSpec(id="d", type="dot"),)))  # fmt: skip
+    io.save(folder / "gem.phasor.json", Document(
+        meta=Meta(title="gem", modules=("gem.py",)),
+        objects=(ObjectSpec(id="g", type="m15_trust_gem"),
+                 ObjectSpec(id="d", type="dot", always=("gem.py:spin",)))))  # fmt: skip
+    return folder
+
+
+def _code_ran(folder):
+    return sorted(p.stem.removeprefix("ran_") for p in folder.glob("ran_*.txt"))
+
+
+def _attach(ws):
+    """An AI attached to the editor's workspace, as ``phasor mcp --attach`` is."""
+    from phasor.workspace.remote import RemoteServer, RemoteWorkspace
+
+    server = RemoteServer(ws).start()
+    server.write_handoff()
+    return server, RemoteWorkspace.from_handoff(ws.root)
+
+
+@pytest.mark.parametrize("name", ["gem.phasor.json", "plain.phasor.json"])
+def test_reaudit_b1_the_editor_opens_a_document_without_running_its_code(tmp_path, name):
+    """r1: the desktop app (Open dialog, recent files, examples, a command-line path) opens a
+    document through ``open_workspace``; the modules it names do not run."""
+    from phasor.gui.controller import open_workspace
+
+    folder = _trust_folder(tmp_path)
+    ws = open_workspace(str(folder / name))
+    assert ws.allow_scripts is False and ws.engine.allow_scripts is False
+    assert ws.engine.fork().allow_scripts is False
+    if name == "gem.phasor.json":
+        issues = [i for i in ws.engine.lint() if i.code == "missing_type"]
+        assert sorted(i.ids[0] for i in issues) == ["d", "g"]
+        assert all("trust_scene_code" in i.message + (i.fix_hint or "") for i in issues)
+        st = ws.engine.state_at(1.0)
+        assert st["g"].impl.semantics(st)["kind"] == "placeholder"
+    assert _code_ran(folder) == []
+
+
+def test_reaudit_b1_a_script_the_person_opens_runs_and_an_ai_may_only_tweak_it(tmp_path):
+    """The person's own .py runs (it is their code); the AI is limited to tweaks."""
+    from phasor.gui.controller import open_workspace
+    from phasor.workspace.tools import ToolError
+
+    folder = _trust_folder(tmp_path)
+    (folder / "mine.py").write_text(
+        "from phasor import Dot, Scene\ns = Scene('mine', look='none')\ns.add(Dot(id='d'))\n",
+        "utf-8")  # fmt: skip
+    ws = open_workspace(str(folder / "mine.py"))
+    assert ws.engine.scripted and ws.engine.allow_scripts and ws.allow_scripts is False
+    server, ai = _attach(ws)
+    try:
+        for ops in (
+            [{"op": "set_meta", "field": "modules", "value": ["other.py"]}],
+            [{"op": "add_object", "object": {"id": "q", "type": "m15_trust_other"}}],
+        ):
+            try:
+                r = ai.scene_edit(ops)
+            except ToolError:
+                continue
+            assert r["ok"] is False
+        assert ai.scene_edit({"op": "set_param", "path": "d.r", "value": 0.2})["ok"]
+    finally:
+        server.stop()
+    assert _code_ran(folder) == []
+
+
+@pytest.mark.parametrize("trusted", [False, True])
+def test_reaudit_b1_an_attached_ai_never_makes_new_code_run(tmp_path, trusted):
+    """r3b and its variants: whatever the person allowed, the AI cannot name a module, add an
+    updater, open a document with its code or a script, or trust code itself."""
+    from phasor.gui.controller import Editor, open_workspace
+    from phasor.workspace.tools import ToolError
+
+    folder = _trust_folder(tmp_path)
+    ws = open_workspace(str(folder / ("gem.phasor.json" if trusted else "plain.phasor.json")))
+    ed = Editor(ws)
+    if trusted:
+        ed.trust_scene_code()
+        assert _code_ran(folder) == ["gem"]
+        (folder / "ran_gem.txt").unlink()
+    server, ai = _attach(ws)
+    try:
+        attacks = [
+            [{"op": "set_meta", "field": "modules", "value": ["other.py"]},
+             {"op": "add_object", "object": {"id": "q", "type": "m15_trust_other"}}],
+            {"ops": [{"op": "set_meta", "field": "modules",
+                      "value": ["gem.py", "other.py"]}]},
+        ]  # fmt: skip
+        for patch in attacks:
+            with pytest.raises(ToolError, match="may not make new code run"):
+                ai.scene_edit(patch)
+        # A new updater: refused by the guard where the module is trusted, by the schema
+        # (its module is not named) where it is not.
+        new_updater = {"op": "add_object", "object": {"id": "u", "type": "dot",
+                                                      "always": ["gem.py:lift"]}}  # fmt: skip
+        if trusted:
+            with pytest.raises(ToolError, match=r"may not make new code run \(updaters"):
+                ai.scene_edit(new_updater)
+        else:
+            assert ai.scene_edit(new_updater)["ok"] is False
+        assert ws.engine.document.meta.modules == (("gem.py",) if trusted else ())
+        if trusted:  # an object of a type the person's trusted module defines is fine
+            assert ai.scene_edit(
+                {"op": "add_object", "object": {"id": "g2", "type": "m15_trust_gem"}}
+            )["ok"]
+        with pytest.raises(ToolError, match="no tool"):
+            ai.call("trust_scene_code")
+        with pytest.raises(ToolError, match="no tool"):
+            ai.call("_trust_code")
+        with pytest.raises(ToolError, match="does not run scripts"):
+            ai.scene_open("other.py")
+        ai.scene_open("gem.phasor.json")  # opens, but without its code
+        assert ws.engine.allow_scripts is False and ws.engine.fork().allow_scripts is False
+        assert _missing(ws.engine) == ["d", "g"]
+        ai.scene_edit({"op": "set_param", "path": "d.r", "value": 0.2})
+    finally:
+        server.stop()
+    assert _code_ran(folder) == []
+    assert ws.allow_scripts is False
+
+
+def test_reaudit_b1_trusting_the_scene_code_is_the_persons_choice(tmp_path):
+    """The person may trust the modules a document names: they run, the missing_type issues
+    go, unsaved edits are kept; the person may also name a module themselves."""
+    from phasor.gui.controller import Editor, open_workspace
+
+    folder = _trust_folder(tmp_path)
+    ed = Editor(open_workspace(str(folder / "gem.phasor.json")))
+    assert sorted(i["ids"][0] for i in ed.lint_items() if i["code"] == "missing_type") == ["d", "g"]
+    ed.set_param("g", "r", "0.25")
+    assert ed.dirty
+    r = ed.trust_scene_code()
+    assert r["modules"] == ["gem.py"] and _code_ran(folder) == ["gem"]
+    assert ed.engine.allow_scripts and ed.ws.allow_scripts is False
+    assert [i for i in ed.lint_items() if i["code"] == "missing_type"] == []
+    assert ed.dirty and ed.engine.document.object("g").params["r"] == 0.25
+    assert ed.engine.state_at(1.0)["d"].params.pos == (1.0, 0.0, 0.0)  # the updater runs
+    ed._edit({"op": "set_meta", "field": "modules", "value": ["gem.py", "other.py"]}, "modules")
+    assert ed.engine.document.meta.modules == ("gem.py", "other.py")  # the person may
+
+
+def test_reaudit_b1_running_code_never_lends_the_permission_to_the_workspace(tmp_path):
+    """``Editor.run_code`` runs the person's code without raising the workspace's own
+    permission (an attached AI calling ``scene_open`` meanwhile still may not run scripts)."""
+    from phasor.gui.controller import Editor, open_workspace
+
+    folder = _trust_folder(tmp_path)
+    ws = open_workspace(str(folder / "plain.phasor.json"))
+    seen = []
+    real = ws._open
+
+    def spy(path, *, allow_scripts):
+        seen.append(ws.allow_scripts)
+        return real(path, allow_scripts=allow_scripts)
+
+    ws._open = spy
+    r = Editor(ws).run_code("from phasor import Dot, Scene\ns = Scene('x', look='none')\n"
+                            "s.add(Dot(id='d'))\n")  # fmt: skip
+    assert r["ok"] and seen == [False] and ws.allow_scripts is False
+
+
+CONTROL_SCENE = """
+from typing import ClassVar
+
+import numpy as np
+
+from phasor import Scene
+from phasor.core.objects import ObjectBase, ParamsBase, register
+
+
+@register
+class Blob(ObjectBase):
+    type: ClassVar[str] = "m15_blob"
+
+    class Params(ParamsBase):
+        r: float = 0.5
+
+    def draw(self, ctx, state):
+        r = self.me(state).params.r
+        ctx.triangles(np.array([[0, 0, 0], [r, 0, 0], [0, r, 0]]), color=(1, 1, 1, 1))
+
+
+s = Scene("k", look="none", passes=None)
+s.add(Blob(id="b"))
+s.control("b.r", min=0.1, max=2.0)
+"""
+
+
+def test_reaudit_s2_a_slider_on_a_scene_types_default_parameter(tmp_path):
+    """r5: a control on a parameter a scene-local type leaves at its default is accepted,
+    is not an orphan, and the player and the editor read it; without the code it is the
+    missing type that lint reports, not a false orphan, and nothing raises."""
+    from phasor import load
+    from phasor.engine import Engine
+    from phasor.gui.controller import Editor
+    from phasor.interactive import Player
+    from phasor.workspace import Workspace
+
+    (tmp_path / "scene.py").write_text(CONTROL_SCENE, "utf-8")
+    e = load(tmp_path / "scene.py", passes=None)  # s.control("b.r") is not refused
+    assert [c.key for c in e.document.controls] == ["b.r"]
+    e.save(tmp_path / "k.phasor.json")
+    for allow in (True, False):
+        e2 = Engine.open(tmp_path / "k.phasor.json", passes=None, allow_scripts=allow)
+        codes = [i.code for i in e2.lint()]
+        assert "orphan_control" not in codes
+        assert ("missing_type" in codes) is (not allow)
+        p = Player(e2)
+        assert p.values == ({"b.r": 0.5} if allow else {})
+        ws = Workspace(tmp_path)
+        ws._engine = e2
+        ed = Editor(ws)
+        assert [c["value"] for c in ed.controls()] == ([0.5] if allow else [])
+        if allow:
+            assert p.set("b.r", 1.0) == 1.0
+            ed.set_control("b.r", 1.5)
+            assert ed.apply_controls()["ok"]
+            assert e2.document.object("b").params["r"] == 1.5
