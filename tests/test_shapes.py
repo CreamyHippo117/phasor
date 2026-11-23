@@ -992,3 +992,37 @@ def test_a_tracked_file_path_is_read_again_when_any_of_its_files_changes(tmp_pat
     assert _parts(e.state_at(2.0)) == ["logo.ring"]
     b.unlink()
     assert [i.path for i in e.lint() if i.code == "missing_file"] == ["logo.path"]
+
+
+# ---------------------------------------------------------------- 9. booleans on degenerate input
+
+
+def test_a_boolean_on_degenerate_input_never_raises_a_raw_geos_error():
+    """Found by fuzzing (seed 1): a tiny self-crossing ring beside a collinear one, against
+    a single point. GEOS gave up ("Unable to determine overlay result"); the operation now
+    snaps and retries, and otherwise says which operation failed."""
+    pytest.importorskip("shapely")
+    tiny = [(-2.0034340279292995e-05, 1.152610784114357e-05),
+            (4.533513975001653e-06, -3.248761329274574e-06),
+            (-1.158269124574922e-05, -2.7177632846330743e-05),
+            (-1.5595981539131942e-07, 7.4402495924330395e-06),
+            (2.991709870356918e-06, -1.2379767855284872e-05),
+            (8.070447042553143e-06, 4.1491399696003755e-06),
+            (-1.512200140513951e-05, -1.6331134656987116e-05),
+            (-9.022840195666627e-06, 1.2991609933261012e-05)]  # fmt: skip
+    xs = [1.3092309880051034, 1.6428978471782374, 1.8753429955333167, 2.012558812625586,
+          2.339622530301911, 3.7008388585962013, 3.9569858057882845, 4.189676576177723,
+          4.840356348224977, 8.90418981938739, 9.561977972281673]  # fmt: skip
+    ys = [2.618461976010207, 3.285795694356475, 3.7506859910666335, 4.025117625251172,
+          4.679245060603822, 7.401677717192403, 7.913971611576569, 8.379353152355446,
+          9.680712696449953, 17.80837963877478, 19.123955944563345]  # fmt: skip
+    ring = lambda pts: np.array([(x, y, 0.0) for x, y in [*pts, pts[0]]])  # noqa: E731
+    a = [ring(tiny), ring(list(zip(xs, ys, strict=True)))]
+    b = [np.full((1, 3), -0.08901580380121218)]
+    for op in pm.OPS:
+        try:
+            out = pm.boolean(op, a, b, "evenodd", "evenodd")
+        except ValueError as e:
+            assert op in str(e)
+        else:
+            assert all(np.isfinite(r).all() for r in out)

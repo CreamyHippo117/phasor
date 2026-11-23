@@ -569,17 +569,37 @@ def boolean(op: str, a: Sequence[np.ndarray], b: Sequence[np.ndarray], rule_a: s
         for outer, hs in reg.shapes:
             to2 = [_project(reg.to_world(r), frame) for r in (outer, *hs)]
             polys.append(Polygon(to2[0], to2[1:]))
-        return shapely.make_valid(MultiPolygon(polys)) if polys else Polygon()
+        return areas(shapely.make_valid(MultiPolygon(polys))) if polys else Polygon()
+
+    def areas(g):
+        """Only the parts with an area: making a ring with none valid gives a line, and a
+        collection of lines and polygons is one GEOS cannot always overlay."""
+        keep = [x for x in shapely.get_parts(g) if isinstance(x, Polygon | MultiPolygon)]
+        return shapely.union_all(keep) if keep else Polygon()
 
     rb = region(pts_b, rule_b)
-    ga, gb = geom(ra, ra), geom(rb, ra)
-    out = {
+    do = {
         "union": shapely.union,
         "intersection": shapely.intersection,
         "difference": shapely.difference,
         "exclusion": shapely.symmetric_difference,
-    }[op](ga, gb)
-    out = shapely.normalize(out)
+    }[op]
+    try:
+        ga, gb = geom(ra, ra), geom(rb, ra)
+        try:
+            out = do(ga, gb)
+        except shapely.errors.GEOSException:
+            # Degenerate input of mixed scales (a ring with no area beside a tiny one):
+            # snap both to a grid far below what shows, make them valid, try again.
+            box = np.array(shapely.bounds(shapely.union(ga.envelope, gb.envelope)))
+            grid = max(float(np.nanmax(np.abs(box))) if np.isfinite(box).any() else 1.0,
+                       1e-300) * 1e-9  # fmt: skip
+            snap = [areas(shapely.make_valid(shapely.set_precision(g, grid))) for g in (ga, gb)]
+            out = do(*snap)
+        out = shapely.normalize(out)
+    except shapely.errors.GEOSException as e:
+        raise ValueError(f"shapes.{op}: the shapes are too degenerate for a boolean "
+                         f"operation (GEOS: {e})") from None  # fmt: skip
     rings = []
     for poly in getattr(out, "geoms", [out]):
         if not isinstance(poly, Polygon) or poly.is_empty:
