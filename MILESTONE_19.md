@@ -36,21 +36,23 @@ independent**. Untested on Windows, macOS and CUDA. Built in parallel with Miles
 
 ## Verification (Linux, 4 cores, llvmpipe OpenGL 4.5, no CUDA)
 
-- `tests/test_diagrams.py` (98 tests, written with or before the code; both lint MODES for
-  every type): ticks (nice steps, degenerate, reversed, too many, NaN/inf/huge int,
+- `tests/test_diagrams.py` (42 test functions, 104 cases, written with or before the code;
+  both lint MODES for every type and every new lint code): ticks (nice steps, degenerate, reversed, too many, NaN/inf/huge int,
   enormous and tiny ranges with distinct numbers, determinism); every type's parts, names,
   semantics, features and placement, lint clean; CSV and code files (read, changed on disk,
   too long, not UTF-8, too big, missing, outside the folder, a FIFO never read); pygments
   highlighting and the fallback without it; `crowded_ticks` for axes and bar names (one
   issue, no pairwise `overlap`); every type at its bounds builds, inspects and lints in
-  bounded time; 22 hostile parameter sets refused as errors through `Engine.apply` (never
+  bounded time; part names the document holds get a suffix (`t.a1_2`, `plane.axes_2`); an
+  SVG without its extra still gets exactly one `missing_extra`; 22 hostile parameter sets refused as errors through `Engine.apply` (never
   raised); the examples show every new type and lint strict-clean; storyboard goldens.
 - Goldens (looked at): `tests/golden/software/diagram_kit.png`,
   `tests/golden/software/data_viz.png`. `test_final` covers the 7 new types (2D and orbit:
   inspect, draw, lint; `REQUIRED` entries for `table`, `code`, `code_line`).
 - Cost: the gallery (77 objects with parts) with OpenGL: `state_at` 7 ms, a new inspector
-  snapshot 0.38 s, strict lint 3.6 s. At the bounds (no OpenGL): each type under 1.1 s for
-  state, inspect and lint together.
+  snapshot 0.38 s, strict lint 3.6 s. At the bounds, measured **without OpenGL**
+  (`passes=None`): each type under 1.1 s for state, inspect and lint together; with OpenGL a
+  300-cell table costs more per inspector snapshot (one solo mask per part), not measured.
 
 ## Deviations
 
@@ -63,7 +65,9 @@ independent**. Untested on Windows, macOS and CUDA. Built in parallel with Miles
    Its end `labels` stay drawn, not parts (making them parts would add new lint subjects to
    old scenes). `step` 0 in a range used to be a validation error; it now asks for a nice
    step (`tests/test_geometry.py` changed to say so). Ranges now must make at most 100 ticks
-   and stay within 1e9 (no example, gallery entry or test in the repository is past it).
+   and stay within 1e9: no example, gallery or showcase script, test or saved
+   `*.phasor.json` in the repository uses `axes` past it (the two saved documents have no
+   axes).
 3. **New name `MatrixDisplay`** (type `matrix_display`): `matrix` is `linalg.Matrix`, a live
    2x2/3x3 of numbers with a determinant; kept as it is. `MatrixDisplay` is any matrix of
    maths. The owner may want `linalg.Matrix` rebuilt on it later (its pictures would change).
@@ -83,8 +87,11 @@ independent**. Untested on Windows, macOS and CUDA. Built in parallel with Miles
    flagged at 1080p; digits and taller letters pass. Not changed (lint rule shared by all
    text).
 9. Number lines write their numbers under a level line and left of a steep one (as axes do).
-10. A `Code` without pygments reports `missing_extra` from semantics (it draws, plainly), not
-    from `Requires` (whose message is "draws nothing").
+10. A `Code` without pygments reports `missing_extra` from its semantics key `plain_without`
+    (it draws, plainly), not from `Requires` (whose message is "draws nothing"); the message
+    comes from `core/extras.EXTRAS`.
+11. **A part name the document already holds or retired under a diagram gets the next free
+    suffix** (`t.a1_2`, `plane.axes_2`, `code.line_1_2`), as `SVG` does; nothing is dropped.
 
 ## Deferred
 
@@ -119,6 +126,18 @@ base theme TOMLs (one `[lint]` line), `tests/test_final.py` (three `REQUIRED` en
 (uses the shared name helpers), CI, packaging, README, TESTING, CLAUDE.md (Commands line).
 Nothing in `core/text.py`, `time/verbs.py`, glyphs or morphing.
 
-## Gate
+## Gate (`phasor-milestone-gate`, 2026-11-23, Linux, llvmpipe, no CUDA)
 
-See the table at the end (filled when the gate ran).
+| Step | Result | Evidence |
+| --- | --- | --- |
+| ruff check, ruff format --check | pass | "All checks passed", 318 files formatted |
+| lint-imports | pass | 2 kept, 0 broken |
+| pytest, focused | pass | test_diagrams, test_shapes, test_style_freedom, test_open_contract, test_lint, test_docs, test_layers, test_beauty, test_engine, test_aesthetic, test_kit, test_geometry, test_motion, test_mcp, test_pycode, test_contracts, test_core: 561 passed, 2 skipped; test_final `-k "not slow"`: 408 passed, 2 skipped. After the last fixes (commit 529e131): test_diagrams, test_shapes, test_lint, test_docs, test_kit, test_mcp, test_layers, test_doctor, test_final `-k "not slow"`: 697 passed, 4 skipped |
+| pytest, full | **not run** | over an hour on this box (left to CI) |
+| phasor doctor | tier B | llvmpipe OpenGL 4.5, g++ CPU kernels, no CUDA, all extras installed |
+| exit demo | pass (Linux) | `examples/diagram_kit.py`: every type renders (golden looked at), strict lint empty; `examples/data_viz.py` likewise |
+| contract audit | done, **not independent** | by the authoring model (no subagent available). Writes only through `Engine.apply` (builds return parts; nothing writes the document); `state_at` depends on the document, t and files named by `Files` params (read only inside the folder, cached by stamp, the engine's caches dropped when they change); caches keyed by everything they read (file stamp; source, language and whether pygments is there); `core/ticks.py` is pure and in `core` (no GPU/GL); every new type has the five members after registration; one way to do each thing (Axes extended; Counter extended; `MatrixDisplay` beside `linalg.Matrix` is Deviation 3). No contract text changed |
+| docs and artifacts | pass | API.md section with two running blocks, lint table, llms.txt; examples and catalog entries; goldens; this file |
+
+**MILESTONE 19: NOT DONE: the full suite was not run, and the contract audit was not
+independent.** On Linux, the exit conditions are met.
