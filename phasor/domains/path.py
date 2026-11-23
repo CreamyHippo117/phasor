@@ -257,6 +257,12 @@ class PathBase(ObjectBase):
         if n > 1e-12:
             arrow_head(ctx, cam, at, np.asarray(direction) / n, head, color=color, glow=glow)
 
+    def path_points(self, state: SceneState) -> np.ndarray:
+        """The whole outline as one polyline, subpath after subpath (what a ``Tracer``
+        travels along)."""
+        polys = self.flat(self.me(state).params, self._tol(state))
+        return np.vstack(polys) if polys else np.zeros((0, 3))
+
     # ---------------------------------------------------------------- what it is
 
     def features(self, state: SceneState) -> dict[str, np.ndarray]:

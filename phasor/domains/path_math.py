@@ -149,7 +149,8 @@ def rectangle(center, width: float, height: float, radius: float = 0.0,
             if not np.allclose(start, out[-1]):
                 out.extend(line_cubic(out[-1], start))
             out.extend(arc((cx, cy, 0.0), r, a0, math.pi / 2)[1:])
-        out.extend(line_cubic(out[-1], out[0]))
+        if not np.allclose(out[-1], out[0]):
+            out.extend(line_cubic(out[-1], out[0]))
         sub = np.array(out)
     sub = sub @ rot.T + c
     sub[-1] = sub[0]
@@ -241,6 +242,14 @@ def flatten(sub: np.ndarray, tol: float) -> np.ndarray:
     pts = np.vstack(out)
     if is_closed(sub):
         pts[-1] = pts[0]
+    # A cubic of zero length (a corner arc ending where the next piece starts) adds a point
+    # on top of the last one; a stroke cannot miter a joint with no direction.
+    step = np.abs(np.diff(pts, axis=0)).max(axis=1)
+    keep = np.r_[True, step > 1e-12 * max(1.0, float(np.abs(pts).max()))]
+    if not keep.all():
+        last = pts[-1].copy()
+        pts = pts[keep]
+        pts[-1] = last if len(pts) > 1 else pts[-1]
     return pts
 
 

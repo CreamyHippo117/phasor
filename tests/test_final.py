@@ -42,6 +42,8 @@ REQUIRED = {
     "callout": {"target": "guide"},  # rings an object
     "sound_rays": {"time": 0.5},  # in a room; 0: the sound has not left
     "wavefront3d": {"time": 0.5},
+    "path": {"subpaths": [[[0, 0, 0], [0.5, 1, 0], [1.5, 1, 0], [2, 0, 0]]]},
+    "svg": {"path": "examples/assets/emblem.svg"},  # relative: tests run from the repo root
 }
 # Types that point at another object: the scene gets a curve called "guide" for them.
 PARTNERED = {"tracer", "callout"}

@@ -161,3 +161,13 @@ why = "kernel-level demo, not a scene"
 kind = "physics"
 tier = "technique"
 teaches = "Sound in a 3D room: rays and fronts bouncing off the walls, an orbiting camera, an impulse response filling in"
+
+[examples.shapes]
+kind = "basics"
+tier = "reference"
+teaches = "Every outline shape on Path (circle, ellipse, arc with a tip, sector, annulus, polygon, regular polygon, rounded rectangle, brace), traced in row by row with fills and dashes"
+
+[examples.vector_toolkit]
+kind = "basics"
+tier = "technique"
+teaches = "Fills with holes (even-odd), dashed and dotted strokes, boolean operations on shapes, and an SVG file read as Path parts"
