@@ -961,11 +961,25 @@ class Mobject:
         cls, params = self._spec()
         return cls, {**params, **self._look()}
 
+    def phasor_style(self, cls: Any = None) -> dict[str, Any]:
+        """``_style`` cut to the keys the phasor type has (a diagram's ``color`` is its own
+        roles: an explicit color the script set on a key it lacks is said and left out)."""
+        cls = cls or self.phasor_spec()[0]
+        out = self._style(**self._style_extra())
+        keys = getattr(cls, "Style", None)
+        if not isinstance(keys, dict):
+            return out
+        for k in [k for k in out if k not in keys]:
+            v = out.pop(k)
+            if isinstance(v, str) and v.startswith("#"):
+                self._warn(f"a {type(self).__name__}'s {k} is not carried over (a "
+                           f"{cls.type} takes {sorted(keys)})")  # fmt: skip
+        return out
+
     def phasor_object(self, ident: str):
         cls, params = self.phasor_spec()
         extra = {"z_index": self.z} if self.z else {}
-        return cls(id=ident, opacity=0.0, style=self._style(**self._style_extra()), **extra,
-                   **params)  # fmt: skip
+        return cls(id=ident, opacity=0.0, style=self.phasor_style(cls), **extra, **params)
 
 
 def _call_updater(mob: Mobject, fn: Callable, dt: float) -> None:
@@ -2955,7 +2969,8 @@ class _Context:
                 rate: Any) -> None:  # fmt: skip
         """Style keys that change from ``start`` to ``goal``: style tracks (colors mix in
         linear light; a size jumps at the end)."""
-        old, new = start._style(**start._style_extra()), goal._style(**goal._style_extra())
+        cls = leaf.phasor_spec()[0]
+        old, new = start.phasor_style(cls), goal.phasor_style(cls)
         for key in sorted(new):
             if old.get(key) == new[key] or key in ("fill", "dash"):
                 continue
@@ -3495,40 +3510,36 @@ def _module() -> types.ModuleType:
 def import_manim(path: str | Path, scene: str | None = None) -> ManimImport:
     """Run the Manim script at ``path`` (a ``Scene`` subclass named ``scene``, or the first one
     it defines) and return the phasor scene it builds. The scene reads files (an SVG, a
-    sound) from the script's folder and never runs scripts itself."""
+    sound) from the script's folder and never runs scripts itself. The stand-in ``manim``
+    module is on the import path only while the script runs. Anything the script raises
+    besides a missing name (``NameError``, ``AttributeError``: a Manim name the stand-in
+    lacks) is a ``ManimImportError`` that names it."""
     global _CTX
     path = Path(path)
-    fake = _module()
     saved = {k: sys.modules.get(k) for k in ("manim", "manimlib")}
-    sys.modules["manim"] = fake
+    sys.modules["manim"] = _module()
+    ctx: _Context | None = None
     try:
-        ns = runpy.run_path(str(path), run_name="manim_import")
-    finally:
-        for k, v in saved.items():
-            if v is None:
-                sys.modules.pop(k, None)
-            else:
-                sys.modules[k] = v
-    classes = [v for v in ns.values() if isinstance(v, type) and issubclass(v, Scene)
-               and v.__module__ == "manim_import"]  # fmt: skip
-    if not classes:
-        raise ManimImportError(f"{path.name} defines no Manim Scene class")
-    if scene is not None:
-        match = [c for c in classes if c.__name__ == scene]
-        if not match:
-            raise ManimImportError(f"no Scene {scene!r} in {path.name}; it defines "
-                                   f"{[c.__name__ for c in classes]}")  # fmt: skip
-        cls = match[0]
-    else:
-        cls = classes[0]
-    base_dir = str(path.resolve().parent)
-    s = PhasorScene(cls.__name__, width=1920, height=1080, base_dir=base_dir,
-                    allow_scripts=False)  # fmt: skip
-    s.set("camera.height", FRAME_HEIGHT)
-    s.set("camera.center", (0.0, 0.0, 0.0))
-    ctx = _Context(scene=s, base_dir=base_dir)
-    _CTX = ctx
-    try:
+        ns = _run_script(path)
+        classes = [v for v in ns.values() if isinstance(v, type) and issubclass(v, Scene)
+                   and v.__module__ == "manim_import"]  # fmt: skip
+        if not classes:
+            raise ManimImportError(f"{path.name} defines no Manim Scene class")
+        if scene is not None:
+            match = [c for c in classes if c.__name__ == scene]
+            if not match:
+                raise ManimImportError(f"no Scene {scene!r} in {path.name}; it defines "
+                                       f"{[c.__name__ for c in classes]}")  # fmt: skip
+            cls = match[0]
+        else:
+            cls = classes[0]
+        base_dir = str(path.resolve().parent)
+        s = PhasorScene(cls.__name__, width=1920, height=1080, base_dir=base_dir,
+                        allow_scripts=False)  # fmt: skip
+        s.set("camera.height", FRAME_HEIGHT)
+        s.set("camera.center", (0.0, 0.0, 0.0))
+        ctx = _Context(scene=s, base_dir=base_dir)
+        _CTX = ctx
         instance = cls()
         instance.setup()
         instance.construct()
@@ -3553,8 +3564,23 @@ def import_manim(path: str | Path, scene: str | None = None) -> ManimImport:
         raise ManimImportError(f"{path.name}: {e}") from None
     except RecursionError:
         raise ManimImportError(f"{path.name}: the script recursed too deeply") from None
+    except ManimImportError as e:
+        if str(e).startswith(path.name):
+            raise
+        raise ManimImportError(f"{path.name}{_where(e, path)}: {e}") from None
+    except (NameError, AttributeError, KeyboardInterrupt, MemoryError):
+        raise
+    except Exception as e:  # the script's own error: said, with where, not a traceback
+        raise ManimImportError(
+            f"{path.name}: the script failed: {type(e).__name__}: {e}{_where(e, path)}"
+        ) from None
     finally:
         _CTX = None
+        for k, v in saved.items():
+            if v is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
     return ManimImport(
         scene=s,
         warnings=list(dict.fromkeys(ctx.warnings)),
@@ -3563,3 +3589,22 @@ def import_manim(path: str | Path, scene: str | None = None) -> ManimImport:
         others=[c.__name__ for c in classes if c is not cls],
         trace=ctx.trace,
     )
+
+
+def _run_script(path: Path) -> dict[str, Any]:
+    try:
+        return runpy.run_path(str(path), run_name="manim_import")
+    except SyntaxError as e:
+        raise ManimImportError(
+            f"{path.name}: not valid Python (line {e.lineno}: {e.msg})"
+        ) from None
+
+
+def _where(e: BaseException, path: Path) -> str:
+    """`` (line N)`` of the script where ``e`` was raised, when it was raised there."""
+    tb, line = e.__traceback__, None
+    while tb is not None:
+        if Path(tb.tb_frame.f_code.co_filename).name == path.name:
+            line = tb.tb_lineno
+        tb = tb.tb_next
+    return f" (line {line})" if line else ""

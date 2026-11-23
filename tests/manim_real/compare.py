@@ -144,6 +144,16 @@ def _pair(real: list[dict], ours: list[dict]) -> list[tuple[dict, dict | None]]:
     return [(m, pool.get(m["cls"], []).pop(0) if pool.get(m["cls"]) else None) for m in real]
 
 
+def _matching_at(plays: list[dict], sample: dict) -> bool:
+    """Whether a TransformMatching* plays at ``sample``: Manim then shows the pieces it
+    moves in a VGroup of its own, which is not the script's."""
+    t = sample["t"]
+    for p in plays:
+        if p["t0"] - 1e-9 <= t < p["t0"] + p["duration"] - 1e-9 and not sample.get("end"):
+            return any(a["cls"].startswith("TransformMatching") for a in p["anims"])
+    return False
+
+
 def compare(real: dict, ours: dict) -> Finding:
     f = Finding(real["scene"])
     if abs(real["duration"] - ours["duration"]) < 1e-6:
@@ -169,7 +179,8 @@ def compare(real: dict, ours: dict) -> Finding:
     frame_err = 0.0
     where: dict[str, str] = {}
     for rs, os_ in zip(real["samples"], ours["samples"], strict=True):
-        real_mobs = [m for m in rs["mobjects"] if m["cls"] not in INTERNAL]
+        internal = INTERNAL | ({"VGroup"} if _matching_at(rp, rs) else set())
+        real_mobs = [m for m in rs["mobjects"] if m["cls"] not in internal]
         if len(real_mobs) != len(os_["mobjects"]):
             if counts_ok:
                 where["count"] = (f"t={rs['t']:g}: Manim {[m['cls'] for m in real_mobs]}, phasor "

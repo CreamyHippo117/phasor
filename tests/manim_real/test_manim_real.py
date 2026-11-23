@@ -25,10 +25,14 @@ SCENES = sorted(p.stem for p in compare.SCENES.glob("*.py"))
 # Where phasor differs by design (MILESTONE_20.md, "Real Manim"): the measure is skipped.
 BY_DESIGN = {
     "animate_timing": {"position", "size"},  # Create traces a square from another corner
-    "axes_plot": {"size"},  # Create's share of a curve: by arc length here, by Bezier in Manim
+    # Create's share of a curve: by arc length here, by Bezier pieces in Manim
+    "axes_plot": {"position", "size"},
     "shapes_layout": {"size"},  # Manim's arrow tip is wider
-    "fills_colors": {"size"},  # a dashed line's box ends at its last dash
+    "fills_colors": {"position", "size"},  # a dashed line's box ends at its last dash
     "updaters": {"size"},  # phasor's box includes the stroke's width (a turned square)
+    # text set at phasor's role sizes is narrower than Manim's (owner decision, MILESTONE_20):
+    # a small text put in a corner by its edge lands that much further out
+    "text_write": {"text"},
 }
 
 
@@ -43,5 +47,6 @@ def test_the_import_matches_real_manim(name):
         assert f.worst["position"] <= compare.POS_TOL, f.details
     if "size" not in skip:
         assert f.worst["size"] <= compare.SIZE_TOL, f.details
-    assert f.worst["text"] <= compare.TEXT_POS_TOL, f.details
+    if "text" not in skip:
+        assert f.worst["text"] <= compare.TEXT_POS_TOL, f.details
     assert f.worst["frame"] in (0.0,) or f.worst["frame"] <= compare.POS_TOL, f.details

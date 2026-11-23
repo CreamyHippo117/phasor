@@ -309,7 +309,7 @@ s5.add(Sound(id="click", path="click.wav", start=0.5, gain=-6.0))
 s5.marker("end", 2.0)
 track, rate = s5.engine.audio_track()
 assert rate == 48000 and len(track) == 2 * 48000  # the scene's length, no narration needed
-assert track[: 24000].max() == 0 and track[24000 : 24000 + 4800].max() > 0
+assert track[:24000].max() == 0 and track[24000 : 24000 + 4800].max() > 0
 assert s5.engine.inspect(0.0, id="click")["objects"][0]["semantic"]["seconds"] == 0.1
 ```
 
