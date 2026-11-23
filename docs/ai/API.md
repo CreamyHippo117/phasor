@@ -519,9 +519,13 @@ Each issue has `code`, `severity`, `message`, `ids`, `times`, `fix_hint`, and `f
 | `unsolved` | error | a constraint or guard does not hold |
 | `raw_motion` | warning, strict only | a transition written with raw `to()` instead of a verb |
 | `orphan_override` | error | a tweak whose object is gone |
-| `missing_file` | warning | a file an object reads (a room's `.obj`) is not in the scene's folder; it draws nothing |
+| `missing_file` | warning | a file an object reads (a room's `.obj`) is not in the scene's folder, or is not a regular file (a folder, a FIFO, a device, a link that loops); it draws nothing |
 | `missing_extra` | warning | an object needs an optional package that is not installed (`SVG` needs the `svg` extra); it draws nothing |
 | `fill_crossing` | warning | a filled path whose edges cross: the fill may not follow its rule |
+| `fill_unchecked` | warning | a filled path with more edges than are checked for crossings (`path_math.CROSSING_LIMIT`, 20000) |
+| `dash_limit` | warning | a dashed or dotted path that would need more than `MAX_DASHES` (2000) dashes: they are drawn longer |
+| `bad_file` | warning | a file an object reads is not valid (an SVG that is not SVG), or some of its shapes are skipped (points not finite or absurdly far out); what cannot be read draws nothing |
+| `svg_too_complex` | warning | an SVG past a reading limit (size, elements once `<use>` is expanded, nesting, shapes, segments): its drawing is empty or cut short |
 
 `engine.autofix()` applies every `fix` the linter offers (add `near` for a child label that
 overlaps, `on_screen` for something cut by the frame), lints again, and returns
@@ -1212,7 +1216,7 @@ counterclockwise.
 | `shapes.Path` | `subpaths`, `rule` (`nonzero`/`evenodd`), `tips` (`none`/`start`/`end`/`both`: arrow tips on the open ends); `Path.through(id, points, closed=False)` builds one of straight segments | `path` |
 | `shapes.Circle` | `pos`, `r` | `circle`: `center`, `radius` |
 | `shapes.Ellipse` | `pos`, `width`, `height`, `rotation` | `ellipse` |
-| `shapes.Arc` | `pos`, `r`, `start`, `angle` (negative: clockwise), `tips` | `arc` (open: no area) |
+| `shapes.Arc` | `pos`, `r`, `start`, `angle` (-360 to 360, not 0; negative: clockwise), `tips` | `arc` (open, even a full turn: no area unless filled) |
 | `shapes.Sector` | `pos`, `r`, `start`, `angle`, `inner` (> 0: a slice of a ring) | `sector` |
 | `shapes.Annulus` | `pos`, `outer`, `inner` | `annulus` (a fill with a hole) |
 | `shapes.Polygon` (type `polygon_path`) | `vertices` (3 or more, in order) | `polygon`; feature `vertices` |
@@ -1226,25 +1230,38 @@ in and fades its fill in with it), `fill_opacity` and `stroke_opacity` (0-1, tim
 role's; `stroke_opacity=0` is a fill with no outline). Style keys: `color` (emphasis,
 primary), `stroke` (stroke, regular; `Brace`: bold), `glow` (glow, none), `fill` (fill,
 none; `SVG`: solid), `fill_color` (emphasis, primary), `dash` (dash, solid). Presets
-`outline`, `filled`, `solid`, `glowing`, `dashed`.
+`outline`, `filled`, `solid`, `glowing`, `dashed`. Every number of a path (a size, a
+position, a point) is within ±1e9 (`MAX_COORD`); beyond that is a validation error when it
+is set.
 
 - **Fills** are plain paint: they never glow, and a color below the theme's bloom knee comes
   out exactly as written. `rule="evenodd"`: every nested subpath flips inside and outside;
   `nonzero`: a subpath that runs the other way is a hole. A filled path whose edges cross
   is lint `fill_crossing` (split it, or use a boolean `union`).
 - **Dashes** are cut by arc length from each subpath's start, so they stay where they are
-  while a path is traced or grows. `dotted` draws round dots.
+  while a path is traced or grows. `dotted` draws round dots. A path draws at most
+  `MAX_DASHES` (2000) dashes or dots: a longer one gets longer dashes (lint `dash_limit`).
+  A theme's `[dash]` periods are 0 (solid) or at least 0.002 frame heights.
 - **Boolean operations**: `shapes.union(a, b, id=...)`, `intersection`, `difference`,
   `exclusion` take two shapes or paths (not yet in a scene, or already added) and return a
   new `Path` of straight segments, measured once when called; it takes `a`'s style unless
   given one. They need the `boolean` extra (shapely): without it they raise an error that
-  says how to install it.
+  says how to install it. Input too degenerate for GEOS (a ring with no area beside a tiny
+  one) is snapped and tried again; failing that, a `ValueError` names the operation.
 - **`SVG`**: each shape of the file becomes a part `<id>.<name>`, named from its `id`
-  attribute (lower case, other characters `_`; one without an id by its kind, `circle`,
-  `circle_2`). Filled shapes are filled with `fill_color`, stroked ones stroked; the file's
-  own colors are not used. Text, pictures and external references are ignored. The file is
-  read again when it changes. A missing file is lint `missing_file`; without the `svg`
-  extra (svgelements) it is lint `missing_extra`; either way it draws nothing.
+  attribute (lower case, other characters `_`, at most 40 characters; one without an id by
+  its kind, `circle`, `circle_2`, in file order, so give shapes ids to keep constraints on
+  them). A name the document already uses or retired under the `SVG` (a `logo.label`) gets
+  the next free suffix (`label_2`). Filled shapes are filled with `fill_color`, stroked
+  ones stroked; the file's own colors are not used. Text, pictures and external references
+  are ignored. The file is read again when it changes (a `path` on a track: every file it
+  names). A bad or hostile file never makes the scene fail: missing (or not a regular
+  file) is lint `missing_file`, not valid SVG is `bad_file`, past a limit (8 MB, 50000
+  elements once `<use>` is expanded, nesting 100 deep, 10000 shapes, 200000 segments;
+  constants in `path_math`) is `svg_too_complex`, and without the `svg` extra
+  (svgelements) it is `missing_extra`; it then draws nothing (or what fits the limits).
+- A render worker never re-reads a changed file: one that changes while a scene renders
+  stops the render with an error ("render it again"), so no video mixes old and new frames.
 - A `Tracer` can travel along any path or shape.
 
 ```python

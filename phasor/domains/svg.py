@@ -38,7 +38,7 @@ from phasor.core.objects import ObjectBase, ParamsBase, register
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
 from phasor.domains import path_math as pm
-from phasor.domains.path import STYLE, Path
+from phasor.domains.path import MAX_COORD, STYLE, Path
 
 MAX_NAME = 40  # characters of a part's name taken from the file (before any suffix)
 MAX_WORLD = 1e6  # a part with a point this far from ``pos`` (in heights) is skipped
@@ -81,7 +81,8 @@ def _placed(stamp: tuple, pos: tuple, height: float, reserved: frozenset[str]):
     with np.errstate(over="ignore", invalid="ignore"):
         for sh in d.shapes:
             subs = [np.round((sub - mid) * flip + origin, 9) for sub in sh.subpaths]
-            if all(np.isfinite(a).all() and np.abs(a - origin).max() <= far for a in subs):
+            if all(np.isfinite(a).all() and np.abs(a - origin).max() <= far
+                   and np.abs(a).max() <= MAX_COORD for a in subs):  # fmt: skip
                 keep.append((sh, subs))
             else:
                 skipped += 1
@@ -108,7 +109,7 @@ class SVG(ObjectBase):
     class Params(ParamsBase):
         path: str = ""  # an .svg file in the scene's folder
         pos: Vec3 = (0.0, 0.0, 0.0)  # where the middle of its view box goes
-        height: float = Field(2.0, gt=0)  # world height of its view box
+        height: float = Field(2.0, gt=0, le=MAX_COORD)  # world height of its view box
 
         @field_validator("path")
         @classmethod

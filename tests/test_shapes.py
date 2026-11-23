@@ -1088,3 +1088,15 @@ def test_a_staggered_trace_round_trips_through_the_code_view_exactly(tmp_path):
     doc = s.engine.document
     again = rebuild(doc, tmp_path)
     assert diff_documents(plain(doc), plain(again))["same"]
+
+
+def test_an_svg_placed_beyond_what_a_path_takes_skips_its_shapes(tmp_path):
+    pytest.importorskip("svgelements")
+    (tmp_path / "logo.svg").write_text(H + DOT + '<circle id="far" cx="1e7" cy="0" r="1"/>'
+                                       "</svg>", encoding="utf-8")  # fmt: skip
+    s = Scene("svg", passes=None, base_dir=tmp_path)
+    s.add(shapes.SVG(id="logo", path="logo.svg", height=5e8))
+    st, issues = _survives(s.engine)
+    assert _parts(st) == ["logo.dot"] and "bad_file" in issues
+    with pytest.raises(DocumentError):
+        s.add(shapes.SVG(id="huge", path="logo.svg", height=1e300))
