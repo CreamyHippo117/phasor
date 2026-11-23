@@ -9,7 +9,7 @@ Testing plan and what is untested: [TESTING.md](TESTING.md).
 API for humans and agents: [docs/ai/API.md](docs/ai/API.md). Driving it from an AI: [docs/ai/MCP.md](docs/ai/MCP.md).
 
 ```bash
-uv sync --extra gl --extra encode --extra gpu --extra boolean --extra svg   # drop --extra gpu without an NVIDIA GPU
+uv sync --extra gl --extra encode --extra gpu --extra boolean --extra svg --extra code   # drop --extra gpu without an NVIDIA GPU
 uv run phasor doctor
 uv run python examples/moving_dot.py
 uv run phasor inspect examples/moving_dot.py --t 2 --detail brief

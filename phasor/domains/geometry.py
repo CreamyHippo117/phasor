@@ -61,7 +61,7 @@ def number_parts(prefix: str, numbers, *, roles: dict[str, Any], reserved=frozen
     style = {"color": roles["color"], "size": roles["numbers"]}
     names = unique_names([ticks.name(prefix, s) for _, s, _, _ in numbers], reserved)
     return [Text(id=n, text=ticks.as_math(s), pos=tuple(float(c) for c in at), anchor=anchor,
-                 style=style, tags=["tick"])
+                 style=style, tags=["tick", f"along_{prefix}"])
             for n, (_, s, at, anchor) in zip(names, numbers, strict=True)]  # fmt: skip
 
 
