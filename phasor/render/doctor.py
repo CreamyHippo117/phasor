@@ -341,6 +341,20 @@ def compute_tier(checks: list[Check]) -> str:
     return "B"
 
 
+_REPORT: DoctorReport | None = None
+
+
+def cached_report() -> DoctorReport:
+    """The doctor's report, probed once per process. A render needs only the tier and the
+    encoder, and the machine does not change under a running program; probing again cost
+    every export (and every desktop-app render) the CUDA, OpenGL and ffmpeg checks
+    (GPU_SPEED.md step 7). ``phasor doctor`` and the app's Doctor still probe fresh."""
+    global _REPORT
+    if _REPORT is None:
+        _REPORT = run_doctor()
+    return _REPORT
+
+
 def run_doctor() -> DoctorReport:
     checks: list[Check] = [_guard("python", check_python)]
     cuda = _guard("cuda", check_cuda)

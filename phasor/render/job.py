@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from phasor.core.timing import stage
-from phasor.render.doctor import run_doctor
+from phasor.render.doctor import cached_report
 from phasor.render.encode import BackgroundWriter, mux_audio, open_writer
 from phasor.render.output import save_png
 
@@ -66,7 +66,7 @@ def render_file(
     size = (w or meta.width, h or meta.height)
     fps = fps or preset_fps or meta.fps
     with stage("setup"):  # once per render, not per frame
-        tier = run_doctor().tier
+        tier = cached_report().tier
     if tier == "C":
         raise RuntimeError("no OpenGL here (tier C); nothing can be rendered")
     warnings = (

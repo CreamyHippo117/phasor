@@ -250,6 +250,41 @@ stage with step 0 first; if it is large, move the `step` of those `Simulation`s 
 registered kernels (NumPy reference = today's step, so the three-way kernel tests apply),
 keeping fixed dt, the seed and the checkpoint cache (contract 3). Helps only those scenes.
 
+## Step 8. Startup and the bake (2026-11-23, measured on Linux llvmpipe; untested on CUDA)
+
+Plan written after finding that steps 0-4 left the *fixed* cost of a render as the largest part
+of short renders, and that no GPU was at hand: only things that are CPU-side and exactly
+repeatable are done here. The CPU kernels and C++ path belong to Milestone 14, not to this file.
+
+Measured first (all examples; `load` = running the scene script, incl. its bakes):
+- 19 of 22 examples load in under 0.25 s. Slow: `residue_theorem` 17.8 s (9 layout bakes of
+  about 3.6 s each, one per verb that reads `state_at`), `motion_gallery` 6.7 s + 2.4 s first
+  state, `prism_primes` 3.9 s (6.7 s of a profile in mpmath's `zetazero`).
+- **Frame reuse is dead.** Idea: skip drawing a frame identical to the last. Hit rate over every
+  example at its fps: **0 %** everywhere (life makes every glow breathe; no scene is ever
+  still). Not built. It would only pay in a draft that freezes life, and freezing life moves
+  baked label slots (they are measured against the wiggling anchor).
+- `run_doctor()` ran on every render (0.3 s here; on CUDA it also compiles a kernel).
+
+Done, each bit-identical (finals pinned: `pc_tasks/pin_frames.py`, prism_primes, motion_gallery,
+julia_explorer, 8-bit hashes equal before and after; a baked-layout hash of four scenes equal):
+- `core/spatial.py`: `project`/`clip_w` build the homogeneous points without `np.c_` (the
+  bake projects 258 000 tiny arrays); same matmul, same bits (`tests/test_speed_hotpaths.py`).
+- `core/values.py`: `normalize` takes the plain-float case first (1.3 M calls a load).
+- `layout/geometry.py`: the coverage summed-area table in int32 (same integers).
+- `examples/prism_primes.py`: each zeta zero is found once, not once per approximation.
+- `render/doctor.py` `cached_report()`: a render probes the machine once per process.
+residue_theorem load 17.8 -> 16.2 s (profile: 31.7 -> 21.4 s), prism_primes 3.9 -> 3.2 s.
+
+Not done, and why:
+- The nine bakes while a script builds (`Scene._verb` calls `state_at`): letting verbs read an
+  unbaked state would change what contract 7 says reads the bake; needs the owner. An
+  incremental bake is the real fix (most verbs touch few objects).
+- Worker start overlapping the parent's setup, and fewer workers for short renders: measure on
+  the PC first (`pc_tasks/09_render_speed.md`, section 2).
+- Step 5 (GL-CUDA interop, PyNvVideoCodec) and step 6 (simulations on the card): need the card
+  and, for step 5, owner approval of the dependency.
+
 ## Rules for the whole plan
 
 - One step per commit series; a step is done when its tests pass, the full suite passes

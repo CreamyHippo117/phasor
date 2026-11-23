@@ -125,8 +125,13 @@ class Coverage:
     def __init__(self, mask: np.ndarray, aspect: float) -> None:
         self.h, self.w = mask.shape
         self.aspect = aspect
-        self._sat = np.zeros((self.h + 1, self.w + 1), dtype=np.int64)
-        self._sat[1:, 1:] = mask.astype(np.int64).cumsum(0).cumsum(1)
+        # int32 holds any count of pixels a frame has (up to 2**31); half the memory traffic
+        # of int64 for the same exact integers
+        self._sat = np.zeros((self.h + 1, self.w + 1), dtype=np.int32)
+        m = mask.astype(np.int32)
+        np.cumsum(m, axis=0, out=m)
+        np.cumsum(m, axis=1, out=m)
+        self._sat[1:, 1:] = m
 
     def fraction(self, box: Box) -> float:
         x0 = int(np.floor(box.x0 / self.aspect * self.w))

@@ -17,6 +17,13 @@ Value = Any  # bool | float | str | tuple[Value, ...]
 
 def normalize(v: Any) -> Value:
     """Canonical form: ints -> float, lists -> tuples, recursively. Rejects everything else."""
+    t = type(v)
+    if t is float:  # the common case, ahead of the isinstance chain (called ~1e6 times a load)
+        if v - v != 0.0:  # nan or inf
+            raise ValueError(f"non-finite number: {v!r}")
+        return v
+    if t is str or t is bool:
+        return v
     if isinstance(v, bool | str):
         return v
     if isinstance(v, numbers.Real):
