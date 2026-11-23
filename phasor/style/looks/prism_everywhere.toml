@@ -196,7 +196,7 @@ material = "glass"
 
 # dynamical systems (ANIMATIONS.md D1, D2): trajectories glow, the arrow field and nullclines stay faint
 [defaults.phase_portrait.params]
-dim = 0.82
+dim = 0.9
 flow = true
 
 [defaults.phase_portrait.style]
@@ -210,12 +210,15 @@ glow = "strong"
 dim = 0.9  # a little see-through, as the phase portrait
 
 [defaults.linear_system.style]
+glow = "strong"
+
 # live convolution (ANIMATIONS.md S1): two glowing signals, the product lit, the output as light
 [defaults.convolution.params]
 dim = 0.92
 
 [defaults.convolution.style]
 glow = "strong"
+
 # filtering (ANIMATIONS.md S3): the plane's markers and the response curves glow, bars glow softly
 [defaults.pole_zero.params]
 dim = 0.9  # a little see-through, like the other prism types
@@ -240,14 +243,19 @@ dim = 0.9  # a little see-through, like the other prism types
 
 [defaults.filtered_spectrum.style]
 glow = "soft"
+
 [defaults.winding.params]
 hue_along = 1.0
 
 [defaults.winding.style]
+glow = "strong"
 
 [defaults.directivity.style]
+glow = "strong"
+
 [defaults.doppler.style]
 glow = "strong"
+
 [defaults.strange_attractor.params]
 dim = 0.82
 
