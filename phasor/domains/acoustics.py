@@ -460,8 +460,8 @@ class ImageSources(ObjectBase):
     def semantics(self, state: SceneState) -> dict[str, Any]:
         im = self._images(state)
         p = self.me(state).params
-        return {"kind": "image_sources", "count": int(len(im["pos"]) - 1), "order": p.order,
-                "weakest_gain": round(float(im["gain"].min()), 4)}  # fmt: skip
+        return {"kind": "image_sources", "backdrop": True, "count": int(len(im["pos"]) - 1),
+                "order": p.order, "weakest_gain": round(float(im["gain"].min()), 4)}  # fmt: skip
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
         me = self.me(state)

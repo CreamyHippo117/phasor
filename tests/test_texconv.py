@@ -9,6 +9,7 @@ import pytest
 from phasor import Equation, Scene, Text
 from phasor.core import text as tm
 from phasor.core.texconv import join_latex, mathtext_losses, split_math, to_latex, to_mathtext
+from tests.conftest import gl_available
 
 SAMPLES = [
     r"$\tfrac{1}{2} \le x$",
@@ -91,6 +92,7 @@ def test_round_trip_through_latex_renders_the_same_on_mathtext():
     assert np.array_equal(a, b)
 
 
+@pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
 def test_text_and_equation_report_their_latex():
     s = Scene("both")
     s.add(Text(id="half", text=r"$\tfrac{1}{2} \le x$"))
