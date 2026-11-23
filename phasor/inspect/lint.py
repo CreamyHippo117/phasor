@@ -14,6 +14,8 @@ returns one issue per problem with the times it was seen. Rules in this mileston
 | unsolved  | error    | a constraint that does not hold (from the bake, or a guard)    |
 | occluded_label | warning | 3D: a label partly hidden by something in front of it      |
 | missing_file | warning | a file an object reads (a mesh) is not in the scene's folder    |
+| missing_extra | warning | an object needs an optional package that is not installed (SVG) |
+| fill_crossing | warning | a filled path whose edges cross: its fill may not follow the rule |
 
 Under a perspective camera ``overlap`` only compares labels with labels and points with
 points: a label in front of a surface is fine, and one behind it is ``occluded_label``.
@@ -275,12 +277,34 @@ def control_rules(c: Compiled) -> list[Issue]:
 
 def file_rules(c: Compiled) -> list[Issue]:
     """``missing_file``: a parameter a type lists in ``Files`` (core/files.py) names a file
-    that is not in the scene's folder. The object draws nothing until the file is there."""
+    that is not in the scene's folder. The object draws nothing until the file is there.
+    ``missing_extra``: a type needs an optional package (its ``Requires``: module -> extra)
+    that is not installed; it draws nothing until the extra is installed."""
+    import importlib.util
+    import sys
+
     from phasor.core import files
     from phasor.time.compile import Const
 
+    def importable(module: str) -> bool:
+        if module in sys.modules:
+            return sys.modules[module] is not None
+        try:
+            return importlib.util.find_spec(module) is not None
+        except (ImportError, ValueError):
+            return False
+
     out = []
     for o in c.objects:
+        for module, extra in getattr(type(o.impl), "Requires", {}).items():
+            if not importable(module):
+                out.append(Issue(
+                    "missing_extra", f"{o.id}: a {o.type!r} needs the {module!r} package, "
+                    "which is not installed; it draws nothing", severity="warning",
+                    ids=(o.id,), times=(0.0,),
+                    fix_hint=f"install it: uv sync --extra {extra} (or pip install "
+                    f"'phasor[{extra}]')",
+                ))  # fmt: skip
         for name in getattr(type(o.impl), "Files", ()):
             path = f"{o.id}.{name}"
             node = c.nodes.get(path)
@@ -503,8 +527,13 @@ def run(
             if _is_label(e):
                 if (y1 - y0) < th["text_min"] * height:
                     f.add("tiny", (e["id"],), t, px=y1 - y0, what="text")
-            elif max(x1 - x0, y1 - y0) < th["tiny"] * height:
+            elif (
+                max(x1 - x0, y1 - y0) < th["tiny"] * height
+                and e["semantic"].get("drawn", 1.0) >= 1.0
+            ):  # a curve being traced starts small; it is judged once drawn
                 f.add("tiny", (e["id"],), t, px=max(x1 - x0, y1 - y0), what="object")
+            if e["semantic"].get("fill_crossing"):
+                f.add("fill_crossing", (e["id"],), t)
         if persp:
             for e in labels:
                 v = e["visible_fraction"]
@@ -596,6 +625,12 @@ def run(
                          fix_hint="give it a 'near' constraint so the placer moves it, add the "
                          f"camera goal 'camera avoid_occlusion({ids[0]})', or make the "
                          "occluder glass")  # fmt: skip
+        if code == "fill_crossing":
+            return Issue(code, f"{ids[0]!r} is filled but its edges cross {when}: the fill "
+                         "is cut into triangles as if they did not, so parts of it may be "
+                         "missing or doubled", "warning", ids, times=ts,
+                         fix_hint="split it into subpaths that do not cross (a boolean "
+                         "union does that), or turn its fill off")  # fmt: skip
         if code == "tiny":
             return Issue(code, f"{info['what']} {ids[0]!r} is only {info['px']:.0f} px "
                          f"{when}", "warning", ids,

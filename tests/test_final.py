@@ -42,6 +42,8 @@ REQUIRED = {
     "callout": {"target": "guide"},  # rings an object
     "sound_rays": {"time": 0.5},  # in a room; 0: the sound has not left
     "wavefront3d": {"time": 0.5},
+    "path": {"subpaths": [[[0, 0, 0], [0.5, 1, 0], [1.5, 1, 0], [2, 0, 0]]]},
+    "svg": {"path": "examples/assets/emblem.svg"},  # relative: tests run from the repo root
 }
 # Types that point at another object: the scene gets a curve called "guide" for them.
 PARTNERED = {"tracer", "callout"}
@@ -51,12 +53,20 @@ IN_ROOM = {"sound_rays", "wavefront3d"}
 # kernel directly) or manim_reverb (a Manim script, run through the importer in its own test).
 EXAMPLES = sorted(p.stem for p in (ROOT / "examples").glob("*.py")
                   if p.stem not in {"domain_coloring", "manim_reverb"})  # fmt: skip
+# Types and examples that need an optional package (an extra): skipped without it.
+NEEDS = {"svg": ("svgelements",), "vector_toolkit": ("shapely", "svgelements")}
 # Slow to build (minutes for riemann_sqrt's labels through an orbit): checked by their own
 # tests, and here only for lint.
 SLOW = {"deep_zoom", "residue_theorem", "riemann_sqrt"}
 
 
+def _needs(name: str) -> None:
+    for module in NEEDS.get(name, ()):
+        pytest.importorskip(module, reason=f"{name} needs the optional {module!r} package")
+
+
 def _one(name: str, camera: str, passes="auto"):
+    _needs(name)
     s = Scene(f"one {name}", passes=passes, base_dir=ROOT)  # files (a picture) from the repo
     if camera == "orbit":
         s.use_camera("orbit")
@@ -77,6 +87,7 @@ _example_cache: dict[str, object] = {}
 
 
 def _example(name: str):
+    _needs(name)
     if name not in _example_cache:
         _example_cache[name] = runpy.run_path(str(ROOT / "examples" / f"{name}.py"),
                                               run_name="x")["s"].engine  # fmt: skip

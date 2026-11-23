@@ -370,6 +370,31 @@ def compute_tier(checks: list[Check]) -> str:
     return "B"
 
 
+# Optional packages some objects need: (module, extra, what needs it).
+EXTRAS = (("shapely", "boolean", "boolean operations on shapes"),
+          ("svgelements", "svg", "SVG drawings"))  # fmt: skip
+
+
+def check_extras() -> Check:
+    """Which optional object packages are installed. Missing ones are not a failure: the
+    objects that need them say so (lint ``missing_extra``) and draw nothing."""
+    import importlib.util
+
+    missing = []
+    for module, extra, what in EXTRAS:
+        try:
+            found = importlib.util.find_spec(module) is not None
+        except (ImportError, ValueError):
+            found = False
+        if not found:
+            missing.append(f"{what} (--extra {extra})")
+    if not missing:
+        return Check("extras", True, "all optional object packages installed",
+                     {"missing": []})  # fmt: skip
+    return Check("extras", None, "not installed: " + ", ".join(missing) + "; uv sync adds them",
+                 {"missing": missing})  # fmt: skip
+
+
 def run_doctor() -> DoctorReport:
     checks: list[Check] = [_guard("python", check_python)]
     cuda = _guard("cuda", check_cuda)
@@ -385,7 +410,7 @@ def run_doctor() -> DoctorReport:
     checks.append(_guard("opengl", check_opengl))
     pyav = _guard("pyav", check_pyav)
     ffmpeg = _guard("ffmpeg", check_ffmpeg)
-    checks += [pyav, ffmpeg]
+    checks += [pyav, ffmpeg, _guard("extras", check_extras)]
     return DoctorReport(checks, compute_tier(checks), pick_encoder(pyav, ffmpeg))
 
 

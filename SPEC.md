@@ -386,6 +386,8 @@ The AI handles structure, math and timing; the engine and your gallery hold the 
 | Glow | `none`, `soft`, `strong` |
 | Text | `title`, `label`, `annotation`, `math` |
 | Surface | `solid`, `glass`, `wire`, `emissive` |
+| Fill | `none`, `soft`, `solid` (a closed path's fill opacity; Milestone 16) |
+| Dash | `solid`, `dashed`, `dotted` (a path's stroke cut by arc length; Milestone 16) |
 
 - Ship three themes tuned by hand: `midnight_glow`, `aurora`, `paper`. Add more only after these look great.
 - **The dark theme is the default, always** (owner, 2026-11-18; replaces an earlier note asking for light defaults). `midnight_glow` stays the house theme. **The `prism` look is the default style** (owner, 2026-11-22): a scene that names neither a look nor a theme gets it; `look="none"` gives plain `midnight_glow`. Light and mid-tone themes are opt-in choices, and glow and bloom must still read on them (soft colored halos, not white blow-outs).

@@ -21,7 +21,7 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1-mesa-dri
       # No CUDA on hosted runners: the gpu extra is left out and gpu tests skip.
-      - run: uv sync --extra gl --extra encode --extra mcp
+      - run: uv sync --extra gl --extra encode --extra mcp --extra boolean --extra svg
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run lint-imports

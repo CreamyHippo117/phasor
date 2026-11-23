@@ -37,7 +37,7 @@ GPU tests are written (`tests/test_gpu.py`, 38 tests, plus 22 in `test_kernels.p
 `test_doctor.py`); they skip themselves without a card. On the PC, in the phasor folder:
 
 ```bash
-uv sync --extra gl --extra encode --extra gui --extra mcp --extra gpu
+uv sync --extra gl --extra encode --extra gui --extra mcp --extra gpu --extra boolean --extra svg
 uv run phasor doctor
 uv run pytest
 uv run pytest tests/test_gpu.py tests/test_kernels.py -v -m gpu

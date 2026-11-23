@@ -23,9 +23,14 @@ def _doc_files():
 def test_doc_code_blocks_run(path: Path):
     text = path.read_text(encoding="utf-8")
     ns: dict = {"__name__": f"docs_{path.stem}"}
+    from phasor.domains.path_math import MissingExtra
+
     for i, m in enumerate(BLOCK.finditer(text)):
         code = m.group(1)
-        exec(compile(code, f"{path.name}[block {i}]", "exec"), ns)
+        try:
+            exec(compile(code, f"{path.name}[block {i}]", "exec"), ns)
+        except MissingExtra as e:  # an optional package (CI installs them all)
+            pytest.skip(f"{path.name} block {i} and later: {e}")
 
 
 MCP_BLOCK = re.compile(r"^```json (patch|calls)[ \t]*\n(.*?)^```", re.S | re.M)

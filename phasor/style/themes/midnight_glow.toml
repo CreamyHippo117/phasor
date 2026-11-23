@@ -36,6 +36,22 @@ glass = 0.45
 wire = 1.0
 emissive = 1.0
 
+
+# Fills of closed paths (shapes, SVG): the value is the fill's opacity. A fill is plain paint
+# (it never glows), so a color below the bloom `knee` shows exactly as written.
+[fill]
+none = 0.0
+soft = 0.12
+solid = 1.0
+
+# Dashes along a path's stroke: the value is the period (one dash and its gap), a share of
+# the frame height; 0 is an unbroken stroke. Dashes are cut by arc length from the start, so
+# they stay put as a path grows.
+[dash]
+solid = 0.0
+dashed = 0.03
+dotted = 0.014
+
 # Cyclic color tables. "oklch L C" is the perceptually even phase wheel at OKLCH lightness
 # L and chroma C; kept darker than the paint colors so glowing curves stand out on it.
 [colormap]

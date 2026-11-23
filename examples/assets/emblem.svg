@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 80">
+  <!-- A small emblem for examples/vector_toolkit.py: a ring, a star, a badge with a hole
+       (fill-rule evenodd), and a wave drawn inside a moved group. -->
+  <circle id="Ring" cx="40" cy="40" r="32" fill="none" stroke="#ffffff" stroke-width="3"/>
+  <path id="star" fill="#ffffff"
+        d="M40 14 L46.2 31.5 L64.7 32 L50 43.3 L55.3 61 L40 50.5 L24.7 61 L30 43.3 L15.3 32 L33.8 31.5 Z"/>
+  <path id="badge-1" fill="#ffffff" fill-rule="evenodd"
+        d="M80 12 H112 V44 H80 Z M89 28 A7 7 0 1 0 103 28 A7 7 0 1 0 89 28 Z"/>
+  <g transform="translate(80 52)">
+    <path id="wave" fill="none" stroke="#ffffff" d="M0 10 Q 8 -6 16 10 T 32 10"/>
+  </g>
+</svg>

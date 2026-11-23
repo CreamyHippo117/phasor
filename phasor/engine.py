@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import phasor.domains  # noqa: F401  (registers the built-in object types)
-from phasor.core import io
+from phasor.core import files, io
 from phasor.core.issues import DocumentError, Issue
 from phasor.core.objects import SCENE_MODULE_PREFIX, CodeScope, get_type
 from phasor.core.patch import TWEAK_OPS, apply_ops, apply_overrides, parse_patch, record_tweaks
@@ -33,7 +33,7 @@ from phasor.inspect.oracle import PassOracle
 from phasor.inspect.passes import PassRunner
 from phasor.layout.bake import Bake, bake, baked_state
 from phasor.layout.plan import Plan, compile_plan
-from phasor.time.compile import Compiled, compile_document
+from phasor.time.compile import Compiled, Const, compile_document
 from phasor.time.expr import CompiledExpr
 from phasor.time.tracks import ResolvedTrack
 
@@ -110,6 +110,31 @@ class _Snapshot:
         self.aesthetic: tuple[Issue, ...] | None = None
         self.states: OrderedDict[float, SceneState] = OrderedDict()
         self.snapshots: OrderedDict[float, dict[str, Any]] = OrderedDict()
+        self.file_stamps = file_stamps(self.compiled)
+
+    def refresh(self) -> None:
+        """Forget what was derived from the files the document names when one of them
+        changed (contract 3: a changed file is read again). A composite builds its parts from
+        a file (an ``SVG``), so a state made before the change is stale too."""
+        now = file_stamps(self.compiled)
+        if now != self.file_stamps:
+            self.file_stamps = now
+            self.bake, self.aesthetic = None, None
+            self.lint = {}
+            self.states.clear()
+            self.snapshots.clear()
+
+
+def file_stamps(c: Compiled) -> tuple:
+    """Each file the document's objects name (``Files``) as it is now (``files.stamp``)."""
+    out = []
+    for o in c.objects:
+        for name in getattr(type(o.impl), "Files", ()):
+            node = c.nodes.get(f"{o.id}.{name}")
+            value = node.value if isinstance(node, Const) else None
+            if isinstance(value, str) and value:
+                out.append(files.stamp(c.base_dir, value))
+    return tuple(out)
 
 
 _build = _Snapshot
@@ -449,6 +474,7 @@ class Engine:
                 "remaining": report["issues"]}  # fmt: skip
 
     def _aesthetic(self, snap: _Snapshot) -> tuple[Issue, ...]:
+        snap.refresh()
         if snap.aesthetic is None:
             snap.aesthetic = tuple(aesthetic_rules.rules(
                 snap.compiled,
@@ -468,6 +494,7 @@ class Engine:
         return None if n is None else mix_track(n, self.base_dir, self.duration)
 
     def _lint(self, snap: _Snapshot, step: float) -> tuple[Issue, ...]:
+        snap.refresh()
         if step not in snap.lint:
             visual = lint_rules.run(
                 snap.compiled,
@@ -495,6 +522,7 @@ class Engine:
     @property
     def layout(self) -> Bake:
         """The layout bake for the current document: key times, tracks, chosen label slots."""
+        self._snap.refresh()
         return self._bake(self._snap)
 
     def state_at(self, t: float) -> SceneState:
@@ -504,6 +532,7 @@ class Engine:
 
     def _state(self, snap: _Snapshot, t: float) -> SceneState:
         t = float(t)
+        snap.refresh()
         if t in snap.states:
             snap.states.move_to_end(t)
             return snap.states[t]
@@ -634,6 +663,7 @@ class Engine:
 
     def _snapshot_of(self, snap: _Snapshot, t: float) -> dict[str, Any]:
         t = float(t)
+        snap.refresh()
         if t not in snap.snapshots:
             snap.snapshots[t] = inspector.snapshot(self._state(snap, t), self.pass_runner())
             if len(snap.snapshots) > STATE_CACHE_SIZE:
