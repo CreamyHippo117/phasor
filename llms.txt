@@ -91,6 +91,7 @@
 - `source`: flash, pos, r
 - `spectrogram`: flash, f0, f1, signal, wav, duration, fs, nwin, hop, window, fmax, playhead, pos, size, smooth, isolines
 - `spectrum`: flash, frequencies, amplitudes, window, samples, fs, pos, extent, bins
+- `strange_attractor`: flash, system, sigma, rho, beta, seed, t_end, progress, pos, size
 - `subgroup_lattice`: flash, group, pos, width, height
 - `taylor`: flash, function, center, order, xmin, xmax, ymax, pos
 - `text`: flash, text, pos, anchor, leader, leader_on, write

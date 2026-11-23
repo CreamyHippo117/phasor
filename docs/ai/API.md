@@ -1216,6 +1216,28 @@ Example: `examples/convolution.py`. The prism looks make both signals and the ou
 product lit where they overlap. Numerics (a sum on a fine grid, checked against box * box = a
 triangle, decay * decay = t e^-at and Gaussian widths adding) are in
 `phasor/domains/convolution_math.py`.
+- `dyn.StrangeAttractor(system="lorenz", sigma=10, rho=28, beta=8/3, seed=0, t_end=36,
+  progress=1, pos=(0, 0, 0), size=6)` traces a single three-dimensional trajectory. Use
+  `system="rossler"` or `"thomas"` for their classic parameter sets. The three named
+  coefficients customize Lorenz. The object ID and seed determine the starting point.
+  The solver uses a fixed step of 0.01 and `t_end` is in simulation time, from 0.01 to
+  120, rounded to the nearest step. The complete path is centered on `pos` with longest span `size`. Animate
+  `progress` from 0 to 1 and use an orbit camera to view its depth. The prism look colors
+  the stroke by simulation time. The inspector reports the simulated time at the head.
+
+```python
+from phasor import Scene, dyn
+
+s = Scene("lorenz", look="prism")
+s.use_camera("orbit", azimuth=-90, elevation=12, distance=11)
+s.add(dyn.StrangeAttractor(id="trajectory", progress=0))
+s.marker("begin", 0.0)
+s.marker("finish", 8.0)
+s.at("begin").trace("trajectory")
+s.at("begin").orbit(70, until="finish")
+```
+
+Example: `examples/strange_attractor.py`.
 
 ## Command line
 

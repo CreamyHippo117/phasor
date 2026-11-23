@@ -196,7 +196,7 @@ material = "glass"
 
 # dynamical systems (ANIMATIONS.md D1, D2): trajectories glow, the arrow field and nullclines stay faint
 [defaults.phase_portrait.params]
-dim = 0.9
+dim = 0.82
 flow = true
 
 [defaults.phase_portrait.style]
@@ -248,3 +248,9 @@ hue_along = 1.0
 [defaults.directivity.style]
 [defaults.doppler.style]
 glow = "strong"
+[defaults.strange_attractor.params]
+dim = 0.82
+
+[defaults.strange_attractor.style]
+glow = "strong"
+colormap = "spectrum"

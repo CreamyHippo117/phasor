@@ -45,6 +45,8 @@ eigenvectors of a matrix, a grid being transformed.
 | D3 | **Bifurcation diagram**: the logistic map (or any map) over a parameter, the period doubling into chaos | PC (millions of points: the point-cloud splat of step 3) | the classic picture as a glowing point cloud |
 | D4 | **Strange attractors**: the Lorenz system traced as a moving trajectory in 3D (and Rossler, Thomas) | here (the curve); PC for the dense cloud version | a glowing 3D curve with hue along time, the camera orbiting |
 | D5 | **Linear systems and their modes** (done: `dyn.LinearSystem`): x' = A x, the eigenvectors as invariant lines, trajectories, the matrix exponential acting on a grid | here (reuses `EigenLines`, `TransformGrid`) | glowing, as above |
+| D4 | **Strange attractors** (done: `dyn.StrangeAttractor`): the Lorenz system traced as a moving trajectory in 3D (and Rossler, Thomas) | here (the curve); PC for the dense cloud version | a glowing 3D curve with hue along time, the camera orbiting |
+| D5 | **Linear systems and their modes**: x' = A x, the eigenvectors as invariant lines, trajectories, the matrix exponential acting on a grid | here (reuses `EigenLines`, `TransformGrid`) | glowing, as above |
 
 ## Order
 
