@@ -33,6 +33,7 @@ _ALIAS = {
     "phasor.domains.shapes": "shapes",
     "phasor.domains.path": "shapes",  # shapes.Path
     "phasor.domains.svg": "shapes",  # shapes.SVG
+    "phasor.domains.diagrams": "dg",
 }
 
 

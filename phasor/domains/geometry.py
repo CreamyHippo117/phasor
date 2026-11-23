@@ -18,12 +18,16 @@ Numerics (formulas, flow lines, coloring) are in ``geometry_math``.
 from __future__ import annotations
 
 import functools
+import itertools
 from typing import Any, ClassVar, Literal
 
 import numpy as np
 from pydantic import Field, field_validator, model_validator
 
+from phasor.core import record, ticks
+from phasor.core import text as text_metrics
 from phasor.core.color import ramp
+from phasor.core.ids import children, unique_names
 from phasor.core.objects import Bounds, DrawContext, ObjectBase, ParamsBase, Pass, register
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
@@ -35,6 +39,7 @@ UV = ("u", "v")
 XYZ = ("x", "y", "z")
 COLOR_BY_CURVE = Literal["none", "t", "speed", "x", "y", "z"]
 COLOR_BY_SURFACE = Literal["none", "height", "u", "v", "radius", "expr"]
+MAX_LABEL = 80  # characters of an axis label
 
 
 def _vec(p) -> np.ndarray:
@@ -43,18 +48,60 @@ def _vec(p) -> np.ndarray:
 
 # ---------------------------------------------------------------- Axes
 
+NUMBER_GAP = 0.3  # text heights between a tick's end and the number written at it
+
+
+def number_parts(prefix: str, numbers, *, roles: dict[str, Any], reserved=frozenset()) -> list:
+    """``Text`` parts for numbers written along an axis: ``numbers`` is (value, text, world
+    position, anchor) per number; each is named by its value (``x_2``, ``x_m0p5``: see
+    ``ticks.name``), clear of ``reserved``, tagged ``tick`` (lint judges crowded numbers as
+    ``crowded_ticks``, not pair by pair), in the composite's ``color`` and ``numbers`` roles."""
+    from phasor.domains.basic import Text
+
+    style = {"color": roles["color"], "size": roles["numbers"]}
+    names = unique_names([ticks.name(prefix, s) for _, s, _, _ in numbers], reserved)
+    return [Text(id=n, text=ticks.as_math(s), pos=tuple(float(c) for c in at), anchor=anchor,
+                 style=style, tags=["tick", f"along_{prefix}"])
+            for n, (_, s, at, anchor) in zip(names, numbers, strict=True)]  # fmt: skip
+
+
+def crowding(texts, spacing: float, along, height: float, cam) -> dict[str, float]:
+    """How much room numbers ``spacing`` apart along the world direction ``along`` need:
+    ``need``, the most two neighbours take of it (half of each one's extent along the axis),
+    and ``height``, their text height; lint ``crowded_ticks`` compares the gap left with the
+    theme's ``tick_gap`` (in text heights)."""
+    along = np.asarray(along, dtype=np.float64)
+    ext = [abs(text_metrics.aspect(t) * height * float(cam.right @ along))
+           + abs(text_metrics.box(t) * height * float(cam.up @ along)) for t in texts]  # fmt: skip
+    need = max((a + b) / 2 for a, b in itertools.pairwise(ext)) if len(ext) > 1 else 0.0
+    return {"spacing": round(float(spacing), 9), "need": round(need, 9),
+            "height": round(float(height), 9)}  # fmt: skip
+
+
+def _finite_scale(v, name: str, zero: bool = True):
+    """A scale: finite, at most ``MAX_VALUE``, positive (or 0, "the shared one", if ``zero``)."""
+    f = ticks.number(v, name)
+    if f > ticks.MAX_VALUE or f < 0 or (f == 0 and not zero):
+        raise ValueError(f"{name} must be positive and at most {ticks.MAX_VALUE:g}")
+    return v
+
 
 @register
 class Axes(ObjectBase):
     """Coordinate axes with tick marks (2D: x and y; 3D: x, y and z), each running from its
-    minimum to its maximum through the origin. Ranges are (min, max, tick step) in axis units;
-    ``scale`` is world units per axis unit. ``labels`` ("x", "y", "z") are drawn at the ends."""
+    minimum to its maximum through the origin. Ranges are (min, max, tick step) in axis units
+    (step 0: a nice step); ``scale`` is world units per axis unit, and ``x_scale``,
+    ``y_scale``, ``z_scale`` (0: ``scale``) set one axis's own (unequal scales). ``labels``
+    ("x", "y", "z") are drawn at the ends. ``numbers=True`` writes the value at every tick
+    but zero, as parts (``axes.x_2``, ``axes.y_m1``) the inspector and lint see one by one;
+    ``digits`` -1 picks as many decimals as the step needs."""
 
     type: ClassVar[str] = "axes"
     Style: ClassVar = {
         "color": ("emphasis", "primary"),
         "stroke": ("stroke", "hairline"),
         "size": ("text", "annotation"),
+        "numbers": ("text", "label"),  # the numbers at the ticks
     }
 
     class Params(ParamsBase):
@@ -64,47 +111,122 @@ class Axes(ObjectBase):
         z_range: tuple[float, float, float] = (-1.0, 6.0, 1.0)
         pos: Vec3 = (0.0, 0.0, 0.0)  # where the axes cross
         scale: float = Field(1.0, gt=0)
-        tick: float = Field(0.12, gt=0)  # tick length in world units
+        x_scale: float = Field(0.0, ge=0)  # world units per x unit (0: ``scale``)
+        y_scale: float = Field(0.0, ge=0)
+        z_scale: float = Field(0.0, ge=0)
+        tick: float = Field(0.12, gt=0, le=ticks.MAX_VALUE)  # tick length in world units
         labels: tuple[str, ...] = ()
+        numbers: bool = False  # write the value at each tick (parts)
+        digits: int = Field(-1, ge=-1, le=ticks.MAX_DECIMALS)  # -1: as the step needs
+
+        @field_validator("x_scale", "y_scale", "z_scale")
+        @classmethod
+        def _scale(cls, v, info):
+            return _finite_scale(v, info.field_name)
+
+        @field_validator("labels")
+        @classmethod
+        def _labels(cls, v):
+            if len(v) > 3 or any(len(x) > MAX_LABEL for x in v):
+                raise ValueError(f"at most 3 labels of at most {MAX_LABEL} characters")
+            for x in v:
+                text_metrics.check_math(x)
+            return v
 
         @model_validator(mode="after")
         def _ranges(self):
+            _finite_scale(self.scale, "scale", zero=False)
             for name in ("x_range", "y_range", "z_range"):
                 lo, hi, step = getattr(self, name)
-                if hi <= lo or step <= 0:
-                    raise ValueError(f"{name} must be (min, max, step) with min < max, step > 0")
+                ticks.check_range(lo, hi, step, name)
+                sc = getattr(self, f"{name[0]}_scale") or self.scale
+                if max(abs(lo), abs(hi)) * sc > ticks.MAX_VALUE:
+                    raise ValueError(f"{name} times its scale must be within "
+                                     f"+-{ticks.MAX_VALUE:g} world units")  # fmt: skip
+            for i, c in enumerate(self.pos):
+                if abs(ticks.number(c, "pos")) > ticks.MAX_VALUE:
+                    raise ValueError(f"pos[{i}] must be within +-{ticks.MAX_VALUE:g}")
             return self
 
-    def _axes(self, p) -> list[tuple[np.ndarray, tuple[float, float, float], np.ndarray]]:
-        """(direction, range, tick direction) per axis."""
+    def _axes(self, p) -> list[tuple[np.ndarray, tuple[float, float, float], np.ndarray, float]]:
+        """(direction, range, tick direction, scale) per axis."""
         e = np.eye(3)
-        out = [(e[0], p.x_range, e[1]), (e[1], p.y_range, e[0])]
+        out = [(e[0], p.x_range, e[1], p.x_scale or p.scale),
+               (e[1], p.y_range, e[0], p.y_scale or p.scale)]  # fmt: skip
         if p.dims == 3:
-            out.append((e[2], p.z_range, e[0]))
+            out.append((e[2], p.z_range, e[0], p.z_scale or p.scale))
         return out
 
     def world_bounds(self, state: SceneState) -> Bounds:
         p = self.me(state).params
         o = _vec(p.pos)
-        pts = [o + d * lo * p.scale for d, (lo, _, _), _ in self._axes(p)]
-        pts += [o + d * hi * p.scale for d, (_, hi, _), _ in self._axes(p)]
-        return Bounds.of_points(pts, pad=p.tick)
+        pts = [o + d * lo * s for d, (lo, _, _), _, s in self._axes(p)]
+        pts += [o + d * hi * s for d, (_, hi, _), _, s in self._axes(p)]
+        own = Bounds.of_points(pts, pad=p.tick)
+        found = record.parts(state, self.id)
+        if not found:
+            return own
+        boxes = [own, *(q.impl.world_bounds(state) for q in found)]
+        return Bounds.of_points([c for b in boxes for c in (b.lo, b.hi)])
 
     def features(self, state: SceneState) -> dict[str, np.ndarray]:
         p = self.me(state).params
         o = _vec(p.pos)
         out = {"origin": o}
-        for name, (d, (_, hi, _), _) in zip("xyz", self._axes(p), strict=False):
-            out[f"{name}_end"] = o + d * hi * p.scale
+        for name, (d, (_, hi, _), _, s) in zip("xyz", self._axes(p), strict=False):
+            out[f"{name}_end"] = o + d * hi * s
+        return out
+
+    def _numbers(self, state: SceneState):
+        """Per axis: (name, [(value, text, position, anchor)], step, spacing, direction,
+        text height)."""
+        me = self.me(state)
+        p = me.params
+        cam = state.camera_for(me)
+        o = _vec(p.pos)
+        h = me.style["numbers"] * float(cam.units_per_height(o))
+        out = []
+        for name, (d, (lo, hi, step), td, s) in zip("xyz", self._axes(p), strict=False):
+            step = ticks.step_of(lo, hi, step)
+            digits = ticks.decimals(step) if p.digits < 0 else p.digits
+            off = p.tick / 2 + NUMBER_GAP * h
+            if name == "x":  # below the x axis, centered on the tick
+                shift, anchor = -td * (off + h / 2), "center"
+            else:  # left of the y (and z) axis, ending at the tick
+                shift, anchor = -td * off, "right"
+            nums = [(v, ticks.text(v, digits), o + d * v * s + shift, anchor)
+                    for v in gm.tick_values(lo, hi, step)]  # fmt: skip
+            out.append((name, nums, step, step * s, d, h))
         return out
 
     def semantics(self, state: SceneState) -> dict[str, Any]:
         p = self.me(state).params
         axes = {
-            n: {"range": [r[0], r[1]], "step": r[2], "ticks": len(gm.tick_values(*r))}
-            for n, (_, r, _) in zip("xyz", self._axes(p), strict=False)
-        }
-        return {"kind": "axes", "dims": p.dims, "axes": axes, "scale": p.scale}
+            n: {"range": [r[0], r[1]], "step": ticks.step_of(*r), "scale": s,
+                "ticks": len(gm.tick_values(*r))}
+            for n, (_, r, _, s) in zip("xyz", self._axes(p), strict=False)
+        }  # fmt: skip
+        out = {"kind": "axes", "dims": p.dims, "axes": axes, "scale": p.scale}
+        if p.numbers:
+            cam = state.camera_for(self.me(state))
+            out["numbers"] = {
+                name: {
+                    "step": step,
+                    **crowding([ticks.as_math(t) for _, t, _, _ in nums], spacing, d, h, cam),
+                }
+                for name, nums, step, spacing, d, h in self._numbers(state)
+            }
+        return out
+
+    def build(self, state: SceneState) -> list:
+        """The numbers at the ticks, when ``numbers`` is on (the lines are drawn by ``draw``)."""
+        me = self.me(state)
+        if not me.params.numbers:
+            return []
+        reserved = children(state.reserved, self.id)
+        roles = me.roles
+        return [part for name, nums, *_ in self._numbers(state)
+                for part in number_parts(name, nums, roles=roles, reserved=reserved)]  # fmt: skip
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
         me = self.me(state)
@@ -113,12 +235,12 @@ class Axes(ObjectBase):
         o = _vec(p.pos)
         col = with_alpha(me.style["color"], p.opacity)
         size = me.style["size"] * float(cam.units_per_height(o))
-        for i, (d, (lo, hi, step), td) in enumerate(self._axes(p)):
-            a, b = o + d * lo * p.scale, o + d * hi * p.scale
+        for i, (d, (lo, hi, step), td, s) in enumerate(self._axes(p)):
+            a, b = o + d * lo * s, o + d * hi * s
             w = me.style["stroke"] * float(cam.units_per_height((a + b) / 2))
             polyline(ctx, cam, [a, b], w, color=col)
             for v in gm.tick_values(lo, hi, step):
-                c = o + d * v * p.scale
+                c = o + d * v * s
                 polyline(ctx, cam, [c - td * p.tick / 2, c + td * p.tick / 2], w, color=col)
             if i < len(p.labels):
                 ctx.text(p.labels[i], b + d * size * 0.9, size, color=col)

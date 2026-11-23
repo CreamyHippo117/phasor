@@ -8,12 +8,12 @@ to NumPy with SymPy's lambdify; they are never evaluated as Python.
 from __future__ import annotations
 
 import functools
-import math
 from collections.abc import Callable
 
 import numpy as np
 import sympy as sp
 
+from phasor.core import ticks
 from phasor.render.gpu.codegen import FunctionError, parse_expression
 
 __all__ = [
@@ -88,11 +88,11 @@ def sample_ramp(lut: np.ndarray, u: np.ndarray) -> np.ndarray:
 
 
 def tick_values(lo: float, hi: float, step: float) -> np.ndarray:
-    """Multiples of ``step`` in [lo, hi], zero left out (the axes cross there)."""
-    if step <= 0:
-        raise ValueError("a tick step must be positive")
-    k0, k1 = math.ceil(lo / step - 1e-9), math.floor(hi / step + 1e-9)
-    return np.array([k * step for k in range(k0, k1 + 1) if k != 0], dtype=np.float64)
+    """Multiples of ``step`` in [lo, hi], zero left out (the axes cross there); ``step`` 0:
+    a nice one (``core/ticks.py``, which bounds how many)."""
+    if step < 0:
+        raise ValueError("a tick step must be positive (or 0 for a nice one)")
+    return np.array([v for v in ticks.values(lo, hi, step) if v != 0], dtype=np.float64)
 
 
 # ---------------------------------------------------------------- surfaces

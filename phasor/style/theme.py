@@ -86,6 +86,7 @@ _TABLES = {
         "impure",
         "off_palette",
         "off_scale",
+        "tick_gap",
     ),
     "life": (
         "glow",

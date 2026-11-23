@@ -1,5 +1,5 @@
 # PyInstaller recipe for the phasor desktop app (see packaging/README.md).
-#   uv sync --extra gl --extra encode --extra gui --extra mcp --extra boolean --extra svg --group package
+#   uv sync --extra gl --extra encode --extra gui --extra mcp --extra boolean --extra svg --extra code --group package
 #   uv run pyinstaller packaging/phasor.spec --noconfirm
 # Output: dist/phasor/ (a folder app; on macOS also dist/phasor.app).
 # Build on each platform for that platform: PyInstaller does not cross-compile.

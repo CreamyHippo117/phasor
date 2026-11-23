@@ -4,10 +4,11 @@ A type needs two members: ``Params`` and ``draw(ctx, state)`` (or, for a composi
 ``build(state) -> [objects]`` instead of ``draw``). ``register`` refuses a type without
 them. ``world_bounds``, ``features`` and ``semantics`` are the type's own when it defines
 them and are derived from what ``draw`` records otherwise (``core/record.py``); a composite's
-are the union of its parts'. ``draw`` may take a third argument, the pass (``color``, ``id``,
-``solo``); one that does not is given a wrapper at registration that drops it, so every
-renderer calls ``draw(ctx, state, pass_)``. After ``register`` every type has all five
-``CONTRACT_MEMBERS``.
+are the union of its parts' (and of what it draws itself, when it also has a ``draw``: an axis
+draws its lines and builds its numbers as parts). ``draw`` may take a third argument, the
+pass (``color``, ``id``, ``solo``); one that does not is given a wrapper at registration that
+drops it, so every renderer calls ``draw(ctx, state, pass_)``. After ``register`` every type
+has all five ``CONTRACT_MEMBERS``.
 
 An instance is bound to one object id and holds no scene state: everything it needs comes
 from the ``SceneState`` it is handed. The same instance doubles as the Python builder
@@ -372,13 +373,16 @@ def register(cls: type) -> type:
         same_file = source is not None and getattr(old, "_phasor_source", None) == source
         if is_builtin(old) or not same_file:
             raise RegistrationError(f"object type {name!r} is already registered")
-    if not hasattr(cls, "draw"):
+    # A composite may also draw (an axis draws its lines; its numbers are parts to inspect).
+    draws = hasattr(cls, "draw") and cls.draw is not _draw_parts
+    if not draws:
         cls.draw = _draw_parts
     elif not _takes_pass(cls.draw):
         cls.draw = _without_pass(cls.draw)
+    derived = (record.HYBRID if draws else record.COMPOSITE) if composite else record.DERIVED
     for m in DERIVED_MEMBERS:
         if not hasattr(cls, m):
-            setattr(cls, m, (record.COMPOSITE if composite else record.DERIVED)[m])
+            setattr(cls, m, derived[m])
     cls._phasor_source = source
     cls._phasor_script = script
     cls._phasor_registered = cls  # this class itself (a subclass inherits the attribute)

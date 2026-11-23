@@ -20,6 +20,12 @@ returns one issue per problem with the times it was seen. Rules in this mileston
 | bad_file  | warning  | a file an object reads is not valid (or some of its shapes are skipped) |
 | svg_too_complex | warning | an SVG past a reading limit: its drawing is empty or cut short |
 | dash_limit | warning | a dashed or dotted path with more dashes than are drawn per path |
+| crowded_ticks | warning | numbers along an axis (or a chart's bar names) too close to read |
+| truncated | warning | a file a table or code block reads is past a limit: only part shown |
+| unknown_language | warning | code in a language pygments does not know: drawn plain   |
+
+``missing_extra`` also warns when a type draws without its extra, plainer (``Code`` without
+pygments is drawn in one color).
 
 Under a perspective camera ``overlap`` only compares labels with labels and points with
 points: a label in front of a surface is fine, and one behind it is ``occluded_label``.
@@ -35,6 +41,7 @@ from typing import Any
 
 import numpy as np
 
+from phasor.core import extras, ticks
 from phasor.core import text as text_metrics
 from phasor.core.color import contrast_ratio, over
 from phasor.core.constraints import LABEL_SUFFIX
@@ -79,6 +86,16 @@ def _part_of(entries: dict[str, dict[str, Any]], a: dict[str, Any], b: dict[str,
                 return True
             up = entries[up].get("part_of") if up in entries else None
     return False
+
+
+def _same_axis(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """Whether two entries are numbers along one axis of one composite (tagged
+    ``along_<axis>`` by ``geometry.number_parts``): lint judges those together, as
+    ``crowded_ticks``, not pair by pair."""
+    if a.get("part_of") is None or a.get("part_of") != b.get("part_of"):
+        return False
+    along = {x for x in a["tags"] if x.startswith("along_")}
+    return bool(along & set(b["tags"]))
 
 
 def _shown(e: dict[str, Any]) -> bool:
@@ -198,9 +215,14 @@ class _Frame:
                 bg = (*np.clip(behind.mean(axis=0), 0, None), 1.0)
                 return contrast_ratio(over((*c[:3], alpha), bg), bg)
         bg = self.state.background
+        mine = self.entries[label_id]
         for obj in self.state.draw_order():
             if obj.id == label_id:
                 break
+            other = self.entries.get(obj.id)
+            if other is not None and (_part_of(self.entries, mine, other)
+                                      or _same_axis(mine, other)):  # fmt: skip
+                continue  # its composite is drawn around it; crowded numbers: crowded_ticks
             on_it = obj.params.opacity > FAINT and "color" in obj.style
             if on_it and self.covered(label_id, obj.id) > 0.5:
                 under = obj.style["color"]
@@ -496,6 +518,8 @@ def run(
                 pair = tuple(sorted((a["id"], b["id"])))
                 if a is b or pair in seen_pairs or _part_of(fr.entries, a, b):
                     continue
+                if _same_axis(a, b):
+                    continue  # numbers along one axis are judged together: crowded_ticks
                 if persp and not (both(a, b, "label") or both(a, b, "point")):
                     continue  # depth decides in 3D: see occluded_label
                 if a["semantic"].get("backdrop") or b["semantic"].get("backdrop"):
@@ -528,6 +552,13 @@ def run(
                 f.add("tiny", (e["id"],), t, px=max(x1 - x0, y1 - y0), what="object")
             if e["semantic"].get("fill_crossing"):
                 f.add("fill_crossing", (e["id"],), t)
+            for axis, n in (e["semantic"].get("numbers") or {}).items():
+                gap = (n["spacing"] - n["need"]) / max(n["height"], 1e-12)
+                if gap < th["tick_gap"]:
+                    clear = ticks.clear_step(n["step"], n["spacing"], n["need"], n["height"],
+                                             th["tick_gap"])  # fmt: skip
+                    f.add("crowded_ticks", (e["id"],), t, path=f"{e['id']}.{axis}",
+                          axis=axis, step=n["step"], clear=clear)  # fmt: skip
         for e in fr.entries.values():  # also what is off screen or draws nothing
             sem = e["semantic"]
             if sem.get("fill_unchecked"):
@@ -540,6 +571,12 @@ def run(
             if sem.get("too_complex"):
                 f.add("svg_too_complex", (e["id"],), t, why=sem["too_complex"],
                       file=sem.get("file"))  # fmt: skip
+            if sem.get("truncated"):
+                f.add("truncated", (e["id"],), t, why=sem["truncated"], file=sem.get("file"))
+            if sem.get("unknown_language"):
+                f.add("unknown_language", (e["id"],), t, language=sem["unknown_language"])
+            if sem.get("plain_without"):  # a type that draws without its extra, plainer
+                f.add("missing_extra", (e["id"],), t, module=sem["plain_without"])
         if persp:
             for e in labels:
                 v = e["visible_fraction"]
@@ -647,9 +684,37 @@ def run(
             what = (f"cannot be read: {info['why']}" if info["why"] else
                     f"has {info['skipped']} shape(s) skipped: points not finite or absurdly "
                     "far out")  # fmt: skip
+            svg = str(info["file"]).lower().endswith(".svg")
             return Issue(code, f"{ids[0]!r}: the file {info['file']!r} {what}", "warning", ids,
                          times=ts, fix_hint="export the file again (plain SVG), or point "
-                         "the object at another file")  # fmt: skip
+                         "the object at another file" if svg else "save the file again as "
+                         "UTF-8 text, or point the object at another file")  # fmt: skip
+        if code == "truncated":
+            return Issue(code, f"{ids[0]!r}: the file {info['file']!r} is past a limit "
+                         f"({info['why']}); only the first part is shown", "warning", ids,
+                         times=ts, fix_hint="shorten the file, or split it into several "
+                         "objects")  # fmt: skip
+        if code == "unknown_language":
+            return Issue(code, f"{ids[0]!r}: pygments does not know the language "
+                         f"{info['language']!r}; the code is drawn plain {when}", "warning", ids,
+                         times=ts, fix_hint="use a pygments lexer name, such as 'python', "
+                         "'c', 'cpp', 'rust', 'javascript' or 'text'")  # fmt: skip
+        if code == "missing_extra":  # drawn without the package, plainer (file_rules: none)
+            extra, what = extras.EXTRAS[info["module"]]
+            return Issue(code, f"{ids[0]!r}: {what} needs the {info['module']!r} package, "
+                         "which is not installed; it is drawn plain", "warning", ids, times=ts,
+                         fix_hint=f"install it: uv sync --extra {extra} (or pip install "
+                         f"'phasor[{extra}]')")  # fmt: skip
+        if code == "crowded_ticks" and info["axis"] == "names":
+            return Issue(code, f"{ids[0]!r}: the bars' names crowd each other {when}", "warning",
+                         ids, path=info["path"], times=ts, fix_hint="make the chart wider, the "
+                         "names shorter, or the 'numbers' text role smaller")  # fmt: skip
+        if code == "crowded_ticks":
+            return Issue(code, f"{ids[0]!r}: the numbers along {info['axis']!r} crowd each "
+                         f"other at a step of {info['step']:g} {when}", "warning", ids,
+                         path=info["path"], times=ts, fix_hint=f"use a step of at least "
+                         f"{info['clear']:g} (the range's third number), a larger scale, or "
+                         "a smaller 'numbers' text role")  # fmt: skip
         if code == "svg_too_complex":
             return Issue(code, f"{ids[0]!r}: the file {info['file']!r} is past a reading "
                          f"limit ({info['why']}); its drawing is empty or cut short",

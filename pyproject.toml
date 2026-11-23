@@ -25,11 +25,13 @@ gl = ["moderngl>=5.12"]
 gpu = ["cupy-cuda12x[ctk]>=13.3"]
 # Video encoding (NVENC when the driver supports it, libx264 otherwise).
 encode = ["av>=14"]
-all = ["phasor[gl,gpu,encode,mcp,gui,notebook,boolean,svg]"]
+all = ["phasor[gl,gpu,encode,mcp,gui,notebook,boolean,svg,code]"]
 # Boolean operations on paths (`shapes.union`, ...): shapely (BSD).
 boolean = ["shapely>=2.0"]
 # `SVG` objects read .svg files with svgelements (MIT).
 svg = ["svgelements>=1.9"]
+# `Code` highlights code with pygments (BSD); without it code is drawn plain.
+code = ["pygments>=2.17"]
 # The MCP server an AI client connects to (`phasor mcp`).
 mcp = ["mcp>=2.0,<3"]
 # Jupyter widgets for interactive scenes (`phasor.interactive.notebook`).

@@ -27,13 +27,13 @@ external references in the file are ignored.
 from __future__ import annotations
 
 import functools
-import re
 from typing import Any, ClassVar
 
 import numpy as np
 from pydantic import Field, field_validator
 
 from phasor.core import extras, files
+from phasor.core.ids import children, name_from, unique_names
 from phasor.core.objects import ObjectBase, ParamsBase, register
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
@@ -47,21 +47,7 @@ MAX_WORLD = 1e6  # a part with a point this far from ``pos`` (in heights) is ski
 def part_names(shapes, reserved=()) -> list[str]:
     """A valid, unique part name per shape, from its ``id`` (or its kind), in file order,
     none of them in ``reserved`` (names the document holds under the ``SVG``)."""
-    used: set[str] = set(reserved)
-    out = []
-    for sh in shapes:
-        base = re.sub(r"[^a-z0-9_]+", "_", sh.id.lower()).strip("_")
-        if not base:
-            base = sh.tag
-        elif not base[0].isalpha():
-            base = f"{sh.tag}_{base}"
-        base = base[:MAX_NAME].rstrip("_")
-        name, n = base, 2
-        while name in used:
-            name, n = f"{base}_{n}", n + 1
-        used.add(name)
-        out.append(name)
-    return out
+    return unique_names([name_from(sh.id, sh.tag, MAX_NAME) for sh in shapes], reserved)
 
 
 @functools.lru_cache(maxsize=16)
@@ -137,9 +123,7 @@ class SVG(ObjectBase):
         p = self.me(state).params
         if self.drawing(state) is None:
             return (), 0
-        prefix = f"{self.id}."
-        reserved = frozenset(i[len(prefix) :].split(".")[0] for i in state.reserved
-                             if i.startswith(prefix))  # fmt: skip
+        reserved = children(state.reserved, self.id)
         stamp = files.stamp(state.base_dir, p.path)
         return _placed(stamp, tuple(p.pos), p.height, reserved)
 

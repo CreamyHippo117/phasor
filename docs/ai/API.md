@@ -520,12 +520,15 @@ Each issue has `code`, `severity`, `message`, `ids`, `times`, `fix_hint`, and `f
 | `raw_motion` | warning, strict only | a transition written with raw `to()` instead of a verb |
 | `orphan_override` | error | a tweak whose object is gone |
 | `missing_file` | warning | a file an object reads (a room's `.obj`) is not in the scene's folder, or is not a regular file (a folder, a FIFO, a device, a link that loops); it draws nothing |
-| `missing_extra` | warning | an object needs an optional package that is not installed (`SVG` needs the `svg` extra); it draws nothing |
+| `missing_extra` | warning | an object needs an optional package that is not installed (`SVG` needs the `svg` extra); it draws nothing. A `Code` without pygments (the `code` extra) is drawn plain instead |
 | `fill_crossing` | warning | a filled path whose edges cross: the fill may not follow its rule |
 | `fill_unchecked` | warning | a filled path with more edges than are checked for crossings (`path_math.CROSSING_LIMIT`, 20000) |
 | `dash_limit` | warning | a dashed or dotted path that would need more than `MAX_DASHES` (2000) dashes: they are drawn longer |
 | `bad_file` | warning | a file an object reads is not valid (an SVG that is not SVG), or some of its shapes are skipped (points not finite or absurdly far out); what cannot be read draws nothing |
 | `svg_too_complex` | warning | an SVG past a reading limit (size, elements once `<use>` is expanded, nesting, shapes, segments): its drawing is empty or cut short |
+| `crowded_ticks` | warning | numbers along an axis (or a chart's bar names) closer than `[lint] tick_gap` text heights; `path` names the axis (`ax.x`), the hint the smallest nice step that clears them |
+| `truncated` | warning | a file a `Table` or `Code` reads is past a limit (rows, columns, lines); only its first part is shown |
+| `unknown_language` | warning | a `Code` language pygments does not know: drawn plain |
 
 `engine.autofix()` applies every `fix` the linter offers (add `near` for a child label that
 overlaps, `on_screen` for something cut by the frame), lints again, and returns
@@ -1326,6 +1329,109 @@ s.add(
 # parts: emblem.ring, emblem.star, emblem.badge_1, emblem.wave
 ```
 
+## Diagrams: number lines, planes, charts, tables, matrices, code (`dg`)
+
+`from phasor import dg`. Each is a composite that draws its own furniture (lines, ticks,
+grid, rules, brackets) and builds everything a reader reads as a **part** the inspector,
+layout and lint see by itself. Parts are placed by their composite (they take no
+constraints: put a `label(x) near x` on a document object instead); numbers along one axis
+are judged together by lint `crowded_ticks`, not pair by pair. Sizes and colors come from
+roles; explicit values are allowed (`off_palette` / `off_scale` warn).
+
+| Type | Parameters | Parts | Semantics `kind` |
+| --- | --- | --- | --- |
+| `dg.NumberLine` | `x_range` (min, max, step; step 0: a nice 1-2-5 step), `pos` (middle), `scale` (world units per unit), `angle` (degrees), `tick`, `numbers`, `digits` (-1: as the step needs), `tips` (`none`/`end`/`both`), `label` | `n_2`, `n_m1`, `n_0p5` (a number per tick) | `number_line`; features `start`, `end`, `zero` |
+| `dg.NumberPlane` | `x_range`, `y_range`, `pos` (where 0, 0 is), `scale`, `x_scale`, `y_scale` (0: `scale`), `faint` (lighter lines between, 0-4), `numbers`, `digits`, `labels` | `axes` (a `geo.Axes`), whose numbers are `axes.x_2`, `axes.y_m1` | `number_plane`, a backdrop (labels may sit on it) |
+| `dg.BarChart` | `values` (1-40), `names`, `colors` (emphasis roles per bar, cycled), `pos` (middle), `width`, `height`, `y_range` ((0, 0, 0): fit the values), `gap`, `grow` (0-1: animate it), `numbers`, `show_values`, `digits` | a `Rectangle` per bar named after its name (`bees`; `bar_1` without names), `bees_name`, `bees_value`, `y_2` | `bar_chart`: `bars`, `largest`, `y_range` |
+| `dg.Table` | `cells` (rows of text; maths in `$...$`) **or** `path` (a `.csv` in the scene's folder), `pos`, `header`, `lines` (`none`/`header`/`grid`), `align`, `reveal` (0-1: rows shown) | a `Text` per cell named like a spreadsheet's: `a1`, `b2` | `table`: `rows`, `columns`, `header` |
+| `dg.MatrixDisplay` | `entries` (rows of maths: `"a_{11}"`, `"\\frac{1}{2}"`), `bracket` (`square`/`round`/`bar`/`none`), `pos` | `e1_2` (row 1, column 2) | `matrix_display` |
+| `dg.Code` | `code` **or** `path` (a source file in the scene's folder), `language` (a pygments name), `pos`, `line_numbers`, `reveal` (0-1: lines shown) | a `CodeLine` per line, `line_3` (blank lines have none unless numbered) | `code`: `lines`, `highlight` (`pygments`, `plain`, `unknown`) |
+| `dg.CodeLine` | `text`, `classes` (a letter per character: `p` plain, `k` keyword, `f` name, `s` string, `n` number, `c` comment, `g` line number), `pos` (left end) | | `label` |
+
+- **Axes with numbers and unequal scales** are `geo.Axes(numbers=True, x_scale=..., y_scale=...)`
+  (below). A **number that animates** is `Counter` (`group=True` writes 1,234,567, `sign=True`
+  a `+`); point its `value` at a `Value` you morph. A live 2x2 or 3x3 matrix of numbers that
+  follows another object is `linalg.Matrix`; `MatrixDisplay` is any matrix of maths.
+- **Code is monospace by placement**: each character is centered in a cell 0.52 text
+  heights wide (wide letters are set a little smaller on the same baseline), in phasor's text
+  font. Highlighting needs pygments, the `code` extra (`uv sync --extra code`); without it the
+  code is drawn plain and lint says `missing_extra`. A language pygments does not know is
+  drawn plain with `unknown_language`. Style keys: `color` (plain), `keyword`, `name`,
+  `string`, `number`, `comment`, `size`.
+- **Bounds** (`core/ticks.py`, `domains/diagrams_math.py`): a range is finite, within ±1e9,
+  `min < max`, and makes at most `MAX_TICKS` (100) ticks; tables at most 40 rows, 12 columns,
+  300 cells of 60 characters; matrices 10 by 10; charts 40 bars; code 120 lines of 120
+  characters (12000 in all, no control characters). Past a bound is a validation error when
+  it is set. A file read for a table or code is cut to the bounds instead (lint
+  `truncated`); one that is not UTF-8 (or not CSV) is `bad_file`; a missing one (or a
+  folder, a FIFO) is `missing_file`, and the object draws nothing. A file changed on disk
+  is read again.
+- Numbers at ticks are written as maths (a true minus sign) in the `numbers` text role and
+  named by value: `x_m2` is -2, `x_2p5` is 2.5. Zero is left out where axes cross; a number
+  line writes it (`n_0`).
+
+```python
+from phasor import Counter, Scene, Value, dg, expr, geo
+
+s = Scene("kit", passes=None)
+s.set("camera.height", 12)
+s.add(dg.NumberLine(id="line", x_range=(-3, 3, 1), pos=(0, -4.6, 0), tips="end"))
+s.add(
+    dg.NumberPlane(id="plane", x_range=(-3, 3, 1), y_range=(-2, 2, 1), pos=(-7, 2, 0), y_scale=0.8)
+)
+s.add(
+    geo.Axes(
+        id="plot",
+        dims=2,
+        x_range=(0, 10, 2),
+        y_range=(0, 1, 0.5),
+        x_scale=0.4,
+        y_scale=3,
+        pos=(-1.5, 0.5, 0),
+        numbers=True,
+        labels=("t", "p"),
+    )
+)
+s.add(
+    dg.BarChart(
+        id="sales",
+        values=(3, 5, 2),
+        names=("ants", "bees", "cats"),
+        pos=(6, 2, 0),
+        width=4,
+        height=3,
+    )
+)
+s.add(dg.Table(id="t", cells=(("x", "$x^2$"), ("2", "4"), ("3", "9")), pos=(-6, -2.5, 0)))
+s.add(dg.MatrixDisplay(id="m", entries=(("1", "2"), ("3", "4")), pos=(-1.5, -2.5, 0)))
+s.add(dg.Code(id="code", code="def f(x):\n    return x * x", pos=(5, -2.5, 0)))
+s.add(Value(id="n", value=0.0))
+s.add(Counter(id="count", value=expr("n.value"), digits=0, group=True, pos=(5, -4.2, 0)))
+s.marker("go", 0.5)
+s.marker("done", 2.0)
+s.at("go").morph("n.value", 25000.0, until="done")
+e = s.engine
+seen = {o["id"]: o["semantic"] for o in e.inspect(2.0)["objects"]}
+assert seen["plot.y_0p5"]["text"] == "$0.5$" and seen["plot"]["axes"]["y"]["scale"] == 3
+assert seen["sales"]["largest"] == "bees" and "sales.bees_name" in seen
+assert seen["t.b1"]["text"] == "$x^2$" and seen["m.e2_1"]["text"] == "$3$"
+assert seen["code.line_2"]["text"] == "return x * x" and seen["count"]["text"] == "$25{,}000$"
+assert "plane.axes.x_m3" in seen and seen["plane"]["backdrop"]
+assert e.lint() == []
+```
+
+A crowded axis is one issue with the step that clears it:
+
+```python
+from phasor import Scene, geo
+
+s = Scene("crowded", passes=None)
+s.add(geo.Axes(id="ax", dims=2, x_range=(0, 1000, 25), x_scale=0.006, numbers=True))
+(issue,) = [i for i in s.engine.lint() if i.code == "crowded_ticks"]
+assert issue.path == "ax.x" and "step of at least" in issue.fix_hint
+assert not [i for i in s.engine.lint() if i.code == "overlap"]  # not pair by pair
+```
+
 ## Space: axes, curves, surfaces and fields (`geo`)
 
 `from phasor import geo`. Give the scene an orbit camera (`s.use_camera("orbit")`) to turn
@@ -1333,7 +1439,10 @@ around them: the `orbit` verb, or drag in the editor. Formulas are text in `t` (
 `v` (surfaces) or `x`, `y`, `z` (fields), read by the whitelist parser, never run as Python.
 
 - `geo.Axes(dims=3, x_range=(-3, 3, 1), z_range=..., labels=("x", "y", "z"))`: axes with ticks
-  (ranges are (min, max, tick step); `scale` is world units per unit).
+  (ranges are (min, max, tick step), step 0 a nice one; `scale` is world units per unit, and
+  `x_scale`, `y_scale`, `z_scale` (0: `scale`) make them unequal). `numbers=True` writes the
+  value at every tick but zero as parts (`axes.x_2`, `axes.y_m1`; the `numbers` text role,
+  `digits` -1 as the step needs). A range makes at most 100 ticks.
 - `geo.ParametricCurve(fx="cos(t)", fy="sin(t)", fz="0.2*t", t_range=(0, 37.7),
   color_by="t")`: a curve; `color_by` is `none`, `t`, `speed`, `x`, `y` or `z` (through the
   `colormap`); `progress` traces it. Semantics: length, closed, color range.

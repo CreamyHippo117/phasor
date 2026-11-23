@@ -16,6 +16,7 @@ import numpy as np
 from pydantic import Field, field_validator, model_validator
 
 from phasor.core import text as text_metrics
+from phasor.core import ticks
 from phasor.core.objects import Bounds, DrawContext, ObjectBase, ParamsBase, Pass, register
 from phasor.core.state import SceneState
 from phasor.core.texconv import join_latex, to_latex
@@ -23,6 +24,7 @@ from phasor.core.values import Vec3
 from phasor.domains.strokes import hue_colors, polyline
 
 DISC_SEGMENTS = 64
+COUNTER_AFFIX = 40  # characters of a counter's prefix or suffix
 
 
 def _rgba(color: tuple[float, ...], opacity: float) -> tuple[float, float, float, float]:
@@ -702,11 +704,13 @@ class Counter(ObjectBase):
     class Params(ParamsBase):
         value: float = 0.0
         digits: int = Field(2, ge=0, le=10)
-        prefix: str = ""
-        suffix: str = ""
+        prefix: str = Field("", max_length=COUNTER_AFFIX)
+        suffix: str = Field("", max_length=COUNTER_AFFIX)
         math: bool = True  # typeset as maths: "$" + prefix + number + suffix + "$"
         pos: Vec3 = (0.0, 0.0, 0.0)
         anchor: Literal["center", "left", "right"] = "center"
+        group: bool = False  # a comma between thousands: 1,234,567
+        sign: bool = False  # a "+" before a positive number
 
         @model_validator(mode="after")
         def _typeset(self):
@@ -716,10 +720,14 @@ class Counter(ObjectBase):
 
     @staticmethod
     def text_of(p) -> str:
-        num = f"{p.value:.{p.digits}f}"
-        if float(num) == 0:
-            num = num.lstrip("-")
-        return f"${p.prefix}{num}{p.suffix}$" if p.math else f"{p.prefix}{num}{p.suffix}"
+        """The text shown: the number with ``digits`` decimals (no ``-0``), between
+        ``prefix`` and ``suffix``. A number of 1e15 or more in size is written in scientific
+        notation and one that is not finite as ``nan`` or ``inf``, so the text stays short
+        whatever an expression feeds it."""
+        num = ticks.text(p.value, p.digits, group=p.group, sign=p.sign)
+        if p.math:
+            return f"${p.prefix}{num.replace(',', '{,}')}{p.suffix}$"
+        return f"{p.prefix}{num}{p.suffix}"
 
     def _box(self, state: SceneState):
         me = self.me(state)

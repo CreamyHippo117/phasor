@@ -1706,12 +1706,16 @@ all = [
     { name = "ipywidgets" },
     { name = "mcp" },
     { name = "moderngl" },
+    { name = "pygments" },
     { name = "pyside6-essentials" },
     { name = "shapely" },
     { name = "svgelements" },
 ]
 boolean = [
     { name = "shapely" },
+]
+code = [
+    { name = "pygments" },
 ]
 encode = [
     { name = "av", version = "18.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
@@ -1757,16 +1761,17 @@ requires-dist = [
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=2.0,<3" },
     { name = "moderngl", marker = "extra == 'gl'", specifier = ">=5.12" },
     { name = "numpy", specifier = ">=1.26" },
-    { name = "phasor", extras = ["gl", "gpu", "encode", "mcp", "gui", "notebook", "boolean", "svg"], marker = "extra == 'all'" },
+    { name = "phasor", extras = ["gl", "gpu", "encode", "mcp", "gui", "notebook", "boolean", "svg", "code"], marker = "extra == 'all'" },
     { name = "pillow", specifier = ">=13.0.0" },
     { name = "pydantic", specifier = ">=2.7" },
+    { name = "pygments", marker = "extra == 'code'", specifier = ">=2.17" },
     { name = "pyside6-essentials", marker = "extra == 'gui'", specifier = ">=6.7" },
     { name = "scipy", specifier = ">=1.13" },
     { name = "shapely", marker = "extra == 'boolean'", specifier = ">=2.0" },
     { name = "svgelements", marker = "extra == 'svg'", specifier = ">=1.9" },
     { name = "sympy", specifier = ">=1.14.0" },
 ]
-provides-extras = ["gl", "gpu", "encode", "all", "boolean", "svg", "mcp", "notebook", "gui"]
+provides-extras = ["gl", "gpu", "encode", "all", "boolean", "svg", "code", "mcp", "notebook", "gui"]
 
 [package.metadata.requires-dev]
 dev = [

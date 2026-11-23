@@ -41,6 +41,7 @@ _MODULES = {  # domain modules: ``from phasor import cx``
     "nw": "phasor.domains.network",
     "dyn": "phasor.domains.dynamics",
     "shapes": "phasor.domains.shapes",
+    "dg": "phasor.domains.diagrams",
 }
 
 __all__ = ["__version__", *_LAZY, *_MODULES]
