@@ -141,7 +141,7 @@ are written gives no extra room. Calling it again is harmless.
 ## No voice in the video
 
 With `voice="estimate"` (or `auto` on a machine without espeak-ng) there is timing but no
-audio. `phasor render` prints "with narration" when a track was muxed.
+audio. `phasor render` prints "with sound" when a track (narration, `Sound` clips) was muxed.
 
 ## Driving phasor over MCP
 

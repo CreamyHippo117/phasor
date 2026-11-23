@@ -14,6 +14,8 @@ fast renders), so they are done on the PC. Each has its own instruction file her
 | `cpu_workers.md` | Milestone 14.3: how many render workers the RTX card wants | `perf/cuda-workers` | `C:\Users\Atlas\phasor-workers` |
 | `08_wave_fields.md` | Interference, beamforming, bifurcation (`ANIMATIONS.md`); after 3 and 4 | `anim/wave-fields` | `C:\Users\Atlas\phasor-waves` |
 | `09_pc_checks_after_14_15.md` | Milestones 14 and 15: Windows CPU backend, GPU kernels, Riemann timing, GPU golden for `open_contract`, decisions | `claude/eloquent-mayer-jiqxs9` (no new branch) | `C:\Users\Atlas\phasor-dev` |
+| `10_manim_real.md` | Milestone 20: the Manim import against real Manim CE, on Windows (passed on Linux) | `claude/eloquent-mayer-jiqxs9` (no new branch) | `C:\Users\Atlas\phasor-dev` |
+| `11_platforms_after_20.md` | Milestone 20: a full Windows pass (sound heard in renders), and what a Mac can run | `claude/eloquent-mayer-jiqxs9` (no new branch) | `C:\Users\Atlas\phasor-dev` |
 
 ## Starting the three at once (PowerShell)
 

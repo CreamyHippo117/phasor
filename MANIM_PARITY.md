@@ -268,7 +268,7 @@ too) and Windows machines whose driver lacks 4.3.
 2. Point 2 on Windows, for drivers without 4.1, as an opt-in through `glcontext.py`.
 3. Point 3 only if 1 and 2 both fail somewhere that matters.
 
-## Waiting for the owner (Milestone 15 audits)
+## Waiting for the owner (Milestone 15 audits; Milestone 20)
 
 1. Imported code (a package, a test module, a notebook cell) is shared by the process and
    usable by a document opened without `allow_scripts` (`MILESTONE_15.md` Deviation 13).
@@ -277,6 +277,9 @@ too) and Windows machines whose driver lacks 4.3.
    class (contract 3); repro `pending/m15_s1_sibling_module/` (`MILESTONE_15.md` Deferred).
 3. How the desktop app offers `Editor.trust_scene_code()` for a document that names modules
    (today: no button; lint `missing_type` names it) (`MILESTONE_15.md` Deviation 17).
+4. Milestone 20: should an imported text match Manim's size (an explicit size on every text,
+   `off_scale` warns) or keep the theme's role (narrower than Manim's: Text 0.42x, MathTex
+   0.6x)? (`MILESTONE_20.md` Deferred 1)
 
 ## Status
 
@@ -288,4 +291,4 @@ too) and Windows machines whose driver lacks 4.3.
 | 18 style | **done** 2026-11-23 (`MILESTONE_18.md`), audited |
 | 17 text shapes | **done** 2026-11-23 (`MILESTONE_17.md`), audited |
 | 19 diagram kit | **done** 2026-11-23 (`MILESTONE_19.md`), audited |
-| 20 importer parity | next |
+| 20 importer parity | **built** 2026-11-23 (`MILESTONE_20.md`): real Manim CE 0.22.1 compared, 10 scenes pass; awaiting an independent audit; Windows/macOS on the PC (`pc_tasks/10`, `11`) |
