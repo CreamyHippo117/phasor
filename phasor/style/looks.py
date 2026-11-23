@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from phasor.core.life import LEVELS
+from phasor.style import explicit
 from phasor.style.theme import ThemeError, available_themes
 
 LOOK_DIR = Path(__file__).parent / "looks"
@@ -55,12 +56,17 @@ class Look:
              palette: str | None = None):  # fmt: skip
         """``params`` and ``style`` with this look's defaults for ``type_name`` added where
         the object did not set them. With a ``palette``, what the look runs a hue along (its
-        lines) takes the palette's colors."""
+        lines) takes the palette's colors. An object whose color the scene typed (an explicit
+        value) keeps that color: the look runs no hue along it."""
         d = self.defaults.get(type_name, {})
+        d_params = dict(d.get("params", {}))
         d_style = dict(d.get("style", {}))
-        if palette is not None and ("colormap" in d_style or "hue_along" in d.get("params", {})):
+        if "color" in style and not explicit.is_role(style["color"]):
+            d_params.pop("hue_along", None)
+            d_style.pop("colormap", None)
+        elif palette is not None and ("colormap" in d_style or "hue_along" in d_params):
             d_style["colormap"] = palette
-        return {**d.get("params", {}), **params}, {**d_style, **style}
+        return {**d_params, **params}, {**d_style, **style}
 
     def palette_targets(self) -> set[str]:
         """The object types whose colors a palette sets (the ones the look runs a hue along)."""

@@ -17,6 +17,7 @@ Untested on Windows, macOS and CUDA.
 | Document | `core/schema.py`, `core/migrate.py`, `core/patch.py` | schema 9. A style value is a role name, or an explicit value: a color (`"#rrggbb"`, `"#rgb"`, `"#rrggbbaa"`, stored upper case; or linear RGBA, 3 or 4 numbers in 0..1, stored as 4) or a size (a positive number of world units, stored as float). Bools, NaN, infinities, out-of-range colors and bad hex are refused. `meta.background` (a color or None: the theme's). `ObjectSpec.style`, `Overrides.styles` and `SetStyle.role` take the wider value. Migration 8 to 9 adds `meta.background: None`; an old document reads the same |
 | Resolution | `style/explicit.py`, `time/compile.py` | which groups take which explicit value (`emphasis`: color; `text`, `stroke`: size; glow, surface, colormap: roles only, `bad_role` otherwise). A hex color is sRGB-decoded to linear once, when the document compiles (contract 4); a tuple is linear already. A world size is turned into the share of the frame height that every `draw` already multiplies back by `units_per_height`, in `evaluate` (pure: document and t), through the camera of the object's layer at its `pos`; composite parts the same way. `roles[key]` holds the value the scene typed, for lint and the UI. No draw code changed |
 | Background | `time/compile.py`, `render/passes.py` | `SceneState.background` is the scene's or the theme's. The field cache key now includes the background (Fractal, cloud and image fields fill empty parts with it; the renderer is shared between scenes) |
+| Looks | `style/looks.py` | a typed color wins over the look: `Look.fill` adds no `hue_along` or colormap to an object whose color is explicit (in the prism look a typed red line was drawn as a white-hot spectrum before this). Roles get the look as before (prism_primes golden unchanged) |
 | Scene API | `scene.py`, `core/pycode.py` | `Scene(..., background=...)`; `style={"color": "#58C4DD"}`, `{"size": 0.4}`, `{"stroke": 0.05}`; generated scripts carry `background=` |
 | `off_palette` | `inspect/aesthetic.py`, theme `[lint] off_palette = 0.12` | aesthetic warning: an explicit color farther (OKLab) than the threshold from every emphasis role of the theme, or a scene background from the theme's; `times`, `path` (`<id>.<key>` or `meta.background`), no `fix` |
 | `off_scale` | `inspect/aesthetic.py`, theme `[lint] off_scale = 1.25` | aesthetic warning: an explicit text size or stroke width more than the ratio off the nearest role of its group, measured at each beat (so a zoom that pushes it off is reported with its times); no `fix` |
@@ -45,7 +46,7 @@ Untested on Windows, macOS and CUDA.
   `test_critic` list the two new rules. A GUI test (`test_gui_window`) checks that the
   inspector neither hides nor replaces a typed color. `test_open_contract`'s migration test
   no longer pins the version to 8.
-- Gate results: see "Gate" at the end.
+- Gate results: see "Gate" below.
 
 ## Deviations
 
@@ -73,6 +74,10 @@ Untested on Windows, macOS and CUDA.
    0.384 world units, width 4 = `regular`'s 0.032); Milestone 20 compares with real Manim.
    Class default colors stay roles, so an unstyled Manim scene keeps the house look and does
    not trip `off_palette` on every object.
+10. **Docs landed in later commits than the API change** (against CLAUDE.md's "same commit"
+    rule): at commits 328b90c and bea305e, `test_mcp::test_llms_txt_is_current` and the
+    three tests that encoded the old roles-only rule fail; they pass from 5ee0bd7 / ff1942a
+    on. Squash the series on merge.
 9. **The reverb golden was regenerated** (it still passed at SSIM 0.97, but no longer showed
    what the import makes).
 
@@ -98,3 +103,19 @@ Windows, macOS and CUDA: not run. GPU goldens from the owner's PC: none yet for
 `evaluate`), `phasor/core/objects.py` (a comment and a type hint), `phasor/style/looks.py`
 (a type hint). If Milestone 16 adds style groups (`fill`, `dash`), `style/explicit.py`
 `EXPLICIT` is where a fill color would be allowed an explicit value.
+
+## Gate (`phasor-milestone-gate`, 2026-11-23, Linux, llvmpipe, no CUDA)
+
+| Step | Result | Evidence |
+| --- | --- | --- |
+| ruff, ruff format | pass | "All checks passed", 302 files formatted |
+| lint-imports | pass | 2 kept, 0 broken |
+| pytest, focused | pass | 23 suites (style_freedom, aesthetic, beauty, lint, final `-k "not slow"`, docs, layers, open_contract, manim_import, prism, critic, engine, time, mcp, core, gui_window, gui_controller, render, contracts, kit, pycode, remote, life): 796 passed, 3 skipped (no CUDA; two `value` cases with nothing to draw). Then style_freedom, workers, sketch, inspect, choices, prism, beauty, life, kit after the look fix: 181 passed, 2 skipped (no software golden yet for two beauty scenes, as before). prism_primes golden passes and its critique stays empty |
+| pytest, full | **not run** | over an hour on this box |
+| phasor doctor | tier B | llvmpipe OpenGL 4.5, g++ CPU kernels, no CUDA |
+| exit demo | pass (Linux) | `examples/own_colors.py`: renders (golden looked at; exact pixels for hex, linear and background); `off_palette` x2 and `off_scale` x1 warn; critique offers the snaps; `polish()` and `autofix` change no typed value; `polish(snap=True)` snaps; a version 8 document migrates and reads the same |
+| contract audit | done, **not independent** | by the authoring model (no subagent available). Every write goes through `Engine.apply`; `state_at` stays a function of (document, t) (world sizes go through the camera evaluated at t); hex decoded to linear once, linear to the end; `style/explicit.py` imports only core and style; no new object members; one way to set a style value (`set_style`). No contract text changed |
+| docs and artifacts | pass | API.md section with a running block, MCP.md, llms.txt regenerated, example + catalog entry, golden, this file |
+
+**MILESTONE 18: NOT DONE: the full suite was not run, and the contract audit was not
+independent.** On Linux, the exit conditions are met.

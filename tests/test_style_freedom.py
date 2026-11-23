@@ -291,6 +291,23 @@ def test_explicit_colors_and_background_reach_the_pixels_exactly():
     assert abs(img[5, 5] - (0x10, 0x18, 0x20)).max() <= 1
 
 
+@pytest.mark.gl
+@pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
+def test_a_typed_stroke_color_wins_over_the_prism_looks_hue():
+    """The look fills what a scene leaves unset; a color the scene typed is set, so the look
+    runs no spectrum along that line (it still gets the look's glow and dim)."""
+    s = Scene("prism_red", look="prism")
+    s.set("camera.height", 8)
+    s.add(Line(id="red", points=[(-3, 0), (3, 0)], style={"color": "#FF0000", "stroke": 0.2}))
+    s.add(Line(id="rainbow", points=[(-3, 1), (3, 1)]))
+    doc = s.engine.document
+    assert "hue_along" not in doc.object("red").params
+    assert doc.object("rainbow").params["hue_along"] > 0  # roles: the look as before
+    img = s.engine.still(0.0, (480, 270)).astype(int)
+    for x in (180, 240, 300):
+        assert img[135, x, 0] > 200 and img[135, x, 1] < 40 and img[135, x, 2] < 40
+
+
 def _own_colors():
     import runpy
     from pathlib import Path
