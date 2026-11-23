@@ -286,4 +286,6 @@ too) and Windows machines whose driver lacks 4.3.
 | 15 contract | **done** 2026-11-23 (`MILESTONE_15.md`), two audit rounds; owner decisions open |
 | 16 shapes | **done** 2026-11-23 (`MILESTONE_16.md`), audited |
 | 18 style | **done** 2026-11-23 (`MILESTONE_18.md`), audited |
-| 17, 19, 20 | 17 and 19 building; 20 last |
+| 17 text shapes | **done** 2026-11-23 (`MILESTONE_17.md`), audited |
+| 19 diagram kit | **done** 2026-11-23 (`MILESTONE_19.md`), audited |
+| 20 importer parity | next |

@@ -6,6 +6,8 @@ verb has inspector output, lint, docs, an example and a golden; every count is b
 fuzzed** (`examples/text_shapes.py`). The independent audit (2026-11-23) found that two
 were not (cached plans, the in-between's fill): see "Independent audit".
 
+**Gate (2026-11-23): MILESTONE 17: DONE** on Linux, after an independent audit (1 blocker, 6 should-fix items, all fixed with tests). Windows CI on the combined Milestone 17+19 tree: only the 4 known failures. Untested: macOS, CUDA, a real TeX engine, matplotlib/FreeType outline stability across versions beyond 3.8.4/3.9.4/3.11.
+
 Status: **built on Linux (llvmpipe OpenGL, no CUDA); focused suites green (see
 Verification); independent audit done 2026-11-23, its findings fixed.** Untested on
 Windows, macOS and CUDA. The full suite was not run (over an hour here; CI runs it).

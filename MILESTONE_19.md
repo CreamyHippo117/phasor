@@ -7,6 +7,8 @@ MatrixDisplay and a Code block renders correctly; every type has inspector outpu
 docs, an example and a golden; params are bounded and fuzzed** (`examples/diagram_kit.py`,
 `examples/data_viz.py`).
 
+**Gate (2026-11-23): MILESTONE 19: DONE** on Linux, after an independent audit (3 blockers, 5 should-fix items, all fixed with tests) and a Windows-CI-found fix (the `diagram_kit` title overlap in analytic mode). Windows CI on the fix: only the 4 known failures (1667 passed). Untested: macOS, CUDA, pygments inside the PyInstaller build.
+
 Status: **built on Linux (llvmpipe OpenGL, no CUDA); focused gates green (see Gate).** The
 full suite was not run (over an hour here; left to CI). Contract audit by the authoring
 model, then an **independent audit (2026-11-23)** whose findings are fixed (Deviations
