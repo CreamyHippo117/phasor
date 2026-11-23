@@ -392,3 +392,201 @@ def test_part_ids_follow_the_id_rules():
     assert not r.ok and r.errors[0].code == "bad_part"
     with pytest.raises(DocumentError):
         s.set("c.part", "x")
+
+
+# ---------------------------------------------------------------- 4. types defined in a scene
+
+STAR_MODULE = """
+from typing import ClassVar
+
+import numpy as np
+
+from phasor.core.objects import ObjectBase, ParamsBase, register
+from phasor.core.values import Vec3
+
+
+@register
+class Star(ObjectBase):
+    type: ClassVar[str] = "{name}"
+
+    class Params(ParamsBase):
+        pos: Vec3 = (0.0, 0.0, 0.0)
+        r: float = 0.5
+
+    def draw(self, ctx, state):
+        p = self.me(state).params
+        a = np.linspace(0, 2 * np.pi, 10, endpoint=False)
+        k = np.where(np.arange(10) % 2 == 0, p.r, p.r / 2)
+        rim = np.asarray(p.pos) + np.c_[k * np.cos(a), k * np.sin(a), 0 * a]
+        pts = np.vstack([p.pos, rim])
+        tri = [[0, 1 + i, 1 + (i + 1) % 10] for i in range(10)]
+        ctx.triangles(pts, np.array(tri), color=(1, 1, 1, p.opacity))
+"""
+
+
+@pytest.fixture
+def star_scene(tmp_path):
+    """A folder with ``shapes.types.py`` (a type nobody registered yet) and a document that
+    uses it, with a tweak in its overrides file."""
+    from phasor.core import io
+    from phasor.core.objects import unregister
+    from phasor.core.schema import Document, Meta, ObjectSpec, Overrides
+
+    name = f"m15_star_{tmp_path.name[-12:].lower().replace('-', '_')}"
+    name = "m15_star_" + "".join(ch for ch in name if ch.isalnum() or ch == "_")[-8:]
+    (tmp_path / "shapes.types.py").write_text(STAR_MODULE.replace("{name}", name), "utf-8")
+    doc = Document(meta=Meta(title="stars", modules=("shapes.types.py",)),
+                   objects=(ObjectSpec(id="star", type=name, params={"pos": (1, 0, 0)}),))  # fmt: skip
+    path = tmp_path / "stars.phasor.json"
+    io.save(path, doc)
+    io.save(io.overrides_path(path), Overrides(params={"star.r": 0.8}))
+    yield path, name
+    unregister(name)
+
+
+def _files(path):
+    from phasor.core import io
+
+    return path.read_bytes(), io.overrides_path(path).read_bytes()
+
+
+def test_a_refused_module_is_missing_type_and_nothing_is_lost(star_scene, tmp_path):
+    from phasor.engine import Engine
+
+    path, name = star_scene
+    before = _files(path)
+    e = Engine.open(path, passes=None)  # scripts may not run: the module is refused
+    (issue,) = [i for i in e.lint() if i.code == "missing_type"]
+    assert issue.ids == ("star",) and "refused" in issue.message and issue.times == (0.0,)
+    assert get_type(name) is None  # nothing ran
+    state = e.state_at(0)
+    assert (
+        state["star"].type == name and state["star"].impl.semantics(state)["kind"] == "placeholder"
+    )
+    assert state["star"].impl.world_bounds(state).center[0] == pytest.approx(1)
+    assert e.document.object("star").params["r"] == 0.8  # the override is still applied
+    e.save(path)
+    assert _files(path) == before  # byte for byte
+
+
+def test_a_module_loads_where_scripts_may_run(star_scene):
+    from phasor.engine import Engine
+
+    path, name = star_scene
+    e = Engine.open(path, passes=None, allow_scripts=True)
+    assert get_type(name) is not None
+    assert [i.code for i in e.lint()] == []
+    snap = e.inspect(0, "star", detail="full")["objects"][0]
+    assert snap["semantic"]["type"] == name and snap["semantic"]["params"]["r"] == 0.8
+    assert snap["features"]["center"]["world"][0] == pytest.approx([1.0764, 0.0, 0.0])  # its box
+
+
+def test_a_render_worker_loads_the_scene_code_its_parent_ran(star_scene):
+    """A worker is a fresh process (ADR 0003): it has none of the scene's types until it
+    loads them, and it may when its parent could."""
+    from phasor import engine as engine_mod
+    from phasor.core.objects import unregister
+    from phasor.engine import Engine
+
+    path, name = star_scene
+    parent = Engine.open(path, passes=None, allow_scripts=True)
+    payload = parent.worker_payload()
+    assert payload["allow_scripts"] is True
+    unregister(name)
+    engine_mod._LOADED.clear()  # as in a new process
+    worker = Engine.from_payload(payload, passes=None)
+    assert worker.lint() == [] and get_type(name) is not None
+    unregister(name)  # a parent that may not run the code sends no permission on
+    refused = Engine.open(path, passes=None).worker_payload()
+    assert refused["allow_scripts"] is False
+
+
+def test_a_missing_module_and_a_broken_one(star_scene, tmp_path):
+    import sys
+
+    from phasor.engine import Engine
+
+    path, name = star_scene
+    (tmp_path / "shapes.types.py").unlink()
+    e = Engine.open(path, passes=None, allow_scripts=True)
+    assert "missing" in next(i for i in e.lint() if i.code == "missing_type").message
+    # A module that registers its type and then fails takes the type with it.
+    broken = STAR_MODULE.replace("{name}", name) + "\nraise RuntimeError('half written')\n"
+    (tmp_path / "shapes.types.py").write_text(broken, "utf-8")
+    modules = set(sys.modules)
+    e = Engine.open(path, passes=None, allow_scripts=True)
+    issue = next(i for i in e.lint() if i.code == "missing_type")
+    assert "RuntimeError: half written" in issue.message
+    assert get_type(name) is None and set(sys.modules) == modules
+
+
+def test_modules_stay_in_the_scene_folder_and_unknown_types_stay_errors():
+    from phasor.core.issues import DocumentError
+    from phasor.core.schema import Document, Meta, ObjectSpec
+
+    for bad in ("../elsewhere.py", "/abs/types.py", "notes.txt"):
+        with pytest.raises(ValueError):
+            Meta(title="x", modules=(bad,))
+    from phasor.engine import Engine
+
+    doc = Document(meta=Meta(title="x"), objects=(ObjectSpec(id="a", type="m15_no_such"),))
+    with pytest.raises(DocumentError, match="unknown object type"):
+        Engine(doc, passes=None)
+
+
+def test_a_version_7_document_migrates_to_8():
+    from phasor.core.migrate import migrate
+    from phasor.core.schema import SCHEMA_VERSION, Document
+
+    raw = {"schema_version": 7, "meta": {"title": "old", "palette": None},
+           "objects": [{"id": "d", "type": "dot", "params": {"r": 0.2}}]}  # fmt: skip
+    doc = Document.model_validate(migrate(raw))
+    assert SCHEMA_VERSION == 8 and doc.schema_version == 8
+    assert doc.meta.modules == () and doc.objects[0].always == ()
+
+
+SCRIPT = """
+from typing import ClassVar
+
+import numpy as np
+
+from phasor import Scene
+from phasor.core.objects import ObjectBase, ParamsBase, register
+
+
+@register
+class Tri(ObjectBase):
+    type: ClassVar[str] = "m15_script_tri"
+
+    class Params(ParamsBase):
+        size: float = 1.0
+
+    def draw(self, ctx, state):
+        s = self.me(state).params.size
+        ctx.triangles(np.array([[0, 0, 0], [s, 0, 0], [0, s, 0]]), color=(1, 1, 1, 1))
+
+
+s = Scene("tri", passes=None)
+s.add(Tri(id="tri", size=2))
+"""
+
+
+def test_a_type_in_the_scene_script_is_named_by_the_document(tmp_path):
+    from phasor import load
+    from phasor.core.objects import unregister
+    from phasor.engine import Engine
+
+    script = tmp_path / "tri_scene.py"
+    script.write_text(SCRIPT, "utf-8")
+    try:
+        e = load(script, passes=None)
+        assert e.document.meta.modules == ("tri_scene.py",)
+        load(script, passes=None)  # run twice in one process: the type replaces itself
+        e.save(tmp_path / "tri.phasor.json")
+        unregister("m15_script_tri")
+        opened = Engine.open(tmp_path / "tri.phasor.json", passes=None, allow_scripts=True)
+        assert opened.lint() == [] and get_type("m15_script_tri") is not None
+        state = opened.state_at(0)
+        assert state["tri"].impl.world_bounds(state).hi[:2] == (2.0, 2.0)
+    finally:
+        unregister("m15_script_tri")

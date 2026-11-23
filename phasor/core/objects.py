@@ -26,9 +26,11 @@ from typing import Any, ClassVar, Literal, Protocol, runtime_checkable
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 
+from phasor.core.files import relative_path
 from phasor.core.ids import is_valid_name
 from phasor.core.schema import ObjectSpec
 from phasor.core.state import ObjectState, SceneState
+from phasor.core.values import Vec3
 
 Pass = Literal["color", "id", "solo"]
 PASSES: tuple[str, ...] = ("color", "id", "solo")
@@ -190,9 +192,24 @@ class ObjectBase:
             style = {**chosen.get("style", {}), **style}
         self._spec_fields = {"style": style, "tags": tuple(tags), "layer": layer}
         self._params = params
+        self._always: list[Callable] = []
 
-    def to_spec(self) -> ObjectSpec:
-        return ObjectSpec(id=self.id, type=self.type, params=self._params, **self._spec_fields)
+    def always(self, fn: Callable) -> ObjectBase:
+        """Keep some of this object's parameters set by ``fn(t, look) -> {param: value}``
+        (ADR 0005). ``look("other")`` gives another object's parameters at ``t``
+        (``look("dot").pos``); each one read is an edge in the parameter graph, so a cycle
+        is an error. ``fn`` must be pure: the same answer for the same ``t`` and reads
+        (lint ``impure_updater`` checks). It must be defined in the scene script or a
+        ``*.types.py`` next to it. Call before ``Scene.add``; returns the object."""
+        self._always.append(fn)
+        return self
+
+    def to_spec(self, base_dir: str | Path | None = None) -> ObjectSpec:
+        """The object as the document stores it. ``base_dir``: the scene's folder, which
+        names the modules its updaters live in."""
+        always = tuple(register_updater(fn, base_dir or ".") for fn in self._always)
+        return ObjectSpec(id=self.id, type=self.type, params=self._params, always=always,
+                          **self._spec_fields)  # fmt: skip
 
     def me(self, state: SceneState) -> ObjectState:
         return state[self.id]
@@ -305,3 +322,117 @@ def get_type(name: str) -> type | None:
 
 def registered_types() -> dict[str, type]:
     return dict(_REGISTRY)
+
+
+def registry_snapshot() -> tuple[dict[str, type], dict[str, Callable]]:
+    return dict(_REGISTRY), dict(_UPDATERS)
+
+
+def restore_registry(snapshot: tuple[dict[str, type], dict[str, Callable]]) -> None:
+    """Put the registries back as ``registry_snapshot`` found them (a module that failed to
+    load leaves none of its types or updaters behind)."""
+    _REGISTRY.clear()
+    _REGISTRY.update(snapshot[0])
+    _UPDATERS.clear()
+    _UPDATERS.update(snapshot[1])
+
+
+# ---------------------------------------------------------------- code in the scene's folder
+
+
+def scene_module(thing: Any, base_dir: str | Path) -> str | None:
+    """The module a scene-local type or updater lives in, relative to the scene's folder
+    (``"scene.py"``, ``"shapes.types.py"``), or None when it is defined anywhere else (in
+    phasor, an installed package, a test file outside the folder, a prompt)."""
+    if isinstance(thing, type) and is_builtin(thing):
+        return None
+    src = getattr(thing, "_phasor_source", None) if isinstance(thing, type) else None
+    src = src or source_file(thing)
+    if not src or not src.endswith(".py"):
+        return None
+    root = Path(base_dir or ".").resolve()
+    path = Path(src)
+    if root not in path.parents:
+        return None
+    try:
+        return relative_path(path.relative_to(root).as_posix())
+    except ValueError:
+        return None
+
+
+_UPDATERS: dict[str, Callable] = {}  # "<module>:<name>" -> updater function
+
+
+def updater_name(fn: Callable) -> str:
+    """How a document names an updater inside its module: its qualified name, and for a
+    lambda or a nested function also the line it starts on (``"<lambda>@12"``)."""
+    name = getattr(fn, "__qualname__", None) or getattr(fn, "__name__", "updater")
+    if "<" in name:
+        name += f"@{fn.__code__.co_firstlineno}"
+    return name
+
+
+def register_updater(fn: Callable, base_dir: str | Path) -> str:
+    """Remember ``fn`` and return the reference a document stores for it."""
+    if not callable(fn):
+        raise TypeError(
+            f"an updater must be a function fn(t, look) -> {{param: value}}, got {fn!r}"
+        )
+    module = scene_module(fn, base_dir)
+    if module is None:
+        raise ValueError(
+            f"updater {updater_name(fn)!r} is not defined in a file in the scene's folder "
+            f"({base_dir}); define it in the scene script or a *.types.py next to it, so the "
+            "document can name it"
+        )
+    ref = f"{module}:{updater_name(fn)}"
+    _UPDATERS[ref] = fn
+    return ref
+
+
+def get_updater(ref: str) -> Callable | None:
+    return _UPDATERS.get(ref)
+
+
+class Placeholder(ObjectBase):
+    """What an object of a type that is not available (its module is missing, refused or
+    broken: lint ``missing_type``) draws: an outlined box at its ``pos``. It keeps the
+    object's id, type name, parameters and overrides; nothing in the document changes.
+    Not registered: a document cannot ask for one."""
+
+    type: ClassVar[str] = "placeholder"
+    Style: ClassVar = {"color": ("emphasis", "danger")}
+    SIDE = 0.08  # share of the frame height
+
+    class Params(ParamsBase):
+        pos: Vec3 = (0.0, 0.0, 0.0)
+
+    def world_bounds(self, state: SceneState) -> Bounds:
+        c, right, up, h = self._frame(state)
+        return Bounds.of_points([c + sx * h * right + sy * h * up
+                                 for sx in (-1, 1) for sy in (-1, 1)])  # fmt: skip
+
+    def features(self, state: SceneState) -> dict[str, np.ndarray]:
+        return {"center": self._frame(state)[0]}
+
+    def semantics(self, state: SceneState) -> dict[str, Any]:
+        return {"kind": "placeholder", "type": self.me(state).type}
+
+    def _frame(self, state: SceneState):
+        me = self.me(state)
+        cam = state.camera_for(me)
+        c = np.asarray(me.params.pos, dtype=np.float64)
+        return c, cam.right, cam.up, self.SIDE / 2 * cam.units_per_height(c)
+
+    def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass = "color") -> None:
+        c, right, up, h = self._frame(state)
+        w = h / 8
+        color = (*self.me(state).style["color"][:3], self.me(state).params.opacity)
+        for a, b in (((-1, -1), (1, -1)), ((1, -1), (1, 1)), ((1, 1), (-1, 1)),
+                     ((-1, 1), (-1, -1))):  # fmt: skip
+            p0 = c + a[0] * h * right + a[1] * h * up
+            p1 = c + b[0] * h * right + b[1] * h * up
+            along = (p1 - p0) / np.linalg.norm(p1 - p0)
+            side = np.cross(np.cross(right, up), along) * w
+            quad = np.array([p0 - side, p1 - side, p1 + side, p0 + side])
+            ctx.triangles(quad, np.array([[0, 1, 2], [0, 2, 3]]), color=color)

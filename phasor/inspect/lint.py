@@ -291,6 +291,19 @@ def file_rules(c: Compiled) -> list[Issue]:
     return out
 
 
+def type_rules(c: Compiled) -> list[Issue]:
+    """``missing_type``: the document names code (``meta.modules``, ADR 0005) for a type or an
+    updater that is not here: the module is missing, was refused (scripts may not run here)
+    or failed to load. The object draws as a placeholder box, or without its updater, and
+    keeps its parameters and overrides; nothing is lost."""
+    return [
+        Issue("missing_type", f"{object_id}: {why}", severity="error", ids=(object_id,),
+              times=(0.0,), fix_hint="put the module next to the scene, or open it where "
+              "scripts may run (allow_scripts=True, or the MCP server with --allow-scripts)")
+        for object_id, why in c.missing
+    ]  # fmt: skip
+
+
 def strict_rules(c: Compiled) -> list[Issue]:
     """Rules for finished scenes only. ``raw_motion``: transitions written with raw ``to()``
     instead of a choreography verb (their timing is not the theme's)."""

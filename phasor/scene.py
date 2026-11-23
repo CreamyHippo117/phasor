@@ -22,7 +22,7 @@ from typing import Any
 
 from phasor.core import io
 from phasor.core.ids import file_stem
-from phasor.core.objects import ObjectBase
+from phasor.core.objects import ObjectBase, scene_module
 from phasor.core.patch import (
     AddConstraint,
     AddControl,
@@ -30,6 +30,7 @@ from phasor.core.patch import (
     AddSegment,
     SetCamera,
     SetMarker,
+    SetMeta,
     SetNarration,
     SetParam,
 )
@@ -226,13 +227,21 @@ class Scene:
     def add(self, obj: ObjectBase) -> ObjectBase:
         """Add an object: ``s.add(Dot(id="dot", pos=(1, 2)))``. Returns it for chaining.
         The scene's look fills in what the object leaves unset (the values are stored)."""
-        spec = obj.to_spec()
+        base_dir = self.engine.base_dir
+        spec = obj.to_spec(base_dir)
         if self.look is not None:
             params, style = self.look.fill(spec.type, dict(spec.params), dict(spec.style),
                                            self.engine.document.meta.palette)  # fmt: skip
             spec = ObjectSpec(id=spec.id, type=spec.type, params=params, style=style,
-                              tags=spec.tags, layer=spec.layer)  # fmt: skip
-        self._apply(AddObject(object=spec))
+                              tags=spec.tags, layer=spec.layer, always=spec.always)  # fmt: skip
+        # A type or updater defined in the scene's folder (ADR 0005): the document names its
+        # module, so the scene opens with it later (where scripts may run).
+        have = self.engine.base.meta.modules
+        need = [m for m in (scene_module(type(obj), base_dir),
+                            *(r.rpartition(":")[0] for r in spec.always)) if m]  # fmt: skip
+        new = tuple(dict.fromkeys([*have, *need]))
+        ops: list[Any] = [SetMeta(field="modules", value=new)] if new != have else []
+        self._apply([*ops, AddObject(object=spec)])
         return obj
 
     def use_camera(self, kind: str = "orbit", **params: Any) -> None:
@@ -336,6 +345,7 @@ def load(path: str | Path, **engine_kwargs: Any) -> Engine:
         )
     overrides = io.load_overrides(path.with_name(path.stem + io.OVERRIDES_SUFFIX))
     engine_kwargs.setdefault("base_dir", path.parent)
+    engine_kwargs.setdefault("allow_scripts", True)  # the person ran this script: its code runs
     return Engine(scenes[0].engine.base, overrides=overrides, **engine_kwargs)
 
 

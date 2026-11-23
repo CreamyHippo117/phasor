@@ -7,6 +7,7 @@ finds. ``evaluate`` is then a pure function of (compiled document, t).
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import math
 from collections.abc import Mapping
@@ -19,7 +20,7 @@ from pydantic import BaseModel, TypeAdapter, ValidationError
 from phasor.core import life
 from phasor.core.ids import is_valid_id
 from phasor.core.issues import DocumentError, Issue
-from phasor.core.objects import SceneObject, get_type, registered_types
+from phasor.core.objects import Placeholder, SceneObject, get_type, registered_types
 from phasor.core.schema import Document, ExprSpec
 from phasor.core.spatial import (
     OrbitCameraParams,
@@ -70,6 +71,8 @@ class Compiled:
     duration: float
     # The scene's folder, for objects that read files (``Files``); set by the Engine.
     base_dir: str = ""
+    # (object id, why) for each object whose code is not available (lint missing_type).
+    missing: tuple[tuple[str, str], ...] = ()
 
 
 @functools.cache
@@ -107,11 +110,27 @@ def _toposort(nodes: dict[str, Node]) -> tuple[tuple[str, ...], list[str]]:
     return tuple(order), sorted(p for p, n in pending.items() if n > 0)
 
 
-def compile_document(doc: Document, base_dir: str = "") -> Compiled:
+def _why(doc: Document, modules: Mapping[str, str] | None) -> str:
+    """Why the code the document names is not here, from the Engine's module report."""
+    bad = {m: s for m, s in (modules or {}).items() if s != "loaded"}
+    if bad:
+        return "; ".join(f"{m}: {s}" for m, s in sorted(bad.items()))
+    return f"no module in meta.modules defines it: {', '.join(doc.meta.modules)}"
+
+
+def compile_document(
+    doc: Document, base_dir: str = "", modules: Mapping[str, str] | None = None
+) -> Compiled:
     """Validate and resolve ``doc``. ``base_dir``: the scene's folder, which the files it
-    names are relative to (``core/files.py``; a missing one is lint ``missing_file``)."""
+    names are relative to (``core/files.py``; a missing one is lint ``missing_file``).
+    ``modules``: what became of each module in ``meta.modules`` (``"loaded"``, ``"missing"``,
+    ``"refused"``, ``"failed: ..."``), from the Engine, which loads them (ADR 0005). An
+    object whose type no loaded module defines draws as a placeholder (lint
+    ``missing_type``); without ``meta.modules`` an unknown type is an error."""
     issues: list[Issue] = []
     add = issues.append
+    missing: list[tuple[str, str]] = []  # (object id, why): lint missing_type
+    placeholders: set[str] = set()
 
     try:
         theme = load_theme(doc.meta.theme)
@@ -156,14 +175,29 @@ def compile_document(doc: Document, base_dir: str = "") -> Compiled:
 
     for index, spec in enumerate(doc.objects, start=1):
         cls = get_type(spec.type)
-        if cls is None:
+        if cls is None and not doc.meta.modules:
             add(Issue("unknown_type", f"unknown object type {spec.type!r}; "
                       f"registered: {sorted(registered_types())}", ids=(spec.id,)))  # fmt: skip
             continue
-        add_params(spec.id, cls.Params, spec.params)
+        if cls is None:
+            # The document names code that would define this type, but it is not here (lint
+            # missing_type): a placeholder box keeps the object and all its parameters.
+            missing.append((spec.id, f"type {spec.type!r} is not available ({_why(doc, modules)})"))
+            cls = Placeholder
+            placeholders.add(spec.id)
+            known = {}
+            for name, raw in spec.params.items():
+                if name in cls.Params.model_fields and not isinstance(raw, ExprSpec):
+                    with contextlib.suppress(ValidationError, ValueError):  # a bad value: default
+                        known[name] = _coerce(cls.Params, name, raw)
+                elif not isinstance(raw, ExprSpec):  # kept for expressions that read it
+                    nodes[f"{spec.id}.{name}"] = Const(normalize(raw))
+            add_params(spec.id, cls.Params, known)
+        else:
+            add_params(spec.id, cls.Params, spec.params)
         style, roles = {}, {}
         for key in spec.style:
-            if key not in cls.Style:
+            if key not in cls.Style and spec.id not in placeholders:
                 add(Issue("unknown_style", f"{spec.type!r} has no style key {key!r}; "
                           f"it has {sorted(cls.Style)}", ids=(spec.id,)))  # fmt: skip
         for key, (group, default) in cls.Style.items():
@@ -184,6 +218,8 @@ def compile_document(doc: Document, base_dir: str = "") -> Compiled:
         duration = max(duration, doc.narration.end)  # the scene lasts as long as the voice
     for path, segs in sorted(doc.timeline.tracks.items()):
         node = nodes.get(path)
+        if path not in owner and path.rpartition(".")[0] in placeholders:
+            continue  # kept in the document; it animates again once the type is back
         if path not in owner:
             add(Issue("unknown_param", f"track on unknown parameter {path!r}", path=path))
             continue
@@ -244,7 +280,7 @@ def compile_document(doc: Document, base_dir: str = "") -> Compiled:
     if doc.meta.duration is not None:
         duration = doc.meta.duration
     compiled = Compiled(doc, theme, time_map, MappingProxyType(nodes), order, tuple(objects),
-                        duration, str(base_dir))  # fmt: skip
+                        duration, str(base_dir), tuple(missing))  # fmt: skip
     evaluate(compiled, 0.0)  # surfaces type errors from expressions before anything is saved
     return compiled
 
