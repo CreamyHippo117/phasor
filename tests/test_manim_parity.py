@@ -585,3 +585,193 @@ class S(Scene):
     assert any("numbers" in w for w in r.warnings)
     size = len(json.dumps(doc_of(r).model_dump(mode="json")))
     assert size < 4_000_000
+
+
+# ---------------------------------------------------------------- bounded work (M20 audit)
+
+
+def _keyed_numbers(r) -> int:
+    from phasor.importers.manim import _numbers
+
+    return sum(_numbers(s.to) for segs in doc_of(r).timeline.tracks.values() for s in segs)
+
+
+class _Count:
+    """Counts calls of ``owner.name`` (still calling it)."""
+
+    def __init__(self, monkeypatch, owner, name):
+        self.n, orig = 0, getattr(owner, name)
+
+        def counted(*a, **k):
+            self.n += 1
+            return orig(*a, **k)
+
+        monkeypatch.setattr(owner, name, counted)
+
+
+@pytest.mark.parametrize("plays", [50, 200])
+def test_many_short_plays_driving_a_redrawn_curve_are_one_patch(tmp_path, monkeypatch, plays):
+    """Blocker B: every play's flush recompiled the growing document (50 plays: 228 s,
+    3.9 GB, 16 MB; 100 killed at 600 s). Now the scene's document is written a constant
+    number of times, whatever the number of plays, and its keys stay within the budget."""
+    import json
+    import time
+
+    from phasor.importers import manim as mi
+    from phasor.scene import Scene as PhasorScene
+
+    applies = _Count(monkeypatch, PhasorScene, "_apply")
+    p = script(tmp_path, f"""
+class S(Scene):
+    def construct(self):
+        t = ValueTracker(0)
+        ax = Axes(x_range=[0, 10], y_range=[-2, 2])
+        g = always_redraw(lambda: ax.plot(lambda x: np.sin(x + t.get_value()),
+                                          x_range=[0, 10, 0.04]))
+        self.add(ax, g)
+        for i in range({plays}):
+            self.play(t.animate.set_value(i * 0.1), run_time=0.5)
+""")  # fmt: skip
+    start = time.perf_counter()
+    r = import_manim(p)
+    assert time.perf_counter() - start < 180  # about 6 s and 9 s here
+    assert applies.n <= 3  # one patch at the end (and the camera set before the script)
+    assert _keyed_numbers(r) <= mi.MAX_KEY_NUMBERS
+    assert len(json.dumps(doc_of(r).model_dump(mode="json"))) < 13_000_000
+    assert r.duration == pytest.approx(plays * 0.5)
+    # the curve follows the tracker while the budget lasts
+    sub = np.asarray(state(r, 2.0, "graph_1").subpaths[0])
+    assert sub[0][1] == pytest.approx(np.sin(0.3) * ax_unit(r), abs=0.05)
+
+
+def ax_unit(r) -> float:
+    """World units per y unit of the test's axes (y from -2 to 2)."""
+    from phasor.importers.manim import FRAME_HEIGHT
+
+    del r
+    return (FRAME_HEIGHT - 2) / 4  # Manim's Axes: y_length 6 over 4 units
+
+
+def test_the_updater_budget_is_enforced_and_dt_stays_manims(tmp_path, monkeypatch):
+    """S1: past the budget the rate became 0 and stayed there (every later dt updater got
+    dt 0 and froze), every later play still ran a frame, and the counts kept growing. Now
+    the frames run are bounded, the rate falls gracefully, a dt updater's motion adds up to
+    Manim's while it runs, and when updaters stop the warning says when."""
+    from phasor.importers import manim as mi
+
+    monkeypatch.setattr(mi, "MAX_FRAMES", 200)
+    calls = _Count(monkeypatch, mi, "_call_updater")
+    p = script(tmp_path, """
+class S(Scene):
+    def construct(self):
+        d = Dot().add_updater(lambda m, dt: m.shift(RIGHT * dt))
+        self.add(d)
+        for _ in range(300):
+            self.wait(0.5)
+""")  # fmt: skip
+    r = import_manim(p)
+    assert calls.n <= 200  # one updater, at most MAX_FRAMES frames
+    slow = next(w for w in r.warnings if "fewer frames a second" in w)
+    stop = next(w for w in r.warnings if "updaters stop at" in w)
+    t_slow = float(slow.split(" from ")[1].split(" s")[0])
+    t_stop = float(stop.split("stop at ")[1].split(" s")[0])
+    assert 0 < t_slow < t_stop < 150
+    # Manim: each wait(0.5) at 30 fps moves the dot by 14/30 (its first frame has dt 0)
+    for t in (t_slow, (t_slow + t_stop) / 2 // 0.5 * 0.5, t_stop):
+        assert state(r, t, "dot_1").pos[0] == pytest.approx(t / 0.5 * 14 / 30, abs=1e-6)
+    assert state(r, 150.0, "dot_1").pos[0] == pytest.approx(t_stop / 0.5 * 14 / 30, abs=1e-6)
+
+
+def test_the_numbers_budget_bounds_the_keys(tmp_path, monkeypatch):
+    from phasor.importers import manim as mi
+
+    monkeypatch.setattr(mi, "MAX_KEY_NUMBERS", 50_000)
+    p = script(tmp_path, """
+class S(Scene):
+    def construct(self):
+        t = ValueTracker(0)
+        ax = Axes()
+        g = always_redraw(lambda: ax.plot(lambda x: np.sin(x + t.get_value())))
+        self.add(ax, g)
+        for i in range(40):
+            self.play(t.animate.increment_value(0.1), run_time=0.5)
+""")  # fmt: skip
+    r = import_manim(p)
+    assert _keyed_numbers(r) <= 50_000
+    assert any("updaters stop at" in w for w in r.warnings)
+
+
+def test_many_mobjects_with_updaters_cost_linear_work(tmp_path, monkeypatch):
+    """S2: 2000 dots with a dt updater each over wait(30) took 524 s and 2.4 GB: each
+    object's add compiled the whole document, and the updater's signature was read on every
+    call. Now the scene is written once and the work is bounded by the budget."""
+    import inspect
+    import time
+
+    from phasor.importers import manim as mi
+    from phasor.scene import Scene as PhasorScene
+
+    applies = _Count(monkeypatch, PhasorScene, "_apply")
+    signatures = _Count(monkeypatch, inspect, "signature")
+    calls = _Count(monkeypatch, mi, "_call_updater")
+    p = script(tmp_path, """
+class S(Scene):
+    def construct(self):
+        dots = VGroup(*[Dot() for _ in range(2000)])
+        for i, d in enumerate(dots):
+            d.add_updater(lambda m, dt, i=i: m.shift(RIGHT * dt * 0.001 * (i % 7)))
+        self.add(dots)
+        self.wait(30)
+""")  # fmt: skip
+    start = time.perf_counter()
+    r = import_manim(p)
+    assert time.perf_counter() - start < 180  # about 8 s here
+    assert applies.n <= 3
+    assert signatures.n <= 2000 + 10  # once per updater
+    assert calls.n <= mi.MAX_UPDATER_CALLS
+    assert _keyed_numbers(r) <= mi.MAX_KEY_NUMBERS
+    # the sixth dot (i = 5) keeps Manim's motion: dt adds up to (30 * 30 - 1) / 30
+    assert state(r, 30.0, "dot_6").pos[0] == pytest.approx(0.005 * (30 * 30 - 1) / 30, abs=1e-6)
+
+
+# ---------------------------------------------------------------- wait_until (M20 audit S5)
+
+
+def test_wait_until_stops_at_the_first_frame_the_condition_holds(tmp_path):
+    """S5: ``wait_until`` waited ``max_time`` whatever the condition said. Manim (CE 0.22.1,
+    measured; also ``tests/manim_real/scenes/wait_until.py``) checks the condition after
+    each frame of the wait, when its clock is one frame on, and the wait ends there."""
+    p = script(tmp_path, """
+class S(Scene):
+    def construct(self):
+        d = Dot().add_updater(lambda m, dt: m.shift(RIGHT * dt))
+        self.add(d)
+        self.wait_until(lambda: d.get_x() >= 0.99, max_time=10)
+        self.play(FadeOut(d))
+        t = self.time
+        self.wait_until(lambda: self.time >= t + 0.49)
+        t = self.time
+        self.wait(5, stop_condition=lambda: self.time >= t + 0.99)
+        self.wait_until(lambda: False, max_time=0.5)
+""")  # fmt: skip
+    r = import_manim(p)
+    assert r.warnings == []
+    waits = [p for p in r.trace if p["anims"][0]["cls"] == "Wait"]
+    # frames at 30 a second, the first with dt 0: x is 1 at frame 30, when Manim's clock
+    # says 31/30 (real Manim: time 1.0333, x 1.0)
+    assert waits[0]["duration"] == pytest.approx(31 / 30)
+    assert waits[1]["duration"] == pytest.approx(0.5)
+    assert waits[2]["duration"] == pytest.approx(1.0)  # stop_condition, as wait_until
+    assert waits[3]["duration"] == pytest.approx(0.5)  # never true: the whole max_time
+    assert r.duration == pytest.approx(31 / 30 + 1 + 0.5 + 1 + 0.5)
+
+
+def test_a_failing_wait_until_condition_is_a_clean_error(tmp_path):
+    p = script(tmp_path, """
+class S(Scene):
+    def construct(self):
+        self.wait_until(lambda: 1 / 0)
+""")  # fmt: skip
+    with pytest.raises(ManimImportError, match="wait_until condition failed"):
+        import_manim(p)
+    assert "manim" not in sys.modules

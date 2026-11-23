@@ -26,6 +26,7 @@ colors, default sizes and rate functions are Manim's own.
 from __future__ import annotations
 
 import colorsys
+import contextlib
 import copy
 import inspect
 import math
@@ -101,9 +102,16 @@ FONT_UNIT = 0.048 * FRAME_HEIGHT / 48
 STROKE_UNIT = 0.004 * FRAME_HEIGHT / 4
 DEFAULT_DOT_RADIUS = 0.08
 DEFAULT_ARROW_BUFF = 0.25  # Manim's ``Arrow`` stops this far short of both ends
-UPDATE_RATE = 30  # frames a second at which updaters run (Manim: its frame rate)
-MAX_FRAMES = 20_000  # updater frames in one import; past it fewer a second, with a warning
-MAX_KEY_NUMBERS = 2_000_000  # numbers updater frames may sample in one import (about 20 MB)
+UPDATE_RATE = 30  # frames a second at which updaters run (``config.frame_rate``, Manim -qm)
+MAX_UPDATE_RATE = 120  # a script's own ``config.frame_rate`` is clamped to 1..this
+# The updater budget (lesson 2): frames run, and numbers sampled from them (a redrawn curve is
+# hundreds a frame; what is kept of them is the document, so this bounds its size too). Past
+# half of either, updaters run at fewer frames a second (never fewer than MIN_UPDATE_RATE,
+# with dt still Manim's); once a play cannot have two frames, they stop, said.
+MAX_FRAMES = 20_000
+MAX_UPDATER_CALLS = 2_000_000  # updater functions called (2000 dots with updaters: 1000 frames)
+MAX_KEY_NUMBERS = 1_000_000  # a document of at most about 12 MB of updater keys
+MIN_UPDATE_RATE = 2.0
 KEY_TOLERANCE = 1e-4  # sampled keys closer than this to a straight line between are dropped
 RATE_PIECES = 16  # a rate function phasor has no name for is sampled into this many segments
 SAMPLES = 72  # points round a circle (the box of a shape; phasor draws the true curve)
@@ -983,12 +991,26 @@ class Mobject:
         return cls(id=ident, opacity=0.0, style=self.phasor_style(cls), **extra, **params)
 
 
-def _call_updater(mob: Mobject, fn: Callable, dt: float) -> None:
+def _wants_dt(fn: Callable) -> bool:
+    """Whether an updater takes ``dt`` (Manim's rule), worked out once per function for the
+    import (``inspect.signature`` on every call was most of the updater time)."""
+    cache = _CTX.wants_dt if _CTX is not None else {}
+    try:
+        return cache[fn]
+    except (KeyError, TypeError):
+        pass
     try:
         params = inspect.signature(fn).parameters
-        wants_dt = "dt" in params or len(params) >= 2
+        wants = "dt" in params or len(params) >= 2
     except (TypeError, ValueError):
-        wants_dt = False
+        wants = False
+    with contextlib.suppress(TypeError):  # an unhashable callable: worked out every time
+        cache[fn] = wants
+    return wants
+
+
+def _call_updater(mob: Mobject, fn: Callable, dt: float) -> None:
+    wants_dt = _wants_dt(fn)
     try:
         fn(mob, dt) if wants_dt else fn(mob)
     except ManimImportError:
@@ -2630,10 +2652,17 @@ ApplyWave = Wiggle
 
 
 class Wait(Animation):
+    """Manim's ``Wait``; with ``stop_condition`` (``wait_until``) it ends at the first frame
+    where the condition is true (checked after the frame's updaters, as Manim does)."""
+
     default_rate = linear
 
-    def __init__(self, run_time: float = 1.0, **kw: Any) -> None:
+    def __init__(self, run_time: float = 1.0, stop_condition: Any = None,
+                 frozen_frame: Any = None, **kw: Any) -> None:  # fmt: skip
         super().__init__(None, run_time=run_time, **kw)
+        if stop_condition is not None and not callable(stop_condition):
+            raise ManimImportError(f"stop_condition {stop_condition!r} is not a function")
+        self.stop = stop_condition
 
     def apply(self, ctx, t0, d):
         return None
@@ -2838,8 +2867,27 @@ class _Context:
     frame_t: float = 0.0  # the frame updaters run at (Scene.time, while they run)
     frames: int = 0
     numbers: int = 0  # numbers the updater frames sampled
-    rate: float = UPDATE_RATE
+    calls: int = 0  # updater functions called
+    stopped: float | None = None  # when the updater budget ran out
+    coarse: bool = False  # updaters ran at fewer frames a second (said once)
+    taken: set[str] = field(default_factory=set)  # ids of objects added but not yet applied
+    scratch: Any = None  # an engine that checks one object at a time (``add``)
+    wants_dt: dict[Any, bool] = field(default_factory=dict)  # updater -> takes dt
+    config: Any = None  # the stand-in's ``config`` (its ``frame_rate``)
     sounds: int = 0
+
+    def frame_rate(self) -> float:
+        """Manim's frame rate: ``config.frame_rate`` (30 unless the script sets it)."""
+        try:
+            r = float(getattr(self.config, "frame_rate", UPDATE_RATE))
+        except (TypeError, ValueError):
+            r = float("nan")
+        if not math.isfinite(r) or not 1 <= r <= MAX_UPDATE_RATE:
+            self.warn(f"config.frame_rate {getattr(self.config, 'frame_rate', None)!r}: "
+                      f"updaters run at {UPDATE_RATE} frames a second (1 to "
+                      f"{MAX_UPDATE_RATE})")  # fmt: skip
+            return float(UPDATE_RATE)
+        return r
 
     def warn(self, msg: str) -> None:
         self.warnings.append(msg)
@@ -2847,7 +2895,7 @@ class _Context:
     def ident(self, leaf: Mobject) -> str:
         base = name_from(leaf.id_base or type(leaf).__name__, "mobject", 30)
         doc = self.scene.engine.document
-        taken = {o.id for o in doc.objects} | set(doc.retired_ids)
+        taken = {o.id for o in doc.objects} | set(doc.retired_ids) | self.taken
         while True:
             self.counts[base] = self.counts.get(base, 0) + 1
             ident = f"{base}_{self.counts[base]}"
@@ -2864,19 +2912,40 @@ class _Context:
             for k, v in leaf.phasor_spec()[1].items():
                 self.values[("camera", k)] = v
             return "camera"
-        self.flush()
         ident = self.ident(leaf)
         try:
             obj = leaf.phasor_object(ident)
-            self.scene.add(obj)
+            spec = self.add(obj)
         except (ValidationError, DocumentError) as e:
-            obj = self._fallback(leaf, ident, e)
+            obj, spec = self._fallback(leaf, ident, e)
         leaf.obj_id, leaf.ptype = ident, obj.type
-        for k, v in self.scene.engine.document.object(ident).params.items():
+        for k, v in spec.params.items():
             self.values[(ident, k)] = v
         return ident
 
-    def _fallback(self, leaf: Mobject, ident: str, error: ValidationError | DocumentError):
+    def add(self, obj: Any) -> Any:
+        """Check ``obj`` on its own (a scratch engine holding only it: the checks one object
+        meets) and queue its add for the next flush; returns its spec as the document will
+        hold it. ``DocumentError`` when it is refused. Adding each object to the scene itself
+        compiled the whole document every time: quadratic in objects (M20 audit S2)."""
+        from phasor.engine import Engine
+
+        ops = self.scene.add_ops(obj)
+        doc = self.scene.engine.document
+        if self.scratch is None:
+            self.scratch = Engine(Document(meta=doc.meta, cameras=doc.cameras),
+                                  base_dir=self.scene.engine.base_dir)  # fmt: skip
+        result = self.scratch.apply(ops, origin="script")
+        if result.ok:
+            spec = self.scratch.document.object(obj.id)
+            self.scratch.undo()
+        result.raise_for_errors()
+        self.ops.extend(ops)
+        self.taken.add(obj.id)
+        return spec
+
+    def _fallback(self, leaf: Mobject, ident: str,
+                  error: ValidationError | DocumentError) -> tuple[Any, Any]:  # fmt: skip
         """A shape phasor's own kind cannot hold (a zero radius, a coordinate past the
         bounds): a path through its outline, else a line, with a warning."""
         what = f"{ident} ({type(leaf).__name__})"
@@ -2898,7 +2967,7 @@ class _Context:
             look = leaf._look() if cls is not PLine else {}
             try:
                 obj = cls(id=ident, opacity=0.0, style=style, **params, **look)
-                self.scene.add(obj)
+                spec = self.add(obj)
             except (ValidationError, DocumentError):
                 continue
             self.warn(f"{what} cannot be drawn as its own kind ({why[:120]}): drawn as a "
@@ -2908,7 +2977,7 @@ class _Context:
             if cls is PLine:
                 leaf._look = dict  # type: ignore[method-assign]
                 leaf._style = lambda _s=style, **kw: dict(_s)  # type: ignore
-            return obj
+            return obj, spec
         raise ManimImportError(f"{what}: {why}") from None
 
     def same_kind(self, a: Mobject, b: Mobject) -> bool:
@@ -2991,6 +3060,10 @@ class _Context:
         self.busy[path] = max(self.busy.get(path, 0.0), round(t0 + d, 9))
 
     def flush(self) -> None:
+        """Apply the pending segments in one patch. Only what reads the engine's document
+        calls it (a verb's motion, the ambient rotation, a camera change, the end of the
+        import): every ``Engine.apply`` validates and compiles the whole document, so a flush
+        per play made many short plays quadratic in time and memory (M20 audit B)."""
         if self.ops:
             ops, self.ops = self.ops, []
             self.scene._apply(ops)
@@ -3082,10 +3155,9 @@ class _Context:
         for leaf in (a, b):
             if leaf.kind == "text" and not leaf.as_shapes:
                 leaf.as_shapes = True
-                if leaf.obj_id:
-                    self.flush()
-                    self.scene._apply([{"op": "set_param", "path": f"{leaf.obj_id}.as_shapes",
-                                        "value": True}])  # fmt: skip
+                if leaf.obj_id:  # applied with the pending ops, before the verb reads it
+                    self.ops.append({"op": "set_param", "path": f"{leaf.obj_id}.as_shapes",
+                                     "value": True})  # fmt: skip
         self.realize(a)
         self.realize(b)
         try:
@@ -3208,7 +3280,6 @@ class Scene:
                 self._c.show(leaf, self._c.t)
             if m not in self.mobjects:
                 self.mobjects.append(m)
-        self._c.flush()
         return self
 
     add_foreground_mobject = add_foreground_mobjects = add
@@ -3223,7 +3294,6 @@ class Scene:
             self._c.gone(m)
             if m in self.mobjects:
                 self.mobjects.remove(m)
-        self._c.flush()
         return self
 
     def clear(self) -> Scene:
@@ -3296,9 +3366,10 @@ class Scene:
                 else:
                     self.mobjects[i] = a.goal
         c.trace[-1]["after"] = self._listing()
-        self._frames(t0, d, flat, before, trackers)
-        c.flush()
-        c.t = t0 + d
+        stops = [a.stop for a in built if isinstance(a, Wait) and a.stop is not None]
+        end = self._frames(t0, d, flat, before, trackers, stops[0] if stops else None)
+        c.trace[-1]["duration"] = end - t0
+        c.t = end
 
     def _listing(self) -> list[dict]:
         out = []
@@ -3309,13 +3380,60 @@ class Scene:
         return out
 
     def _frames(self, t0: float, d: float, flat: list[tuple[Animation, float, float]],
-                before: dict[int, Mobject], tracker_start: dict[int, float]) -> None:  # fmt: skip
+                before: dict[int, Mobject], tracker_start: dict[int, float],
+                stop: Callable[[], Any] | None = None) -> float:  # fmt: skip
         """Run the updaters frame by frame through [t0, t0 + d], with every mobject an
-        animation moves where Manim has it at that frame, and key what they change."""
+        animation moves where Manim has it at that frame, and key what they change. ``stop``
+        (``wait_until``): checked after each frame, as Manim does; the play ends at the
+        first frame where it is true. Returns when the play ends."""
         c = self._c
-        if not self._updating():
-            return
-        c.flush()
+        if not self._updating() and stop is None:
+            return t0 + d
+        # Manim's frames at its rate R: t0, t0 + 1/R, ... before t0 + d (the first with dt
+        # 0), then the end, with every animation finished and the updaters run once more
+        # with dt 0. Within the budget the stand-in samples them all; past half of it, fewer
+        # (rate r < R), each with the dt of the Manim frames it stands for.
+        big_r = c.frame_rate()
+        n_manim = math.ceil(d * big_r - 1e-9) if d > 0 else 0
+        per = max(1, sum(_numbers(v) for m in self._updating() for leaf in m.leaves()
+                         if leaf.kind not in ("group", "value")
+                         for v in leaf.phasor_spec()[1].values()))  # fmt: skip
+        calls = max(1, sum(len(m.updaters) for m in self._updating()))
+        left_frames = min(MAX_FRAMES - c.frames, (MAX_UPDATER_CALLS - c.calls) // calls)
+        left_samples = (MAX_KEY_NUMBERS - c.numbers) // per
+        if c.stopped is not None or left_frames < 2 or left_samples < 1:
+            if c.stopped is None:
+                c.stopped = t0
+                c.warn(f"updaters stop at {t0:.6g} s ({_budget()}): what they would move "
+                       "after that stays where it is")  # fmt: skip
+            if stop is not None:
+                c.warn("a wait_until (stop_condition) after the updater budget ran out waits "
+                       "its whole time")  # fmt: skip
+            return t0 + d
+        share = min(1 - c.frames / MAX_FRAMES, 1 - c.calls / MAX_UPDATER_CALLS,
+                    1 - c.numbers / MAX_KEY_NUMBERS)  # fmt: skip
+        floor = min(MIN_UPDATE_RATE, big_r)
+        rate = big_r if share >= 0.5 else max(big_r * (share / 0.5) ** 3, floor)
+        n = min(math.ceil(d * rate - 1e-9) if d > 0 else 0, n_manim, left_frames - 1)
+        # Every frame runs and is sampled while the budget is plenty; past half of it the first
+        # frame of a play (where the last one ended, with dt 0) is skipped, so a play costs as
+        # little as one frame and one sample
+        full = n == n_manim and n + 1 <= left_samples and share >= 0.5
+        if not full:
+            n = min(n, left_samples)
+            rate = n / d if n < n_manim else big_r
+            if not c.coarse:
+                c.coarse = True
+                c.warn(f"updaters run at fewer frames a second from {t0:.6g} s "
+                       f"({_budget()}; their dt still adds up to Manim's)")  # fmt: skip
+        else:
+            rate = big_r
+
+        def manim_frame(k: int) -> int:  # the Manim frame that sampled frame k stands for
+            if k >= n:
+                return max(n_manim - 1, 0)
+            return k if n == n_manim else min(int(k * big_r / rate + 1e-6), n_manim - 1)
+
         moving: list[tuple[Mobject, Mobject, Mobject, float, float, Any]] = []
         seen: set[int] = set()
         trackers: list[tuple[Mobject, float, float, float, float, Any]] = []
@@ -3331,55 +3449,64 @@ class Scene:
                         seen.add(id(leaf))
                         moving.append((leaf, before[id(leaf)], leaf.copy(), at, dur,
                                        anim.rate_func))  # fmt: skip
-        # Manim's frames: t0, t0 + 1/rate, ... before t0 + d (the first with dt 0), then the
-        # end, with every animation finished and the updaters run once more with dt 0
-        n = math.ceil(d * c.rate - 1e-9) if d > 0 else 0
-        # the budget: frames, and numbers sampled (a redrawn curve is hundreds a frame)
-        per = max(1, sum(_numbers(v) for m in self._updating() for leaf in m.leaves()
-                         if leaf.kind not in ("group", "value")
-                         for v in leaf.phasor_spec()[1].values()))  # fmt: skip
-        left = min(MAX_FRAMES - c.frames, (MAX_KEY_NUMBERS - c.numbers) // per)
-        if n + 1 > left:  # past the budget: fewer frames a second (at the end, one a play)
-            c.rate = max(left - 1, 0) / d if d > 0 else c.rate
-            c.warn(f"updaters run at fewer frames a second past {MAX_FRAMES} frames or "
-                   f"{MAX_KEY_NUMBERS} numbers (the motion they make is coarser)")  # fmt: skip
-            n = math.ceil(d * c.rate - 1e-9) if d > 0 else 0
-        c.frames += n + 1
-        c.numbers += (n + 1) * per
         samples: dict[tuple[int, str], list[tuple[float, Any]]] = {}
         keyed: dict[int, Mobject] = {}
+        end = t0 + d
+        ran = got = 0  # frames run, numbers sampled (counted, not estimated)
+        over = False
         c.in_frames = True
         try:
-            for k in range(n + 1):
-                t = c.frame_t = round(t0 + (k / c.rate if k < n else d), 9)
-                for leaf, s, g, at, dur, rate in moving:
-                    u = 1.0 if dur <= 0 else _rate(rate, (t - at) / dur)
+            for k in range(0 if full or n == 0 else 1, n + 1):
+                t = c.frame_t = round(t0 + (manim_frame(k) / big_r if k < n else d), 9)
+                for leaf, s, g, at, dur, rate_fn in moving:
+                    u = 1.0 if dur <= 0 else _rate(rate_fn, (t - at) / dur)
                     _interpolate(leaf, s, g, u)
-                for m, v0, v1, at, dur, rate in trackers:
-                    u = 1.0 if dur <= 0 else _rate(rate, (t - at) / dur)
+                for m, v0, v1, at, dur, rate_fn in trackers:
+                    u = 1.0 if dur <= 0 else _rate(rate_fn, (t - at) / dur)
                     m.value = v0 + (v1 - v0) * u
-                dt = 0.0 if k in (0, n) else 1.0 / c.rate
+                dt = 0.0 if k == 0 else (manim_frame(k) - manim_frame(k - 1)) / big_r
                 for m in self._updating():
                     for fn in list(m.updaters):
                         _call_updater(m, fn, dt)
+                        c.calls += 1
                     for leaf in m.leaves():
                         keyed[id(leaf)] = leaf
+                ran += 1
                 for leaf in keyed.values():
                     if leaf.kind in ("group", "value"):
                         continue
                     for p, v in leaf.phasor_spec()[1].items():
                         samples.setdefault((id(leaf), p), []).append((t, v))
+                        got += _numbers(v)
+                if c.numbers + got > MAX_KEY_NUMBERS:  # an updater grew what it draws
+                    over = True
+                    break
+                if stop is not None and k < n:
+                    # Manim checks after rendering the frame, when its clock (Scene.time)
+                    # is a frame on; the wait ends there (measured with Manim CE 0.22.1)
+                    after = min(round(t0 + (manim_frame(k) + 1) / big_r, 9), t0 + d)
+                    c.frame_t = after
+                    if _stopped(stop):
+                        end = after
+                        break
         finally:
             c.in_frames = False
+            c.frames += ran
+            c.numbers += got
+        if over:
+            c.stopped = t0
+            c.warn(f"updaters stop at {c.frame_t:.6g} s ({_budget()}): what they would move "
+                   "after that stays where it is")  # fmt: skip
         for leaf, _s, g, _a, _d, _r in moving:
-            if id(leaf) not in keyed and leaf.alias is None:
+            if (over or id(leaf) not in keyed) and leaf.alias is None:
                 leaf._take(g)
         for m, _v0, v1, *_ in trackers:
             m.value = v1
         warned: set[int] = set()
+        shown = self._shown_ids()
         for (lid, p), series in samples.items():
             leaf = keyed[lid]
-            if leaf.kind != "frame" and (leaf.obj_id is None or id(leaf) not in self._shown_ids()):
+            if leaf.kind != "frame" and (leaf.obj_id is None or id(leaf) not in shown):
                 continue
             oid = c.realize(leaf)
             if leaf.kind != "frame" and leaf.phasor_spec()[0].type != leaf.ptype:
@@ -3408,20 +3535,21 @@ class Scene:
                 prev = t
             c.values[(oid, p)] = keys[-1][1]
             c.busy[path] = max(c.busy.get(path, 0.0), round(keys[-1][0], 9))
-        c.flush()
+        return end
 
     def _shown_ids(self) -> set[int]:
         return {id(leaf) for m in self.mobjects for leaf in m.leaves()} | self._c.shown
 
     def wait(self, duration: float = 1.0, stop_condition: Any = None, frozen_frame: Any = None,
              **kw: Any) -> None:  # fmt: skip
-        self.play(Wait(run_time=_num(duration, "wait duration")))
+        self.play(Wait(run_time=_num(duration, "wait duration"), stop_condition=stop_condition))
 
     def pause(self, duration: float = 1.0) -> None:
         self.wait(duration)
 
     def wait_until(self, stop_condition: Callable, max_time: float = 60.0) -> None:
-        self.wait(max_time)
+        """Manim: wait until ``stop_condition()`` is true, at most ``max_time`` seconds."""
+        self.wait(max_time, stop_condition=stop_condition)
 
     def next_section(self, *a: Any, **k: Any) -> None:
         return None
@@ -3442,13 +3570,12 @@ class Scene:
             params["gain"] = min(max(_num(gain, "gain"), media.MIN_GAIN), media.MAX_GAIN)
         c.sounds += 1
         doc = c.scene.engine.document
-        taken = {o.id for o in doc.objects} | set(doc.retired_ids)
+        taken = {o.id for o in doc.objects} | set(doc.retired_ids) | c.taken
         ident = next(f"sound_{k}" for k in range(c.sounds, c.sounds + len(taken) + 2)
                      if f"sound_{k}" not in taken)  # fmt: skip
-        c.flush()
         try:
-            c.scene.add(media.Sound(id=ident, **params))
-        except ValidationError as e:
+            c.add(media.Sound(id=ident, **params))
+        except (ValidationError, DocumentError) as e:
             c.warn(f"add_sound({sound_file!r}) is left out: {_validation_message(e)}")
 
     def add_subcaption(self, *a: Any, **k: Any) -> None:
@@ -3464,6 +3591,23 @@ class Scene:
         if name.startswith("_"):
             raise AttributeError(name)
         raise ManimImportError(f"Scene.{name} is not supported by phasor's Manim import yet")
+
+
+def _budget() -> str:
+    return (f"the import runs at most {MAX_FRAMES} updater frames and {MAX_UPDATER_CALLS} "
+            f"updater calls, and samples at most {MAX_KEY_NUMBERS} numbers")  # fmt: skip
+
+
+def _stopped(stop: Callable[[], Any]) -> bool:
+    """Whether a ``wait_until`` condition holds now; one that fails is a clean error, as a
+    failing updater is (Manim stops with the error too)."""
+    try:
+        return bool(stop())
+    except ManimImportError:
+        raise
+    except Exception as e:
+        raise ManimImportError(f"the wait_until condition failed: {type(e).__name__}: "
+                               f"{e}") from None  # fmt: skip
 
 
 def _interpolate(leaf: Mobject, s: Mobject, g: Mobject, u: float) -> None:
@@ -3539,7 +3683,7 @@ def _module() -> types.ModuleType:
     names["np"] = np  # Manim's star-import gives scripts numpy as ``np``
     names["config"] = types.SimpleNamespace(
         frame_height=FRAME_HEIGHT, frame_width=FRAME_WIDTH, pixel_height=1080, pixel_width=1920,
-        frame_rate=60, frame_x_radius=FRAME_WIDTH / 2, frame_y_radius=FRAME_HEIGHT / 2,
+        frame_rate=UPDATE_RATE, frame_x_radius=FRAME_WIDTH / 2, frame_y_radius=FRAME_HEIGHT / 2,
         background_color="#000000")  # fmt: skip
     mod.__dict__.update(names)
     keep = ("config", "np", "always_redraw", "always", "f_always", "rate_functions",
@@ -3585,15 +3729,14 @@ def import_manim(path: str | Path, scene: str | None = None) -> ManimImport:
                         allow_scripts=False)  # fmt: skip
         s.set("camera.height", FRAME_HEIGHT)
         s.set("camera.center", (0.0, 0.0, 0.0))
-        ctx = _Context(scene=s, base_dir=base_dir)
+        ctx = _Context(scene=s, base_dir=base_dir, config=sys.modules["manim"].config)
         _CTX = ctx
         instance = cls()
         instance.setup()
         instance.construct()
-        ctx.flush()
         if isinstance(instance, ThreeDScene):
             instance._finish_rotation()
-        s.marker("end", ctx.t)
+        ctx.ops.append({"op": "set_marker", "name": "end", "t": ctx.t})
         background = str(instance.camera.background_color)
         if background.upper() not in ("#000000", "BLACK"):  # Manim's own: keep the theme's
             value = style_color(background)
@@ -3603,8 +3746,8 @@ def import_manim(path: str | Path, scene: str | None = None) -> ManimImport:
                         ctx.warn(f"the background's alpha ({background!r}) is not carried "
                                  "over: a background is opaque")  # fmt: skip
                     value = value[:7]
-                op = {"op": "set_meta", "field": "background", "value": value}
-                s.engine.apply(op, origin="script").raise_for_errors()
+                ctx.ops.append({"op": "set_meta", "field": "background", "value": value})
+        ctx.flush()  # the one patch with everything since the last verb (M20 audit B)
     except ValidationError as e:  # anything the checks above missed: said, not a traceback
         raise ManimImportError(f"{path.name}: {_validation_message(e)}") from None
     except (DocumentError, VerbError) as e:

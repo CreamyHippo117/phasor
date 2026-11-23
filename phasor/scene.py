@@ -257,6 +257,11 @@ class Scene:
     def add(self, obj: ObjectBase) -> ObjectBase:
         """Add an object: ``s.add(Dot(id="dot", pos=(1, 2)))``. Returns it for chaining.
         The scene's look fills in what the object leaves unset (the values are stored)."""
+        self._apply(self.add_ops(obj))
+        return obj
+
+    def add_ops(self, obj: ObjectBase) -> list[Any]:
+        """The patch ops ``add`` applies for ``obj``, not applied (an importer batches them)."""
         base_dir = self.engine.base_dir
         spec = obj.to_spec(base_dir)
         if self.look is not None:
@@ -271,8 +276,7 @@ class Scene:
                             *(r.rpartition(":")[0] for r in spec.always)) if m]  # fmt: skip
         new = tuple(dict.fromkeys([*have, *need]))
         ops: list[Any] = [SetMeta(field="modules", value=new)] if new != have else []
-        self._apply([*ops, AddObject(object=spec)])
-        return obj
+        return [*ops, AddObject(object=spec)]
 
     def use_camera(self, kind: str = "orbit", **params: Any) -> None:
         """Choose the camera: ``"orbit"`` (3D perspective around ``target``; ``azimuth``,

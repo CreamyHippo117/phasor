@@ -79,9 +79,11 @@ def record(path: str, name: str | None = None) -> dict:
     orig_play, orig_update = Scene.play, Scene.update_to_time
 
     def play(self, *a, **k):
-        t0 = clock["t0"]
+        t0, start = clock["t0"], float(self.time)
         orig_play(self, *a, **k)
         d = float(self.duration)
+        if any(getattr(x, "stop_condition", None) for x in self.animations or []):
+            d = float(self.time) - start  # a wait_until that stopped early: what it lasted
         anims = [{"cls": type(x).__name__, "run_time": round(float(x.run_time), 6),
                   "rate_func": getattr(x.rate_func, "__name__", "?")}
                  for x in (self.animations or [])]  # fmt: skip
