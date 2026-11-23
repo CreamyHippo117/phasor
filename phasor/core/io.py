@@ -43,7 +43,8 @@ def overrides_path(doc_path: str | Path) -> Path:
 
 
 def load_document(path: str | Path) -> Document:
-    return parse_document(json.loads(Path(path).read_text(encoding="utf-8")))
+    # utf-8-sig: Notepad may save "UTF-8 with BOM"
+    return parse_document(json.loads(Path(path).read_text(encoding="utf-8-sig")))
 
 
 def load_overrides(path: str | Path) -> Overrides:
@@ -51,7 +52,7 @@ def load_overrides(path: str | Path) -> Overrides:
     if not p.exists():
         return Overrides()
     try:
-        return Overrides.model_validate(json.loads(p.read_text(encoding="utf-8")))
+        return Overrides.model_validate(json.loads(p.read_text(encoding="utf-8-sig")))
     except ValidationError as e:
         raise DocumentError(schema_issues(e)) from e
 

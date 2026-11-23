@@ -271,6 +271,8 @@ def test_a_library_that_builds_but_will_not_load_falls_back_and_is_not_retried(
     from phasor.render.gpu import registry
 
     monkeypatch.setattr(registry, "_WARNED", set())
+    # with a CUDA card `auto` picks CUDA, whose own loading would meet the patched CDLL
+    monkeypatch.setattr(registry, "default_gpu", lambda: None)
     with pytest.warns(RuntimeWarning, match="runs on NumPy"):
         got = gpu.run("vignette", tile, **params)
     np.testing.assert_array_equal(got, get("vignette").reference(tile, **params))

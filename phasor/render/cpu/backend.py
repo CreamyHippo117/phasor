@@ -45,7 +45,7 @@ from typing import Any
 
 import numpy as np
 
-from phasor.core.proc import NO_WINDOW
+from phasor.core.proc import NO_WINDOW, ascii_path, ascii_temp_env
 from phasor.render.gpu.registry import BLOCK, HEADER, PRECISIONS, KernelError
 
 # libgomp's idle threads otherwise spin after each kernel, taking cores from llvmpipe and the
@@ -196,19 +196,37 @@ def _has_openmp(path: str, version: str) -> bool:
         src, lib = Path(tmp) / "probe.cpp", Path(tmp) / f"probe{LIB_SUFFIX}"
         src.write_text(probe, encoding="utf-8")
         try:
-            done = subprocess.run([path, *_pic(), "-shared", "-fopenmp", str(src), "-o", str(lib)],
-                                  capture_output=True, text=True, timeout=120,
-                                  creationflags=NO_WINDOW)  # fmt: skip
-            if done.returncode == 0:
-                ok = _load(path, lib).phasor_omp() >= 1
+            lib.touch()  # (a short name needs the file to exist)
+            done = subprocess.run([path, *_pic(), "-shared", "-fopenmp", ascii_path(src), "-o",
+                                   ascii_path(lib)], capture_output=True, text=True, timeout=120,
+                                  env=ascii_temp_env(), creationflags=NO_WINDOW)  # fmt: skip
         except (OSError, subprocess.TimeoutExpired):
-            ok = False
+            return False  # the compiler did not run: not remembered as "no OpenMP"
+        if done.returncode == 0:
+            try:
+                ok = _load(path, lib).phasor_omp() >= 1
+            except OSError:  # builds but its runtime (libgomp) does not load
+                ok = False
+        elif not _builds_without_openmp(path, src, lib):
+            return False  # fails for another reason (a path it cannot open): not remembered
     try:
         d.mkdir(parents=True, exist_ok=True)
         note.write_text(json.dumps({"openmp": ok, "compiler": version}), encoding="utf-8")
     except OSError:
         pass
     return ok
+
+
+def _builds_without_openmp(path: str, src: Path, lib: Path) -> bool:
+    """Whether the probe builds once ``-fopenmp`` is left out (so OpenMP is what is missing)."""
+    src.write_text('extern "C" int phasor_omp(void) { return 1; }\n', encoding="utf-8")
+    try:
+        done = subprocess.run([path, *_pic(), "-shared", ascii_path(src), "-o", ascii_path(lib)],
+                              capture_output=True, text=True, timeout=120, env=ascii_temp_env(),
+                              creationflags=NO_WINDOW)  # fmt: skip
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return done.returncode == 0
 
 
 _DLL_DIRS: dict[str, Any] = {}  # Windows: the compiler's runtime DLLs, kept on the search path
@@ -385,9 +403,9 @@ class CpuBackend:
         src.write_text(code, encoding="utf-8")
         try:
             try:
-                done = subprocess.run([c.path, *flags, str(src), "-o", str(tmp)],
+                done = subprocess.run([c.path, *flags, ascii_path(src), "-o", ascii_path(tmp)],
                                       capture_output=True, text=True, timeout=600,
-                                      creationflags=NO_WINDOW)  # fmt: skip
+                                      env=ascii_temp_env(), creationflags=NO_WINDOW)  # fmt: skip
             except (OSError, subprocess.TimeoutExpired) as e:
                 raise CompileError(f"{c.name} did not run: {e}") from e
             if done.returncode != 0:

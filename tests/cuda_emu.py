@@ -13,6 +13,7 @@ but its exp, log and sin are not libm's). Those need the ``gpu``-marked tests on
 
 from __future__ import annotations
 
+import atexit
 import ctypes
 import hashlib
 import shutil
@@ -42,6 +43,7 @@ static inline unsigned long long atomicAdd(unsigned long long* a, unsigned long 
 """
 _CTYPES = {np.int32: ctypes.c_int, np.float32: ctypes.c_float, np.float64: ctypes.c_double}
 _DIR = Path(tempfile.mkdtemp(prefix="phasor_emu_"))
+atexit.register(shutil.rmtree, _DIR, ignore_errors=True)  # (a loaded DLL may stay behind)
 _LIBS: dict[str, ctypes.CDLL] = {}  # compiled kernels, by source hash
 
 

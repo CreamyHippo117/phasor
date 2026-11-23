@@ -41,3 +41,28 @@ stay within the tolerance (0.35), not match the Linux numbers.
 
 Write here: the Manim version, pass/fail per scene, and any number that differs from the
 Linux table.
+
+**2026-11-23, Windows 11 (RTX 4070 Ti PC), Manim CE 0.22.1** (`uv venv manim_env --python
+3.12`, wheels only, no build), **MiKTeX 25.12** (user install via winget, auto-install of
+packages on). `uv run pytest tests/manim_real -v`: **11 passed** (33.9 s), every scene
+including `math_tex` and `manim_reverb` (real LaTeX).
+
+`python -m tests.manim_real.compare -v` against the Linux table in `MILESTONE_20.md`:
+
+| Scene | Windows | Same as Linux? |
+| --- | --- | --- |
+| shapes_layout | positions 0.008, sizes 0.250 (arrow tip, by design) | yes |
+| animate_timing | positions 0.000, sizes 0.101 (by design) | yes |
+| fills_colors | positions 0.011, sizes 0.045 | yes |
+| text_write | positions 0.000, sizes 0.000; text 0.463 (by design, skipped) | text 0.463 here, 0.54 on Linux (fonts) |
+| axes_plot | positions 0.003, sizes 0.026; text 0.050 | yes |
+| math_tex | positions 0.000, sizes 0.000; text 0.108 | yes |
+| moving_camera | camera frame 0.000, sizes 0.032 | yes |
+| updaters | positions 0.000, sizes 0.045 | yes |
+| manim_camera_tour | positions 0.001, sizes 0.037, camera 0.000; text 0.132 | text 0.132 here, 0.104 on Linux (fonts) |
+| wait_until | clock 3.367 s, positions 0.000, sizes 0.032 | yes |
+| manim_reverb | clock 14.5 s, positions 0.010, sizes 0.035; text 0.303 | yes |
+
+Clock, play counts, run times and rate functions match in every scene. Every shape, dot,
+line and camera number is the Linux one to 3 decimals. Only text differs (Pango on Windows
+fonts), and it stays within 0.35 except `text_write`, which is by design.

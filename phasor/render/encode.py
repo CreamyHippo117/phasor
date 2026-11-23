@@ -252,4 +252,11 @@ def mux_audio(video: str | Path, samples: np.ndarray, rate: int) -> None:
             dst.mux(packet)
         for packet in aout.encode(None):
             dst.mux(packet)
-    tmp.replace(video)
+    try:
+        tmp.replace(video)
+    except PermissionError as e:  # Windows: a video player still has the old file open
+        tmp.unlink(missing_ok=True)
+        raise PermissionError(
+            f"cannot add the sound to {video}: another program (a video player?) has it open."
+            " Close it and render again"
+        ) from e

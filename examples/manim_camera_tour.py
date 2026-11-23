@@ -1,4 +1,4 @@
-"""A Manim Community scene that uses what Milestone 20 carries over: it runs in phasor
+"""A Manim Community scene with a moving camera, updaters and a sound: it runs in phasor
 unchanged (``phasor manim examples/manim_camera_tour.py``), and in Manim CE 0.22.1 too.
 
 A moving camera zooms onto a filled shape, a dot rides round a circle on an updater driven

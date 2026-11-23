@@ -71,7 +71,7 @@ class Settings:
     def load(cls) -> Settings:
         """The saved settings; defaults when there are none or the file is damaged."""
         try:
-            raw = json.loads(cls.path().read_text(encoding="utf-8"))
+            raw = json.loads(cls.path().read_text(encoding="utf-8-sig"))  # Notepad may add a BOM
         except (OSError, ValueError):
             return cls()
         s = cls()
@@ -127,6 +127,7 @@ TEMPLATES: dict[str, dict[str, Any]] = {
 
 
 _NOTE = re.compile(r"^Milestone \w+(?: exit demo)?(?: \([^)]*\))?(?:[:,]\s*|\s+(?=tour))")
+_NOTE_ASIDE = re.compile(r"\s*\((?:Milestone|BEAUTY\.md)[^)]*\)")  # "... lands (Milestone 20)."
 
 
 def examples() -> list[dict[str, str]]:
@@ -148,7 +149,7 @@ def examples() -> list[dict[str, str]]:
             about = " ".join(m.group(1).split())
             # The docstrings start with project notes ("Milestone 9 exit demo: ..."): the
             # start screen shows only what the scene is.
-            about = _NOTE.sub("", about)
+            about = _NOTE_ASIDE.sub("", _NOTE.sub("", about))
             about = about[:1].upper() + about[1:160]
         out.append({"name": p.stem.replace("_", " "), "path": str(p), "about": about})
     return out

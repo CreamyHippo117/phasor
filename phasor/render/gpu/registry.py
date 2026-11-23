@@ -122,6 +122,9 @@ def default_gpu() -> Gpu | None:
     try:
         import cupy
 
+        from phasor.core.proc import ascii_tempdir
+
+        ascii_tempdir()  # NVRTC cannot open CuPy's .cu files under a non-ASCII TEMP
         if cupy.cuda.runtime.getDeviceCount() < 1:
             return None
         return Gpu()
@@ -131,6 +134,7 @@ def default_gpu() -> Gpu | None:
 
 BACKENDS = ("auto", "cuda", "cpu", "reference")
 _WARNED: set[str] = set()
+_CUDA_FAILED: set[str] = set()  # kernels NVRTC could not build here (auto then skips CUDA)
 
 
 def active_backend() -> str:
@@ -155,9 +159,21 @@ def run(name: str, tile: Tile, *, backend: str = "auto", threads: int | None = N
         return k.reference(tile, **params)
     if backend in ("auto", "cuda"):
         gpu = default_gpu()
-        if gpu is not None:
-            return k.launch(gpu, tile, **params)
-        if backend == "cuda":
+        if gpu is not None and (backend == "cuda" or name not in _CUDA_FAILED):
+            if backend == "cuda":
+                return k.launch(gpu, tile, **params)
+            try:
+                return k.launch(gpu, tile, **params)
+            except Exception as e:  # auto: a kernel NVRTC cannot build falls back, once
+                if type(e).__name__ != "CompileException":
+                    raise
+                _CUDA_FAILED.add(name)
+                import warnings
+
+                why = (str(e).splitlines() or [""])[0]
+                warnings.warn(f"kernel {name!r} does not compile for CUDA, using the CPU: {why}",
+                              RuntimeWarning, stacklevel=2)  # fmt: skip
+        elif backend == "cuda":
             raise KernelError("no CUDA device (run `phasor doctor`)")
     from phasor.render.cpu import backend as cpu  # here: it imports this module
 
