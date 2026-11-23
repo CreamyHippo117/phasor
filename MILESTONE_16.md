@@ -78,7 +78,12 @@ independently (see Verification).** Untested on Windows, macOS and CUDA.
 10. **Theme values chosen by eye:** fill `soft` = 0.12 (fills blend in linear light, so
     0.22 looked grey-white on dark themes), dash periods 0.03 and 0.014 of the frame height,
     dashes 55% on.
-11. Shapes lie in the plane z = `pos.z`; a `Path` may lie in any plane (fills are
+11. **`Line` and `Arrow` stay as they were**, beside `Path`. A straight open `Path` and a
+    `Line` draw alike, but `Line` has `hue_along` and the `polyline` semantics layout and
+    lint already rely on; `Arrow` is a vector (`components`). Making them paths would change
+    saved scenes' pictures and semantics; they share the stroke and head helpers instead.
+    `Path` is the one way to draw a filled or dashed outline.
+12. Shapes lie in the plane z = `pos.z`; a `Path` may lie in any plane (fills are
     triangulated in the plane of its points).
 
 ## Deferred
