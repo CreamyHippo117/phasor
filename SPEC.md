@@ -324,6 +324,7 @@ CUDA does the math, OpenGL draws the picture, and one narrow bridge connects the
 - CuPy compiles through NVRTC at first use and caches the result, so users need no C++ compiler. NVRTC itself comes from pip via the `cupy-cuda12x[ctk]` extra (phasor's `gpu` extra), so no CUDA Toolkit install is needed either. `phasor doctor` must prove this on a clean Windows machine.
 - SymPy expressions become kernel code through a small emitter (`render/gpu/codegen.py`; `sympy.ccode` has no complex type) plus a complex-math header (`render/gpu/complex.cuh`). One expression feeds the kernel, the NumPy reference and the LaTeX label. Formula text is read by a whitelist parser and never evaluated as Python.
 - Kernel sources stay plain C++ plus the CUDA keywords, so the same string can be compiled for the CPU in tests (`tests/cuda_emu.py`) on machines without a GPU.
+- As built (Milestone 14): that same string is also the tier B backend. `render/cpu/backend.py` compiles each kernel's CUDA source, unchanged, with a g++ or clang++ found at run time (`-O3`, OpenMP where available, no fused multiply-add), runs its blocks on every core and caches the library in the user cache, keyed by a hash of the code, compiler and flags. Integer atomics are real atomics and float atomics are refused, so results are the same bits at any thread count. `registry.run(backend="auto")` tries `cuda`, then `cpu`, then `reference`; no compiler means the NumPy reference. No prebuilt binaries. MSVC `cl` is not supported. Windows is untested.
 
 **CUDA to OpenGL bridge (`render/gpu/bridge.py`)**
 
@@ -360,7 +361,7 @@ CUDA does the math, OpenGL draws the picture, and one narrow bridge connects the
 | Tier | Hardware | Behavior |
 | --- | --- | --- |
 | A | NVIDIA with CUDA 12 | Everything |
-| B | Any GPU with OpenGL 4.3, no CUDA | Kernels run on NumPy references at preview resolution; final renders allowed but warned as slow |
+| B | Any GPU with OpenGL 4.3, no CUDA | Kernels run on every CPU core through the CPU backend when g++ or clang++ is found (as built, Milestone 14), else on the NumPy references; final renders allowed, warned as slower than tier A |
 | C | No usable GPU | Timeline and lint work; the inspector runs in analytic mode (exact geometry, no occlusion, marked `"occlusion": "analytic"`); no rendering |
 
 **Testing and benchmarks**

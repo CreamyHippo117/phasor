@@ -194,6 +194,68 @@ Post is the biggest or second stage in both. Not measured, and
 not claimable from this machine: anything with CUDA, and 14.3's worker counts on the RTX 4070
 Ti (`pc_tasks/`).
 
+## 14.4 findings (2026-11-23; written investigation, nothing built)
+
+The question: how phasor can render where there is no OpenGL 4.3. That covers every Mac
+(Apple stops at 4.1 core, deprecated since macOS 10.14 but still shipped, on Apple silicon
+too) and Windows machines whose driver lacks 4.3.
+
+**1. phasor does not use any 4.3 feature. Measured here.**
+- `glcontext.REQUIRED_GL = 430` says "compute shaders, SSBOs, integer textures". The
+  renderer uses none of the first two. Every shader is a vertex/fragment pair (`#version
+  430`) with `layout(location = n)` outputs and a `uint` id target, which are GL 3.3
+  features.
+- The host calls in `render/passes.py` are `buffer`, `texture`, `depth_texture`,
+  `depth_renderbuffer`, `framebuffer`, `vertex_array`, `program`, `copy_framebuffer` (a
+  blit), `blend_func`, `enable` and `disable`. All of them are 3.x.
+- Experiment, not committed: on this box's Mesa I asked for a 4.1 core context
+  (`MESA_GL_VERSION_OVERRIDE=4.1`, `MESA_GLSL_VERSION_OVERRIDE=410`), with
+  `create_standalone_context(require=410)` and every `#version 430` in `passes.py` changed
+  to `410`. Mesa then reported "4.1 (Core Profile)" and compiled every shader.
+- A 480x270 frame at mid-scene of `prism_primes`, `basics_3d` (lit surfaces, labels) and
+  `motion_gallery` came out **byte-identical** (max difference 0) to the 4.5 context.
+- Caveat: Mesa's override caps the version it reports and the GLSL it accepts. It does not
+  remove the newer entry points, so a stray 4.2+ call would still have worked here. Only a
+  real 4.1 driver proves it.
+- **Recommendation (owner decision: it changes the tier rule in SPEC and CLAUDE.md):**
+  - Lower the requirement to 4.1 core and write `#version 410` in the renderer's shaders.
+  - Keep the doctor's triangle and id probes, at 410.
+  - Then run the suite on a real Mac, on Apple's own OpenGL, before claiming anything. Until
+    then: untested on macOS.
+
+**2. Mesa llvmpipe, where the driver is missing or too old.**
+- Linux: already the headless path (EGL, `glcontext.py`). It is multithreaded
+  (`LP_NUM_THREADS`, default every core). In the 14.0 baseline it drew `prism_primes` at
+  960x540 in 27 ms/frame, a small share of the frame.
+- Windows: the `mesa-dist-win` builds ship an `opengl32.dll` with llvmpipe (GL 4.5 core).
+  Windows loads `opengl32.dll` from the application's folder before the system's, so
+  placing it next to `python.exe` (or the packaged app's exe) is enough.
+  - The ModernGL `glcontext` WGL backend seems to take a `libgl` path, which would let
+    `glcontext.py` load a named DLL on request without copying anything. Not verified:
+    check this before building on it.
+  - It costs about 30-60 MB in the installer and its own license notices. Untested on
+    Windows.
+- macOS: Homebrew's `mesa` builds llvmpipe, but for GLX/X11, not CGL, which is what
+  ModernGL uses on macOS. Getting it to run under a CGL or EGL context is real porting work.
+  If point 1 holds on a real Mac, Apple's own 4.1 makes this unnecessary.
+
+**3. A NumPy rasterizer (a second `DrawContext`).** Rough cost; nothing measured:
+- It would rasterize triangles, text quads and kernel quads with depth, premultiplied
+  blending, the two color targets (paint and emission), the id and solo passes, and the lit
+  surface shading.
+- That is about 1500-3000 lines plus their own tests. Every golden would need a third
+  variant, or it would have to match `software` within SSIM.
+- Vectorized NumPy fills a few large triangles quickly. It does not fill thousands of small
+  ones (curves, text): those need per-triangle Python, or a C++ inner loop, which would
+  bring the compiler back. Expect it to run well behind llvmpipe, which is already
+  multithreaded LLVM-compiled code.
+- It also breaks "one way to do each thing": two renderers that must keep agreeing.
+
+**Order proposed:**
+1. Point 1, on a real Mac. Cheap, and it may settle macOS.
+2. Point 2 on Windows, for drivers without 4.1, as an opt-in through `glcontext.py`.
+3. Point 3 only if 1 and 2 both fail somewhere that matters.
+
 ## Status
 
 | Milestone | Status |
