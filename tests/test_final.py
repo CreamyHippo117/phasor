@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import runpy
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -160,7 +161,11 @@ def test_every_example_survives_save_and_load(name, tmp_path):
     e = _example(name)
     path = tmp_path / f"{name}.phasor.json"
     e.save(path)
-    again = phasor.load(path)  # measured the same way as the original (OpenGL when there)
+    # A scene with its own code (ADR 0005) names its modules: they go with it, and it opens
+    # where scripts may run (the process's copy of the script's code is not lent to it).
+    for module in e.document.meta.modules:
+        shutil.copy(ROOT / "examples" / module, tmp_path / module)
+    again = phasor.load(path, allow_scripts=bool(e.document.meta.modules))  # OpenGL when there
     d = diff_documents(e.document, again.document)
     assert d["same"], d["changes"][:3]
     top = list(json.loads(path.read_text(encoding="utf-8")))

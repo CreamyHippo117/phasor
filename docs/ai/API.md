@@ -152,8 +152,10 @@ assert seen["semantic"]["type"] == "doc_kite" and "top" in seen["features"]
   `domains/strokes.py`. Derived `semantics`: `{"type", "params"}`.
 - Write any of the three yourself when you know more (a pole, a tip, `"kind": "point"`);
   yours wins. `draw(self, ctx, state, pass_)` still works: the pass is optional.
-- A recording is cached per (type, id, parameters, style, camera); `draw` may read other
-  objects (`state["other"]`), and the recording is made again when they change.
+- A recording is cached per (type, id, parameters, style, camera, and each file the type
+  names in `Files`: a changed file is drawn again); `draw` may read other objects
+  (`state["other"]`), `state.t` and `state.values`, and the recording is made again when what
+  it read changes. Its arrays (`curve`, `start`, `end`) are shared and read-only.
 
 **Composites.** `build(self, state)` instead of `draw` returns other objects. Each part
 gets the id `<composite>.<name>`, is drawn and inspected as itself (`"part_of"` in the
@@ -181,14 +183,18 @@ state = k.engine.state_at(0.0)
 assert [o.id for o in state.objects if o.parent == "post"] == ["post.post", "post.sign"]
 ```
 
-Constraints name document objects; a part is placed through its composite.
+Constraints name document objects; a part is placed through its composite. A part has no
+updater (`bad_part`): put it on the composite.
 
 **Updaters.** `obj.always(fn)` with `fn(t, look) -> {param: value}` keeps parameters set
 from time and other objects. `look("id")` gives that object's parameters at `t`
 (`look("dot").pos`); each one read is an edge in the parameter graph, so a cycle is an
-error, and a read the updater did not make at t = 0 is an error too (read the same things at
-every t). It must be pure: `lint(strict=True)` calls every updater again, in another order,
-and reports `impure_updater` when answers differ (threshold: the theme's `[lint] impure`).
+error, and a read the updater did not make at t = 0 is an error too, as is a parameter it
+did not return then (read and return the same things at every t). It must be pure:
+`lint(strict=True)` calls every updater again, in another order, and reports
+`impure_updater` when answers differ (threshold: the theme's `[lint] impure`), and
+`bad_updater` with the times when one fails (it tries every sample time and at least the
+first two seconds, so a scene with no markers is checked past t = 0).
 Something that needs the previous frame is a `Simulation`. `look` sees parameters before
 living motion: tag an object `exact` when something must sit on it exactly.
 
@@ -220,11 +226,24 @@ assert not [i for i in k.engine.lint(strict=True) if i.code == "impure_updater"]
 `always` lists `"<file>:<function>"`. Opening the document loads those modules only where
 scripts may run (`phasor.load("scene.py")`, `Engine(..., allow_scripts=True)`, the MCP
 server's `--allow-scripts`, and `--allow-scripts` on `phasor inspect`, `lint`, `storyboard`,
-`render`, `web`, `bench --frames` and `sketch`; render workers inherit it), only from inside the scene's folder. A missing, refused or
+`render`, `web`, `bench --frames` and `sketch`; render workers get exactly the engine's own
+`allow_scripts`), only from inside the scene's folder. A missing, refused or
 broken module is lint `missing_type`: the object draws as a placeholder box and keeps its
 parameters and overrides (saving it changes nothing). An updater defined anywhere else (a
 notebook cell, a prompt) is refused: the document could not find it again. Types shipped in phasor still get an entry here, an
 example and a storyboard test; scene-local types do not need them.
+
+Scene code belongs to its file. A type or updater a script defines (`python scene.py`,
+`load`, `runpy`, or a module the engine loaded) is reached only by a document that lists
+that file in its own `meta.modules`, and only where scripts may run, even if this process
+already ran it: two scenes may both define `gem` or `scene.py:orbit` and never see each
+other's, and a document opened without `allow_scripts` never runs a script's code. A scene's
+own type may not take the name of a type shipped in phasor. Code from an imported module (a
+package, a test file) and from a notebook cell is shared by the process, as phasor's own
+types are. A `Scene(...)` built in a script may run that script's code; one built by imported
+code may not unless it passes `allow_scripts=True`, and so does an `Engine` made from a
+scene's document (`Engine(s.engine.base, ..., allow_scripts=True)`; `engine.fork()` keeps
+the permission). `engine.type_of(name)` gives the class a document uses.
 
 ## Narrate: words drive time
 
