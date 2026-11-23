@@ -19,8 +19,6 @@ method that turns them into subpaths; drawing, bounds, features and semantics ar
 
 from __future__ import annotations
 
-import threading
-from collections import OrderedDict
 from collections.abc import Callable
 from typing import Any, ClassVar, Literal
 
@@ -28,6 +26,7 @@ import numpy as np
 from pydantic import Field, field_validator, model_validator
 
 from phasor.core import record
+from phasor.core.cache import ByteCache
 from phasor.core.ids import is_valid_id
 from phasor.core.objects import DrawContext, ObjectBase, ParamsBase, register
 from phasor.core.state import SceneState
@@ -68,42 +67,14 @@ PRESETS: dict[str, dict[str, dict[str, Any]]] = {
     "dashed": {"style": {"dash": "dashed"}},
 }
 
-_CACHE: OrderedDict[tuple, tuple[Any, int]] = OrderedDict()  # key -> (value, bytes)
-_CACHE_USED = [0]
-_LOCK = threading.Lock()
-
-
-def _nbytes(value: Any) -> int:
-    """About how much memory a cached value holds (its arrays, plus a little per entry)."""
-    if isinstance(value, np.ndarray):
-        return int(value.nbytes)
-    if isinstance(value, tuple | list):
-        return 64 + sum(_nbytes(v) for v in value)
-    if isinstance(value, dict):
-        return 64 + sum(_nbytes(v) for v in value.values())
-    return 64
+_CACHE = ByteCache(lambda: CACHE_BYTES)
 
 
 def _cached(key: tuple, make: Callable[[], Any]) -> Any:
     """A path's geometry, kept while it fits in ``CACHE_BYTES`` (least recently used out):
     a drawing of thousands of parts (an SVG) keeps all of them, so a new frame does not
     flatten and measure them all again, and memory stays bounded."""
-    with _LOCK:
-        hit = _CACHE.get(key)
-        if hit is not None:
-            _CACHE.move_to_end(key)
-            return hit[0]
-    value = make()
-    size = 256 + _nbytes(value)
-    with _LOCK:
-        old = _CACHE.pop(key, None)
-        if old is not None:
-            _CACHE_USED[0] -= old[1]
-        _CACHE[key] = (value, size)
-        _CACHE_USED[0] += size
-        while _CACHE_USED[0] > CACHE_BYTES and len(_CACHE) > 1:
-            _CACHE_USED[0] -= _CACHE.popitem(last=False)[1][1]
-    return value
+    return _CACHE.get(key, make)
 
 
 def _frozen(*arrays: np.ndarray) -> None:

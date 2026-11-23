@@ -35,14 +35,20 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from phasor.core.cache import ByteCache
 from phasor.core.state import ObjectState, SceneState
 from phasor.domains import morph_math as mm
 from phasor.domains import path_math as pm
 from phasor.domains.morph_math import Group, Look, Shape
-from phasor.domains.path import FLATNESS, _cached
+from phasor.domains.path import FLATNESS
 
 MAX_GROUPS = 2000  # groups an outline is matched by; the rest of a composite's are left out
 MAX_FILL_RING = 4096  # points of one ring the in-between's fill is triangulated through
+# Plans kept between frames, in bytes. The largest plan is MAX_TOTAL points a side, about
+# 2 MB, so this keeps some 30 of the largest at once (a scene of many morphs running
+# together still finds each one's plan the next frame).
+PLAN_BYTES = 64 * 2**20
+_PLANS = ByteCache(lambda: PLAN_BYTES)
 
 
 @dataclass(frozen=True)
@@ -130,9 +136,12 @@ def _flat(subs: Sequence[np.ndarray], tol: float) -> tuple[np.ndarray, ...]:
 
 
 def _plan(a: Sequence[np.ndarray], b: Sequence[np.ndarray], ac, bc) -> mm.Plan:
-    """The plan for two outlines, cached by every byte of both (and which are closed)."""
+    """The plan for two outlines, cached by every byte of both (and which are closed), in
+    their own pool of ``PLAN_BYTES``: a source that moves makes a plan a frame (pairs are
+    by least travel in the world), and those must neither grow without bound nor push a
+    drawing's flattened curves out of the geometry cache."""
     key = ("morph", mm.digest(a), mm.digest(b), tuple(ac), tuple(bc))
-    return _cached(key, lambda: mm.plan(a, b, ac, bc))
+    return _PLANS.get(key, lambda: mm.plan(a, b, ac, bc))
 
 
 def frame(state: SceneState, target_id: str, arc: float = 0.0) -> list[Item] | None:

@@ -21,8 +21,6 @@ read-only.
 
 from __future__ import annotations
 
-import threading
-from collections import OrderedDict
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -31,10 +29,12 @@ import numpy as np
 
 from phasor.core import files
 from phasor.core import text as text_metrics
+from phasor.core.cache import ByteCache
 from phasor.core.objects import Bounds
 from phasor.core.state import SceneState
 
-CACHE_SIZE = 4096
+CACHE_SIZE = 4096  # recordings kept, at most
+CACHE_BYTES = 256 * 2**20  # ... and in bytes (a morph's in-between can be megabytes a frame)
 _ABSENT = object()  # a ``state.values`` key the draw asked for that was not there
 _ALL = object()  # the draw went through all of ``state.values``
 # The compass points of the box, as (along the camera's right, along its up).
@@ -179,8 +179,8 @@ def _still(state: SceneState, reads: tuple) -> bool:
     return all(_same(_comparable(n, getattr(state, n)), v) for n, v in parts.items())
 
 
-_CACHE: OrderedDict[tuple, tuple[tuple, Recording]] = OrderedDict()
-_LOCK = threading.Lock()  # the cache is the process's: the GUI and an MCP client share it
+# key -> (what draw read, the recording); the process's: the GUI and an MCP client share it
+_CACHE = ByteCache(lambda: CACHE_BYTES, CACHE_SIZE)
 
 
 def _camera_key(cam) -> tuple:
@@ -210,12 +210,8 @@ def record(impl, state: SceneState) -> Recording:
     cam = state.camera_for(me)
     key = (type(impl), impl.id, *_fingerprint(state, impl.id), state.base_dir,
            _files_key(impl, state, me))  # fmt: skip
-    with _LOCK:
-        hit = _CACHE.get(key)
+    hit = _CACHE.peek(key)
     if hit is not None and _still(state, hit[0]):
-        with _LOCK:
-            if key in _CACHE:
-                _CACHE.move_to_end(key)
         return hit[1]
     rec_ctx = Recorder(cam.right, cam.up)
     watch = _Watch(state, impl.id)
@@ -223,10 +219,7 @@ def record(impl, state: SceneState) -> Recording:
     pts = np.vstack(rec_ctx.points) if rec_ctx.points else np.zeros((0, 3))
     pts.flags.writeable = False  # shared by everyone who asks: nobody may change it
     rec = Recording(pts, tuple(rec_ctx.kinds), tuple(rec_ctx.strokes), rec_ctx.right, rec_ctx.up)
-    with _LOCK:
-        _CACHE[key] = (watch.reads(state), rec)
-        if len(_CACHE) > CACHE_SIZE:
-            _CACHE.popitem(last=False)
+    _CACHE.put(key, (watch.reads(state), rec))
     return rec
 
 

@@ -155,6 +155,80 @@ def test_a_moving_source_is_followed_purely():
     assert np.array_equal(p1, _points(s.engine, "b", t0 + 0.01))
 
 
+def _plan_bytes() -> int:
+    """The real bytes of every cached plan: its arrays, summed here (not the counter)."""
+    return sum(sum(x.nbytes for x in (*p.a, *p.b)) for p, _ in morph._PLANS.entries.values())
+
+
+def test_a_moving_morph_keeps_plan_memory_bounded(monkeypatch):
+    """Audit 17 #1: a plan was counted as 64 bytes whatever its size, so a source that moves
+    (a new plan a frame: pairs are by least travel in the world) grew memory without bound
+    (600 frames of a 400-glyph text: 912 MB of plans). Plans now have their own pool,
+    measured by their arrays."""
+    from phasor.core import cache
+
+    monkeypatch.setattr(morph, "PLAN_BYTES", 3 * 2**20)
+    monkeypatch.setattr(morph, "_PLANS", cache.ByteCache(lambda: morph.PLAN_BYTES))
+    s = _scene()
+    s.add(Text(id="src", text="Transform me into a circle", as_shapes=True))
+    s.add(shapes.Circle(id="dst", r=2.0, pos=(1, 0), style={"fill": "soft"}))
+    s.at(0.0).to("src.pos", (3, 2, 0), duration=3.0, ease="linear")
+    s.at("go").transform("src", "dst")
+    t0, t1 = _span(s, "dst.morph")
+    made = 0
+    for t in np.linspace(t0, t1, 42)[1:-1]:
+        before = len(morph._PLANS.entries)
+        morph.frame(s.engine.state_at(float(t)), "dst")
+        made += len(morph._PLANS.entries) >= before
+        real = _plan_bytes()
+        assert real <= morph.PLAN_BYTES
+        assert morph._PLANS.used >= real  # the counter sees every array
+    assert made == 40 and len(morph._PLANS.entries) < 40  # a plan a frame; old ones went
+
+
+def test_a_still_morph_makes_one_plan_and_the_same_frames():
+    s = _scene()
+    s.add(Text(id="src", text="Same", as_shapes=True))
+    s.add(shapes.Circle(id="dst", r=2.0, pos=(1, 0), style={"fill": "soft"}))
+    s.at("go").transform("src", "dst")
+    t0, t1 = _span(s, "dst.morph")
+    st = s.engine.state_at((t0 + t1) / 2)
+    first = morph.frame(st, "dst")
+    key = next(
+        k for k in morph._PLANS.entries if k[1] == mm.digest(morph.shape_of(st, "src").subpaths)
+    )
+    for t in np.linspace(t0, t1, 12)[1:-1]:
+        morph.frame(s.engine.state_at(float(t)), "dst")
+    assert sum(k[1] == key[1] for k in morph._PLANS.entries) == 1
+    morph._PLANS.entries.pop(key)  # made again: exactly the same frame
+    again = morph.frame(st, "dst")
+    assert len(first) == len(again)
+    for x, y in zip(first, again, strict=True):
+        assert x.look == y.look and x.alpha == y.alpha and x.closed == y.closed
+        assert all(np.array_equal(a, b) for a, b in zip(x.polys, y.polys, strict=True))
+        assert all(np.array_equal(a, b) for a, b in zip(x.fill or (), y.fill or (), strict=True))
+
+
+def test_recordings_are_bounded_by_their_bytes_too(monkeypatch):
+    """The recordings of ``draw`` were bounded by count only (4096 of them, a morph's
+    in-between a megabyte or more each): they are kept within ``record.CACHE_BYTES`` too."""
+    from phasor.core import cache
+    from phasor.core import record as rec
+
+    monkeypatch.setattr(rec, "CACHE_BYTES", 2**20)
+    monkeypatch.setattr(rec, "_CACHE", cache.ByteCache(lambda: rec.CACHE_BYTES, rec.CACHE_SIZE))
+    s = _scene()
+    s.add(Text(id="src", text="Transform me into a circle", as_shapes=True))
+    s.add(shapes.Circle(id="dst", r=2.0, pos=(1, 0), style={"fill": "soft"}))
+    s.at("go").transform("src", "dst")
+    t0, t1 = _span(s, "dst.morph")
+    for t in np.linspace(t0, t1, 22)[1:-1]:
+        _points(s.engine, "dst", float(t))
+        real = sum(r.points.nbytes + sum(x.nbytes for x in r.strokes)
+                   for _, r in (v for v, _ in rec._CACHE.entries.values()))  # fmt: skip
+        assert real <= rec._CACHE.used <= rec.CACHE_BYTES or len(rec._CACHE.entries) == 1
+
+
 def test_transform_gives_the_same_document_in_any_script_order():
     """Verbs on different objects may be written in any order (a chain on one object is
     written in time order, as for every verb: its opacity track)."""
