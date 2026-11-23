@@ -92,9 +92,9 @@ class Axes(ObjectBase):
     minimum to its maximum through the origin. Ranges are (min, max, tick step) in axis units
     (step 0: a nice step); ``scale`` is world units per axis unit, and ``x_scale``,
     ``y_scale``, ``z_scale`` (0: ``scale``) set one axis's own (unequal scales). ``labels``
-    ("x", "y", "z") are drawn at the ends. ``numbers=True`` writes the value at every tick but zero, as parts
-    (``axes.x_2``, ``axes.y_m1``) the inspector and lint see one by one; ``digits`` -1 picks
-    as many decimals as the step needs."""
+    ("x", "y", "z") are drawn at the ends. ``numbers=True`` writes the value at every tick
+    but zero, as parts (``axes.x_2``, ``axes.y_m1``) the inspector and lint see one by one;
+    ``digits`` -1 picks as many decimals as the step needs."""
 
     type: ClassVar[str] = "axes"
     Style: ClassVar = {
