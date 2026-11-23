@@ -21,6 +21,8 @@ compounding. If this file and SPEC.md disagree, stop and ask.
 - Desktop app (owner, 2026-11-22): code-first, one shared script that the person, the AI and
   the app all edit. Plan: `APP_PLAN.md` (answered); ADR 0004 (tweaks inside the script,
   touches contract 2) accepted by the owner; phase 1 not started.
+- Manim parity, the whole CPU, and an open object contract: `MANIM_PARITY.md` (Milestones 14-20,
+  owner 2026-11-23); ADR 0005 proposed, not accepted; nothing built.
 - Render speed: `GPU_SPEED.md` (steps 1-4 done, workers included); resume at its "Next
   session"; measure with wall clock before and after each step.
 - One milestone per branch. No work on milestone N+1 until N's exit demo and tests pass.
