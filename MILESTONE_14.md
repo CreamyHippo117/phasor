@@ -5,6 +5,8 @@ run time, the NumPy reference as the fallback, no prebuilt binaries). Exit demo:
 with CUDA hidden, `phasor render` of `prism_primes` uses every core, is N times faster than the
 reference path, and matches the software golden.
 
+**Gate (2026-11-23): MILESTONE 14: DONE** on this box (4 cores, no CUDA). Full local run 1545 passed; the only failures were the 7 `mcp` tests, which pass with the extra installed. Untested on Windows, macOS and CUDA (`pc_tasks/09_pc_checks_after_14_15.md`).
+
 Status: **built on Linux (4 cores, no CUDA, llvmpipe).** Gate re-run 2026-11-23 after the two
 stale prism software goldens were regenerated (`test_prism_domain_golden_storyboard`,
 `test_prism_heat_golden_storyboard`: stale since the prism looks, not a regression of this

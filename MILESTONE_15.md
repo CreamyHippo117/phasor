@@ -5,6 +5,8 @@ Accepted by the owner on 2026-11-23 (`docs/decisions/0005-open-object-contract.m
 in about 10 lines (`draw` only); the inspector, layout, lint and storyboard all work on it,
 and an `always` updater keeps a label on a moving dot** (`examples/open_contract.py`).
 
+**Gate (2026-11-23): MILESTONE 15: DONE**, after two independent audit rounds (3 blockers found and fixed). The last fix (GUI and attached-AI path) was checked by mutation tests, not by a third independent audit. Open for the owner: sibling-module sharing (S1) and how the app offers trust. Untested: Qt on a real display, Windows/macOS path handling, CUDA.
+
 Status: **built; gates green on Linux (see Verification); independent audit done 2026-11-23, blockers fixed** (Deviations 11-15); **re-audit of the allow_scripts fix done the same day, its blocker fixed** (Deviations 17-19; one finding left to the owner, Deferred). Untested on Windows and CUDA.
 
 ## Built
