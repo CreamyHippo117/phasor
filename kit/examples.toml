@@ -87,6 +87,11 @@ kind = "basics"
 tier = "reference"
 teaches = "The smallest scene: a labeled dot crosses the frame and passes behind a disc"
 
+[examples.open_contract]
+kind = "basics"
+tier = "technique"
+teaches = "A scene's own types: a new shape from Params and draw, a composite, a Value, and updaters that keep a label on a moving dot"
+
 [examples.prism_domain]
 kind = "complex"
 tier = "technique"

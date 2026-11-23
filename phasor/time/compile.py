@@ -496,11 +496,11 @@ def _expand(c: Compiled, t: float, objects: tuple[ObjectState, ...], scene) -> t
             except (ValidationError, ValueError) as e:
                 msg = _first_error(e) if isinstance(e, ValidationError) else str(e)
                 raise fail(parent.id, f"part {part.id!r}: {msg}") from e
-            pp = parent.params
-            params = params.model_copy(update={
-                "opacity": params.opacity * params.dim * pp.opacity,
-                "z_index": params.z_index + pp.z_index,
-            })  # fmt: skip
+            pp = parent.params  # a part fades with, and sits above, its composite
+            seen = params.opacity * params.dim * pp.opacity
+            params = model.model_validate(
+                {**dict(params), "opacity": seen, "z_index": params.z_index + pp.z_index}
+            )
             style, roles = {}, {}
             for key in spec.style:
                 if key not in cls.Style:

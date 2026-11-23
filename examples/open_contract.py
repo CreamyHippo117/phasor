@@ -1,4 +1,4 @@
-"""The open object contract (Milestone 15, ADR 0005): a scene that brings its own types.
+"""A scene that brings its own types: the open object contract (ADR 0005).
 
 - ``Diamond`` is a new shape in about ten lines: ``Params`` and ``draw``, nothing else. Its
   bounds, features and semantics come from what it draws, so the inspector, layout and lint
