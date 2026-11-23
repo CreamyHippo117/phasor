@@ -21,6 +21,7 @@ from typing import Any
 
 import numpy as np
 
+from phasor.core.ids import MAX_REF
 from phasor.core.schema import ExprSpec, MarkerRef, TimeRef
 from phasor.core.state import SceneState
 from phasor.time.compile import Compiled, evaluate
@@ -342,6 +343,9 @@ class Verbs:
         object can become itself several times from different sources."""
         if source == target:
             raise VerbError(f"{verb} needs two objects; both are {source!r}")
+        if len(source) > MAX_REF:  # ``morph_from`` names it: refused here, not at a frame
+            raise VerbError(f"{verb}: the source's id has {len(source)} characters; a morph "
+                            f"names at most {MAX_REF} characters (use a shorter id)")  # fmt: skip
         if not self._has_outline(source):
             raise VerbError(f"{verb}: {source!r} ({self.state[source].type}) has no outline to "
                             "morph; paths, shapes, text, equations and SVGs do")  # fmt: skip

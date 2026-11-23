@@ -35,13 +35,20 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from phasor.core.cache import ByteCache
 from phasor.core.state import ObjectState, SceneState
 from phasor.domains import morph_math as mm
 from phasor.domains import path_math as pm
 from phasor.domains.morph_math import Group, Look, Shape
-from phasor.domains.path import FLATNESS, _cached
+from phasor.domains.path import FLATNESS
 
 MAX_GROUPS = 2000  # groups an outline is matched by; the rest of a composite's are left out
+MAX_FILL_RING = 4096  # points of one ring the in-between's fill is triangulated through
+# Plans kept between frames, in bytes. The largest plan is MAX_TOTAL points a side, about
+# 2 MB, so this keeps some 30 of the largest at once (a scene of many morphs running
+# together still finds each one's plan the next frame).
+PLAN_BYTES = 64 * 2**20
+_PLANS = ByteCache(lambda: PLAN_BYTES)
 
 
 @dataclass(frozen=True)
@@ -129,9 +136,12 @@ def _flat(subs: Sequence[np.ndarray], tol: float) -> tuple[np.ndarray, ...]:
 
 
 def _plan(a: Sequence[np.ndarray], b: Sequence[np.ndarray], ac, bc) -> mm.Plan:
-    """The plan for two outlines, cached by every byte of both (and which are closed)."""
+    """The plan for two outlines, cached by every byte of both (and which are closed), in
+    their own pool of ``PLAN_BYTES``: a source that moves makes a plan a frame (pairs are
+    by least travel in the world), and those must neither grow without bound nor push a
+    drawing's flattened curves out of the geometry cache."""
     key = ("morph", mm.digest(a), mm.digest(b), tuple(ac), tuple(bc))
-    return _cached(key, lambda: mm.plan(a, b, ac, bc))
+    return _PLANS.get(key, lambda: mm.plan(a, b, ac, bc))
 
 
 def frame(state: SceneState, target_id: str, arc: float = 0.0) -> list[Item] | None:
@@ -321,6 +331,15 @@ def _matching(src: Shape, dst: Shape, m: float, tol: float, arc: float) -> list[
     return items
 
 
+def _thin(ring: np.ndarray) -> np.ndarray:
+    """A ring to fill, with at most ``MAX_FILL_RING`` points (every k-th kept). Only the
+    in-between makes such rings (the pieces of one subpath joined along it, 40 000 points
+    at most); triangulating one that crosses itself grows faster than its size."""
+    if len(ring) <= MAX_FILL_RING:
+        return ring
+    return ring[:: -(-len(ring) // MAX_FILL_RING)]
+
+
 def paint(ctx, state: SceneState, me: ObjectState, items: Sequence[Item]) -> None:
     """Draw items as a path draws itself: the fill (plain paint, never glowing), then the
     stroke (mitered; a closed loop's seam too)."""
@@ -339,7 +358,7 @@ def paint(ctx, state: SceneState, me: ObjectState, items: Sequence[Item]) -> Non
         if it.fill_from is not None and it.blend < 1.0:
             layers.insert(0, (it.fill_from, "evenodd", 1.0 - it.blend))
         for rings_, rule, share in layers:
-            rings = [q for q in rings_ if len(q) >= 3]
+            rings = [_thin(q) for q in rings_ if len(q) >= 3]
             if f[3] * a * share > 0 and rings:
                 pos, tris = pm.fill(rings, rule)
                 if len(tris):
@@ -376,8 +395,10 @@ def facts(state: SceneState, me: ObjectState) -> dict[str, object]:
     if src is None:
         out["morph_missing"] = True
         return out
+    dst = me.impl.morph_shape(state)
+    if dst is None:  # it has no outline itself (it draws itself)
+        return out
     if p.morph_kind == "whole":
-        dst = me.impl.morph_shape(state)
         plan = _plan(src.subpaths, dst.subpaths, src.closed, dst.closed)
         if plan.gone or plan.new:
             out["morph_limit"] = len(plan.gone) + len(plan.new)

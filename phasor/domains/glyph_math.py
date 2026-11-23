@@ -15,7 +15,9 @@ corner of the box, x to the right and y up; the caller places them with the came
 ``right`` and ``up``. TrueType quadratic curves become cubics exactly.
 
 A text keeps at most ``MAX_GLYPHS`` glyphs as shapes (the rest are left out; lint
-``glyph_limit`` says so). Results are cached per text (the fonts never change in a process).
+``glyph_limit`` says so). A math text mathtext cannot read (TeX can, with the ``latex``
+engine) has no outline: ``Outline.error`` says why. Results are cached per text (the fonts
+never change in a process). Works with matplotlib 3.8 and later (``_ft_flags``).
 """
 
 from __future__ import annotations
@@ -52,6 +54,7 @@ class Glyph:
 class Outline:
     glyphs: tuple[Glyph, ...]
     total: int  # glyphs the text has (more than ``len(glyphs)`` when capped)
+    error: str = ""  # why the text has no outline (mathtext cannot read it); "" when it has
 
 
 def glyph_name(ch: str) -> str:
@@ -142,6 +145,17 @@ def subpaths(verts: np.ndarray, codes: np.ndarray, scale: float = 1.0,
 
 
 @functools.cache
+def _ft_flags() -> tuple[int, int]:
+    """(load without hinting, default kerning) in matplotlib's font API: the enums from
+    3.10 (``LoadFlags``, ``Kerning``), the module constants before (3.8, 3.9)."""
+    from matplotlib import ft2font
+
+    if hasattr(ft2font, "LoadFlags") and hasattr(ft2font, "Kerning"):
+        return ft2font.LoadFlags.NO_HINTING, ft2font.Kerning.DEFAULT
+    return ft2font.LOAD_NO_HINTING, ft2font.KERNING_DEFAULT
+
+
+@functools.cache
 def _plain_font():
     """Aileron, the font Pillow bundles (``core.text`` draws plain text with it)."""
     from matplotlib.ft2font import FT2Font
@@ -153,8 +167,7 @@ def _plain_font():
 
 
 def _plain(text: str) -> Outline:
-    from matplotlib.ft2font import Kerning, LoadFlags
-
+    no_hinting, kerning = _ft_flags()
     font = _plain_font()
     ascent, descent = text_metrics._font(text_metrics._REF).getmetrics()
     line = text_metrics._REF / (ascent + descent)  # ems per line height, as Pillow sizes it
@@ -170,9 +183,9 @@ def _plain(text: str) -> Outline:
             break
         gi = font.get_char_index(ord(ch))
         if prev is not None and gi:
-            pen += font.get_kerning(prev, gi, Kerning.DEFAULT) / 64.0
+            pen += font.get_kerning(prev, gi, kerning) / 64.0
         try:
-            glyph = font.load_glyph(gi, flags=LoadFlags.NO_HINTING)  # 0: the missing glyph
+            glyph = font.load_glyph(gi, flags=no_hinting)  # 0: the missing glyph
         except RuntimeError:
             prev = None
             continue
@@ -206,23 +219,32 @@ def _plain(text: str) -> Outline:
 def _math(text: str) -> Outline:
     from matplotlib import rc_context
     from matplotlib.font_manager import FontProperties
-    from matplotlib.ft2font import LoadFlags
     from matplotlib.mathtext import MathTextParser
 
-    with rc_context({"mathtext.fontset": "cm"}):
-        parsed = MathTextParser("path").parse(to_mathtext(text), dpi=72,
-                                              prop=FontProperties(size=FONT_SCALE))  # fmt: skip
+    no_hinting, _ = _ft_flags()
+    try:  # with the latex engine a text may typeset in TeX yet not in mathtext
+        with rc_context({"mathtext.fontset": "cm"}):
+            parsed = MathTextParser("path").parse(to_mathtext(text), dpi=72,
+                                                  prop=FontProperties(size=FONT_SCALE))  # fmt: skip
+    except ValueError as e:
+        why = (str(e).strip().splitlines() or ["no reason given"])[-1]
+        return Outline((), 0, f"mathtext cannot read it ({why})")
     em = text_metrics.MATH_EM  # line heights per em
     lift = float(parsed.depth) / FONT_SCALE  # depth below the baseline, in ems (mathtext)
     found: list[tuple[float, str, str, list[np.ndarray]]] = []
     total = len(parsed.rects) + sum(not (0 < g[2] < 0x110000 and chr(g[2]).isspace())
                                     for g in parsed.glyphs)  # fmt: skip
-    for font, fontsize, ccode, gi, ox, oy in parsed.glyphs:
+    for entry in parsed.glyphs:
         if len(found) >= MAX_GLYPHS:
             break
+        if len(entry) == 6:  # matplotlib 3.10+: (font, size, char, glyph index, x, y)
+            font, fontsize, ccode, gi, ox, oy = entry
+        else:  # 3.8, 3.9: (font, size, char, x, y); the glyph is the font's for the char
+            font, fontsize, ccode, ox, oy = entry
+            gi = font.get_char_index(ccode)
         font.clear()
         font.set_size(FONT_SCALE, 72)
-        font.load_glyph(gi, flags=LoadFlags.NO_HINTING)
+        font.load_glyph(gi, flags=no_hinting)
         verts, codes = font.get_path()
         s = fontsize / FONT_SCALE
         subs = subpaths(

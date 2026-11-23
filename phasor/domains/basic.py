@@ -23,7 +23,7 @@ from phasor.core.texconv import join_latex, to_latex
 from phasor.core.values import Vec3
 from phasor.domains import glyph_math as gm
 from phasor.domains import morph_math as mm
-from phasor.domains.path import MorphParams, Path
+from phasor.domains.path import MAX_COORD, MorphParams, Path
 from phasor.domains.strokes import hue_colors, polyline
 
 DISC_SEGMENTS = 64
@@ -229,29 +229,32 @@ class Text(ObjectBase):
         out.update(_shape_facts(state, self.me(state), [text]))
         return out
 
-    def morph_shape(self, state: SceneState) -> mm.Shape:
-        """Its glyphs as outlines in world space, one group per glyph (``domains/morph``)."""
+    def morph_shape(self, state: SceneState) -> mm.Shape | None:
+        """Its glyphs as outlines in world space, one group per glyph (``domains/morph``);
+        None when it has no outline (``glyph_math.Outline.error``)."""
         me = self.me(state)
+        outline = gm.outline(me.params.text)
+        if outline.error:
+            return None
         corner, _, _, h = self._box(state)
         look = _glyph_look(me, me.style["color"])
-        return _glyph_shape([(gm.outline(me.params.text), corner, look, None, "")], h,
-                            state.camera_for(me))  # fmt: skip
+        return _glyph_shape([(outline, corner, look, None, "")], h, state.camera_for(me))
 
     def build(self, state: SceneState) -> list[ObjectBase]:
         """As shapes: a ``Path`` part per glyph (none while it is becoming something)."""
         me = self.me(state)
         if not me.params.as_shapes or _becoming(state, me):
             return []
-        return _glyph_parts(state, me, self.morph_shape(state))
+        return _glyph_parts(state, me, _outlined(me, self.morph_shape(state), [me.params.text]))
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
         me = self.me(state)
         p = me.params
         corner, wv, hv, h = self._box(state)
         color = _rgba(me.style["color"], p.opacity)
-        if _becoming(state, me):
-            _draw_morph(ctx, state, self)
-        elif not p.as_shapes:  # as shapes, its parts draw the glyphs
+        becoming = _becoming(state, me)
+        morphed = becoming and _draw_morph(ctx, state, self)
+        if not morphed and (becoming or not p.as_shapes):  # as shapes, its parts draw glyphs
             ctx.text(p.text, np.asarray(p.pos), h, color=color, anchor=p.anchor, reveal=p.write)
         if p.leader_on > 0:
             cam = state.camera_for(me)
@@ -418,9 +421,10 @@ class Equation(ObjectBase):
             corners += self._corners(state, p.from_parts, p.from_pos)
         return _with_morph(self, state, Bounds.of_points(corners))
 
-    def morph_shape(self, state: SceneState) -> mm.Shape:
+    def morph_shape(self, state: SceneState) -> mm.Shape | None:
         """Its glyphs as outlines in world space, one group per glyph, each knowing its part
-        (its TeX and key: ``transform_matching`` pairs equations' parts by TeX)."""
+        (its TeX and key: ``transform_matching`` pairs equations' parts by TeX); None when
+        a part has no outline (``glyph_math.Outline.error``)."""
         me = self.me(state)
         p = me.params
         layout, h, _, _, _ = self._layout(state)
@@ -431,11 +435,14 @@ class Equation(ObjectBase):
         for i, (part, origin, hh) in enumerate(layout):
             if glyphs >= gm.MAX_GLYPHS:  # every part together keeps MAX_GLYPHS
                 break
-            glyphs += len(gm.outline(part).glyphs)
+            outline = gm.outline(part)
+            if outline.error:
+                return None
+            glyphs += len(outline.glyphs)
             corner = np.asarray(origin) - up * (text_metrics.box(part) * hh / 2)
             look = _glyph_look(me, self._color(me, p.colors, i))
             key = p.keys[i] if i < len(p.keys) else ""
-            pieces.append((gm.outline(part), corner, look, (i, part), key))
+            pieces.append((outline, corner, look, (i, part), key))
         return _glyph_shape(pieces, h, cam)
 
     def build(self, state: SceneState) -> list[ObjectBase]:
@@ -443,7 +450,7 @@ class Equation(ObjectBase):
         me = self.me(state)
         if not me.params.as_shapes or _becoming(state, me) or self._transforming(me.params):
             return []
-        return _glyph_parts(state, me, self.morph_shape(state))
+        return _glyph_parts(state, me, _outlined(me, self.morph_shape(state), me.params.parts))
 
     def features(self, state: SceneState) -> dict[str, np.ndarray]:
         return {"center": np.asarray(self.me(state).params.pos, dtype=np.float64)}
@@ -478,9 +485,9 @@ class Equation(ObjectBase):
         p = me.params
         glow = me.style["glow"]
         if _becoming(state, me):
-            _draw_morph(ctx, state, self, arc=p.arc)
-            return
-        if p.as_shapes and not self._transforming(p):
+            if _draw_morph(ctx, state, self, arc=p.arc):
+                return
+        elif p.as_shapes and not self._transforming(p):
             return  # its parts draw the glyphs
         layout, _, total, _, _ = self._layout(state)
         if not self._transforming(p):
@@ -617,6 +624,8 @@ def _glyph_parts(state: SceneState, me, shape: mm.Shape) -> list[ObjectBase]:
     n = len(shape.groups)
     out: list[ObjectBase] = []
     for k, (g, name) in enumerate(zip(shape.groups, names, strict=True)):
+        if _far(shape, g):  # a Path cannot hold it: left out (lint glyph_limit)
+            continue
         drawn, filled = written(p.write, k, n)
         own = dict(style)
         if 0 <= g.part < len(colors):  # an equation part's own color role
@@ -627,6 +636,12 @@ def _glyph_parts(state: SceneState, me, shape: mm.Shape) -> list[ObjectBase]:
                         fill_opacity=p.fill_opacity * filled,
                         stroke_opacity=1.0 - (1.0 - p.stroke_opacity) * filled))  # fmt: skip
     return out
+
+
+def _far(shape: mm.Shape, g: mm.Group) -> bool:
+    """A glyph with a point past ``path.MAX_COORD`` (or not finite): no ``Path`` part can
+    hold it, so it is left out of the parts (lint ``glyph_limit`` says why)."""
+    return any(not float(np.abs(shape.subpaths[i]).max()) <= MAX_COORD for i in g.members)
 
 
 def _typed(state: SceneState, me, key: str):
@@ -641,16 +656,31 @@ def _typed(state: SceneState, me, key: str):
     return max(world, 1e-9)
 
 
-def _draw_morph(ctx: DrawContext, state: SceneState, impl, arc: float = 0.0) -> None:
+def _outlined(me, shape: mm.Shape | None, texts) -> mm.Shape:
+    """The outline a text drawn as shapes is built from; a text with none is refused,
+    saying why (mathtext cannot read what TeX typeset)."""
+    if shape is None:
+        why = next((o.error for t in texts if (o := gm.outline(t)).error), "")
+        raise ValueError(f"{me.id!r} cannot be drawn as shapes: {why}; draw it as a picture "
+                         "(as_shapes off) or write maths mathtext reads")  # fmt: skip
+    return shape
+
+
+def _draw_morph(ctx: DrawContext, state: SceneState, impl, arc: float = 0.0) -> bool:
     """A text or equation becoming itself from another object: the in-between, or its own
-    glyphs when the source has no outline."""
+    glyphs when the source has no outline. False (nothing drawn) when it has no outline
+    itself: the caller draws its picture."""
     from phasor.domains import morph
 
     me = impl.me(state)
     items = morph.frame(state, impl.id, arc=arc)
     if items is None:
-        items = morph.own(state, me, impl.morph_shape(state))
+        shape = impl.morph_shape(state)
+        if shape is None:
+            return False
+        items = morph.own(state, me, shape)
     morph.paint(ctx, state, me, items)
+    return True
 
 
 def _with_morph(impl, state: SceneState, box: Bounds) -> Bounds:
@@ -679,9 +709,13 @@ def _shape_facts(state: SceneState, me, texts) -> dict[str, Any]:
                 total += len(texts) - k - 1
                 break
         drawn = min(drawn, gm.MAX_GLYPHS)
-        out.update(as_shapes=True, glyphs=drawn)
+        shape = me.impl.morph_shape(state)
+        far = sum(_far(shape, g) for g in shape.groups) if shape is not None else 0
+        out.update(as_shapes=True, glyphs=drawn - far)
         if drawn < total:
             out["glyph_limit"] = total  # lint glyph_limit (at least this many)
+        if far:
+            out["glyphs_far"] = far  # lint glyph_limit: past path.MAX_COORD, not drawn
     out.update(morph.facts(state, me))
     return out
 

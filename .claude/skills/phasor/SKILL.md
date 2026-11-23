@@ -20,6 +20,11 @@ person both edit. The `phasor` MCP tools (when connected) let you see what it re
    Positions are world coordinates (x = Re, y = Im).
 3. For a narrated scene: narration with `[[markers]]`, and every motion anchored to a
    marker with a verb (`reveal`, `trace`, `dim_others`, `morph`, ...).
+   One thing becoming another: `transform(a, b)` morphs any outline (path, shape, text,
+   SVG) into another; between two equations drawn as pictures it glides equal parts and
+   crossfades the rest. To rearrange a formula so each symbol travels to its new place,
+   draw both equations `as_shapes=True` and use `transform` or `transform_matching`
+   (matching pieces move, the rest fade; also for text into text).
 4. Check: `scene_open` the script (again after every edit), then `review`: lint, what is on
    screen at each marker, and a storyboard picture. Without the tools: `phasor lint SCENE
    --aesthetic`, then `phasor storyboard SCENE --marks` and read the picture. Fix each item

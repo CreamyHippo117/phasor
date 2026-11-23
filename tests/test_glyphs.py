@@ -6,15 +6,19 @@ it always did."""
 from __future__ import annotations
 
 import math
+from typing import ClassVar
 
 import numpy as np
 import pytest
 
 from phasor import Dot, Equation, Scene, Text
 from phasor.core import text as text_metrics
+from phasor.core.objects import ObjectBase, ParamsBase, register
 from phasor.core.record import record
+from phasor.core.values import Vec3
 from phasor.domains import glyph_math as gm
 from phasor.domains import path_math as pm
+from phasor.domains import shapes
 
 MODES = [None, pytest.param("auto", marks=pytest.mark.gl)]
 
@@ -322,3 +326,164 @@ def test_morph_params_at_their_bounds_never_break_state_inspect_or_lint(morph, k
     s.engine.lint()
     r = s.engine.apply({"op": "set_param", "path": "eq.arc", "value": 1e300}, origin="script")
     assert not r.ok
+
+
+# ---------------------------------------------------------------- independent audit
+
+
+@register
+class AuditBadge(ObjectBase):
+    """A composite whose part has an explicit color and stroke (scene-local type)."""
+
+    type: ClassVar[str] = "audit17_badge"
+
+    class Params(ParamsBase):
+        pos: Vec3 = (0.0, 0.0, 0.0)
+
+    def build(self, state):
+        return [shapes.Circle("ring", r=1.0, style={"color": "#00FF00", "stroke": 0.9})]
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_a_composite_part_with_explicit_values_is_judged_but_a_glyph_is_not(passes):
+    """Audit 17 #3: ``off_palette``/``off_scale`` skipped every composite part, so a part
+    a ``build`` gives an explicit off-palette color and an off-scale stroke was silent.
+    Only glyph parts (whose values come from their text, judged there) are skipped."""
+    s = _scene(passes)
+    s.marker("end", 2.0)
+    s.add(AuditBadge(id="b"))
+    s.add(Text(id="word", text="green", pos=(0, -2), as_shapes=True,
+               style={"color": "#00FF00"}))  # fmt: skip
+    found = {(i.code, i.ids) for i in s.engine.lint(aesthetic=True)
+             if i.code in ("off_palette", "off_scale")}  # fmt: skip
+    assert ("off_palette", ("b.ring",)) in found and ("off_scale", ("b.ring",)) in found
+    assert ("off_palette", ("word",)) in found  # the text, once
+    assert not [ids for _, ids in found if ids and ids[0].startswith("word.")]
+
+
+@pytest.fixture
+def tex_accepts_anything(monkeypatch):
+    """The ``latex`` engine as far as pictures go (no TeX here): every math string
+    typesets, so ``\\begin{pmatrix}`` passes ``check_math``; outlines still come from
+    mathtext, which cannot read it. The caches it touches are cleared both ways."""
+
+    def caches():
+        text_metrics.math_box.cache_clear()
+        text_metrics.aspect.cache_clear()
+        text_metrics.rasterize.cache_clear()
+        gm.outline.cache_clear()
+
+    caches()
+    monkeypatch.setattr(text_metrics, "_math", lambda text, em_px, engine=None: (
+        np.full((em_px, 3 * em_px), 255, np.uint8), em_px * 0.2))  # fmt: skip
+    yield r"$\begin{pmatrix}1\\2\end{pmatrix}$"
+    monkeypatch.undo()
+    caches()
+
+
+def test_a_text_mathtext_cannot_outline_is_morph_missing_and_never_raises(tex_accepts_anything):
+    """Audit 17 #5: with the latex engine a text mathtext cannot read passed the verb and
+    then ``inspect``/``lint`` raised ValueError from the outline. It has no outline: a
+    morph from it is ``morph_missing`` (the target draws itself); as shapes it is refused
+    when added, saying why."""
+    from phasor.core.issues import DocumentError
+
+    tex = tex_accepts_anything
+    o = gm.outline(tex)
+    assert o.glyphs == () and "mathtext" in o.error
+    assert gm.outline("   ").error == ""  # an empty outline is not a failure
+    s = _scene()
+    s.marker("go", 1.0)
+    s.add(Text(id="w", text=tex))
+    s.add(shapes.Circle(id="c", r=1))
+    s.at("go").transform("w", "c")
+    s.engine.state_at(1.3)
+    s.engine.inspect(1.3, detail="full")
+    assert "morph_missing" in {i.code for i in s.engine.lint()}
+    assert len(_points_of(s.engine, "c", 1.3)) > 0  # it draws itself
+    # the other way round: a circle into the text, which draws its picture
+    s2 = _scene()
+    s2.marker("go", 1.0)
+    s2.add(shapes.Circle(id="c", r=1))
+    s2.add(Text(id="w", text=tex))
+    s2.at("go").transform("c", "w")
+    s2.engine.inspect(1.3, detail="full")
+    s2.engine.lint()
+    st = s2.engine.state_at(1.3)
+    assert "text" in record(st["w"].impl, st).kinds
+    with pytest.raises(DocumentError, match="cannot be drawn as shapes"):
+        _scene().add(Text(id="w", text=tex, as_shapes=True))
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_glyphs_past_the_coordinate_limit_are_left_out_with_a_lint_not_an_error(passes):
+    """Audit 17 #7: a glyph ``Path`` part past ``path.MAX_COORD`` failed validation, so an
+    as_shapes text moved there made ``state_at`` raise from that time on (a picture text
+    was fine), and a static one was refused with a message about part 'f'. Such glyphs
+    are left out, and ``glyph_limit`` says why."""
+    from phasor.domains.path import MAX_COORD
+
+    s = _scene(passes)
+    s.marker("end", 4.0)
+    s.add(Text(id="w", text="far", as_shapes=True))
+    r = s.engine.apply({"op": "add_segment", "path": "w.pos", "segment": {
+        "t0": 1.0, "t1": 3.0, "to": [2 * MAX_COORD, 0, 0]}}, origin="script")  # fmt: skip
+    assert r.ok and not [i for i in r.lint_added if i.severity == "error"]
+    near = s.engine.state_at(0.5)
+    assert len([o for o in near.objects if o.parent == "w"]) == 3
+    st = s.engine.state_at(3.5)
+    assert not [o for o in st.objects if o.parent == "w"]
+    s.engine.inspect(3.5)
+    (issue,) = [i for i in s.engine.lint() if i.code == "glyph_limit"]
+    assert issue.ids == ("w",) and "1e+09" in issue.message and min(issue.times) >= 1.0
+    s2 = _scene(passes)
+    s2.add(Text(id="w", text="far", pos=(2 * MAX_COORD, 0, 0), as_shapes=True))
+    assert [i.code for i in s2.engine.lint() if i.code == "glyph_limit"] == ["glyph_limit"]
+
+
+def _points_of(e, oid, t):
+    st = e.state_at(t)
+    return np.asarray(record(st[oid].impl, st).points)
+
+
+def test_outlines_read_matplotlib_before_and_after_3_10(monkeypatch):
+    """Audit 17 #4: ``LoadFlags``/``Kerning`` and the 6-entry mathtext glyphs are new in
+    matplotlib 3.10; 3.8 and 3.9 (allowed by the pyproject floor) have module constants
+    and 5 entries (font, size, char, x, y). Both give the same outlines (also run for real
+    on 3.8.4 and 3.9.4)."""
+    import warnings
+
+    from matplotlib import ft2font
+    from matplotlib.mathtext import MathTextParser
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        if not hasattr(ft2font, "LOAD_NO_HINTING"):  # removed in 3.12: nothing to fall back to
+            pytest.skip("this matplotlib has no pre-3.10 font constants")
+        old_flags = (ft2font.LOAD_NO_HINTING, ft2font.KERNING_DEFAULT)
+    texts = ("AVa, Wo", "$\\frac{a}{b} + \\sqrt{x}$")
+    gm.outline.cache_clear()
+    gm._ft_flags.cache_clear()
+    new = [gm.outline(t) for t in texts]
+    monkeypatch.delattr(ft2font, "LoadFlags", raising=False)
+    monkeypatch.delattr(ft2font, "Kerning", raising=False)
+    parse = MathTextParser.parse
+
+    def five(self, *a, **k):  # the 3.9 layout: no glyph index
+        got = parse(self, *a, **k)
+        return got._replace(glyphs=[(f, s, c, x, y) for f, s, c, _, x, y in got.glyphs])
+
+    monkeypatch.setattr(MathTextParser, "parse", five)
+    gm.outline.cache_clear()
+    gm._ft_flags.cache_clear()
+    try:
+        assert gm._ft_flags() == old_flags
+        old = [gm.outline(t) for t in texts]
+    finally:
+        gm.outline.cache_clear()
+        gm._ft_flags.cache_clear()
+    for a, b in zip(new, old, strict=True):
+        assert a.total == b.total and len(a.glyphs) == len(b.glyphs)
+        for ga, gb in zip(a.glyphs, b.glyphs, strict=True):
+            assert ga.key == gb.key and ga.name == gb.name
+            assert all(np.array_equal(x, y) for x, y in zip(ga.subpaths, gb.subpaths, strict=True))

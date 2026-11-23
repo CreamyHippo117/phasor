@@ -525,7 +525,7 @@ Each issue has `code`, `severity`, `message`, `ids`, `times`, `fix_hint`, and `f
 | `fill_crossing` | warning | a filled path whose edges cross: the fill may not follow its rule |
 | `fill_unchecked` | warning | a filled path with more edges than are checked for crossings (`path_math.CROSSING_LIMIT`, 20000) |
 | `dash_limit` | warning | a dashed or dotted path that would need more than `MAX_DASHES` (2000) dashes: they are drawn longer |
-| `glyph_limit` | warning | text or an equation drawn `as_shapes` with more than `glyph_math.MAX_GLYPHS` (400) glyphs: the rest are not drawn |
+| `glyph_limit` | warning | text or an equation drawn `as_shapes` with more than `glyph_math.MAX_GLYPHS` (400) glyphs, or with glyphs past `path.MAX_COORD` (1e9 world units): those are not drawn |
 | `morph_missing` | warning | a morph whose source (`morph_from`) is not in the scene or has no outline: the object draws itself |
 | `morph_limit` | warning | a morph between outlines with more than `morph_math.MAX_SUBPATHS` (512) subpaths a side: the rest fade |
 | `bad_file` | warning | a file an object reads is not valid (an SVG that is not SVG), or some of its shapes are skipped (points not finite or absurdly far out); what cannot be read draws nothing |
@@ -870,7 +870,8 @@ refused. A world size is exact in 2D at any zoom; in 3D it is exact at the objec
 an overlay-layer object its units are frame heights (the overlay's units). Taste stays checked: `lint(aesthetic=True)` warns with `off_palette`
 when an explicit color is farther than the theme's `[lint] off_palette` (an OKLab distance)
 from every palette role, or a background from the theme's, and with `off_scale` when a size
-is more than `[lint] off_scale` times off the nearest text or stroke role. Neither has a
+is more than `[lint] off_scale` times off the nearest text or stroke role (a composite's
+parts are judged too, but not the glyph parts of a text drawn `as_shapes`: the text is). Neither has a
 `fix` (the value may be meant): `critique()` lists a `snap` op per issue (the nearest
 role), and `polish(snap=True)` applies it, only when asked. A scripted scene's background
 is changed in its script.
@@ -1478,8 +1479,10 @@ is `basic.OUTLINE` (0.04) of the line height wide, so it scales with the text; a
 equation's `colors` color each part's glyphs. `write` draws each glyph's outline, then fills
 it, glyph after glyph (`basic.WRITE_SPAN` of the write each). A text that is not drawn as
 shapes draws as before. At most `glyph_math.MAX_GLYPHS` (400) glyphs (all parts of an
-equation together) are drawn (lint `glyph_limit`). With the `latex` math engine the picture
-comes from TeX but the outlines from mathtext.
+equation together) are drawn, and none past `path.MAX_COORD` world units (lint `glyph_limit`).
+With the `latex` math engine the picture comes from TeX but the outlines from mathtext: a text
+mathtext cannot read has no outline (a morph from it is `morph_missing`, a morph into it
+draws its picture; as shapes it is refused when added).
 
 **`transform` between any two outlines.** Paths, every shape, text and equations can be
 morphed into (`morph_from`, `morph`, `morph_kind` parameters, set by the verbs); paths,
@@ -1495,7 +1498,13 @@ outlines are an identity at every step. Dashes and arrow tips are not drawn in b
 Bounds (`morph_math`): `MAX_SUBPATHS` 512 a side (the shortest beyond fade; lint
 `morph_limit`), `MAX_POINTS` 512 points a piece, `MAX_TOTAL` 40 000 in all, `MAX_ASSIGN` 256
 pairs by optimal assignment (more pair in canonical order), `SAMPLE_CUBICS` 2048 cubics a
-subpath is sampled through. A source that is gone is lint `morph_missing` (it draws itself).
+subpath is sampled through; the in-between's fill triangulates at most `morph.MAX_FILL_RING`
+(4096) points a ring (a longer ring keeps every k-th point, also at the first frame when one
+subpath is split into many pieces; strokes keep all). Plans are
+cached by both outlines in the world (pairs are by least travel, so a source that moves or
+a camera that zooms makes a plan a frame), in a pool of `morph.PLAN_BYTES` (64 MB) measured
+by their arrays. A source that is gone is lint `morph_missing` (it draws itself); a source
+whose id is longer than `core.ids.MAX_REF` (200) characters is refused by the verbs.
 One object can become itself several times (`morph_from` switches at each verb). The
 `morph` verb also animates style keys (see "Style transitions").
 
