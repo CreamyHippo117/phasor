@@ -1098,6 +1098,33 @@ assert kinds == ["saddle", "stable spiral", "saddle"]
 Example: `examples/phase_portrait.py`. The prism looks make trajectories glow with the arrow
 field and nullclines kept faint.
 
+### Linear systems and their modes
+
+`dyn.LinearSystem(matrix=((a, b), (c, d)), extent=, seeds= or n_seeds=, t_end=, progress=,
+backward=, labels=)`: x' = A x with exact trajectories `e^(tA) x0` (`backward` runs each seed
+back in time too, so the whole curve shows) and a label of the type and eigenvalues. Semantics:
+the type (`saddle`, `stable node`, ...), eigenvalues, real eigenvectors, trace and determinant.
+Its modes and the matrix exponential acting on a grid are drawn by the linalg objects beside it:
+`linalg.EigenLines(matrix=A)` (the invariant lines) and `linalg.TransformGrid(flow=A,
+flow_time=t)`, which shows `e^(tA)` on the grid instead of `matrix` (sweep it with
+`s.at("m").sweep("grid.flow_time", 0.6, show=False)`; every cell's area is multiplied by
+`e^(trace * t)`). `linalg_math.expm(m, t)` is the matrix exponential.
+
+```python
+from phasor import Scene, dyn, linalg
+
+A = ((1, 2), (2, 1))
+s = Scene("modes", passes=None)
+s.add(dyn.LinearSystem(id="sys", matrix=A))
+s.add(linalg.TransformGrid(id="grid", flow=A, flow_time=0.5))
+sem = s.engine.inspect(0.0, id="sys")["objects"][0]["semantic"]
+assert sem["type"] == "saddle"
+det = s.engine.inspect(0.0, id="grid")["objects"][0]["semantic"]["determinant"]
+assert abs(det - 2.718282) < 1e-5  # e^(trace * 0.5)
+```
+
+Example: `examples/linear_system.py`.
+
 ## Command line
 
 | Command | Status | Purpose |
