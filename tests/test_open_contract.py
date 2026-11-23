@@ -928,3 +928,427 @@ def test_exit_demo_golden_storyboard():
     e = _example()
     sheet = e.storyboard([0.8, 2.5, 4.0, 5.8], size=(320, 180))["image"]
     _golden("open_contract", sheet, e.pass_runner().renderer_class())
+
+
+# ---------------------------------------------------------------- 7. the independent audit
+# Findings of the independent audit of Milestone 15 (2026-11-23), repro scripts x1, x2, x4,
+# x9, x10 and x11, each a test here. Scene code (a script run as ``python x.py``, by ``load``
+# or by the engine) belongs to its own file: a document uses it only through its own
+# ``meta.modules`` and only where scripts may run.
+
+AUDIT_SCENE = """
+import pathlib
+from typing import ClassVar
+
+import numpy as np
+
+from phasor import Dot, Scene
+from phasor.core.objects import ObjectBase, ParamsBase, register
+from phasor.core.values import Vec3
+
+HERE = pathlib.Path(__file__).parent
+with open(HERE / "ran.txt", "a", encoding="utf-8") as f:
+    f.write("ran\\n")
+
+
+@register
+class Gem(ObjectBase):
+    type: ClassVar[str] = "m15_audit_gem"
+
+    class Params(ParamsBase):
+        pos: Vec3 = (0.0, 0.0, 0.0)
+
+    def draw(self, ctx, state):
+        (HERE / "drew.txt").write_text("drew", encoding="utf-8")
+        x, y, z = self.me(state).params.pos
+        r = SIZE
+        ctx.triangles(np.array([[x, y, z], [x + r, y, z], [x, y + r, z]]), color=(1, 1, 1, 1))
+
+
+SIZE = {size}
+
+
+def orbit(t, look):
+    (HERE / "drew.txt").write_text("updated", encoding="utf-8")
+    return {"pos": ({x}, 0.0, 0.0)}
+
+
+s = Scene("gem", passes=None)
+s.add(Gem(id="g"))
+s.add(Dot(id="d", pos=(0, 0, 0)).always(orbit))
+"""
+
+
+def _audit_folder(root, name, size=1.0, x=1.0):
+    folder = root / name
+    folder.mkdir()
+    script = folder / "scene.py"
+    script.write_text(AUDIT_SCENE.replace("{size}", str(size)).replace("{x}", str(x)), "utf-8")
+    return script
+
+
+def _ran(folder):
+    """What the scene code in ``folder`` did: ran (the module), drew (its draw or updater)."""
+    return {n: (folder / f"{n}.txt").exists() for n in ("ran", "drew")}
+
+
+def _forget(folder):
+    for n in ("ran", "drew"):
+        (folder / f"{n}.txt").unlink(missing_ok=True)
+
+
+def _missing(engine):
+    return sorted(i.ids[0] for i in engine.lint() if i.code == "missing_type")
+
+
+def _gem_hi(engine):
+    st = engine.state_at(0)
+    return st["g"].impl.world_bounds(st).hi[0]
+
+
+def test_audit_x1_a_document_that_may_not_run_scripts_never_runs_code_from_elsewhere(tmp_path):
+    """Finding 1 (x1, x9): code a script registered earlier in the process is not used by a
+    document opened without scripts, in another folder or in the script's own."""
+    import shutil
+
+    from phasor import load
+    from phasor.engine import Engine
+
+    a = _audit_folder(tmp_path, "a")
+    e = load(a, passes=None)  # the person ran a/scene.py: its type and updater exist now
+    assert e.state_at(0.5)["d"].params.pos == (1.0, 0.0, 0.0)
+    e.save(a.parent / "a.phasor.json")
+    other = tmp_path / "c"
+    other.mkdir()  # the same document in a folder that has no scene.py
+    shutil.copy(a.parent / "a.phasor.json", other / "c.phasor.json")
+    for path in (other / "c.phasor.json", a.parent / "a.phasor.json"):
+        _forget(a.parent)
+        doc = Engine.open(path, passes=None)  # allow_scripts=False
+        assert _missing(doc) == ["d", "g"]
+        st = doc.state_at(0.5)
+        assert st["d"].params.pos == (0.0, 0.0, 0.0)  # its own value, not the updater's
+        assert st["g"].impl.semantics(st)["kind"] == "placeholder"
+        doc.inspect(0.5, detail="full")
+        assert _ran(a.parent) == {"ran": False, "drew": False}
+        assert doc.worker_payload()["allow_scripts"] is False
+
+
+def test_audit_x1_an_engine_that_loaded_a_module_lends_nothing_to_another(tmp_path):
+    """The variant through the engine: folder p's module loaded for an allowed document;
+    folder q's document, not allowed, names the same type and updater."""
+    from phasor import load
+    from phasor.core.objects import unregister
+    from phasor.engine import Engine
+
+    for name in ("p", "q"):
+        load(_audit_folder(tmp_path, name), passes=None).save(tmp_path / name / "s.phasor.json")
+    unregister("m15_audit_gem")
+    p = Engine.open(tmp_path / "p" / "s.phasor.json", passes=None, allow_scripts=True)
+    assert _missing(p) == [] and _gem_hi(p) == 1.0
+    _forget(tmp_path / "q")
+    q = Engine.open(tmp_path / "q" / "s.phasor.json", passes=None)
+    assert _missing(q) == ["d", "g"]
+    q.inspect(0.0, detail="full")
+    assert _ran(tmp_path / "p")["drew"] is True  # p's own lint drew
+    _forget(tmp_path / "p")
+    q.lint(), q.state_at(1.0)
+    assert _ran(tmp_path / "p") == _ran(tmp_path / "q") == {"ran": False, "drew": False}
+
+
+def test_audit_x11_a_worker_never_gets_more_permission_than_its_parent(tmp_path):
+    """Finding 2 (x11): the worker payload carries the engine's own permission only; a fresh
+    spawned worker of a document that may not run scripts runs none of its folder's code."""
+    import pickle
+    import subprocess
+    import sys
+
+    from phasor import load
+    from phasor.engine import Engine
+
+    load(_audit_folder(tmp_path, "h1"), passes=None)  # registers the type and updater
+    u = _audit_folder(tmp_path, "u")
+    load(u, passes=None).save(u.parent / "u.phasor.json")
+    _forget(u.parent)
+    parent = Engine.open(u.parent / "u.phasor.json", passes=None)
+    payload = parent.worker_payload()
+    assert payload["allow_scripts"] is False
+    blob = tmp_path / "payload.pkl"
+    blob.write_bytes(pickle.dumps(payload))
+    code = ("import pickle, sys; from phasor.engine import Engine; "
+            "e = Engine.from_payload(pickle.load(open(sys.argv[1], 'rb')), passes=None); "
+            "print(sorted(i.code for i in e.lint()))")  # fmt: skip
+    r = subprocess.run([sys.executable, "-c", code, str(blob)], capture_output=True, text=True,
+                       cwd=Path(__file__).parents[1], timeout=300)  # fmt: skip
+    assert r.returncode == 0, r.stderr[-400:]
+    assert "missing_type" in r.stdout
+    assert _ran(u.parent) == {"ran": False, "drew": False}
+    allowed = Engine.open(u.parent / "u.phasor.json", passes=None, allow_scripts=True)
+    assert allowed.worker_payload()["allow_scripts"] is True
+
+
+def test_audit_x1_two_scenes_with_the_same_names_never_see_each_others_code(tmp_path):
+    """Finding 3 (x1, x9): two scene folders that both define type ``m15_audit_gem`` and an
+    updater ``scene.py:orbit``; alternating between them, each sees only its own."""
+    from phasor import load
+
+    ea = load(_audit_folder(tmp_path, "a", size=1.0, x=1.0), passes=None)
+    eb = load(_audit_folder(tmp_path, "b", size=4.0, x=-5.0), passes=None)  # no clash
+    for _ in range(2):
+        assert ea.state_at(0.5)["d"].params.pos == (1.0, 0.0, 0.0)
+        assert eb.state_at(0.5)["d"].params.pos == (-5.0, 0.0, 0.0)
+        assert _gem_hi(ea) == 1.0 and _gem_hi(eb) == 4.0
+        assert ea.apply({"op": "set_param", "path": "d.r", "value": 0.3}).ok
+        assert ea.state_at(0.7)["d"].params.pos == (1.0, 0.0, 0.0)
+        assert eb.apply({"op": "set_param", "path": "d.r", "value": 0.3}).ok
+        assert eb.state_at(0.7)["d"].params.pos == (-5.0, 0.0, 0.0)
+        assert _gem_hi(ea.fork()) == 1.0 and _gem_hi(eb.fork()) == 4.0
+
+
+def test_audit_scene_code_cannot_take_a_shipped_name(tmp_path):
+    from phasor import load
+
+    script = tmp_path / "fake.py"
+    script.write_text(AUDIT_SCENE.replace("m15_audit_gem", "dot").replace("{size}", "1")
+                      .replace("{x}", "1"), "utf-8")  # fmt: skip
+    with pytest.raises(RegistrationError, match="already registered"):
+        load(script, passes=None)
+    assert get_type("dot").__module__ == "phasor.domains.basic"
+
+
+def test_audit_where_code_comes_from(tmp_path):
+    """The line between scene code (scoped to its file, needs permission) and imported code
+    (phasor, packages, test modules: shared by the process)."""
+    import runpy
+    import subprocess
+    import sys
+
+    from phasor.core.objects import script_of
+
+    assert script_of(globals()) is None  # a test module is imported
+    assert script_of(vars(np)) is None
+    ns: dict = {"__name__": "__main__"}  # a notebook cell or a prompt: no file
+    exec("def f(t, look):\n    return {}\n", ns)
+    assert script_of(ns["f"].__globals__) is None
+    path = tmp_path / "run.py"
+    path.write_text("def f():\n    pass\n", "utf-8")
+    for name in ("__phasor__", "x", "__main__"):  # runpy, any run_name
+        f = runpy.run_path(str(path), run_name=name)["f"]
+        assert script_of(f.__globals__) == str(path.resolve())
+    probe = tmp_path / "probe.py"  # ``python probe.py``
+    probe.write_text("from phasor.core.objects import script_of\nprint(script_of(globals()))\n",
+                     "utf-8")  # fmt: skip
+    out = subprocess.run([sys.executable, str(probe)], capture_output=True, text=True,
+                         cwd=Path(__file__).parents[1], timeout=300).stdout.strip()  # fmt: skip
+    assert out == str(probe.resolve())
+
+
+def test_audit_a_short_form_draw_is_still_scene_code(tmp_path):
+    """``register`` wraps a two-argument ``draw``; the wrapper lives in phasor, the type does
+    not: it is still the script's, and the process does not share it."""
+    from phasor import load
+
+    a = _audit_folder(tmp_path, "a")
+    e = load(a, passes=None)
+    assert get_type("m15_audit_gem") is None  # not shared with the process
+    assert e.type_of("m15_audit_gem")._phasor_script == str(a.resolve())
+
+
+def test_audit_a_scene_built_by_phasor_or_a_test_may_not_run_scripts(tmp_path):
+    """``Scene()`` lets scripts run only when a script built it (the person ran it): not when
+    an imported module did, such as an importer inside a server."""
+    import runpy
+
+    assert Scene("t", passes=None).engine.allow_scripts is False  # built by a test module
+    script = tmp_path / "built.py"
+    script.write_text("from phasor import Scene\ns = Scene('b', passes=None)\n", "utf-8")
+    assert runpy.run_path(str(script))["s"].engine.allow_scripts is True
+
+
+AUDIT_LATE = """
+from phasor import Dot, Scene
+
+
+def late(t, look):
+    out = {"pos": (1.0, 0.0, 0.0)}
+    if t > 1.0:
+        out["r"] = 0.9
+    return out
+
+
+def branch(t, look):
+    if t < 1.0:
+        return {"r": look("a").r}
+    return {"r": look("b").r + 0.2}
+
+
+s = Scene("d", passes=None)
+s.add(Dot(id="a", r=0.1, tags=["exact"]))
+s.add(Dot(id="b", r=0.5, tags=["exact"]))
+s.add(Dot(id="d", pos=(0, 0, 0), r=0.2, tags=["exact"]).always({which}))
+"""
+
+
+def test_audit_x2_an_updater_must_set_the_same_parameters_at_every_t(tmp_path):
+    """Finding 4 (x2): a parameter an updater returns only later is an error naming the
+    parameter and the time, never silently dropped."""
+    from phasor import load
+    from phasor.core.issues import DocumentError
+
+    script = tmp_path / "late.py"
+    script.write_text(AUDIT_LATE.replace("{which}", "late"), "utf-8")
+    e = load(script, passes=None)
+    assert e.state_at(0.5)["d"].params.r == 0.2
+    with pytest.raises(DocumentError, match=r"'r'.*t=2"):
+        e.state_at(2.0)
+
+
+@pytest.mark.parametrize("which", ["late", "branch"])
+def test_audit_x2_strict_lint_probes_updaters_beyond_t0(tmp_path, which):
+    """The scene has no markers (only t = 0 is a sample); strict lint still tries later
+    times and reports the updater that fails there. Plain lint does not crash."""
+    from phasor import load
+
+    script = tmp_path / f"{which}.py"
+    script.write_text(AUDIT_LATE.replace("{which}", which), "utf-8")
+    e = load(script, passes=None)
+    assert [i.code for i in e.lint()] == []
+    (issue,) = [i for i in e.lint(strict=True) if i.code == "bad_updater"]
+    assert issue.ids == ("d",) and issue.severity == "error" and issue.times
+    assert all(t > 1.0 for t in issue.times) and which in issue.message
+
+
+AUDIT_FILES = """
+from typing import ClassVar
+
+import numpy as np
+
+from phasor import Scene
+from phasor.core import files
+from phasor.core.objects import ObjectBase, ParamsBase, register
+from phasor.core.values import Vec3
+
+
+@register
+class FileBox(ObjectBase):
+    type: ClassVar[str] = "m15_filebox"
+    Files: ClassVar = ("path",)
+
+    class Params(ParamsBase):
+        path: str = "size.txt"
+
+    def draw(self, ctx, state):
+        r = float(files.resolve(state.base_dir, self.me(state).params.path).read_text("utf-8"))
+        ctx.triangles(np.array([[0, 0, 0], [r, 0, 0], [0, r, 0]]), color=(1, 1, 1, 1))
+
+
+@register
+class TimeBox(ObjectBase):
+    type: ClassVar[str] = "m15_timebox"
+
+    class Params(ParamsBase):
+        pos: Vec3 = (0.0, 0.0, 0.0)
+
+    def draw(self, ctx, state):
+        r = 1.0 + state.t
+        ctx.triangles(np.array([[0, 0, 0], [r, 0, 0], [0, r, 0]]), color=(1, 1, 1, 1))
+
+
+@register
+class ValueBox(ObjectBase):
+    type: ClassVar[str] = "m15_valuebox"
+
+    class Params(ParamsBase):
+        pos: Vec3 = (0.0, 0.0, 0.0)
+
+    def draw(self, ctx, state):
+        r = state.values["fb.opacity"] * 2
+        ctx.triangles(np.array([[0, 0, 0], [r, 0, 0], [0, r, 0]]), color=(1, 1, 1, 1))
+
+
+s = Scene("f", passes=None)
+s.add(FileBox(id="fb"))
+s.add(TimeBox(id="tb"))
+s.add(ValueBox(id="vb"))
+s.marker("end", 5)
+"""
+
+
+def test_audit_x4_a_recording_follows_the_files_and_the_time_a_draw_reads(tmp_path):
+    """Finding 5 (x4): derived bounds are made again when a file the type names changes, and
+    for a draw that reads ``state.t`` or ``state.values``, when what it read changes."""
+    from phasor import load
+
+    (tmp_path / "size.txt").write_text("1.0", "utf-8")
+    script = tmp_path / "boxes.py"
+    script.write_text(AUDIT_FILES, "utf-8")
+    e = load(script, passes=None)
+
+    def hi(i, t=0.0):
+        st = e.state_at(t)
+        return st[i].impl.world_bounds(st).hi[0]
+
+    assert hi("fb") == 1.0
+    size = tmp_path / "size.txt"
+    size.write_text("3.0", "utf-8")
+    st = size.stat()
+    os.utime(size, ns=(st.st_atime_ns, st.st_mtime_ns + 10**9))
+    assert hi("fb") == 3.0
+    assert (hi("tb", 0.0), hi("tb", 2.0), hi("tb", 0.0)) == (1.0, 3.0, 1.0)
+    assert hi("vb") == 2.0
+    e.apply({"op": "set_param", "path": "fb.opacity", "value": 0.5}).raise_for_errors()
+    assert hi("vb") == 1.0
+
+
+def test_audit_x10_cached_geometry_is_read_only():
+    """Finding 6 (x10): what a recording keeps is shared, so it cannot be written to."""
+    s = _scene(Stroke(id="st"))
+    state = s.engine.state_at(0)
+    f = state["st"].impl.features(state)
+    for name in ("start", "end", "curve"):
+        assert not f[name].flags.writeable
+        with pytest.raises(ValueError):
+            f[name][...] = 99
+    again = state["st"].impl.features(state)
+    np.testing.assert_allclose(again["end"], [2, 1, 0])
+
+
+def _lifted(t, look):
+    return {"pos": (0.0, t, 0.0)}
+
+
+@register
+class Lifted(ObjectBase):
+    """A composite whose part has an updater: parts have none (finding 7)."""
+
+    type: ClassVar[str] = "m15_lifted"
+
+    class Params(ParamsBase):
+        pos: Vec3 = (0.0, 0.0, 0.0)
+
+    def build(self, state):
+        return [Dot(id="d").always(_lifted)]
+
+
+def test_audit_a_part_with_an_updater_is_an_error_not_silently_still():
+    from phasor.core.issues import DocumentError
+
+    with pytest.raises(DocumentError, match="updater"):
+        _scene(Lifted(id="lift"))
+
+
+def test_audit_only_plain_names_are_adopted_as_updaters(tmp_path):
+    """Finding 9: a document names an updater in a module by a plain function name; a dotted
+    name (an attribute of something in the module) is not looked up."""
+    from phasor.core import io
+    from phasor.core.schema import Document, Meta, ObjectSpec
+    from phasor.engine import Engine
+
+    (tmp_path / "ups.types.py").write_text(
+        "def plain(t, look):\n    return {'r': 0.3}\n\n\nclass Holder:\n"
+        "    @staticmethod\n    def lift(t, look):\n        return {'r': 0.4}\n", "utf-8")  # fmt: skip
+    for ref, missing in (("ups.types.py:plain", []), ("ups.types.py:Holder.lift", ["d"])):
+        doc = Document(meta=Meta(title="u", modules=("ups.types.py",)),
+                       objects=(ObjectSpec(id="d", type="dot", always=(ref,)),))  # fmt: skip
+        io.save(tmp_path / "u.phasor.json", doc)
+        e = Engine.open(tmp_path / "u.phasor.json", passes=None, allow_scripts=True)
+        assert _missing(e) == missing
