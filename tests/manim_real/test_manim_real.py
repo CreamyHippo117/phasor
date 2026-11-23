@@ -21,10 +21,11 @@ pytestmark = [
                        reason="needs PHASOR_MANIM_PYTHON (a Python with manim installed)"),
 ]  # fmt: skip
 
-SCENES = sorted(p.stem for p in compare.SCENES.glob("*.py"))
+SCENES = {p.stem: p for p in compare.SCRIPTS}
 # Where phasor differs by design (MILESTONE_20.md, "Real Manim"): the measure is skipped.
 BY_DESIGN = {
     "animate_timing": {"position", "size"},  # Create traces a square from another corner
+    "manim_reverb": {"position", "size"},  # the same, for the room
     # Create's share of a curve: by arc length here, by Bezier pieces in Manim
     "axes_plot": {"position", "size"},
     "shapes_layout": {"size"},  # Manim's arrow tip is wider
@@ -36,9 +37,9 @@ BY_DESIGN = {
 }
 
 
-@pytest.mark.parametrize("name", SCENES)
+@pytest.mark.parametrize("name", sorted(SCENES))
 def test_the_import_matches_real_manim(name):
-    f = compare.run_scene(compare.SCENES / f"{name}.py")
+    f = compare.run_scene(SCENES[name])
     differed = " ".join(f.differed)
     assert "duration" not in differed and "play " not in differed, f.differed
     assert "never found" not in differed, f.differed

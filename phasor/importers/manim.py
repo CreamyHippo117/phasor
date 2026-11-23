@@ -1985,6 +1985,9 @@ class ComplexPlane(NumberPlane):
     number_to_point = n2p
 
 
+NUMBERS_BELOW = 0.37  # how far a number line's numbers reach below its ticks
+
+
 class NumberLine(Mobject):
     kind = "number_line"
 
@@ -1997,10 +2000,12 @@ class NumberLine(Mobject):
         self.length = abs(_num(span * _num(unit_size, "unit_size") if length is None else length,
                                "length"))  # fmt: skip
         self.numbers, self.tip = bool(include_numbers), bool(include_tip)
-        mid = -(self.xr[0] + self.xr[1]) / 2 * self.unit  # Manim centres the line's length
+        # Manim centres the line's length at the origin; its box is the ticks (0.1 each
+        # side), and its numbers below them reach NUMBERS_BELOW further (Manim CE 0.22.1)
         self.origin = np.array([0.0, 0.0, 0.0])
         self.pts = np.array([(-self.length / 2, -0.1, 0), (self.length / 2, 0.1, 0)], float)
-        self._mid = mid
+        if self.numbers:
+            self.pts[0, 1] -= NUMBERS_BELOW
 
     @property
     def unit(self) -> float:
@@ -2022,6 +2027,8 @@ class NumberLine(Mobject):
     point_to_number = p2n
 
     def add_numbers(self, *a: Any, **kw: Any) -> NumberLine:
+        if not self.numbers:
+            self.pts[0, 1] -= NUMBERS_BELOW * self.s
         self.numbers = True
         if self.obj_id and _CTX is not None:
             _CTX.instant(self, "numbers", True)
@@ -3355,7 +3362,9 @@ class Scene:
                                  for _, v in series):  # fmt: skip
                 continue
             keys = _simplify(series, KEY_TOLERANCE)
-            prev = None
+            # keys that go on from the last ones (the play before ended where this starts)
+            # move from there; anything else jumps at its first key
+            prev = busy if t0 - 1e-9 <= busy < keys[0][0] else None
             for t, v in keys:
                 c.ops.append(_seg(path, round(prev if prev is not None else t, 9), round(t, 9),
                                   v, "linear"))  # fmt: skip

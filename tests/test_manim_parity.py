@@ -441,3 +441,67 @@ class S(Scene):
     assert main(["manim", str(p), "-o", str(out)]) == 0
     assert (out.parent / "click.wav").exists() and "lint error" not in capsys.readouterr().out
     assert io.load_document(out).object("sound_1").params["path"] == "click.wav"
+
+
+# ---------------------------------------------------------------- the examples (exit demo)
+
+
+def test_the_camera_tour_imports_with_every_feature_and_no_warning():
+    """Milestone 20's exit demo: a Manim script using the camera frame, a filled shape, a
+    ValueTracker with an updater, always_redraw, add_sound, a morph, a color animation and
+    a number line runs unchanged, with nothing left behind."""
+    from tests.test_manim_import import ROOT
+
+    r = import_manim(ROOT / "examples" / "manim_camera_tour.py")
+    assert r.warnings == [] and r.duration == pytest.approx(12.0)
+    k = kinds(r)
+    assert {"value", "sound", "number_line", "circle", "regular_polygon", "path"} <= set(
+        k.values())  # fmt: skip
+    v = r.scene.engine.state_at
+    assert v(4.5).values["camera.height"] == pytest.approx(3.0 * 2.5 * 9 / 16)
+    assert v(8.5).values["camera.height"] == pytest.approx(8.0)  # restored
+    ride = [v(t)["dot_1"].params.pos for t in (4.5, 5.25, 6.0, 7.5)]
+    assert ride[0] == pytest.approx((-1.5, 0, 0)) and ride[2] == pytest.approx(
+        (-4.5, 0, 0), abs=1e-6
+    )
+    # between Manim's frames (1/30 s) the dot moves on a chord: within 1e-3 of the circle
+    assert ride[1] == pytest.approx((-3.0, 1.5, 0), abs=1e-3) and ride[3] == pytest.approx(ride[0])
+    assert v(4.5)["sound_1"].params.start == 4.5
+    assert v(9.25)["regularpolygon_1"].params.morph_from == "square_1"
+    assert not [i for i in r.scene.engine.lint() if i.severity == "error"]
+    track, rate = r.scene.engine.audio_track()
+    assert len(track) == 12 * rate and abs(track[int(4.6 * rate)]) > 0
+
+
+def test_the_sound_cue_example_mixes_its_clip_at_the_landing():
+    import runpy
+
+    from tests.test_manim_import import ROOT
+
+    e = runpy.run_path(str(ROOT / "examples" / "sound_cue.py"), run_name="x")["s"].engine
+    track, rate = e.audio_track()
+    assert len(track) == 3 * rate
+    assert np.abs(track[: int(1.29 * rate)]).max() == 0 and np.abs(track[int(1.32 * rate)]) > 0
+    assert e.lint(strict=True) == []
+
+
+@pytest.mark.gl
+@pytest.mark.slow
+@pytest.mark.parametrize("name, times", [("manim_camera_tour", [1.5, 4.0, 6.0, 9.5]),
+                                         ("sound_cue", [0.2, 0.8, 1.4, 2.5])])  # fmt: skip
+def test_example_golden_storyboards(name, times):
+    import runpy
+
+    from tests.conftest import gl_available
+    from tests.test_beauty import _golden
+    from tests.test_manim_import import ROOT
+
+    if not gl_available():
+        pytest.skip("needs OpenGL")
+    path = ROOT / "examples" / f"{name}.py"
+    if name.startswith("manim_"):
+        e = import_manim(path).scene.engine
+    else:
+        e = runpy.run_path(str(path), run_name="x")["s"].engine
+    sheet = e.storyboard(times, size=(320, 180))["image"]
+    _golden(name, sheet, e.pass_runner().renderer_class())

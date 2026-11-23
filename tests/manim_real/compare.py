@@ -30,6 +30,8 @@ import numpy as np
 
 HERE = Path(__file__).parent
 SCENES = HERE / "scenes"
+# every scene compared: the small ones here and the Manim examples
+SCRIPTS = sorted(SCENES.glob("*.py")) + sorted((HERE.parents[1] / "examples").glob("manim_*.py"))
 
 # Tolerances (world units of Manim's 8-unit frame). Shapes are drawn from the same geometry,
 # so they agree closely; text is set in phasor's own font (Aileron / Computer Modern through
@@ -41,7 +43,7 @@ TEXT_POS_TOL = 0.35
 TEXT_SIZE_TOL = 0.45  # relative
 TEXT_CLASSES = {"Text", "MathTex", "Tex", "MarkupText", "Title", "Paragraph"}
 # Composites drawn by phasor's own diagram kit: its furniture (tips, tick lengths, numbers)
-# is phasor's, so only the place is compared.
+# is phasor's, and its numbers are text: its place is compared with the text tolerance.
 KIT_CLASSES = {"Axes", "NumberPlane", "NumberLine", "BarChart", "Table", "Matrix", "Code"}
 # Mobjects real Manim lists that are not the script's: the camera frame of a
 # MovingCameraScene, a ValueTracker (a point), and the Group an AnimationGroup or a
@@ -181,7 +183,7 @@ def compare(real: dict, ours: dict) -> Finding:
     for rs, os_ in zip(real["samples"], ours["samples"], strict=True):
         internal = INTERNAL | ({"VGroup"} if _matching_at(rp, rs) else set())
         real_mobs = [m for m in rs["mobjects"] if m["cls"] not in internal]
-        if len(real_mobs) != len(os_["mobjects"]):
+        if len(real_mobs) != len(os_["mobjects"]) and not _matching_at(rp, rs):
             if counts_ok:
                 where["count"] = (f"t={rs['t']:g}: Manim {[m['cls'] for m in real_mobs]}, phasor "
                                   f"{[m['cls'] for m in os_['mobjects']]}")  # fmt: skip
@@ -196,7 +198,7 @@ def compare(real: dict, ours: dict) -> Finding:
             at = (f"t={rs['t']:g} {m['cls']}: Manim {m['center'][:2]} {m['width']:.3f}x"
                   f"{m['height']:.3f}, phasor {[round(v, 3) for v in o['center'][:2]]} "
                   f"{o['width']:.3f}x{o['height']:.3f}")  # fmt: skip
-            if m["cls"] in TEXT_CLASSES:
+            if m["cls"] in TEXT_CLASSES or m["cls"] in KIT_CLASSES:  # text in them: wider
                 if d > text_err:
                     text_err, where["text"] = d, at
                 continue
@@ -240,7 +242,7 @@ def run_scene(script: Path) -> Finding:
 
 def main() -> int:
     print("| scene | matched | differed |\n| --- | --- | --- |")
-    for script in sorted(SCENES.glob("*.py")):
+    for script in SCRIPTS:
         try:
             f = run_scene(script)
         except Exception as e:  # report and go on: one broken scene is one row
