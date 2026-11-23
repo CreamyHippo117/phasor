@@ -692,23 +692,45 @@ def test_a_hostile_view_box_still_draws_finite_parts(tmp_path, box):
     assert _parts(st) == ([] if box == "0 0 0 0" else ["logo.dot"])
 
 
-@pytest.mark.parametrize("text", ["", "\x00\x01garbage" * 10, H + '<path id="p" d="M0 0 L10'])
-def test_a_malformed_svg_is_bad_file_and_parsed_once(tmp_path, text, monkeypatch):
+BAD_SVGS = [
+    "",
+    "\x00\x01garbage" * 10,
+    H + '<path id="p" d="M0 0 L10',
+    H + "<circle/></svg>",
+]  # the last is XML; svgelements is made to fail on it
+
+
+@pytest.mark.parametrize("passes", MODES)
+@pytest.mark.parametrize("text", BAD_SVGS)
+def test_a_malformed_svg_is_bad_file_and_parsed_once(tmp_path, text, monkeypatch, passes):
     se = pytest.importorskip("svgelements")
     calls = []
-    real = se.SVG.parse
+    real = pm._expansion_limit
 
     def counted(*a, **k):
         calls.append(1)
         return real(*a, **k)
 
-    monkeypatch.setattr(se.SVG, "parse", staticmethod(counted))
+    def broken(*a, **k):
+        raise ValueError("svgelements could not read it")
+
+    monkeypatch.setattr(pm, "_expansion_limit", counted)
+    if text.endswith("<circle/></svg>"):
+        monkeypatch.setattr(se.SVG, "parse", staticmethod(broken))
     pm._read_svg.cache_clear()
-    s = _svg_scene(tmp_path, text)
+    (tmp_path / "logo.svg").write_text(text, encoding="utf-8")
+    s = Scene("svg", passes=passes, base_dir=tmp_path)
+    s.add(shapes.SVG(id="logo", path="logo.svg"))
     st, issues = _survives(s.engine)
     assert _parts(st) == []
     assert issues["bad_file"].ids == ("logo",) and issues["bad_file"].severity == "warning"
-    assert len(calls) <= 1  # a bad file is remembered as bad, not parsed at every t
+    assert len(calls) == 1  # a bad file is read once and remembered as bad
+    pm._read_svg.cache_clear()
+
+
+class _Hung(BaseException):
+    """Raised by the alarm: a BaseException, so no ``except Exception``/``OSError`` in the
+    code under test can swallow it and block again."""
 
 
 def _with_alarm(seconds, fn):
@@ -718,7 +740,7 @@ def _with_alarm(seconds, fn):
         return fn()
 
     def boom(*_):
-        raise TimeoutError(f"took more than {seconds} s")
+        raise _Hung(f"took more than {seconds} s")
 
     old = signal.signal(signal.SIGALRM, boom)
     signal.alarm(seconds)
@@ -729,12 +751,16 @@ def _with_alarm(seconds, fn):
         signal.signal(signal.SIGALRM, old)
 
 
-def test_nested_use_that_fans_out_is_svg_too_complex_and_fast(tmp_path):
+@pytest.mark.parametrize("passes", MODES)
+def test_nested_use_that_fans_out_is_svg_too_complex_and_fast(tmp_path, passes):
     fan = (H + '<defs><circle id="a0" cx="5" cy="5" r="1"/>'
            + "".join(f'<g id="a{i + 1}">' + f'<use href="#a{i}"/>' * 10 + "</g>"
                      for i in range(6))
            + '</defs><use href="#a6"/></svg>')  # fmt: skip
-    s = _svg_scene(tmp_path, fan)
+    pytest.importorskip("svgelements")
+    (tmp_path / "logo.svg").write_text(fan, encoding="utf-8")
+    s = Scene("svg", passes=passes, base_dir=tmp_path)
+    s.add(shapes.SVG(id="logo", path="logo.svg"))
     st, issues = _with_alarm(60, lambda: _survives(s.engine))
     assert _parts(st) == []
     assert issues["svg_too_complex"].ids == ("logo",)
@@ -909,10 +935,11 @@ def test_dashes_are_capped_per_path_and_counted_from_where_they_start():
     assert pm.dashes(poly, 1.0, 0.5, upto=float("inf"), limit=10)  # never OverflowError
 
 
-def test_a_huge_dashed_circle_draws_a_bounded_number_of_dashes_and_lint_says_so():
+@pytest.mark.parametrize("passes", MODES)
+def test_a_huge_dashed_circle_draws_a_bounded_number_of_dashes_and_lint_says_so(passes):
     import time
 
-    s = Scene("dash", passes=None)
+    s = Scene("dash", passes=passes)
     s.add(shapes.Circle(id="big", r=1e4, style={"dash": "dashed"}))
     st = s.engine.state_at(0)
     ctx = _Any()
@@ -1062,11 +1089,12 @@ def test_a_drawing_of_many_parts_is_not_flattened_again_at_a_new_frame(tmp_path,
     assert len(calls) == first
 
 
-def test_a_fill_too_detailed_to_check_for_crossings_says_so():
+@pytest.mark.parametrize("passes", MODES)
+def test_a_fill_too_detailed_to_check_for_crossings_says_so(passes):
     k = np.linspace(0, 2 * np.pi, pm.CROSSING_LIMIT + 10, endpoint=False)
     ring = np.c_[np.cos(k), np.sin(k), np.zeros_like(k)]
     assert pm.crossings([ring]) is None  # not checked: neither True nor False
-    s = Scene("detail", passes=None)
+    s = Scene("detail", passes=passes)
     s.add(shapes.Path.through("ring", ring, closed=True, style={"fill": "solid"}))
     assert _sem(s.engine, "ring")["fill_unchecked"] is True
     (issue,) = [i for i in s.engine.lint() if i.code == "fill_unchecked"]

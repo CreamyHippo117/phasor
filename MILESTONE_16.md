@@ -93,8 +93,10 @@ macOS and CUDA.
 14. Shapes lie in the plane z = `pos.z`; a `Path` may lie in any plane (fills are
     triangulated in the plane of its points).
 15. **Audit: new bounds that can refuse a saved document.** `Arc.angle` is -360..360 (not
-    0), and every number of a path or shape is within ±1e9 (`path.MAX_COORD`). Nothing in
-    `examples/`, `gallery/`, `showcase/` or the tests was outside them. A full-turn `Arc` stays
+    0), and every number of a path or shape is within ±1e9 (`path.MAX_COORD`). Checked: no
+    `shapes.Arc` in the repository (examples, docs, tests) has a larger angle, and the two
+    saved `*.phasor.json` documents in the repository load; gallery and showcase scripts
+    were not all re-run (they predate the shape types). A full-turn `Arc` stays
     open (tips kept, no area unless filled); a `Brace` is always open.
 16. **Audit: `SceneState.reserved`** (new field, `compare=False`): the document's object and
     camera ids and its retired ids, so a composite whose part names come from a file avoids
@@ -218,5 +220,5 @@ memory are unchanged and deferred (above): lint keeps an inspector snapshot of a
 parts per sampled time, and `state_at` validates every part at each new t.
 
 
-**MILESTONE 16: DONE on Linux after the independent audit (2026-11-23); deferred items
-above.** Untested on Windows, macOS and CUDA.
+**MILESTONE 16: independent audit findings fixed on Linux (2026-11-23); focused suites
+pass, the full suite is left to CI; deferred items above.** Untested on Windows, macOS and CUDA.

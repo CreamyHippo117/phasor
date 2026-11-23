@@ -402,7 +402,10 @@ class Engine:
                 if not isinstance(raw, str) or not raw:
                     continue
                 try:
-                    src, dst = files.resolve(self.base_dir, raw), folder / files.relative_path(raw)
+                    src, dst = (
+                        files.regular_file(self.base_dir, raw),
+                        folder / files.relative_path(raw),
+                    )
                 except ValueError:
                     continue
                 if src.is_file() and src.resolve() != dst.resolve():
