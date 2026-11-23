@@ -219,7 +219,8 @@ assert not [i for i in k.engine.lint(strict=True) if i.code == "impure_updater"]
 `*.types.py` file next to it, is named by the document: `meta.modules` lists the file and
 `always` lists `"<file>:<function>"`. Opening the document loads those modules only where
 scripts may run (`phasor.load("scene.py")`, `Engine(..., allow_scripts=True)`, the MCP
-server's `--allow-scripts`), only from inside the scene's folder. A missing, refused or
+server's `--allow-scripts`, and `--allow-scripts` on `phasor inspect`, `lint`, `storyboard`,
+`render`, `web`, `bench --frames` and `sketch`; render workers inherit it), only from inside the scene's folder. A missing, refused or
 broken module is lint `missing_type`: the object draws as a placeholder box and keeps its
 parameters and overrides (saving it changes nothing). An updater defined anywhere else (a
 notebook cell, a prompt) is refused: the document could not find it again. Types shipped in phasor still get an entry here, an
@@ -1424,20 +1425,23 @@ field and nullclines kept faint.
 | Command | Status | Purpose |
 | --- | --- | --- |
 | `phasor doctor [--json] [--require A\|B\|C]` | M0 | Prove CUDA, NVRTC, OpenGL 4.3, encoders and, without CUDA, the C++ compiler for CPU kernels (name, version, threads); print tier |
-| `phasor inspect SCENE [--t T] [--id ID] [--detail brief\|standard\|full]` | M1 | What is on screen at time t |
-| `phasor lint SCENE [--fix] [--strict] [--json] [--step S]` | M2 | Lint; exit 1 on errors (`--strict`: on warnings too). `--fix` applies suggested fixes and saves them |
-| `phasor storyboard SCENE [-o PNG] [--t T]... [--marks] [--json]` | M2 | Keyframe contact sheet plus what the inspector sees |
-| `phasor render SCENE [-o OUT] [--preset preview\|final\|4k] [--fps F] [--start S] [--end E] [--frame T] [--workers N] [--threads T]` | M3 | Video (`.mp4`; `.mov` is ProRes; a folder or `%05d.png` is a PNG sequence) or one PNG with `--frame`. `--workers`: render processes (default a quarter of the CPU threads, 1 to 4); the result is the same file as one process makes. `--threads`: CPU kernel threads per process without CUDA (default: the cores shared out, workers x threads <= cores) |
+| `phasor inspect SCENE [--t T] [--id ID] [--detail brief\|standard\|full] [--allow-scripts]` | M1 | What is on screen at time t |
+| `phasor lint SCENE [--fix] [--strict] [--json] [--step S] [--allow-scripts]` | M2 | Lint; exit 1 on errors (`--strict`: on warnings too). `--fix` applies suggested fixes and saves them |
+| `phasor storyboard SCENE [-o PNG] [--t T]... [--marks] [--json] [--allow-scripts]` | M2 | Keyframe contact sheet plus what the inspector sees |
+| `phasor render SCENE [-o OUT] [--preset preview\|final\|4k] [--fps F] [--start S] [--end E] [--frame T] [--workers N] [--threads T] [--allow-scripts]` | M3 | Video (`.mp4`; `.mov` is ProRes; a folder or `%05d.png` is a PNG sequence) or one PNG with `--frame`. `--workers`: render processes (default a quarter of the CPU threads, 1 to 4); the result is the same file as one process makes. `--threads`: CPU kernel threads per process without CUDA (default: the cores shared out, workers x threads <= cores) |
 | `phasor kit [FOLDER]` | kit | Set up or update a folder where an AI writes scenes (default `Documents/phasor`): `CLAUDE.md`, the AI docs, the examples sorted by kind, the `/scene` command, `TASTE.md`, and the phasor tools in `.mcp.json`. Your `TASTE.md`, `WISHLIST.md` and `scenes/` are never replaced |
 | `phasor bench [--width W] [--height H]` | M3 | ms per frame per kernel and peak VRAM; saved in `benchmarks/` |
-| `phasor bench --frames SCENE [--count N] [--preset P]` | GPU_SPEED.md | ms per final frame per stage (state, simulation, draw, gpu draw, readback, widen, blur sum, post, srgb, encode); saved in `benchmarks/` |
+| `phasor bench --frames SCENE [--count N] [--preset P] [--allow-scripts]` | GPU_SPEED.md | ms per final frame per stage (state, simulation, draw, gpu draw, readback, widen, blur sum, post, srgb, encode); saved in `benchmarks/` |
 | `phasor mcp [--root DIR] [--allow-scripts] [--attach]` | M5, M10 | MCP server; `--attach` edits the scene open in a running `phasor gui` |
 | `phasor gui [SCENE] [--root DIR] [--no-ai] [--install-shortcut]` | M10 | The desktop app (needs `uv sync --extra gui`): a start screen, or the editor on SCENE; also `phasor-gui`; a Manim script opens too |
-| `phasor web SCENE [-o PAGE.html] [--steps N]` | M12 | Bake a self-contained interactive web page from the scene's sliders |
+| `phasor web SCENE [-o PAGE.html] [--steps N] [--allow-scripts]` | M12 | Bake a self-contained interactive web page from the scene's sliders |
 | `phasor manim SCRIPT [--scene NAME] [-o OUT] [--code]` | M13 | Import a Manim Community scene as a phasor scene |
 | `phasor sketch SCENE STROKES.json [--t T] [--accept [K ...]] [--text K=TEXT]` | M11 | Turn drawn strokes into proposals; `--accept` applies them |
 
 `SCENE` is a `.phasor.json` document or a `.py` script that defines exactly one `Scene`.
+`--allow-scripts` (off by default) runs the Python modules a saved document names in
+`meta.modules` (its own object types and updaters); without it those objects are
+`missing_type` placeholder boxes. A `.py` scene is code you ran, so it needs no flag.
 
 ## The desktop app (`phasor-gui`)
 

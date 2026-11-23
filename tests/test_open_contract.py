@@ -514,6 +514,68 @@ def test_a_render_worker_loads_the_scene_code_its_parent_ran(star_scene):
     assert refused["allow_scripts"] is False
 
 
+def _cli_json(argv, capsys):
+    from phasor.cli import main
+
+    code = main(argv)
+    return code, capsys.readouterr().out
+
+
+def test_the_cli_refuses_scene_code_unless_asked(star_scene, capsys):
+    """Deviation 9 of Milestone 15: a saved document that names modules opens through the
+    CLI with the placeholder, and with the real type under `--allow-scripts`."""
+    path, name = star_scene
+    base = ["inspect", str(path), "--id", "star", "--detail", "full"]
+    code, out = _cli_json(base, capsys)
+    assert code == 0 and json.loads(out)["objects"][0]["semantic"]["kind"] == "placeholder"
+    assert get_type(name) is None  # nothing ran
+    code, out = _cli_json([*base, "--allow-scripts"], capsys)
+    snap = json.loads(out)["objects"][0]
+    assert code == 0 and snap["semantic"]["type"] == name
+    assert snap["semantic"].get("kind") != "placeholder"
+
+
+def test_cli_lint_reports_missing_type_until_allowed(star_scene, capsys):
+    path, _ = star_scene
+    code, out = _cli_json(["lint", str(path), "--json"], capsys)
+    assert "missing_type" in out
+    code, out = _cli_json(["lint", str(path), "--json", "--allow-scripts"], capsys)
+    assert code == 0 and "missing_type" not in out
+
+
+@pytest.mark.gl
+@pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
+def test_cli_render_draws_the_real_type_only_when_allowed(star_scene, tmp_path):
+    from phasor.cli import main
+
+    path, _ = star_scene
+    plain, real = tmp_path / "plain.png", tmp_path / "real.png"
+    assert main(["render", str(path), "--frame", "0", "-o", str(plain), "--quiet"]) == 0
+    assert main(["render", str(path), "--frame", "0", "-o", str(real), "--quiet",
+                 "--allow-scripts"]) == 0  # fmt: skip
+    assert plain.read_bytes() != real.read_bytes()
+
+
+def test_the_cli_flag_reaches_the_render_workers(star_scene, tmp_path, monkeypatch):
+    """`parallel_frames` builds the worker payload from the engine the CLI opened."""
+    import phasor.scene as scene_mod
+    from phasor.cli import main
+
+    path, _ = star_scene
+    seen = []
+
+    def fake(engine, workers, **kw):
+        seen.append(engine.worker_payload()["allow_scripts"])
+        return None
+
+    monkeypatch.setattr(scene_mod, "parallel_frames", fake)
+    for flags in ([], ["--allow-scripts"]):
+        out = tmp_path / "f.png"
+        main(["render", str(path), "--frame", "0", "-o", str(out), "--quiet",
+              "--workers", "2", *flags])  # fmt: skip
+    assert seen == [False, True]
+
+
 @pytest.mark.gl
 @pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
 def test_spawned_render_workers_draw_the_scene_type_not_a_placeholder(star_scene, tmp_path):
