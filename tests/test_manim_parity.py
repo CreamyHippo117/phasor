@@ -455,6 +455,9 @@ class S(Scene):
     "class S(Scene):\n    def construct(self):\n        self.play(Wait(run_time='x'))",
     "class S(Scene):\n    def construct(self)\n        pass",  # not Python
     "class S(Scene):\n    def construct(self):\n        self.construct()",  # recursion
+    "class S(Scene):\n    def construct(self):\n        raise SystemExit(3)",  # exit()
+    "class S(Scene):\n    def construct(self):\n        d = Dot().add_updater(lambda m: "
+    "__import__('sys').exit(1))\n        self.add(d)\n        self.wait(1)",
 ])  # fmt: skip
 def test_a_script_that_fails_is_a_clean_import_error(tmp_path, body):
     with pytest.raises(ManimImportError) as info:
@@ -775,3 +778,116 @@ class S(Scene):
     with pytest.raises(ManimImportError, match="wait_until condition failed"):
         import_manim(p)
     assert "manim" not in sys.modules
+
+
+# ---------------------------------------------------------------- the audit's notes
+
+
+@pytest.mark.parametrize("name", ["slow_into", "wiggle", "there_and_back", "double_smooth"])
+def test_a_rate_function_without_a_name_stays_within_its_tolerance(tmp_path, name):
+    """Note 1: 16 even pieces missed ``slow_into`` by 8.9%, ``wiggle`` by 3.6%,
+    ``there_and_back`` by 1.7% of the motion; the pieces now follow the function."""
+    from phasor.importers import manim as mi
+
+    p = script(tmp_path, f"""
+class S(Scene):
+    def construct(self):
+        d = Dot()
+        self.add(d)
+        self.play(d.animate.shift(RIGHT * 4), run_time=2, rate_func={name})
+""")  # fmt: skip
+    r = import_manim(p)
+    f = getattr(mi.rate_functions, name)
+    worst = max(abs(state(r, 2 * u, "dot_1").pos[0] - 4 * f(u))
+                for u in np.linspace(0, 1, 801))  # fmt: skip
+    assert worst <= 4 * mi.RATE_TOLERANCE + 1e-6
+    assert len(doc_of(r).timeline.tracks["dot_1.pos"]) <= mi.MAX_RATE_PIECES + 2
+
+
+def test_config_frame_rate_is_the_rate_updaters_run_at(tmp_path):
+    """Note 5: the stand-in said 60 frames a second and ran updaters at 30. It says 30
+    (Manim's -qm) and runs a script's own rate (1 to 120)."""
+    body = """
+class S(Scene):
+    def construct(self):
+        config.frame_rate = {rate}
+        sq = Square().add_updater(lambda m, dt: m.rotate(dt))
+        self.add(sq)
+        self.play(Wait(run_time=3))
+"""
+    r = import_manim(script(tmp_path, body.format(rate="config.frame_rate")))
+    turned = math.radians(state(r, 3.0, "square_1").rotation)
+    assert turned == pytest.approx((3 * 30 - 1) / 30, abs=1e-6) and r.warnings == []
+    r = import_manim(script(tmp_path, body.format(rate=60)))
+    turned = math.radians(state(r, 3.0, "square_1").rotation)
+    assert turned == pytest.approx((3 * 60 - 1) / 60, abs=1e-6)
+    r = import_manim(script(tmp_path, body.format(rate=1e6)))
+    assert any("config.frame_rate" in w for w in r.warnings)
+    assert math.radians(state(r, 3.0, "square_1").rotation) == pytest.approx(89 / 30, abs=1e-6)
+
+
+def test_add_sound_says_when_it_clamps(tmp_path):
+    """Note 3: a negative ``time_offset`` or a gain past the range was clamped silently."""
+    from tests.test_sound import wav
+
+    wav(tmp_path / "a.wav", np.full(800, 1000))
+    r = import_manim(script(tmp_path, """
+class S(Scene):
+    def construct(self):
+        self.add_sound("a.wav", time_offset=-2, gain=99)
+        self.wait(1)
+"""))  # fmt: skip
+    assert any("starts at 0 s" in w for w in r.warnings)
+    assert any("gain 99 dB is played at 24 dB" in w for w in r.warnings)
+
+
+def test_a_script_past_the_time_budget_is_a_clean_error(tmp_path, monkeypatch):
+    """Note 10: a script that runs on and on stops with a clean error at the next play or
+    updater call (a loop that never calls back cannot be stopped this way)."""
+    from phasor.importers import manim as mi
+
+    monkeypatch.setattr(mi, "MAX_IMPORT_SECONDS", 0.0)
+    p = script(tmp_path, """
+class S(Scene):
+    def construct(self):
+        self.wait(1)
+""")  # fmt: skip
+    with pytest.raises(ManimImportError, match="ran for more than"):
+        import_manim(p)
+    assert "manim" not in sys.modules
+
+
+def test_saving_elsewhere_never_writes_through_a_link(tmp_path):
+    """Note 10: bringing a sound along followed a symlink at the destination."""
+    import os
+
+    from phasor.importers.manim import import_manim as imp
+    from tests.test_sound import wav
+
+    wav(tmp_path / "click.wav", np.full(800, 1000))
+    p = script(tmp_path, """
+class S(Scene):
+    def construct(self):
+        self.add_sound("click.wav")
+        self.wait(1)
+""")  # fmt: skip
+    elsewhere, outside = tmp_path / "elsewhere", tmp_path / "outside"
+    elsewhere.mkdir()
+    outside.mkdir()
+    (outside / "victim.wav").write_bytes(b"mine")
+    try:
+        os.symlink(outside / "victim.wav", elsewhere / "click.wav")
+    except (OSError, NotImplementedError):
+        pytest.skip("no symlinks here (Windows without the privilege)")
+    imp(p).scene.engine.save(elsewhere / "s.phasor.json")
+    assert (outside / "victim.wav").read_bytes() == b"mine"
+    assert (elsewhere / "click.wav").is_symlink()
+
+
+def test_a_scene_script_that_exits_is_a_tool_error(tmp_path):
+    """Note 10: SystemExit escaped the workspace's guard (and the MCP server with it)."""
+    from phasor.workspace import ToolError, Workspace
+
+    ws = Workspace(tmp_path)
+    with pytest.raises(ToolError, match="exit"):
+        ws._guard(lambda: sys.exit(3))

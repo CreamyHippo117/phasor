@@ -33,6 +33,7 @@ import math
 import re
 import runpy
 import sys
+import time
 import types
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -112,8 +113,13 @@ MAX_FRAMES = 20_000
 MAX_UPDATER_CALLS = 2_000_000  # updater functions called (2000 dots with updaters: 1000 frames)
 MAX_KEY_NUMBERS = 1_000_000  # a document of at most about 12 MB of updater keys
 MIN_UPDATE_RATE = 2.0
+MAX_IMPORT_SECONDS = 600.0  # a script still running after this (in play, an updater) stops
 KEY_TOLERANCE = 1e-4  # sampled keys closer than this to a straight line between are dropped
-RATE_PIECES = 16  # a rate function phasor has no name for is sampled into this many segments
+RATE_PIECES = 16  # a turn (``Rotate``) is keyed this many times along its arc
+# A rate function phasor has no name for becomes straight pieces that stay within
+# RATE_TOLERANCE of it (a share of the motion), at most MAX_RATE_PIECES of them.
+RATE_TOLERANCE = 0.002
+MAX_RATE_PIECES = 64
 SAMPLES = 72  # points round a circle (the box of a shape; phasor draws the true curve)
 
 
@@ -1010,6 +1016,8 @@ def _wants_dt(fn: Callable) -> bool:
 
 
 def _call_updater(mob: Mobject, fn: Callable, dt: float) -> None:
+    if _CTX is not None:
+        _CTX.tick()
     wants_dt = _wants_dt(fn)
     try:
         fn(mob, dt) if wants_dt else fn(mob)
@@ -2836,6 +2844,29 @@ def _simplify(samples: list[tuple[float, Any]], tol: float) -> list[tuple[float,
     return [samples[k] for k in np.flatnonzero(keep)]
 
 
+def _knots(rate: Any) -> tuple[float, ...]:
+    """Where to break a rate function phasor has no easing for into straight pieces: the
+    points (of 0..1, ending at 1) that keep a line between them within ``RATE_TOLERANCE`` of
+    the function, sampled 1024 times and ever closer to both ends (Douglas-Peucker); past
+    ``MAX_RATE_PIECES`` pieces, that many even ones. Worked out once per function."""
+    cache = _CTX.knots if _CTX is not None else {}
+    try:
+        return cache[rate]
+    except (KeyError, TypeError):
+        pass
+    # evenly, and closer and closer towards both ends (``slow_into`` is vertical at 0)
+    ends = [2.0**-k for k in range(11, 31)]
+    us = sorted({i / 1024 for i in range(1025)} | set(ends) | {1 - e for e in ends})
+    dense = [(u, (_rate(rate, u),)) for u in us]
+    kept = [u for u, _ in _simplify(dense, RATE_TOLERANCE)][1:]
+    if len(kept) > MAX_RATE_PIECES:
+        kept = [k / MAX_RATE_PIECES for k in range(1, MAX_RATE_PIECES + 1)]
+    out = tuple(kept)
+    with contextlib.suppress(TypeError):
+        cache[rate] = out
+    return out
+
+
 def _numbers(v: Any) -> int:
     """How many numbers a parameter value holds (a point 3, a path's subpaths many)."""
     try:
@@ -2873,6 +2904,17 @@ class _Context:
     taken: set[str] = field(default_factory=set)  # ids of objects added but not yet applied
     scratch: Any = None  # an engine that checks one object at a time (``add``)
     wants_dt: dict[Any, bool] = field(default_factory=dict)  # updater -> takes dt
+    knots: dict[Any, tuple[float, ...]] = field(default_factory=dict)  # rate -> its pieces
+    started: float = field(default_factory=time.monotonic)
+
+    def tick(self) -> None:
+        """A clean error once the script has run ``MAX_IMPORT_SECONDS`` (checked at every
+        play, updater call and wait condition: a script that never calls back is not
+        stopped)."""
+        if time.monotonic() - self.started > MAX_IMPORT_SECONDS:
+            raise ManimImportError(f"the script ran for more than {MAX_IMPORT_SECONDS:g} s; "
+                                   "the import stops there")  # fmt: skip
+
     config: Any = None  # the stand-in's ``config`` (its ``frame_rate``)
     sounds: int = 0
 
@@ -3043,12 +3085,12 @@ class _Context:
         elif rate in _EASE:
             self.ops.append(_seg(path, t0, round(t0 + d, 9), value, _EASE[rate]))
         elif _same_shape(start, value):
-            for k in range(1, RATE_PIECES + 1):
-                u = k / RATE_PIECES
+            before = 0.0
+            for u in _knots(rate):
                 v = _lerp(start, value, _rate(rate, u))
-                a, b = round(t0 + d * (k - 1) / RATE_PIECES, 9), round(t0 + d * u, 9)
+                a, b = round(t0 + d * before, 9), round(t0 + d * u, 9)
                 self.ops.append(_seg(path, a, b, v, "linear"))
-                end = v
+                end, before = v, u
         elif start is not None and _rate(rate, 1.0) < 0.5:  # a color there and back
             mid = round(t0 + d / 2, 9)
             self.ops.append(_seg(path, t0, mid, value, "sigmoid"))
@@ -3115,14 +3157,18 @@ class _Context:
     def sweep(self, leaves: list[Mobject], at: Callable[[float], list[Mobject]], t0: float,
               d: float, rate: Any) -> None:  # fmt: skip
         """Leaves along a path that is not a straight line in their parameters (a rotation):
-        keyed ``RATE_PIECES`` times."""
+        keyed ``RATE_PIECES`` times (and where a rate function phasor has no name for
+        needs it, ``_knots``)."""
         prev = [leaf.copy() for leaf in leaves]
-        for k in range(1, RATE_PIECES + 1):
-            u0, u1 = (k - 1) / RATE_PIECES, k / RATE_PIECES
+        steps = {k / RATE_PIECES for k in range(1, RATE_PIECES + 1)}
+        if rate not in _EASE:
+            steps |= set(_knots(rate))
+        u0 = 0.0
+        for u1 in sorted(steps):
             goals = at(_rate(rate, u1))
             for leaf, p, g in zip(leaves, prev, goals, strict=True):
-                self.move(leaf, p, g, t0 + d * u0, d / RATE_PIECES, linear)
-            prev = goals
+                self.move(leaf, p, g, t0 + d * u0, d * (u1 - u0), linear)
+            prev, u0 = goals, u1
         for leaf, g in zip(leaves, prev, strict=True):
             if leaf.alias is None:
                 leaf._take(g)
@@ -3324,6 +3370,7 @@ class Scene:
     def play(self, *args: Any, run_time: float | None = None, rate_func: Any = None,
              lag_ratio: float | None = None, **kw: Any) -> None:  # fmt: skip
         c = self._c
+        c.tick()
         built = [_as_animation(a) for a in args]
         if not built:  # Manim refuses it; it imported before: nothing happens
             c.warn("play() with no animation does nothing")
@@ -3566,8 +3613,16 @@ class Scene:
         start = c.t + _num(time_offset, "time_offset")
         params: dict[str, Any] = {"path": rel, "start": min(max(round(start, 6), 0.0),
                                                             media.MAX_START)}  # fmt: skip
+        if params["start"] != round(start, 6):
+            c.warn(f"add_sound({sound_file!r}): it would start at {start:g} s; it starts at "
+                   f"{params['start']:g} s (0 to {media.MAX_START:g})")  # fmt: skip
         if gain is not None:
-            params["gain"] = min(max(_num(gain, "gain"), media.MIN_GAIN), media.MAX_GAIN)
+            asked = _num(gain, "gain")
+            params["gain"] = min(max(asked, media.MIN_GAIN), media.MAX_GAIN)
+            if params["gain"] != asked:
+                c.warn(f"add_sound({sound_file!r}): gain {asked:g} dB is played at "
+                       f"{params['gain']:g} dB ({media.MIN_GAIN:g} to "
+                       f"{media.MAX_GAIN:g})")  # fmt: skip
         c.sounds += 1
         doc = c.scene.engine.document
         taken = {o.id for o in doc.objects} | set(doc.retired_ids) | c.taken
@@ -3576,7 +3631,8 @@ class Scene:
         try:
             c.add(media.Sound(id=ident, **params))
         except (ValidationError, DocumentError) as e:
-            c.warn(f"add_sound({sound_file!r}) is left out: {_validation_message(e)}")
+            why = _validation_message(e) if isinstance(e, ValidationError) else str(e)
+            c.warn(f"add_sound({sound_file!r}) is left out: {why}")
 
     def add_subcaption(self, *a: Any, **k: Any) -> None:
         return None
@@ -3601,6 +3657,8 @@ def _budget() -> str:
 def _stopped(stop: Callable[[], Any]) -> bool:
     """Whether a ``wait_until`` condition holds now; one that fails is a clean error, as a
     failing updater is (Manim stops with the error too)."""
+    if _CTX is not None:
+        _CTX.tick()
     try:
         return bool(stop())
     except ManimImportError:
@@ -3673,7 +3731,9 @@ _NOT_MANIM = ("ManimImport", "ManimImportError", "Path", "PhasorScene", "Documen
               "ValidationError", "DocumentError", "Any", "Callable", "Sequence", "TEXT_ROLES",
               "FONT_UNIT", "STROKE_UNIT", "UPDATE_RATE", "MAX_FRAMES", "MAX_KEY_NUMBERS",
               "KEY_TOLERANCE",
-              "RATE_PIECES", "SAMPLES", "MAX_SIZE")  # fmt: skip
+              "RATE_PIECES", "RATE_TOLERANCE", "MAX_RATE_PIECES", "MAX_UPDATE_RATE",
+              "MIN_UPDATE_RATE", "MAX_UPDATER_CALLS", "MAX_IMPORT_SECONDS", "SAMPLES",
+              "MAX_SIZE")  # fmt: skip
 
 
 def _module() -> types.ModuleType:
@@ -3760,6 +3820,9 @@ def import_manim(path: str | Path, scene: str | None = None) -> ManimImport:
         raise ManimImportError(f"{path.name}{_where(e, path)}: {e}") from None
     except (NameError, AttributeError, KeyboardInterrupt, MemoryError):
         raise
+    except SystemExit as e:  # exit() in the script or an updater: said, the caller goes on
+        raise ManimImportError(f"{path.name}: the script called exit({e.code!r})"
+                               f"{_where(e, path)}") from None  # fmt: skip
     except Exception as e:  # the script's own error: said, with where, not a traceback
         raise ManimImportError(
             f"{path.name}: the script failed: {type(e).__name__}: {e}{_where(e, path)}"

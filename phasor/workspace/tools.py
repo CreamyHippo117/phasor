@@ -215,6 +215,8 @@ class Workspace:
             raise ToolError(str(e), e.issues) from e
         except (KeyError, ValueError, OSError) as e:
             raise ToolError(str(e.args[0]) if isinstance(e, KeyError) and e.args else str(e)) from e
+        except SystemExit as e:  # a scene script that calls exit(): the server goes on
+            raise ToolError(f"the script called exit({e.code!r})") from None
 
     def summary(self) -> dict[str, Any]:
         e = self.engine

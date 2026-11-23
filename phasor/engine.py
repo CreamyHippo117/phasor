@@ -408,9 +408,16 @@ class Engine:
                     )
                 except ValueError:
                     continue
-                if src.is_file() and src.resolve() != dst.resolve():
-                    dst.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(src, dst)
+                if not src.is_file() or src.resolve() == dst.resolve():
+                    continue
+                # never write through a link: a symlink at the destination (or a linked
+                # folder on the way) could point anywhere; the file is left behind (lint
+                # missing_file says so where the scene is opened)
+                inside, parent = folder.resolve(), dst.parent.resolve()
+                if dst.is_symlink() or (parent != inside and inside not in parent.parents):
+                    continue
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
 
     # ------------------------------------------------------------ read
 
