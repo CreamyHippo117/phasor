@@ -555,3 +555,14 @@ def test_example_golden_storyboards(name, times):
     e = _example(name)
     sheet = e.storyboard(times, size=(320, 180))["image"]
     _golden(name, sheet, e.pass_runner().renderer_class())
+
+
+def test_doctor_names_a_missing_extra_without_failing(monkeypatch):
+    import sys
+
+    from phasor.render.doctor import check_extras
+
+    assert check_extras().ok in (True, None)
+    monkeypatch.setitem(sys.modules, "svgelements", None)
+    c = check_extras()
+    assert c.ok is None and "--extra svg" in c.detail

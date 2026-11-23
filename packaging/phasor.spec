@@ -1,5 +1,5 @@
 # PyInstaller recipe for the phasor desktop app (see packaging/README.md).
-#   uv sync --extra gl --extra encode --extra gui --extra mcp --group package
+#   uv sync --extra gl --extra encode --extra gui --extra mcp --extra boolean --extra svg --group package
 #   uv run pyinstaller packaging/phasor.spec --noconfirm
 # Output: dist/phasor/ (a folder app; on macOS also dist/phasor.app).
 # Build on each platform for that platform: PyInstaller does not cross-compile.
@@ -21,7 +21,7 @@ datas += [(str(ROOT / "docs" / "ai"), "phasor/_docs/docs/ai"),
           (str(ROOT / "kit"), "phasor/_docs/kit"),  # the AI kit (phasor kit)
           (str(ROOT / "skills"), "phasor/_docs/skills"),
           (str(ROOT / "STYLE.md"), "phasor/_docs")]
-hidden = collect_submodules("phasor") + ["moderngl", "glcontext", "av", "kiwisolver"]
+hidden = collect_submodules("phasor") + ["moderngl", "glcontext", "av", "kiwisolver", "mapbox_earcut"]
 binaries = []
 excludes = ["cupy", "tkinter", "IPython", "ipywidgets", "notebook", "pytest"]
 # PHASOR_PACKAGE_GPU=1 bundles CuPy and the CUDA libraries it needs (NVIDIA machines; about

@@ -49,7 +49,9 @@ Every type also has `opacity` (0-1; below 0.5 it stops hiding things behind it),
 
 Roles: emphasis `primary secondary muted highlight danger`; stroke `hairline regular bold`;
 text `title label annotation math`; glow `none soft strong`; colormap `phase sequential`;
-surface `solid glass wire emissive` (3D materials; glass is see-through and hides nothing).
+surface `solid glass wire emissive` (3D materials; glass is see-through and hides nothing);
+fill `none soft solid` (a closed path's fill opacity, from the theme); dash `solid dashed
+dotted` (how a path's stroke is cut).
 
 `cx` objects are rectangles of the complex plane drawn by GPU kernels: world x is Re z and
 world y is Im z, so the camera zooms into them like into anything else. They are
@@ -516,6 +518,8 @@ Each issue has `code`, `severity`, `message`, `ids`, `times`, `fix_hint`, and `f
 | `raw_motion` | warning, strict only | a transition written with raw `to()` instead of a verb |
 | `orphan_override` | error | a tweak whose object is gone |
 | `missing_file` | warning | a file an object reads (a room's `.obj`) is not in the scene's folder; it draws nothing |
+| `missing_extra` | warning | an object needs an optional package that is not installed (`SVG` needs the `svg` extra); it draws nothing |
+| `fill_crossing` | warning | a filled path whose edges cross: the fill may not follow its rule |
 
 `engine.autofix()` applies every `fix` the linter offers (add `near` for a child label that
 overlaps, `on_screen` for something cut by the frame), lints again, and returns
@@ -1147,6 +1151,101 @@ g.add(
 )
 sem = g.engine.inspect(0, id="tree")["objects"][0]["semantic"]
 assert (sem["nodes"], sem["edges"], sem["depth"]) == (63, 62, 5)
+```
+
+## Paths, fills and shapes (`shapes`)
+
+`from phasor import shapes`. Every outline is a **`shapes.Path`**: subpaths of cubic Béziers
+(each subpath is an anchor, then handle, handle, anchor per cubic; closed when it ends where
+it began), drawn with a **fill** and a **stroke**. Curves are flattened by their size on
+screen, so they stay smooth at any zoom. The shapes below are paths with their own
+parameters; they all lie in the plane z = `pos.z` (the screen in 2D). Angles in degrees,
+counterclockwise.
+
+| Type | Parameters | Semantics (`kind`, besides `length`, `area`, `closed`, `subpaths`, `rule`, `fill`, `dash`) |
+| --- | --- | --- |
+| `shapes.Path` | `subpaths`, `rule` (`nonzero`/`evenodd`), `tips` (`none`/`start`/`end`/`both`: arrow tips on the open ends); `Path.through(id, points, closed=False)` builds one of straight segments | `path` |
+| `shapes.Circle` | `pos`, `r` | `circle`: `center`, `radius` |
+| `shapes.Ellipse` | `pos`, `width`, `height`, `rotation` | `ellipse` |
+| `shapes.Arc` | `pos`, `r`, `start`, `angle` (negative: clockwise), `tips` | `arc` (open: no area) |
+| `shapes.Sector` | `pos`, `r`, `start`, `angle`, `inner` (> 0: a slice of a ring) | `sector` |
+| `shapes.Annulus` | `pos`, `outer`, `inner` | `annulus` (a fill with a hole) |
+| `shapes.Polygon` (type `polygon_path`) | `vertices` (3 or more, in order) | `polygon`; feature `vertices` |
+| `shapes.RegularPolygon` | `n`, `pos`, `r` (circumradius), `rotation` (first vertex at the top) | `polygon`: `side`; feature `vertices` |
+| `shapes.Rectangle` | `pos`, `width`, `height`, `corner_radius`, `rotation` | `rectangle`; feature `vertices` |
+| `shapes.Brace` | `start`, `end`, `depth` (left to right it points down) | `brace`: `tip`; feature `tip` (put a label there) |
+| `shapes.SVG` | `path` (an .svg file in the scene's folder), `pos` (middle of its view box), `height` | `svg`: `parts` |
+
+Every path and shape also has `progress` (the drawn share of the stroke: `trace` draws it
+in and fades its fill in with it), `fill_opacity` and `stroke_opacity` (0-1, times the
+role's; `stroke_opacity=0` is a fill with no outline). Style keys: `color` (emphasis,
+primary), `stroke` (stroke, regular; `Brace`: bold), `glow` (glow, none), `fill` (fill,
+none; `SVG`: solid), `fill_color` (emphasis, primary), `dash` (dash, solid). Presets
+`outline`, `filled`, `solid`, `glowing`, `dashed`.
+
+- **Fills** are plain paint: they never glow, and a color below the theme's bloom knee comes
+  out exactly as written. `rule="evenodd"`: every nested subpath flips inside and outside;
+  `nonzero`: a subpath that runs the other way is a hole. A filled path whose edges cross
+  is lint `fill_crossing` (split it, or use a boolean `union`).
+- **Dashes** are cut by arc length from each subpath's start, so they stay where they are
+  while a path is traced or grows. `dotted` draws round dots.
+- **Boolean operations**: `shapes.union(a, b, id=...)`, `intersection`, `difference`,
+  `exclusion` take two shapes or paths (not yet in a scene, or already added) and return a
+  new `Path` of straight segments, measured once when called; it takes `a`'s style unless
+  given one. They need the `boolean` extra (shapely): without it they raise an error that
+  says how to install it.
+- **`SVG`**: each shape of the file becomes a part `<id>.<name>`, named from its `id`
+  attribute (lower case, other characters `_`; one without an id by its kind, `circle`,
+  `circle_2`). Filled shapes are filled with `fill_color`, stroked ones stroked; the file's
+  own colors are not used. Text, pictures and external references are ignored. The file is
+  read again when it changes. A missing file is lint `missing_file`; without the `svg`
+  extra (svgelements) it is lint `missing_extra`; either way it draws nothing.
+- A `Tracer` can travel along any path or shape.
+
+```python
+import math
+
+from phasor import Scene, Text, shapes
+from phasor.domains import path_math as pm
+
+s = Scene("shapes_demo", passes=None)
+s.add(shapes.Circle(id="disc", r=1.2, style={"fill": "soft", "glow": "soft"}))
+s.add(shapes.Rectangle(id="card", pos=(3.5, 0), width=2.5, height=1.5, corner_radius=0.3,
+                       style={"dash": "dashed"}))
+s.add(shapes.Arc(id="swing", pos=(-3.5, 0), r=1.0, start=0, angle=200, tips="end"))
+s.add(shapes.Brace(id="span", start=(-1.2, -1.5), end=(1.2, -1.5)))
+s.add(Text(id="span.label", text="2.4"))
+s.constrain("label(span) below span")
+# path_math builds subpaths (circle, arc, rectangle, sector, brace, polyline, ...)
+outer, inner = pm.circle((0, 2.6, 0), 0.6), pm.circle((0, 2.6, 0), 0.3)
+s.add(shapes.Path(id="ring", rule="evenodd", style={"fill": "solid"},
+                  subpaths=[outer.tolist(), inner.tolist()]))
+s.at(0.2).trace("disc", "swing")
+e = s.engine
+seen = {o["id"]: o["semantic"] for o in e.inspect(2.0)["objects"]}
+assert seen["disc"]["kind"] == "circle" and abs(seen["disc"]["area"] - math.pi * 1.44) < 1e-3
+assert abs(seen["ring"]["area"] - math.pi * (0.36 - 0.09)) < 1e-3  # even-odd: a hole
+assert seen["swing"]["tips"] == "end" and "area" not in seen["swing"]
+assert e.lint() == []
+```
+
+```python
+from phasor import Scene, shapes
+
+b = Scene("booleans", passes=None)
+left = shapes.Circle(id="left", pos=(-0.5, 0), style={"fill": "soft"})
+right = shapes.Circle(id="right", pos=(0.5, 0))
+b.add(shapes.intersection(left, right, id="lens"))  # needs the boolean extra (shapely)
+b.add(shapes.exclusion(left, right, id="moon"))
+seen = {o["id"]: o["semantic"] for o in b.engine.inspect(0)["objects"]}
+assert seen["lens"]["area"] < 1.3 < seen["moon"]["area"]
+```
+
+```python no-run
+# needs a file: an .svg next to the scene (examples/vector_toolkit.py runs this)
+s.add(shapes.SVG(id="emblem", path="assets/emblem.svg", pos=(0, -2), height=3,
+                 style={"fill": "soft", "fill_color": "highlight"}))
+# parts: emblem.ring, emblem.star, emblem.badge_1, emblem.wave
 ```
 
 ## Space: axes, curves, surfaces and fields (`geo`)
