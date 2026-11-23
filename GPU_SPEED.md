@@ -260,10 +260,7 @@ Measured first (all examples; `load` = running the scene script, incl. its bakes
 - 19 of 22 examples load in under 0.25 s. Slow: `residue_theorem` 17.8 s (9 layout bakes of
   about 3.6 s each, one per verb that reads `state_at`), `motion_gallery` 6.7 s + 2.4 s first
   state, `prism_primes` 3.9 s (6.7 s of a profile in mpmath's `zetazero`).
-- **Frame reuse is dead.** Idea: skip drawing a frame identical to the last. Hit rate over every
-  example at its fps: **0 %** everywhere (life makes every glow breathe; no scene is ever
-  still). Not built. It would only pay in a draft that freezes life, and freezing life moves
-  baked label slots (they are measured against the wiggling anchor).
+- Frame reuse (skipping a frame identical to the last): dropped, 0 % of frames repeat (life).
 - `run_doctor()` ran on every render (0.3 s here; on CUDA it also compiles a kernel).
 
 Done, each bit-identical (finals pinned: `pc_tasks/pin_frames.py`, prism_primes, motion_gallery,
