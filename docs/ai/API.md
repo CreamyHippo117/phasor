@@ -36,6 +36,7 @@ s.set("camera.height", 6)  # world units visible top to bottom
 | `cx.Fractal` | `kind` (`mandelbrot`/`julia`), `c` (Julia constant), `pos`, `size`, `max_iter`, `density`, `hue`, `center` (exact text `"re im"`), `zoom` (powers of ten, to 280), `steady` (hold the outer color in a dive); the prism look: `radius` (> 0 turns it on: the edge of the set glows this far, in world units of the rectangle), `ambient` (0-1, light far from the edge); the cloud mode `kind="buddhabrot"`: `count`, `seed`, `exposure`, `point_size`, `white` (as `cloud.PointCloud`; `max_iter` at most 5000) | `colormap` (colormap, sequential), `glow` (glow, none; used by the prism look and the cloud mode) |
 | `cx.RiemannSurface` | `kind` (`sqrt`/`cbrt`/`log`), `pos` (branch point), `radius`, `height` (`re`/`im`), `scale`, `rings`, `segments` | `colormap` (colormap, phase), `material` (surface, solid) |
 | `cloud.PointCloud` | `source` (`roots`/`attractor`/`buddhabrot`/`points`), `degree` and `coefficients` (roots), `kind` (`clifford`/`dejong`/`lorenz`) and `constants` (attractor), `max_iter` (buddhabrot), `points` and `values` (given directly), `count` (at most), `seed`, `pos` (centre and origin of the points), `size` (the rectangle it is seen in), `scale`, `point_size` (splat radius, px), `exposure`, `hue`, `color_by` (`source`/`phase`), `twist` (roots: turns of the last coefficient, animatable), `twinkle` (0-1, life), `white` (0-1, white-hot dense parts) | `colormap` (colormap, spectrum), `glow` (glow, none) |
+| `cloud.PointCloud` (`source="bifurcation"`) | `map` (`logistic`/`sine`/a formula in `r` and `x`), `r_range` and `x_range` (the window: r across the rectangle, x up it), `r_focus`, `x_focus` and `focus` (0-1, animatable: a geometric zoom of the window to the focus), `x0`, `n_iter`, `n_keep` (the last iterates drawn), `sweep` (0-1: share drawn from the left), and the cloud's `pos`, `size`, `point_size`, `exposure`, `hue`, `twinkle`, `white`; preset `prism_bifurcation` | `colormap` (colormap, spectrum), `glow` (glow, none) |
 
 | `Value` | `value` (a named number to animate; nothing is drawn: see "Your own types") | none |
 | `Image` | `path` (a PNG/JPEG/WebP file, relative to the scene's folder), `pos` (centre), `width`, `height` (0: keep the picture's shape), `frame` (an outline of light) | `glow` (glow, none: bright parts shine), `frame` (emphasis, muted), `stroke` (stroke, hairline). Presets `plain`, `framed`, `luminous`. A missing file is issue `missing_file`; transparent parts show the background; an AI may only name files inside its folder |
@@ -1787,4 +1788,44 @@ s.add(
 )
 sem = s.engine.inspect(0.0, id="b")["objects"][0]["semantic"]
 assert sem["set"] == "buddhabrot" and sem["points"] == 50_000 and sem["in_rectangle"] > 40_000
+```
+
+**Bifurcation diagram** (`cloud.PointCloud(source="bifurcation")`, ANIMATIONS.md D3). The
+orbit of `x0` under x -> `map`(r, x) (`logistic` r x (1 - x), `sine` r sin(pi x), or any
+formula in `r` and `x`, read by the same whitelist parser as functions elsewhere) runs
+`n_iter` steps for each r, and its last `n_keep` iterates are splatted as points of light:
+cycles burn as bright branches, chaos smears into a haze. Colour is the column's Lyapunov
+exponent (cycles one hue, chaos another). The window `r_range` x `x_range` fills the `size`
+rectangle. The columns of r are computed for the view, on a lattice fixed in r, about a pixel
+apart at any zoom (`count` is not used); new columns fade in between the old ones as a zoom
+goes on, and an old column's points never change, so a zoom does not shimmer. Zoomed in on x,
+a column shows up to four times `n_keep` iterates. Two ways to zoom: the camera (the same
+factor in r and x), or `focus` 0 -> 1, which zooms the window geometrically to
+`r_focus` x `x_focus` (different factors in r and x, e.g. into the window of period three).
+At `focus` 0 the focus may change unseen, so one object can zoom into several places in turn.
+`sweep` 0 -> 1 draws the diagram from the left. Use `preset="prism_bifurcation"` (more light
+per point than a cloud, a little white). The maths: `cloud_math.bifurcation(map, r0, r1, n_r,
+n_iter, n_keep)` returns the points r + i x and their colour values; `cloud_math.orbits`,
+`lyapunov` and `zoom_window` are the parts. Example: `examples/bifurcation.py`.
+
+```python
+import math
+
+from phasor import Scene, cloud
+from phasor.domains import cloud_math as clm
+
+pts, value = clm.bifurcation("logistic", 3.2, 3.2, 1, 2000, 8)  # one r: a 2-cycle
+assert len(set(round(x, 6) for x in pts.imag)) == 2
+pts, value = clm.bifurcation("r*x*(1 - x)", 1 + math.sqrt(8) + 0.004, 4.0, 1, 2000, 9)
+assert len(set(round(x, 6) for x in pts.imag)) == 3  # the window of period three
+
+s = Scene("logistic", look="prism", passes=None)
+s.add(cloud.PointCloud(id="diagram", preset="prism_bifurcation", r_range=(2.8, 4.0),
+                       x_range=(0.0, 1.0), size=(7.6, 4.1), sweep=0.0,
+                       r_focus=(3.822, 3.862)))  # fmt: skip
+s.at(0.3).to("diagram.sweep", 1.0, duration=4.0)  # r runs in from the left
+s.at(5.0).to("diagram.focus", 1.0, duration=5.0)  # then the window zooms in on r
+sem = s.engine.inspect(10.0, id="diagram")["objects"][0]["semantic"]
+assert sem["source"] == "bifurcation" and sem["window"]["r"] == [3.822, 3.862]
+assert sem["points"] > 100_000
 ```

@@ -83,7 +83,7 @@
 - `pde_surface`: flash, kind, time, pos, size, n, diffusivity, speed, mode, feed, kill, seed, scale, height, hue_cycles, hue, contrast, lines
 - `permutation`: flash, perm, pos, spacing, progress
 - `phase_portrait`: flash, f, g, constants, pos, extent, seeds, n_seeds, t_end, steps, progress, backward, flow, flow_spacing, nullclines, hue_cycles, seed
-- `point_cloud`: flash, source, degree, coefficients, kind, constants, max_iter, points, values, count, seed, pos, size, scale, point_size, exposure, hue, color_by, twist, twinkle, white
+- `point_cloud`: flash, source, degree, coefficients, kind, constants, max_iter, points, values, count, seed, pos, size, scale, point_size, exposure, hue, color_by, twist, twinkle, white, map, r_range, x_range, r_focus, x_focus, focus, x0, n_iter, n_keep, sweep
 - `pole_zero`: flash, kind, order, cutoff, cutoff2, fs, radius, zeros, poles, gain, pos, size, scale, probe
 - `polygon`: flash, n, pos, r, rotation, flip, fill
 - `pressure_slice`: flash, smooth, isolines, hue_cycles, hue, fade, ambient, contrast, size, origin, source, z, time, dx, material, absorption, frequency, gain, seed

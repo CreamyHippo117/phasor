@@ -206,3 +206,8 @@ teaches = "The Lorenz attractor traced in 3D with hue along time as the camera c
 kind = "fractals"
 tier = "technique"
 teaches = "The Buddhabrot, cx.Fractal's cloud mode: millions of escaping orbits splatted as glowing light, coloured by escape time, a slow camera drift"
+
+[examples.bifurcation]
+kind = "physics"
+tier = "technique"
+teaches = "The logistic map's bifurcation diagram as a glowing point cloud: a sweep in from the left, a focus zoom into the period doublings, then into the window of period three"

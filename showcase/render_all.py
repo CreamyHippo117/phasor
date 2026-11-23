@@ -63,6 +63,10 @@ SCENES = [
     ("doppler", "wavefront compression, the sonic pileup, and the Mach cone"),
     ("room_3d", "a 3D room with sound bouncing in it: rays and fronts reflecting off the walls"),
     ("buddhabrot", "the Buddhabrot: eight million escaping orbits glowing like a nebula"),
+    (
+        "bifurcation",
+        "the logistic map doubling into chaos as glowing points; zooms into period three",
+    ),
 ]
 
 

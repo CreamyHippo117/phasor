@@ -7,11 +7,16 @@ generator handed in, which the object makes with ``rng(object_id, seed)`` (contr
 
 from __future__ import annotations
 
+import functools
 import os
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
+import sympy as sp
 from numpy.random import Generator  # the type only; generators come from core.rng
+
+from phasor.render.gpu.codegen import FunctionError, parse_expression
 
 ROOT_CHUNK = 2048  # polynomials per batched eigenvalue solve (one thread's share)
 # LAPACK lets go of the GIL, so the chunks solve side by side: a million complex roots
@@ -227,3 +232,133 @@ def buddhabrot(
 def every_polynomial_count(degree: int, coefficients: tuple[float, ...]) -> int:
     """How many polynomials ``polynomial_roots`` enumerates (before any sampling)."""
     return len(coefficients) ** degree
+
+
+# ---------------------------------------------------------------- bifurcation diagrams
+
+MAPS = {  # named one-parameter maps x -> f(r, x)
+    "logistic": "r*x*(1 - x)",
+    "sine": "r*sin(pi*x)",
+}
+ESCAPE = 1e6  # an orbit past this size has left for infinity: its points are dropped
+# colour: the Lyapunov exponent lambda of each r, squashed into [0, VALUE_SPAN) of the palette,
+# so order (lambda < 0) and chaos (lambda > 0) take hues apart and never meet round the wheel
+LYAPUNOV_SCALE = 0.25
+VALUE_SPAN = 0.6
+
+
+@functools.lru_cache(maxsize=32)
+def map_function(map: str) -> tuple[Callable, Callable]:
+    """``(f, df/dx)`` for a one-parameter map: a name from ``MAPS`` or a formula in ``r``
+    and ``x`` (read by the whitelist parser, never evaluated as Python). Both take arrays
+    ``(r, x)`` and broadcast them."""
+    src = MAPS.get(map.strip(), map)
+    expr = parse_expression(src, ("r", "x"))
+    if expr.has(sp.I):
+        raise FunctionError(f"map {map!r} is complex; a bifurcation map takes real r and x")
+    r, x = sp.Symbol("r", real=True), sp.Symbol("x", real=True)
+
+    def wrap(e: sp.Expr) -> Callable:
+        fn = sp.lambdify((r, x), e, "numpy")
+
+        def call(rr, xx):
+            with np.errstate(all="ignore"):
+                out = np.asarray(fn(rr, xx), dtype=np.float64)
+            return np.broadcast_to(out, np.broadcast(rr, xx).shape)
+
+        return call
+
+    return wrap(expr), wrap(sp.diff(expr, x))
+
+
+def orbits(map: str, r, n: int, x0: float = 0.5, start: int = 0) -> np.ndarray:
+    """The orbit x_0 = ``x0``, x_(k+1) = f(r, x_k) for every value of ``r`` side by side:
+    ``(n + 1 - start, len(r))``, row k is x_(start + k) (the iterates before ``start`` are
+    run but not kept). An orbit that escapes (past ``ESCAPE``, or not a number) is nan from
+    there on. Each column is computed on its own, element by element, so a column's orbit
+    has the same bits whatever other columns run beside it."""
+    if not 0 <= start <= n:
+        raise ValueError(f"start must be 0 to n ({n}), got {start}")
+    f, _ = map_function(map)
+    r = np.ascontiguousarray(r, dtype=np.float64).reshape(-1)
+    out = np.empty((n + 1 - start, len(r)))
+    x = np.full(len(r), float(x0))
+    if start == 0:
+        out[0] = x
+    for k in range(1, n + 1):
+        x = f(r, x)
+        with np.errstate(invalid="ignore"):
+            x = np.where(np.abs(x) <= ESCAPE, x, np.nan)
+        if k >= start:
+            out[k - start] = x
+    return out
+
+
+def lyapunov(map: str, r, xs: np.ndarray) -> np.ndarray:
+    """The Lyapunov exponent of each column: the mean of log |f'(r, x)| over the iterates
+    ``xs`` (rows, one column per r). Negative where the orbit settles on a cycle, positive
+    in chaos (log 2 for the logistic map at r = 4); nan where the orbit escaped."""
+    _, df = map_function(map)
+    r = np.asarray(r, dtype=np.float64).reshape(-1)
+    with np.errstate(all="ignore"):
+        d = np.abs(df(r[None, :], xs))
+        return np.log(np.maximum(d, 1e-12)).mean(axis=0)
+
+
+def lyapunov_value(lam: np.ndarray) -> np.ndarray:
+    """A colour value in [0, ``VALUE_SPAN``) from a Lyapunov exponent: order low, chaos high,
+    the edge of chaos (lambda = 0) in the middle."""
+    return VALUE_SPAN * 0.5 * (1.0 + np.tanh(np.asarray(lam, dtype=np.float64) / LYAPUNOV_SCALE))
+
+
+def bifurcation(
+    map: str = "logistic",
+    r0: float = 2.8,
+    r1: float = 4.0,
+    n_r: int = 1000,
+    n_iter: int = 600,
+    n_keep: int = 200,
+    x0: float = 0.5,
+) -> tuple[np.ndarray, np.ndarray]:
+    """The bifurcation diagram of x -> f(r, x) (``map``: ``logistic`` r x (1 - x), ``sine``
+    r sin(pi x), or a formula in r and x): for ``n_r`` values of r from ``r0`` to ``r1`` the
+    orbit of ``x0`` runs ``n_iter`` steps and its last ``n_keep`` iterates are kept. Returns
+    ``(points, value)``: points r + i x (Re is r, Im is x), column by column in iterate order,
+    escaped orbits dropped; value is the column's Lyapunov exponent as a colour
+    (``lyapunov_value``), so cycles and chaos take different hues."""
+    if not 1 <= n_keep <= n_iter:
+        raise ValueError(f"n_keep must be 1 to n_iter ({n_iter}), got {n_keep}")
+    if n_r < 1:
+        raise ValueError("n_r must be at least 1")
+    r = np.linspace(float(r0), float(r1), int(n_r))
+    xs = orbits(map, r, n_iter, x0, start=n_iter - n_keep + 1)  # the last n_keep iterates
+    value = np.broadcast_to(lyapunov_value(lyapunov(map, r, xs)), xs.shape)
+    pts = (r[None, :] + 1j * xs).T.reshape(-1)
+    value = value.T.reshape(-1)
+    ok = np.isfinite(pts) & np.isfinite(value)
+    return pts[ok], np.minimum(value[ok], VALUE_SPAN)
+
+
+def zoom_window(outer: tuple[float, float], inner: tuple[float, float], s: float):
+    """The window ``s`` of the way (0-1) on a zoom from ``outer`` to ``inner``: its width
+    changes geometrically (the same zoom factor every step, so it never rushes at the end)
+    and the point that both windows put at the same place stays there."""
+    a0, b0 = _pair(outer)
+    a1, b1 = _pair(inner)
+    if s <= 0:
+        return a0, b0
+    if s >= 1:
+        return a1, b1
+    w0, w1 = b0 - a0, b1 - a1
+    if abs(w0 - w1) <= 1e-12 * max(abs(w0), abs(w1)):  # the same size: slide across
+        a = a0 + (a1 - a0) * s
+        return a, a + w0
+    p = (a1 * b0 - a0 * b1) / (w0 - w1)  # the fixed point of the map outer -> inner
+    u = (p - a0) / w0  # its share across both windows
+    w = w0 * (w1 / w0) ** s
+    return p - u * w, p - u * w + w
+
+
+def _pair(pair) -> tuple[float, float]:
+    lo, hi = pair
+    return float(lo), float(hi)
