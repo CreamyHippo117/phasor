@@ -8,7 +8,8 @@ applied silently; old documents load unchanged** (`examples/own_colors.py`).
 
 Status: **built; focused gates green on Linux (see Verification)**. The full suite was not
 run (over an hour here). Contract audit by the authoring model, **not independent**.
-Untested on Windows, macOS and CUDA.
+Untested on Windows, macOS and CUDA. **Independent audit done 2026-11-23; its findings are
+fixed** (see "Audit" below).
 
 ## Built
 
@@ -54,8 +55,9 @@ Untested on Windows, macOS and CUDA.
    type of `style` widened and `meta.background` was added). Additive: old documents migrate
    by one `setdefault`.
 2. **`Overrides` stays version 1.** Its `styles` values widened; no field was added, so an
-   old overrides file reads the same. An older phasor reading a new overrides file with an
-   explicit value fails with a validation error, not a version message.
+   old overrides file reads the same. An older phasor reading a new overrides file with a
+   hex color fails with `bad_role` (its schema took any string as a role name), not with a
+   validation error or a version message.
 3. **`set_style` keeps its field name `role`** for an explicit value too (one op, one field;
    the document's `style` mixes them the same way). A separate `value` field would have been
    a second way to do one thing.
@@ -81,12 +83,44 @@ Untested on Windows, macOS and CUDA.
     three tests that encoded the old roles-only rule fail; they pass from 5ee0bd7 / ff1942a
     on. Squash the series on merge.
 
+11. **The size bound lives in `core/schema.py`** (`MAX_SIZE`, 1e6 world units), not in
+    `style/explicit.py` as the audit suggested: the schema is the one check every write path
+    and `load_document` share, and `core` may not import `style`. `explicit.py` re-exports it.
+12. **A background with alpha below 1 is now refused** (it was accepted and drawn opaque). A
+    schema 9 document written on this branch before the audit with such a background no
+    longer loads; none was released.
+13. **Explicit sizes on an overlay-layer object are in frame heights** (the overlay camera's
+    `units_per_height` is 1), not world units; documented in API.md, MCP.md and
+    `style/explicit.py`.
+
+## Audit (independent, 2026-11-23): what was fixed
+
+| Finding | Fix | Guarding tests |
+| --- | --- | --- |
+| 1 (blocker) Manim scripts with `stroke_width=0`, `set_stroke(width=0)`, `font_size<=0`, `.scale(0)`, `.scale(-1)` died with a raw `ValidationError` | `importers/manim.py` `carried_size`: a size phasor cannot hold (<= 0, > `MAX_SIZE`) keeps the role, with a warning; a negative scale is a flip (`abs` for sizes, also a dot's radius); `text_role` no longer raises `StopIteration` below 0; any `ValidationError` / `DocumentError` while importing is a `ManimImportError` naming the object and key; `Workspace.scene_open` reports it as a `ToolError` | `test_manim_import.py`: `test_a_size_phasor_cannot_hold_is_dropped_with_a_warning` (6 cases), `test_a_negative_scale_is_a_flip_and_keeps_the_size_positive`, `test_any_invalid_value_surfaces_as_a_manim_import_error_naming_object_and_key`, `test_the_command_and_the_workspace_report_an_import_error_cleanly` |
+| 2 huge ints crashed with `OverflowError` | `core/schema.py` `_float` turns it into a `ValueError` (style, color tuples, background, files on disk) | `test_style_freedom.py`: `test_huge_numbers_are_refused_cleanly_on_every_path` (ObjectSpec, `Engine.apply`, `set_style`, MCP `scene_edit`), `test_huge_numbers_in_a_background_or_a_file_on_disk_are_validation_errors` |
+| 3 no upper bound on sizes (1e308 crashed `still()`) | `MAX_SIZE` = 1e6 world units (Deviation 11); API.md and MCP.md | the two tests above, `test_the_size_bound_is_finite_and_sizes_up_to_it_are_taken`, the importer's `scale_huge` case |
+| 4 GUI "apply look" overwrote typed values and switched the hue back on | `Look.defaults_for` (shared by `Look.fill` and `Editor.apply_look`) leaves out typed keys and the hue along a typed color; still one undo step | `test_gui_controller.py::test_a_look_never_replaces_a_typed_value` |
+| 5 background alpha accepted, then dropped | `Meta.background` refuses alpha < 1 (Deviation 12); the importer strips it with a warning; object colors keep their alpha | `test_a_background_is_opaque_and_alpha_below_one_is_refused` (Meta, Scene, `Engine.apply`, MCP), `test_a_background_with_alpha_imports_opaque_with_a_warning` |
+| 6 stale AI-facing text | `mcp/server.py` INSTRUCTIONS and `docs/ai/PITFALLS.md` (`bad_role`); the skill copy and `kit/CLAUDE.md` were already current; `llms.txt` regenerated (unchanged: it does not carry the instructions) | `test_mcp.py`, `test_docs.py` |
+| notes | Deviation 2 reworded; Deviation 13 (overlay units); `style_color` reuses the schema's `check_color`; the inspector uses `explicit.is_role`; `Workspace.polish` requires a real bool for `snap`; a direct palette test for the importer (the reverb golden does not guard colors) | `test_the_polish_tool_takes_snap_only_as_a_real_bool`, `test_manim_colors_import_as_these_values` |
+
+The audit's repro scripts were the failing evidence for findings 1-5; the importer and GUI
+tests were run red before their fixes, the schema tests for 2, 3 and 5 were written in the
+same session as the fix, just after it.
+
 ## Deferred
 
 - `Equation.colors` (a parameter of emphasis role names per term) stays roles only.
 - Explicit values for glow, surface and colormap keys (not in the plan).
 - Animating a style value (a color change is still instant; the importer still says so).
 - Milestone 20's remaining importer warnings (fills, updaters, ValueTracker, ...).
+- The field cache key in `render/passes.py` (~572) uses role names, not the resolved theme
+  values (predates Milestone 18; noted by the audit). Two themes giving one role different
+  values could share a cached field. Not fixed here: a render-layer change with no failing
+  case yet.
+- `importers/manim.py` `color_role` still reads hex itself (it needs a hue to pick the
+  nearest role); `style_color` (the explicit value) uses the schema's parser.
 
 ## Untested
 

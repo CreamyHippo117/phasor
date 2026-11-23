@@ -6,7 +6,9 @@ Known traps and how phasor reports them.
 
 `Engine.apply` is all-or-nothing. Always check `result.ok`; on failure read
 `result.errors[i].code` and `fix_hint`. Common codes: `unknown_id`, `unknown_param`,
-`bad_param`, `bad_role` (you passed a raw color or size instead of a role), `bad_expr`,
+`bad_param`, `bad_role` (an unknown role name, or an explicit value on a key that takes
+roles only: glow, surface and colormap keys; colors go on `emphasis` keys, sizes on text
+and stroke keys), `bad_expr`,
 `unknown_ref`, `cycle`, `track_on_expr`, `bad_segment` (overlapping or backwards),
 `unknown_marker`, `scripted_scene`.
 
