@@ -317,7 +317,8 @@ class Wavefront(ObjectBase):
 @register
 class ImageSources(ObjectBase):
     """Ghost speakers behind the walls: the image-source method made visible. Brightness
-    falls with each reflection."""
+    falls with each reflection. A backdrop: the dots are sparse, so labels may sit among them
+    (their bounding box spans the room and would otherwise cover every label slot)."""
 
     type: ClassVar[str] = "image_sources"
     Style: ClassVar = {"color": ("emphasis", "muted"), "glow": ("glow", "none")}
@@ -349,8 +350,8 @@ class ImageSources(ObjectBase):
     def semantics(self, state: SceneState) -> dict[str, Any]:
         im = self._images(state)
         p = self.me(state).params
-        return {"kind": "image_sources", "count": int(len(im["pos"]) - 1), "order": p.order,
-                "weakest_gain": round(float(im["gain"].min()), 4)}  # fmt: skip
+        return {"kind": "image_sources", "backdrop": True, "count": int(len(im["pos"]) - 1),
+                "order": p.order, "weakest_gain": round(float(im["gain"].min()), 4)}  # fmt: skip
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
         me = self.me(state)

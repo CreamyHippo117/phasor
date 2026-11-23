@@ -9,6 +9,7 @@ import pytest
 from phasor import Equation, Scene, Text
 from phasor.core import text as tm
 from phasor.core.texconv import join_latex, mathtext_losses, split_math, to_latex, to_mathtext
+from tests.conftest import gl_available
 
 SAMPLES = [
     r"$\tfrac{1}{2} \le x$",
@@ -101,4 +102,5 @@ def test_text_and_equation_report_their_latex():
     assert sem["half"]["latex"] == r"$\tfrac{1}{2} \le x$"
     assert sem["pct"]["latex"] == r"50\% of $2\pi$"
     assert sem["euler"]["latex"] == r"$e^{i\pi}+1=0$"
-    assert e.still(0.0, (160, 90)).shape[:2] == (90, 160)
+    if gl_available():  # the picture needs OpenGL; the inspector output above does not
+        assert e.still(0.0, (160, 90)).shape[:2] == (90, 160)
