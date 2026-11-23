@@ -849,7 +849,8 @@ def test_a_script_past_the_time_budget_is_a_clean_error(tmp_path, monkeypatch):
     updater call (a loop that never calls back cannot be stopped this way)."""
     from phasor.importers import manim as mi
 
-    monkeypatch.setattr(mi, "MAX_IMPORT_SECONDS", 0.0)
+    # negative, not 0: Windows' monotonic clock ticks in ~15 ms steps, so "elapsed > 0" can be False
+    monkeypatch.setattr(mi, "MAX_IMPORT_SECONDS", -1.0)
     p = script(tmp_path, """
 class S(Scene):
     def construct(self):
