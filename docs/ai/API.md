@@ -1258,3 +1258,54 @@ assert report.tier in {"A", "B", "C"}
 
 Tiers: **A** CUDA kernels and GL 4.3. **B** GL 4.3 only. **C** no usable GL: the inspector
 runs in analytic mode, stills are unavailable.
+
+## Filtering: poles and zeros, response, signal and spectrum
+
+`from phasor import filt`. One digital filter, shown four ways. Every object takes the same
+filter parameters: `kind` (`lowpass`, `highpass`, `bandpass`, `bandstop`: Butterworth, with the
+half-power frequency `cutoff` in Hz and, for the bands, `cutoff2`; `notch`: zeros on the unit
+circle at `cutoff`, poles at `radius` times them; `custom`: `zeros`, `poles` as (re, im) pairs
+in conjugate pairs, and `gain`), `order`, and the sample rate `fs`. A cutoff outside 0 to `fs / 2`
+is refused when the object is added.
+
+- `filt.transfer_plane(id, pos=, scale=, size=, **filter)`: the `cx.DomainColoring` of H(z),
+  placed so the z plane sits at `pos` with `scale` world units per unit of z. In the prism look
+  its zeros and poles glow with the phase wrapped round them.
+- `filt.PoleZero(pos=, scale=, size=, probe=, **filter)`: the unit circle, zeros (rings) and poles
+  (crosses) with their multiplicity. Give it the plane's `pos`, `scale`, `size` and a higher
+  `z_index`. `probe` (0 to 1, DC to half the sample rate) puts a bright point on the circle at
+  that frequency; sweep it together with the response's `reveal`. Semantics list zeros, poles
+  (with multiplicity), `stable` and the largest pole radius.
+- `filt.FrequencyResponse(plot="gain" | "phase", scale="db" | "linear", reveal=, pos=,
+  extent=, **filter)`: the gain (dB with a floor, or linear) or the unwrapped phase from DC to
+  half the sample rate, the cutoffs marked, traced as `reveal` goes 0 -> 1. Semantics give the
+  gain and phase at each cutoff (-3.01 dB at a Butterworth cutoff; -n pi / 4 radians for an
+  order-n low-pass).
+- `filt.FilteredSignal(frequencies=, amplitudes=, duration=, progress=, **filter)`: a sum of
+  sinusoids before (faint) and after (bright) the filter, run from rest so the start-up shows.
+- `filt.FilteredSpectrum(frequencies=, amplitudes=, window=, samples=, fade=, envelope=,
+  **filter)`: the spectrum of the same tones through a window (the one `fourier.Spectrum` draws),
+  what the filter keeps solid and what it removes on top in a second color; `fade` 0 -> 1 fades the
+  removed part out. Semantics: `removed_energy_share` and each tone's gain.
+
+```python
+from phasor import Scene, filt
+
+low = dict(kind="lowpass", order=4, cutoff=1000.0, fs=8000.0)
+s = Scene("low_pass", passes=None)
+s.add(filt.transfer_plane("plane", **low))
+s.add(filt.PoleZero(id="poles", z_index=1, **low))
+s.add(filt.FrequencyResponse(id="gain", pos=(0, -4), **low))
+s.add(filt.FilteredSpectrum(id="spec", frequencies=(300.0, 2800.0), amplitudes=(1.0, 1.0),
+                            pos=(0, 4), **low))  # fmt: skip
+e = s.engine
+sem = {o["id"]: o["semantic"] for o in e.inspect(0.0)["objects"]}
+assert sem["poles"]["zeros"] == [[-1.0, 0.0, 4]] and len(sem["poles"]["poles"]) == 4
+assert abs(sem["gain"]["gain_db_at_cutoff"][0] + 3.0103) < 1e-3
+assert sem["spec"]["tones"][0]["kept"] > 0.99 > 0.01 > sem["spec"]["tones"][1]["kept"]
+```
+
+Example: `examples/filtering.py` (the poles, a probe round the circle with the gain and phase
+traced, a signal going in and out, the removed band fading). Numerics are in
+`phasor/domains/filters_math.py` (Butterworth by the bilinear transform with the cutoff
+pre-warped; checked against `scipy.signal`).

@@ -28,6 +28,7 @@ _ALIAS = {
     "phasor.domains.network": "nw",
     "phasor.domains.dynamics": "dyn",
     "phasor.domains.convolution": "conv",
+    "phasor.domains.filters": "filt",
 }
 
 

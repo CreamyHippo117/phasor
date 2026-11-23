@@ -35,6 +35,9 @@ SCENES = [
     (
         "convolution",
         "live convolution: a kernel flipped and sliding, the overlap lit, the output traced",
+    (
+        "filtering",
+        "a low-pass filter: poles and zeros, gain and phase, a signal and its spectrum cut",
     ),
     ("residue_theorem", "a narrated short: the residue theorem, every motion on a spoken cue"),
     ("riemann_sqrt", "3D: the Riemann surface of sqrt(z), the camera orbits on its own"),

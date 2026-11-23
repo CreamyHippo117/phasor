@@ -123,3 +123,27 @@ dim = 0.92
 
 [defaults.convolution.style]
 glow = "strong"
+# filtering (ANIMATIONS.md S3): the plane's markers and the response curves glow, bars glow softly
+[defaults.pole_zero.params]
+dim = 0.9  # a little see-through, like the other prism types
+
+[defaults.pole_zero.style]
+glow = "strong"
+
+[defaults.frequency_response.params]
+dim = 0.9  # a little see-through, like the other prism types
+
+[defaults.frequency_response.style]
+glow = "strong"
+
+[defaults.filtered_signal.params]
+dim = 0.9  # a little see-through, like the other prism types
+
+[defaults.filtered_signal.style]
+glow = "strong"
+
+[defaults.filtered_spectrum.params]
+dim = 0.9  # a little see-through, like the other prism types
+
+[defaults.filtered_spectrum.style]
+glow = "soft"
