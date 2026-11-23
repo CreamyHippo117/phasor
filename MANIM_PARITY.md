@@ -268,6 +268,16 @@ too) and Windows machines whose driver lacks 4.3.
 2. Point 2 on Windows, for drivers without 4.1, as an opt-in through `glcontext.py`.
 3. Point 3 only if 1 and 2 both fail somewhere that matters.
 
+## Waiting for the owner (Milestone 15 audits)
+
+1. Imported code (a package, a test module, a notebook cell) is shared by the process and
+   usable by a document opened without `allow_scripts` (`MILESTONE_15.md` Deviation 13).
+2. A scene split across a sibling module (`from gemlib import Gem2` beside `scene.py`) counts
+   as imported code, so a later untrusted document naming `gemlib.py` uses the process's
+   class (contract 3); repro `pending/m15_s1_sibling_module/` (`MILESTONE_15.md` Deferred).
+3. How the desktop app offers `Editor.trust_scene_code()` for a document that names modules
+   (today: no button; lint `missing_type` names it) (`MILESTONE_15.md` Deviation 17).
+
 ## Status
 
 | Milestone | Status |

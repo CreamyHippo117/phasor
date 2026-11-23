@@ -5,7 +5,7 @@ Accepted by the owner on 2026-11-23 (`docs/decisions/0005-open-object-contract.m
 in about 10 lines (`draw` only); the inspector, layout, lint and storyboard all work on it,
 and an `always` updater keeps a label on a moving dot** (`examples/open_contract.py`).
 
-Status: **built; gates green on Linux (see Verification); independent audit done 2026-11-23, blockers fixed** (Deviations 11-15). Untested on Windows and CUDA.
+Status: **built; gates green on Linux (see Verification); independent audit done 2026-11-23, blockers fixed** (Deviations 11-15); **re-audit of the allow_scripts fix done the same day, its blocker fixed** (Deviations 17-19; one finding left to the owner, Deferred). Untested on Windows and CUDA.
 
 ## Built
 
@@ -169,14 +169,69 @@ Found by the independent audit (2026-11-23; repro scripts x1-x11), and how they 
     (`test_audit_only_plain_names_are_adopted_as_updaters`); looking up, loading and compiling
     a document's code holds a process lock (`engine._CODE_LOCK`) and the recording cache has
     its own.
+17. **Blocker (re-audit B1): opening a document in the desktop app ran the modules it names,
+    and an attached AI could make new code run.** `gui/window.make_workspace` turned
+    `allow_scripts` on for any path (Open dialog, recent scenes, examples, `phasor gui
+    x.phasor.json`), so a saved document's `meta.modules` ran on open and the open engine kept
+    the permission; with the person's plain document open, an AI attached through
+    `RemoteServer` sent `set_meta modules=["other.py"]` + `add_object` and `other.py` ran.
+    Now (conservative; the owner decides the UX later):
+    (a) `gui/controller.open_workspace` (which `make_workspace` forwards to) gives the
+    permission only to a `.py` the person opens (their own script); a `.phasor.json` opens with
+    `allow_scripts=False`: scene-local types are `missing_type` placeholders, and the
+    `missing_type` text names `Editor.trust_scene_code`. `Workspace._open(path,
+    allow_scripts=...)` takes the permission as an argument, so neither `make_workspace` nor
+    `Editor.run_code` raises the workspace's own `allow_scripts` any more (it stays `False` in
+    the app: an attached AI calling `scene_open` meanwhile could see it raised before).
+    (b) `RemoteServer` runs every call inside `Workspace._as_ai()` (a thread-local mark). Such
+    a call opens documents without their code (`scene_open`, `diff("saved")`), and
+    `scene_edit` refuses (`ToolError`, issue `scene_code`) any `set_meta modules` and any
+    updater (`always`) the document did not already have, checked on the document the engine
+    will edit before anything is built. The standalone `phasor mcp` (no GUI) is unchanged:
+    there the person chose with `--allow-scripts`. (c) `Editor.trust_scene_code()` (through
+    `Workspace._trust_code`, `Engine.fork(allow_scripts=True)`): the person lets the open
+    document's modules run; unsaved edits stay, undo starts again. Being underscore-named
+    (`Workspace`) or on `Editor`, neither is a remote tool. No button yet (owner).
+    Tests: `test_reaudit_b1_*` in `tests/test_open_contract.py` (r1, r3b and variants: a
+    trusted and an untrusted document, `set_meta` alone and with `add_object`, `{"ops":...}`,
+    a new `always`, remote `scene_open` of a JSON and of a `.py`, remote `trust_scene_code`/
+    `_trust_code`, `fork` of the open engine, `run_code` not raising the workspace's
+    permission, a `.py` the person opened staying tweak-only) and in `tests/test_desktop.py`
+    (Qt offscreen: command-line path, Open dialog, recent scenes, an example; the AI attached
+    to a real window). Marker files prove nothing ran.
+18. **A slider on a parameter a scene's own type leaves at its default** (re-audit S2):
+    `patch.param_value` looked the type up without the document's `CodeScope`, so
+    `s.control("b.r", ...)` was refused (`bad_control`), a document with that control got a
+    false `orphan_control`, and `Player(e)` and the editor's sliders raised `KeyError`. It now
+    takes the scope (`Engine.apply` passes its own; lint `c.scope`; `Player` and the editor
+    `engine.code_scope`). Where the type is missing (its code may not run), lint reports
+    `missing_type` only (no `orphan_control`), and `Player`/the editor leave that slider out
+    instead of raising. Test: `test_reaudit_s2_a_slider_on_a_scene_types_default_parameter`.
+19. **Derived features are all read-only** (re-audit note on x10): the stroke's
+    `start`/`end`/`curve` were read-only views of the shared recording, but `center` and the
+    compass points were fresh writeable arrays. Chosen: every derived feature is read-only
+    (nothing in phasor writes to one; the box's points are fresh arrays made read-only, the
+    stroke's are the recording's own). Test: `test_audit_x10_cached_geometry_is_read_only`.
 
 ## Deferred
 
 - `build()` purity is not checked (a composite whose parts differ for the same t is not
   caught the way `impure_updater` catches updaters).
-- `patch.param_value` (a control on a parameter the document leaves at its default) reads
-  the type's default from shipped and imported types only; for a scene's own type it does not
-  find the default (it has no engine, so no `CodeScope`).
+- **Owner decision (re-audit S1): a scene split across a sibling module.** A scene script
+  that imports a helper module beside it (`from gemlib import Gem2` next to `scene.py`, run
+  as `python scene.py`) registers `Gem2` as imported code (`objects.script_of`: the module
+  has a `__spec__`), so it is shared by the process. A document opened afterwards in the same
+  process with `allow_scripts=False` that names `gemlib.py` (absent from its own folder) and
+  type `gem2` gets the process's class: no `missing_type`, and its `draw` runs. Only the
+  person's own code runs (they imported it), but `state_at` then depends on what the process
+  imported, not only on the document and its folder (contract 3). Repro:
+  `pending/m15_s1_sibling_module/` (copied from the re-audit's `A2`). Options for the owner:
+  treat a module imported from the folder of a `__main__` script as that script's scene code
+  (keyed by its file, reachable only through `meta.modules`), or leave imported code shared.
+- Desktop UX for trusting a scene's code (Deviation 17): `Editor.trust_scene_code()` exists
+  but no button or prompt calls it yet; the owner decides how it is offered.
+- An attached AI is refused any change to `meta.modules`, even one back to what the person
+  had (it cannot tell); `undo`/`restore` may return to a state with modules the person set.
 - The registries are still process-wide dictionaries; reads of them are not locked (only
   loading and compiling is).
 - A changed `Files` file is drawn again by the recorder, but the engine's per-version state,
@@ -205,4 +260,8 @@ Found by the independent audit (2026-11-23; repro scripts x1-x11), and how they 
 
 - Windows and CUDA (nothing here touches the GPU path, but the renderer calls the wrapped
   `draw` on every frame there too).
+- Re-audit fixes (Deviations 17-19): Qt itself only on the `offscreen` platform here (no
+  real window, no person clicking the Open dialog); Windows and macOS path normalisation of
+  `open_workspace`'s `.py` check (the check is case-sensitive: a `SCENE.PY` is not run, it
+  fails to open as a document, the safe side) and of the attach handoff; CUDA.
 - Very large composites (hundreds of parts: each evaluation rebuilds them).
