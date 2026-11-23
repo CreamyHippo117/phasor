@@ -23,7 +23,12 @@ compounding. If this file and SPEC.md disagree, stop and ask.
   touches contract 2) accepted by the owner; phase 1 not started.
 - Manim parity, the whole CPU, and an open object contract: `MANIM_PARITY.md` (Milestones 14-20,
   owner 2026-11-23, answers recorded there); ADR 0005 accepted, plan approved, interleaved with
-  `BEAUTY.md`. 14 and 15 are independent; 16-19 wait for 15 to pass its gate.
+  `BEAUTY.md`. **14 (CPU kernels) and 15 (open contract) are built and merged** on
+  `claude/eloquent-mayer-jiqxs9` (`MILESTONE_14.md`, `MILESTONE_15.md`); both gates say NOT DONE
+  only because two prism goldens fail (also on the base commit; see `pending/` once written)
+  and the contract audits were by the authoring model. 16-19 wait for 15 to pass its gate; 20
+  last. Windows, CUDA and macOS untested: **`pc_tasks/09_pc_checks_after_14_15.md`** lists what
+  the owner's PC must run.
 - Render speed: `GPU_SPEED.md` (steps 1-4 done, workers included); resume at its "Next
   session"; measure with wall clock before and after each step.
 - One milestone per branch. No work on milestone N+1 until N's exit demo and tests pass.

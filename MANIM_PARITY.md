@@ -273,5 +273,5 @@ too) and Windows machines whose driver lacks 4.3.
 | Milestone | Status |
 | --- | --- |
 | 14 CPU | built 2026-11-23 (`MILESTONE_14.md`): 4.5x / 3.9x per frame on this 4-core box; the CUDA worker count waits for `pc_tasks/cpu_workers.md` |
-| 15 contract | ADR 0005 accepted; building |
+| 15 contract | built and merged 2026-11-23 (`MILESTONE_15.md`); gate NOT DONE: same two goldens, and the contract audit was not independent |
 | 16-20 | planned (16-19 wait for 15) |
