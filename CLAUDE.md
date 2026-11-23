@@ -147,7 +147,7 @@ compounding. If this file and SPEC.md disagree, stop and ask.
 ## Commands
 
 ```bash
-uv sync --extra gl --extra encode         # add --extra gpu on an NVIDIA machine
+uv sync --extra gl --extra encode --extra mcp --extra boolean --extra svg  # add --extra gpu on an NVIDIA machine
 uv run ruff check . && uv run ruff format --check .
 uv run lint-imports
 uv run pytest                             # gl/gpu tests skip themselves without hardware
