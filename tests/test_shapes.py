@@ -614,8 +614,8 @@ DOT = '<circle id="dot" cx="50" cy="50" r="20"/>'
 def _bump(f):
     import os
 
-    st = os.stat(f, follow_symlinks=False)
-    os.utime(f, ns=(st.st_atime_ns, st.st_mtime_ns + 10**9), follow_symlinks=False)
+    st = os.stat(f)  # regular files only (no follow_symlinks: Windows has none)
+    os.utime(f, ns=(st.st_atime_ns, st.st_mtime_ns + 10**9))
 
 
 def _svg_scene(tmp_path, text, **kw):
