@@ -246,4 +246,5 @@ hue_along = 1.0
 [defaults.winding.style]
 
 [defaults.directivity.style]
+[defaults.doppler.style]
 glow = "strong"

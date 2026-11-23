@@ -29,6 +29,7 @@ render only those: `uv run python showcase/render_all.py prism_primes deep_zoom`
 | `heat_dihedral` | the heat equation and the dihedral group |
 | `directivity` | beam steering, a narrowing piston pattern, and a cardioid |
 | `room_acoustics` | a room, its echoes and the pressure wave |
+| `doppler` | wavefront compression, the sonic pileup, and the Mach cone |
 
 Narrated scenes have sound only where a speech engine is installed (espeak-ng); without one
 the timing is estimated and the video is silent.

@@ -48,6 +48,7 @@
 - `counter`: flash, value, digits, prefix, suffix, math, pos, anchor
 - `directivity`: flash, kind, elements, spacing, radius, frequency, steer, pos, size
 - `domain_coloring`: flash, function, pos, size, contour, softness, hue, radius, ambient, lines
+- `doppler`: flash, speed, frequency, time, pos, size
 - `dot`: flash, pos, r
 - `eigen_lines`: flash, matrix, pos, length
 - `epicycles`: flash, points, terms, phase, trace

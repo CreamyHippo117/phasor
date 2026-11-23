@@ -51,6 +51,7 @@ SCENES = [
     ("heat_dihedral", "the heat equation and the dihedral group"),
     ("directivity", "polar patterns: beam steering, a baffled piston and a cardioid"),
     ("room_acoustics", "a room, its echoes and the pressure wave"),
+    ("doppler", "wavefront compression, the sonic pileup, and the Mach cone"),
 ]
 
 

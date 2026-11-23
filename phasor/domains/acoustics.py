@@ -29,6 +29,7 @@ from phasor.core.simulation import runner_for
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
 from phasor.domains import ac_math
+from phasor.domains.geometry_math import sample_ramp
 from phasor.domains.heatmap import heat_pixels
 from phasor.domains.strokes import circle, disc, polyline, with_alpha
 
@@ -299,6 +300,116 @@ class Wavefront(ObjectBase):
                 color=color,
                 glow=me.style["glow"],
             )
+
+
+# ---------------------------------------------------------------- Doppler wavefronts
+
+
+@register
+class Doppler(ObjectBase):
+    """Wavefronts from a source moving along +x at a constant Mach number.
+
+    ``time`` is seconds since the source started at ``pos``. Sound travels ``size`` world
+    units in one second. Each ring marks a crest at its retarded position.
+    """
+
+    type: ClassVar[str] = "doppler"
+    Style: ClassVar = {
+        "source": ("emphasis", "highlight"),
+        "cone": ("emphasis", "primary"),
+        "stroke": ("stroke", "regular"),
+        "source_radius": ("stroke", "bold"),
+        "glow": ("glow", "none"),
+        "colormap": ("colormap", "magnitude"),
+    }
+    _history: ClassVar[int] = 16
+
+    class Params(ParamsBase):
+        speed: float = Field(0.6, ge=0, allow_inf_nan=False)
+        frequency: float = Field(10.0, gt=0, allow_inf_nan=False)
+        time: float = Field(0.0, ge=0, allow_inf_nan=False)
+        pos: Vec3 = (0.0, 0.0, 0.0)
+        size: float = Field(1.0, gt=0, allow_inf_nan=False)
+
+    def _geometry(self, p):
+        origin = np.asarray(p.pos, dtype=np.float64)
+        centers, radii = ac_math.doppler_wavefronts(p.speed, p.frequency, p.time, self._history)
+        source = origin + np.array([p.size * p.speed * p.time, 0, 0])
+        centers = origin + p.size * np.c_[centers, np.zeros((len(centers), 2))]
+        return source, centers, p.size * radii
+
+    def world_bounds(self, state: SceneState) -> Bounds:
+        source, centers, radii = self._geometry(self.me(state).params)
+        extents = np.c_[radii, radii, np.zeros_like(radii)]
+        lo = np.vstack([source, centers - extents]).min(axis=0)
+        hi = np.vstack([source, centers + extents]).max(axis=0)
+        return Bounds(tuple(lo), tuple(hi))
+
+    def features(self, state: SceneState) -> dict[str, np.ndarray]:
+        source, centers, _ = self._geometry(self.me(state).params)
+        return {"center": source, "source": source, "wavefront_centers": centers}
+
+    def semantics(self, state: SceneState) -> dict[str, Any]:
+        p = self.me(state).params
+        source, _, radii = self._geometry(p)
+        return {
+            "kind": "doppler",
+            "mach": p.speed,
+            "emitted_frequency": p.frequency,
+            "frequency_ahead": p.frequency / (1 - p.speed) if p.speed < 1 else None,
+            "frequency_behind": p.frequency / (1 + p.speed),
+            "mach_angle_degrees": float(np.degrees(np.arcsin(1 / p.speed)))
+            if p.speed > 1
+            else None,
+            "source": source.tolist(),
+            "wavefront_count": len(radii),
+        }
+
+    def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
+        me = self.me(state)
+        p = me.params
+        cam = state.camera_for(me)
+        source, centers, radii = self._geometry(p)
+        scale = float(cam.units_per_height(source))
+        width = me.style["stroke"] * scale
+        glow = me.style["glow"]
+
+        angle = np.linspace(0, 2 * np.pi, 97)
+        cosine = np.cos(angle)
+        rim = np.c_[cosine, np.sin(angle), np.zeros_like(angle)]
+        heard = ac_math.doppler_frequency(p.speed, p.frequency, cosine)
+        # Map the unshifted pitch to the middle, with the caustic at the warm end.
+        hue = 1 / (1 + p.frequency / heard)
+        rgb = sample_ramp(me.style["colormap"], hue)
+        for center, radius in zip(centers, radii, strict=True):
+            fade = 1 - (radius / p.size) * p.frequency / self._history
+            colors = np.c_[rgb, np.full_like(angle, p.opacity * max(0.0, fade))]
+            polyline(
+                ctx,
+                cam,
+                center + radius * rim,
+                width,
+                color=(1.0, 1.0, 1.0, 1.0),
+                colors=colors,
+                glow=glow,
+            )
+
+        if len(radii) and p.speed > 1:
+            oldest = centers[0] - source
+            for x, y in ac_math.mach_cone_rays(p.speed):
+                ray = np.array([x, y, 0.0])
+                tangent = source + (oldest @ ray) * ray
+                color = with_alpha(me.style["cone"], p.opacity)
+                polyline(ctx, cam, [source, tangent], width, color=color, glow=glow)
+
+        disc(
+            ctx,
+            cam,
+            source,
+            me.style["source_radius"] * scale,
+            color=with_alpha(me.style["source"], p.opacity),
+            glow=glow,
+        )
 
 
 # ---------------------------------------------------------------- Image sources
