@@ -574,13 +574,23 @@ class Engine:
 
         return encode_srgb8(self.frame(t, size))
 
-    def frame(self, t: float, size: tuple[int, int] | None = None, *, output: str = "linear"):
+    def frame(
+        self,
+        t: float,
+        size: tuple[int, int] | None = None,
+        *,
+        output: str = "linear",
+        field_scale: float = 1.0,
+    ):
         """The finished picture at ``t`` in linear light: color pass, bloom, tone map.
         (h, w, 4) float32, row 0 = top. ``still`` and ``phasor render`` both use this.
-        ``output="srgb8"``: the (h, w, 3) sRGB bytes instead, encoded on the card."""
-        return self._finished([t], size, output)
+        ``output="srgb8"``: the (h, w, 3) sRGB bytes instead, encoded on the card.
+        ``field_scale`` < 1 draws kernel-made fields (domain coloring, fractals) at that
+        share of their resolution, stretched by the GPU: for the ``draft`` preset only;
+        1.0 (the default) is the unchanged picture."""
+        return self._finished([t], size, output, field_scale)
 
-    def _finished(self, times: list[float], size, output: str):
+    def _finished(self, times: list[float], size, output: str, field_scale: float = 1.0):
         """The average light of the color pass at ``times`` (one time: the frame itself),
         bloomed, tone-mapped and encoded once. Each sample goes to the card once as float16
         and is widened and added there in float32, in a fixed order (GPU_SPEED.md step 2);
@@ -597,7 +607,9 @@ class Engine:
         pic = glow = None
         # Start every sample before collecting any: the card copies one sample off while
         # the next is drawn (asynchronous readback). Same samples, same order of the sum.
-        pending = [runner.start_color_raw(self.state_at(ts), size) for ts in times]
+        pending = [
+            runner.start_color_raw(self.state_at(ts), size, field_scale=field_scale) for ts in times
+        ]
         try:
             for job in pending:
                 p, g = job.collect()
@@ -650,6 +662,7 @@ class Engine:
         samples: int = 4,
         size: tuple[int, int] | None = None,
         output: str = "linear",
+        field_scale: float = 1.0,
     ):
         """Like ``frame`` but with motion blur: the average of ``samples`` frames spread over
         a shutter open ``shutter`` of a frame interval (0.5 is the film standard "180
@@ -658,11 +671,11 @@ class Engine:
         as moving (``is_moving``). Linear light, deterministic."""
         half = shutter / fps / 2
         if samples <= 1 or shutter <= 0 or not self.is_moving(t - half, t + half):
-            return self.frame(t, size, output=output)
+            return self.frame(t, size, output=output, field_scale=field_scale)
         # Average the light before the tone map (which then runs once, contract 4): a bright
         # moving glow smears at its real brightness instead of an already squashed one.
         times = [min(max(ts, 0.0), self.duration) for ts in blur_times(t, fps, shutter, samples)]
-        return self._finished(times, size, output)
+        return self._finished(times, size, output, field_scale)
 
     def storyboard_times(self, count: int = 6) -> list[float]:
         """Start, every marker and the end; padded with evenly spaced times up to ``count``."""

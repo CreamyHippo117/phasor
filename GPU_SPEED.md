@@ -250,6 +250,39 @@ stage with step 0 first; if it is large, move the `step` of those `Simulation`s 
 registered kernels (NumPy reference = today's step, so the three-way kernel tests apply),
 keeping fixed dt, the seed and the checkpoint cache (contract 3). Helps only those scenes.
 
+## Step 7. Draft preset
+
+A `draft` preset (`render/job.py`) for the quickest look at timing and layout: the owner allows
+giving up quality on low-quality previews, never on `final` or `4k`. Each cut is a table entry
+in `job.py`; a preset not listed in a table gets full quality, and `tests/test_draft_preset.py`
+pins that `preview`, `final` and `4k` are unchanged and that their pictures are bit-identical
+to before (hashes taken on the untouched tree, Mesa llvmpipe).
+
+- Frame 640x360 at 15 fps, no motion blur (`PRESETS`, `BLUR`).
+- Fast encode (`FAST_ENCODE`, `open_writer(..., fast=True)`): x264 `veryfast` crf 28, NVENC
+  `p1` cq 30. Default writers are unchanged. NVENC settings untested on any card.
+- Kernel-drawn fields at half resolution per side, stretched by the texture's linear filter
+  (`FIELD_SCALE`, `field_scale` on `Engine.frame`/`frame_blurred` down to `GLRenderer._field_quad`;
+  default 1.0 leaves every path as it was).
+- Limit: render workers (`--workers` > 1) draw through `scene.parallel_frames`, whose frame
+  call has no `field_scale`, so with workers the field cut is not applied (the frame size,
+  fps, no blur and fast encode are). `render_file` reports the `field_scale` it used.
+  Forwarding it needs a small edit in `scene.py`.
+
+Measured on this machine, which is a Linux box with Mesa llvmpipe and no GPU: NOT GPU data,
+untested on CUDA and on a real GL card. `phasor render examples/prism_domain.py --workers 1`,
+wall clock, run one after the other with nothing else running:
+
+| preset | frames | size, fps | wall | per frame |
+| --- | --- | --- | --- | --- |
+| preview | 240 | 960x540, 30 | 291.2 s | 1213 ms |
+| draft | 120 | 640x360, 15 | 43.6 s | 363 ms |
+
+Draft is 6.7x faster on wall time; about 2x of that is only half as many frames (15 fps), the
+rest is the smaller frame, half-resolution fields and the faster x264 setting. The file is
+63 KB against 330 KB. (The in-test check, `prism_domain` 1 s: preview 30.2 s, draft 4.6 s.)
+Each figure is one run, so treat the exact ratio loosely.
+
 ## Rules for the whole plan
 
 - One step per commit series; a step is done when its tests pass, the full suite passes

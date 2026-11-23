@@ -40,7 +40,7 @@ a variant and compare.
 | `critique`, `polish` | the art director: a taste score, aesthetic issues with fixes and the rubric; apply the fixes (3 rounds at most) |
 | `variants`, `choose` | alternative looks of one beat side by side (as is, calmer, bolder); pick one, it is recorded in `style/choices.jsonl` and applied |
 | `diff`, `checkpoint`, `restore`, `undo`, `redo` | compare and branch |
-| `render` | a video (`preview`, `final`, `4k`) or one PNG with `frame` |
+| `render` | a video (`draft` is the quickest and roughest, then `preview`, `final`, `4k`) or one PNG with `frame` |
 | `docs_search` | find the API, a pattern or an example |
 
 ## Patch operations

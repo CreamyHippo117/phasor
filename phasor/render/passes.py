@@ -434,7 +434,7 @@ class GLRenderer:
         return collector.commands
 
     def _draw_object(self, state, obj: ObjectState, pass_, size, order: int, zoom: float,
-                     commands=None) -> None:  # fmt: skip
+                     commands=None, field_scale: float = 1.0) -> None:  # fmt: skip
         cam = state.camera_for(obj)
         for kind, c in self._commands(state, obj, pass_) if commands is None else commands:
             if kind == "surface" and pass_ == "color":
@@ -446,7 +446,7 @@ class GLRenderer:
                 kind, c = "mesh", {"positions": c["positions"], "indices": c["indices"],
                                    "color": (0, 0, 0, 1)}  # fmt: skip
             if kind == "field" and pass_ == "color":
-                quad = self._field_quad(state, obj, cam, c, size, zoom)
+                quad = self._field_quad(state, obj, cam, c, size, zoom, field_scale)
                 if quad is None:
                     continue
                 kind, c = (
@@ -541,9 +541,12 @@ class GLRenderer:
         vao, count = self._vertex_array(prog, layout, [data], c["indices"])
         vao.render(vertices=count)
 
-    def _field_quad(self, state, obj, cam, c, size, zoom):
+    def _field_quad(self, state, obj, cam, c, size, zoom, field_scale: float = 1.0):
         """Compute a kernel-drawn quad's visible pixels and upload them through the bridge.
-        Returns (vertices with uv, texture), or None when none of it is on screen."""
+        Returns (vertices with uv, texture), or None when none of it is on screen.
+        ``field_scale`` < 1 (the ``draft`` preset only) computes that share of the pixels
+        along each side and lets the texture's linear filter stretch them; 1.0 changes
+        nothing."""
         from phasor.render.gpu.bridge import CopyBridge
 
         p0, r, u = c["corner"], c["right"], c["up"]
@@ -564,6 +567,9 @@ class GLRenderer:
         # ceil, but a size that is a whole number up to rounding noise stays that number
         pw = int(np.clip(np.ceil(np.hypot(*a) * (s1 - s0) - 1e-6), 1, MAX_FIELD_PX))
         ph = int(np.clip(np.ceil(np.hypot(*b) * (t1 - t0) - 1e-6), 1, MAX_FIELD_PX))
+        if field_scale != 1.0:
+            pw = max(1, int(np.ceil(pw * field_scale)))
+            ph = max(1, int(np.ceil(ph * field_scale)))
         rl, ul = float(np.linalg.norm(r)), float(np.linalg.norm(u))
         center = ((s0 + s1) / 2 * rl, (t0 + t1) / 2 * ul)
         height = (t1 - t0) * ul
@@ -597,7 +603,16 @@ class GLRenderer:
             return self._render_current(state, pass_, size, **kwargs)
 
     def _render_current(
-        self, state, pass_, size, *, only=None, force=frozenset(), zoom=1.0, raw=False
+        self,
+        state,
+        pass_,
+        size,
+        *,
+        only=None,
+        force=frozenset(),
+        zoom=1.0,
+        raw=False,
+        field_scale=1.0,
     ) -> np.ndarray:
         import moderngl
 
@@ -639,7 +654,7 @@ class GLRenderer:
                 self._draw_deferred(state, deferred, size, zoom)
             # The overlay layer always sits on top of the world: it ignores world depth.
             ctx.depth_func = "1" if obj.layer == "overlay" else "<="
-            self._draw_object(state, obj, pass_, size, order, zoom, commands)
+            self._draw_object(state, obj, pass_, size, order, zoom, commands, field_scale)
         if deferred:
             self._draw_deferred(state, deferred, size, zoom)
         if resolved is not target:
@@ -730,14 +745,15 @@ class GLRenderer:
         return self.start_color_raw(state, size).collect()
 
     def start_color_raw(
-        self, state: SceneState, size: tuple[int, int] | None = None
+        self, state: SceneState, size: tuple[int, int] | None = None, *, field_scale: float = 1.0
     ) -> PendingRead:
         """Draw the color pass and start copying both targets off the card, without
         waiting: ``collect()`` on the result gives what ``color_and_emission_raw`` gives.
         Start several before collecting any, and the card copies one frame while the next
-        is being built. Every started read must be collected (or ``release``d)."""
+        is being built. Every started read must be collected (or ``release``d).
+        ``field_scale`` is for drafts: see ``_field_quad``."""
         size = size or (state.width, state.height)
-        return self._render(state, "color", size, raw="async")
+        return self._render(state, "color", size, raw="async", field_scale=field_scale)
 
     def _finish_read(self, packs: list, size, read: bool) -> list[bytes] | None:
         def run():

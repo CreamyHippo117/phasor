@@ -330,7 +330,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--frame", type=float, help="render only the frame at this time, as PNG")
     r.add_argument("--motion-blur", type=float, metavar="SHUTTER", dest="shutter",
                    help="shutter as a share of a frame (0 off, 0.5 film standard); "
-                   "default: off for preview, 0.5 for final and 4k")  # fmt: skip
+                   "default: off for preview and draft, 0.5 for final and 4k")  # fmt: skip
     r.add_argument("--blur-samples", type=int, help="sub-frames per frame when blurring (4)")
     r.add_argument("--workers", type=int,
                    help="render processes (default: a quarter of the CPU threads, 1 to 4; "
@@ -367,7 +367,7 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--frames", metavar="SCENE", help="time whole frames of SCENE (a file or "
                    "an example name) stage by stage, instead of single kernels")  # fmt: skip
     b.add_argument("--count", type=int, default=60, help="frames to time (with --frames)")
-    b.add_argument("--preset", default="final", choices=["preview", "final", "4k"],
+    b.add_argument("--preset", default="final", choices=sorted(PRESETS),
                    help="render preset (with --frames)")  # fmt: skip
     b.set_defaults(func=_cmd_bench)
 
