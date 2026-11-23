@@ -164,11 +164,15 @@ class Workspace:
                 ".phasor.json instead, or start the server with --allow-scripts"
             )
         from phasor.importers import import_manim, looks_like_manim
+        from phasor.importers.manim import ManimImportError
 
         if p.suffix == ".py" and looks_like_manim(p):
             # A Manim script: run through the stand-in module; the result is a plain scene
             # (saved beside the script as name.phasor.json), free to edit.
-            result = self._guard(lambda: import_manim(p))
+            try:
+                result = self._guard(lambda: import_manim(p))
+            except ManimImportError as e:
+                raise ToolError(f"{p.name} could not be imported: {e}") from e
             self._engine = Engine(result.document(), base_dir=p.parent)
             self.path = p.with_suffix(io.DOC_SUFFIX)
             self.import_notes = result.warnings
@@ -620,7 +624,9 @@ class Workspace:
         ``rounds`` (3) times; each round is undoable. Returns the score before and after and
         what is left for you to judge. Colors and sizes the scene typed (``off_palette``,
         ``off_scale``) snap to the nearest role only with ``snap=True``: ask the person."""
-        r = self.engine.polish(min(max(rounds, 1), 3), snap=bool(snap))
+        if not isinstance(snap, bool):  # a JSON "false" is truthy: never snap by accident
+            raise ToolError(f"snap must be true or false, not {snap!r}")
+        r = self.engine.polish(min(max(rounds, 1), 3), snap=snap)
         return {**r, "version": self.engine.version}
 
     def variants(self, beat: str | float, n: int = 3) -> dict[str, Any]:

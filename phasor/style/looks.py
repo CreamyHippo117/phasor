@@ -58,15 +58,24 @@ class Look:
         the object did not set them. With a ``palette``, what the look runs a hue along (its
         lines) takes the palette's colors. An object whose color the scene typed (an explicit
         value) keeps that color: the look runs no hue along it."""
-        d = self.defaults.get(type_name, {})
-        d_params = dict(d.get("params", {}))
-        d_style = dict(d.get("style", {}))
-        if "color" in style and not explicit.is_role(style["color"]):
-            d_params.pop("hue_along", None)
-            d_style.pop("colormap", None)
-        elif palette is not None and ("colormap" in d_style or "hue_along" in d_params):
+        d_params, d_style = self.defaults_for(type_name, style)
+        if palette is not None and ("colormap" in d_style or "hue_along" in d_params):
             d_style["colormap"] = palette
         return {**d_params, **params}, {**d_style, **style}
+
+    def defaults_for(self, type_name: str, style: dict[str, Any]):
+        """This look's ``(params, style)`` defaults for an object of ``type_name`` whose style
+        is ``style``, without what would replace a value the scene typed: no default for a
+        key holding an explicit value, and no hue along (or colormap) when the color is
+        typed. Used by ``fill`` and when a look is applied to objects already there."""
+        d = self.defaults.get(type_name, {})
+        d_params = dict(d.get("params", {}))
+        typed = {k for k, v in style.items() if not explicit.is_role(v)}
+        d_style = {k: v for k, v in d.get("style", {}).items() if k not in typed}
+        if "color" in typed:
+            d_params.pop("hue_along", None)
+            d_style.pop("colormap", None)
+        return d_params, d_style
 
     def palette_targets(self) -> set[str]:
         """The object types whose colors a palette sets (the ones the look runs a hue along)."""

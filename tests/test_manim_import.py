@@ -357,3 +357,125 @@ def shutil_copy(src, dst):
     import shutil
 
     shutil.copy(src, dst)
+
+
+# ---------------------------------------------------------------- audit of Milestone 18
+
+# Scripts that imported before Milestone 18 must still import: a size or width Manim accepts
+# but phasor's explicit values cannot hold (zero, negative, too large) is not carried over.
+ZERO_SIZES = {
+    "stroke_width_0": ("c = Circle(radius=1, stroke_width=0)", "circle_1", "stroke"),
+    "set_stroke_0": ("c = Square().set_stroke(width=0)", "square_1", "stroke"),
+    "font_size_0": ('c = Text("hi", font_size=0)', "text_1", "size"),
+    "font_size_negative": ('c = Text("hi", font_size=-10)', "text_1", "size"),
+    "scale_0": ('c = Text("hi").scale(0)', "text_1", "size"),
+    "scale_huge": ('c = Text("hi").scale(1e9)', "text_1", "size"),
+}
+
+
+@pytest.mark.parametrize("case", sorted(ZERO_SIZES))
+def test_a_size_phasor_cannot_hold_is_dropped_with_a_warning(tmp_path, case):
+    line, oid, key = ZERO_SIZES[case]
+    p = script(tmp_path, f"""
+class S(Scene):
+    def construct(self):
+        {line}
+        self.add(c)
+        self.wait(1)
+""")  # fmt: skip
+    r = import_manim(p)
+    style = r.scene.engine.document.object(oid).style
+    assert key not in style or isinstance(style[key], str)  # the role, not a value
+    assert any("not carried over" in w for w in r.warnings), r.warnings
+    assert "manim" not in sys.modules
+
+
+def test_a_negative_scale_is_a_flip_and_keeps_the_size_positive(tmp_path):
+    p = script(tmp_path, """
+class S(Scene):
+    def construct(self):
+        a = Text("hi").scale(-1)
+        b = Text("ho", font_size=24).scale(-2)
+        d = Dot(RIGHT).scale(-2)
+        self.add(a, b, d)
+        self.wait(1)
+""")  # fmt: skip
+    r = import_manim(p)
+    doc = r.scene.engine.document
+    assert doc.object("text_1").style["size"] == pytest.approx(48 * FONT_UNIT)
+    assert doc.object("text_2").style["size"] == pytest.approx(48 * FONT_UNIT)
+    assert doc.object("dot_1").params["r"] > 0
+
+
+def test_a_background_with_alpha_imports_opaque_with_a_warning(tmp_path):
+    p = script(tmp_path, """
+class S(Scene):
+    def construct(self):
+        self.camera.background_color = "#1E1E1E80"
+        self.add(Text("hi", color="#FF000080"))
+        self.wait(1)
+""")  # fmt: skip
+    r = import_manim(p)
+    doc = r.scene.engine.document
+    assert doc.meta.background == "#1E1E1E"
+    assert doc.object("text_1").style["color"] == "#FF000080"  # an object's alpha is kept
+    assert any("background" in w and "alpha" in w for w in r.warnings), r.warnings
+
+
+INVALID = """
+class S(Scene):
+    def construct(self):
+        self.add(Text("hi"))
+        self.wait(1)
+"""
+
+
+def test_any_invalid_value_surfaces_as_a_manim_import_error_naming_object_and_key(
+    tmp_path, monkeypatch
+):
+    """The generic guard: whatever slips past the importer's own checks is reported as a
+    ManimImportError with the object and the key, never a raw pydantic traceback."""
+    from phasor.importers import manim as mi
+
+    monkeypatch.setattr(mi.Text, "_style", lambda self, **extra: {"size": -1.0})
+    with pytest.raises(ManimImportError) as info:
+        import_manim(script(tmp_path, INVALID))
+    msg = str(info.value)
+    assert "text_1" in msg and "style.size" in msg and "validation error" not in msg
+    assert "manim" not in sys.modules
+
+
+def test_the_command_and_the_workspace_report_an_import_error_cleanly(
+    tmp_path, monkeypatch, capsys
+):
+    from phasor.cli import main
+    from phasor.importers import manim as mi
+    from phasor.workspace import Workspace
+
+    monkeypatch.setattr(mi.Text, "_style", lambda self, **extra: {"size": -1.0})
+    p = script(tmp_path, INVALID)
+    assert main(["manim", str(p)]) == 1
+    out = "".join(capsys.readouterr())
+    assert "text_1" in out and "Traceback" not in out and "validation error" not in out
+    ws = Workspace(tmp_path, allow_scripts=True)
+    with pytest.raises(Exception) as info:
+        ws.scene_open("s.py")
+    assert "text_1" in str(info.value) and "validation error" not in str(info.value)
+
+
+def test_manim_colors_import_as_these_values():
+    """The palette, asserted directly: the reverb golden passed at SSIM 0.97 with every
+    colour changed, so it does not guard colours."""
+    from phasor.importers.manim import _BLUE, _RED, _WHITE, style_color
+
+    assert [style_color(c) for c in ("BLUE", "YELLOW", "GREEN", "RED", "GREY", "WHITE")] == [
+        "#58C4DD", "#FFFF00", "#83C167", "#FC6255", "#888888", "#FFFFFF"]  # fmt: skip
+    assert style_color("#abc") == "#AABBCC" and style_color("#ff880080") == "#FF880080"
+    assert [style_color(c) for c in (_WHITE, _RED, _BLUE)] == ["primary", "danger", "secondary"]
+    r = import_manim(ROOT / "examples" / "manim_reverb.py")
+    colors = {o.id: o.style.get("color") for o in r.scene.engine.document.objects}
+    assert colors == {
+        "rectangle_1": "#58C4DD", "dot_1": "#FFFF00", "dot_2": "#83C167",
+        "circle_1": "#FFFF00", "circle_2": "#FFFF00", "circle_3": "#FFFF00",
+        "axes_1": "#888888", "path_1": "#FC6255", "text_1": "primary", "text_2": "primary",
+        "text_3": "primary", "mathtex_1": "primary"}  # fmt: skip

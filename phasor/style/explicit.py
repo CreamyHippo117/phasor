@@ -8,6 +8,10 @@ path) or, where its role group allows, an explicit value:
 | text       | a text height in world units                                            |
 | stroke     | a stroke width in world units                                           |
 
+A size is positive and at most ``MAX_SIZE`` (1e6 world units; checked by the document schema,
+``core/schema.py``, which cannot import this layer). On an overlay-layer object the units are
+the overlay's: frame heights. A scene background (``meta.background``) is an opaque color.
+
 Glow, surface and colormap keys take roles only. Resolution is pure: a color resolves when
 the document compiles; a world size is turned into the share of the frame height the
 drawing code expects when the scene is evaluated at ``t``, through the camera of the
@@ -26,6 +30,7 @@ from typing import Any
 import numpy as np
 
 from phasor.core.color import hex_to_linear, linear_to_oklab
+from phasor.core.schema import MAX_SIZE as MAX_SIZE  # re-exported: the largest size
 from phasor.style.theme import ROLE_GROUPS, Theme, ThemeError
 
 # role group -> what an explicit value means there

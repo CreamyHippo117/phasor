@@ -24,7 +24,8 @@ builds one Scene; it is the source that you and the person both edit. Work in th
 1. Start from the closest example (kit/examples/INDEX.md in a kit folder). docs_search and
    object_types tell you exact names, parameters and style roles: look up, do not guess.
 2. Write or edit the script. Name objects by meaning (pole_i, loop, loop.label). Style takes
-   role names, never raw colors; labels are placed by constraints, never by position.
+   role names; a color or size may be typed where the person wants one exactly (review
+   warns off_palette / off_scale). Labels are placed by constraints, never by position.
 3. scene_open the script (again after every edit), then review: lint, what is on screen at
    each marker, and a storyboard picture. Fix in the script and review again until clean,
    and look at the picture: lint cannot tell you a layout is ugly.

@@ -589,7 +589,8 @@ class Editor:
 
     def apply_look(self, name: str) -> dict[str, Any]:
         """Switch the scene to a look: its theme and life, and its defaults for the objects
-        already there. One undo step."""
+        already there, except where the scene typed a value (a color, a size: it stays, and
+        a typed color gets no hue along it). One undo step."""
         from phasor.style.looks import load_look
 
         look = load_look(name)
@@ -599,10 +600,10 @@ class Editor:
             {"op": "set_meta", "field": "look", "value": name},
         ]
         for spec in self.engine.document.objects:
-            d = look.defaults.get(spec.type, {})
-            for k, v in d.get("params", {}).items():
+            params, style = look.defaults_for(spec.type, dict(spec.style))
+            for k, v in params.items():
                 ops.append({"op": "set_param", "path": f"{spec.id}.{k}", "value": v})
-            for k, role in d.get("style", {}).items():
+            for k, role in style.items():
                 ops.append({"op": "set_style", "id": spec.id, "key": k, "role": role})
         return self._edit(ops, f"look: {name}")
 
