@@ -394,9 +394,9 @@ class Inspector(QWidget):
             box.addItems(list(ROLE_GROUPS.get(group, () if label else (role,))))
             box.setCurrentText(label if label is not None else role)
             box.currentTextChanged.connect(
-                lambda r, k=key, keep=label: None
-                if r == keep
-                else self.edited.emit(self.ed.set_style(oid, k, r))
+                lambda r, k=key, keep=label: (
+                    None if r == keep else self.edited.emit(self.ed.set_style(oid, k, r))
+                )
             )
             self.form.addRow(f"style: {key}", box)
             self.roles[key] = box

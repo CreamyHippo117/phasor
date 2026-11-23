@@ -53,8 +53,15 @@ def test_style_takes_roles_or_explicit_colors_and_review_says_when_they_are_off(
     )
     assert not r["ok"]
     r = ws.scene_edit(
-        {"op": "add_object", "object": {"id": "d", "type": "dot", "params": {"r": 0.5},
-                                        "style": {"color": "#83C167"}}}  # fmt: skip
+        {
+            "op": "add_object",
+            "object": {
+                "id": "d",
+                "type": "dot",
+                "params": {"r": 0.5},
+                "style": {"color": "#83C167"},
+            },
+        }
     )
     assert r["ok"]
     (off,) = [i for i in ws.critique()["issues"] if i["code"] == "off_palette"]
