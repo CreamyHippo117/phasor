@@ -8,7 +8,7 @@ from phasor import Scene, Tracer, dyn
 
 s = Scene("strange_attractor", look="prism")
 s.use_camera("orbit", azimuth=-75, elevation=20, distance=13.5)
-s.add(dyn.StrangeAttractor(id="trajectory", seed=7, t_end=30, progress=0.009, dim=0.82))
+s.add(dyn.StrangeAttractor(id="trajectory", seed=7, t_end=30, progress=0.009))
 s.add(
     Tracer(
         id="moving_tip",
