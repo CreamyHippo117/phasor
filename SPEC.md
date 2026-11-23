@@ -60,13 +60,13 @@ These seven decisions are hard to change later. Build them exactly as written in
 
 - Schema: pydantic v2 models in `core/schema.py`. JSON Schema is exported from them for MCP validation and docs. The document carries `schema_version`; migrations live in `core/migrate.py`.
 - Canonical file: `name.phasor.json`, written with sorted keys and stable ordering so git diffs stay clean.
-- A Python script is a builder: running `scene.py` emits the base document. GUI and AI tweaks to a scripted scene are saved in `name.overrides.json`, keyed by object id + parameter path (plus layout constraints added on top of the script's own, ADR 0002), and applied on top at load. Re-running the script never destroys tweaks. An override whose target id vanished is a lint error (`orphan_override`).
+- A Python script is a builder: running `scene.py` emits the base document. GUI and AI tweaks to a scripted scene are saved in `name.overrides.json`, keyed by object id + parameter path (plus layout constraints added on top of the script's own, ADR 0002), and applied on top at load. Re-running the script never destroys tweaks. An override whose target id vanished is a lint error (`orphan_override`). An object whose type comes from a module that is missing or not allowed to load is lint `missing_type`; it draws as a placeholder box and keeps its parameters and overrides (ADR 0005).
 - IDs match `[a-z][a-z0-9_]*`, use dots for children (`res.pole_i`), and are never reused or renumbered: removing an object retires its id in the document (`retired_ids`), and adding it again is an error. Auto IDs come from type + meaning (`pole_i`), not counters.
 
 **3. Time is a pure function**
 
-- `Engine.state_at(t) -> SceneState` depends only on (document, t), given the machine's occlusion oracle: the layout bake reads the real id pass where OpenGL exists and geometry where it does not, so a near-tie can place a label differently on two machines (ADR 0002). It may also depend on files the document names: an object type lists its file-path params in `Files` (e.g. `Room3D.path`, a Wavefront `.obj`); paths are relative and stay inside the scene's folder (`core/files.py`), a changed file is re-read (cached on its mtime and size), and a missing one draws nothing and is lint `missing_file` (owner approved, 2026-11-22). `SceneState` is immutable (frozen dataclasses) and holds every object's resolved parameters.
-- Parameters form a DAG of constants, tracks (piecewise segments with easing) and expressions over other parameters. Evaluate in topological order; a cycle is a validation error.
+- `Engine.state_at(t) -> SceneState` depends only on (document, t), given the machine's occlusion oracle: the layout bake reads the real id pass where OpenGL exists and geometry where it does not, so a near-tie can place a label differently on two machines (ADR 0002). It may also depend on files the document names: an object type lists its file-path params in `Files` (e.g. `Room3D.path`, a Wavefront `.obj`); paths are relative and stay inside the scene's folder (`core/files.py`), a changed file is re-read (cached on its mtime and size), and a missing one draws nothing and is lint `missing_file` (owner approved, 2026-11-22). A document may also name code modules in its folder (`meta.modules`, ADR 0005): read only from inside the scene's folder and loaded only where scripts are allowed, like the importers. `SceneState` is immutable (frozen dataclasses) and holds every object's resolved parameters.
+- Parameters form a DAG of constants, tracks (piecewise segments with easing), expressions over other parameters, and updaters (`obj.always(fn)`; ADR 0005: `fn(t, look)` is pure, and each `look(id)` read is an edge). Evaluate in topological order; a cycle is a validation error. An updater that gives different results on repeat evaluation is lint `impure_updater`; one that needs the previous frame is a `Simulation`.
 - Narration lives in a separate `TimeMap` (marker name to seconds). Tracks store marker-relative anchors. Re-recording audio rebuilds only the `TimeMap`.
 - Simulations (PDE, FDTD, particles) are `Simulation` objects with `step(state, dt)`, a fixed dt, a seed, and checkpoints every N steps cached in `.phasor_cache/` under a hash of their parameters. `state_at(t)` = nearest earlier checkpoint + remaining steps.
 - Randomness only through `rng(object_id, seed)`. Same inputs must give the same frames on the same machine.
@@ -80,14 +80,14 @@ These seven decisions are hard to change later. Build them exactly as written in
 
 **5. The object contract**
 
-Every object type implements the `SceneObject` protocol. A type missing any member fails registration.
+Every object type implements `Params` and `draw`; a type missing either fails registration (ADR 0005, owner 2026-11-23). `world_bounds`, `features` and `semantics` are optional: when a type does not write them, they are derived from what `draw` records (`core/record.py`), and a type that knows more writes its own. `draw`'s `pass_` argument is optional. A type may instead define `build(state)`, returning other objects (a composite; children get dotted ids). Types shipped in phasor's packages still carry the full set, an `docs/ai/API.md` entry and an example; scene-local types do not need them.
 
 | Member | Returns | Used by |
 | --- | --- | --- |
 | `Params` | pydantic model of its parameters | validation, GUI panels, MCP patches |
-| `world_bounds(state)` | AABB + bounding sphere | camera solver, culling |
-| `features(state)` | named points/curves in world space (`pole_i`, `tip`, `front`) | inspector, labels, resolver |
-| `semantics(state)` | JSON-serializable math facts | inspector, resolver |
+| `world_bounds(state)` (optional) | AABB + bounding sphere | camera solver, culling |
+| `features(state)` (optional) | named points/curves in world space (`pole_i`, `tip`, `front`) | inspector, labels, resolver |
+| `semantics(state)` (optional) | JSON-serializable math facts | inspector, resolver |
 | `draw(ctx, state, pass_)` | draw calls for pass `color`, `id` or `solo` | both renderers |
 
 **6. Layer rules**

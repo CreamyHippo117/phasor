@@ -1,8 +1,8 @@
 # ADR 0005: an open object contract
 
-Status: **Proposed** (2026-11-23), waiting for the owner. It touches SPEC contracts 5 (object
+Status: **Accepted** (owner, 2026-11-23). It touches SPEC contracts 5 (object
 contract), 3 (time is pure) and 2 (document is truth). Nothing here is built yet. It is part
-of `MANIM_PARITY.md` (Milestone 15).
+of `MANIM_PARITY.md` (Milestone 15). The SPEC and CLAUDE.md edits listed at the end were made in the commit that accepted it; the code is Milestone 15.
 
 ## Context
 

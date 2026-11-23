@@ -1,9 +1,8 @@
 # Manim parity, the CPU, and a freer object contract
 
-Plan requested by the owner on 2026-11-23; **not yet approved**. Like `GPU_SPEED.md`, this file
+Plan requested by the owner on 2026-11-23; **approved the same day** (answers below). Like `GPU_SPEED.md`, this file
 holds the detail and the status. The contract changes are in
-`docs/decisions/0005-open-object-contract.md` (proposed). Nothing in Milestone 15 is built until
-the owner accepts it. The SPEC edit goes in the same commit as the acceptance.
+`docs/decisions/0005-open-object-contract.md` (accepted 2026-11-23, SPEC edited in the same commit).
 
 What this plan closes, from the comparison of 2026-11-23:
 
@@ -160,21 +159,29 @@ as composites (`build`) of `Path` and `Text`.
   documentation only.
 - Platforms: a full `TESTING.md` pass on Windows; macOS once 14.4 gives it a renderer.
 
-## Questions for the owner
+## Owner's answers (2026-11-23)
 
-1. Accept ADR 0005 (it changes contracts 2, 3 and 5)?
-2. Allow explicit colors and sizes in scenes (Milestone 18)?
-3. New dependencies: `mapbox-earcut` (fills), `pyclipper` or `shapely` (boolean operations),
-   `svgelements` (SVG), possibly `pygments` (Code). Writing our own triangulation and
-   clipping is possible but slow to get right.
-4. Before, after or interleaved with `BEAUTY.md`?
-5. CPU kernels need a C++ compiler at run time. Accept that, falling back to NumPy without
-   one? Or ship prebuilt libraries per platform?
+1. ADR 0005 (contracts 2, 3 and 5): **accepted**. SPEC and CLAUDE.md edited in the same commit.
+2. Explicit colors and sizes in scenes (Milestone 18): **allowed**. CLAUDE.md's beauty rule is
+   amended: explicit values are checked by `off_palette` / `off_scale` and snapped by `polish()`.
+3. Dependencies: **left to the builder**. Picks, all with Windows wheels: `mapbox-earcut`
+   (ISC) for fill triangulation; `shapely` (BSD, vectorized, robust on messy input) for boolean
+   operations, preferred over `pyclipper` (MIT; integer coordinates need scaling);
+   `svgelements` (MIT) for SVG. `pygments` (BSD) only if Milestone 19's `Code` needs it. Each
+   is a base dependency only if its object type is in the core; otherwise an extra.
+4. Order against `BEAUTY.md`: **interleaved**. Between milestones, take the next runnable
+   `BEAUTY.md` step; its steps 3, 4 and 7 are PC-only (`pc_tasks/`).
+5. CPU kernels: **a C++ compiler at run time**, with the NumPy reference as the fallback when
+   none is found. No prebuilt binaries.
+
+Branches: the session may push only `claude/eloquent-mayer-jiqxs9`, so Milestones 14 and 15
+are built in local worktrees and merged here, one milestone per commit series. Nothing starts
+on 16-19 until 15 passes `phasor-milestone-gate`.
 
 ## Status
 
 | Milestone | Status |
 | --- | --- |
-| 14 CPU | planned |
-| 15 contract | waiting on ADR 0005 |
-| 16-20 | planned |
+| 14 CPU | approved; baseline first, then built |
+| 15 contract | ADR 0005 accepted; building |
+| 16-20 | planned (16-19 wait for 15) |
