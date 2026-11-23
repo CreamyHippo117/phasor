@@ -27,6 +27,7 @@ _ALIAS = {
     "phasor.domains.geometry": "geo",
     "phasor.domains.network": "nw",
     "phasor.domains.dynamics": "dyn",
+    "phasor.domains.convolution": "conv",
 }
 
 

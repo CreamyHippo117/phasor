@@ -32,6 +32,10 @@ SCENES = [
         "a damped pendulum: trajectories tracing the flow, then its rest points classified",
     ),
     ("linear_system", "x' = A x: eigenvector lines, trajectories, the grid carried by the flow"),
+    (
+        "convolution",
+        "live convolution: a kernel flipped and sliding, the overlap lit, the output traced",
+    ),
     ("residue_theorem", "a narrated short: the residue theorem, every motion on a spoken cue"),
     ("riemann_sqrt", "3D: the Riemann surface of sqrt(z), the camera orbits on its own"),
     ("deep_zoom", "a dive into the Mandelbrot set down to 1e-30 (the GPU's favourite)"),

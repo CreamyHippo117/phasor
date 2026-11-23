@@ -1124,6 +1124,37 @@ assert abs(det - 2.718282) < 1e-5  # e^(trace * 0.5)
 ```
 
 Example: `examples/linear_system.py`.
+## Signals: live convolution
+
+`from phasor import conv`. `conv.Convolution(f=, g=, progress=, pos=, extent=)` shows two signals
+and the output they make. The top panel has `f`, the kernel `g` flipped and slid to the shift
+tau (two hues), and under them their product f(s) g(tau - s), filled where they overlap. The
+bottom panel shares the time axis: the area of that product is the output (f * g)(tau), traced
+point by point with a beacon at the point being made. `progress` 0 -> 1 slides the kernel over
+every shift at which the two can overlap (`s.at("m").sweep("c.progress", 1.0, show=False)`).
+
+- A signal is a name (`box`, `triangle`, `decay`, `ramp`, `gauss`, `wave`) or a formula in `t`
+  (read safely, never run as Python), zero outside its support. `f_support=(lo, hi)` and
+  `g_support` set where it is not zero (`(0, 0)`: the shape's own; a formula without one gets
+  -1..1).
+- `ghost` draws the whole output faintly ahead of the traced part; `shade` (0..1) is how strongly
+  the product is filled; `hue_cycles` runs the palette along the output.
+- Semantics: `shift`, `shift_range`, `output` (the area at this shift), `peak` and `overlapping`.
+
+```python
+from phasor import Scene, conv
+
+s = Scene("overlap", passes=None)
+s.add(conv.Convolution(id="c", f="box", g="box", progress=0.5))  # halfway: shift 0
+sem = s.engine.inspect(0.0, id="c")["objects"][0]["semantic"]
+assert sem["shift_range"] == [-2.0, 2.0] and abs(sem["shift"]) < 1e-9
+assert abs(sem["output"] - 2.0) < 0.01  # a box with itself peaks at its width
+```
+
+Example: `examples/convolution.py`. The prism looks make both signals and the output glow, the
+product lit where they overlap. Numerics (a sum on a fine grid, checked against box * box = a
+triangle, decay * decay = t e^-at and Gaussian widths adding) are in
+`phasor/domains/convolution_math.py`.
 
 ## Command line
 
