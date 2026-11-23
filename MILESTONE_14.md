@@ -5,7 +5,10 @@ run time, the NumPy reference as the fallback, no prebuilt binaries). Exit demo:
 with CUDA hidden, `phasor render` of `prism_primes` uses every core, is N times faster than the
 reference path, and matches the software golden.
 
-Status: **built on Linux (4 cores, no CUDA, llvmpipe).** CUDA was not available, so nothing
+Status: **built on Linux (4 cores, no CUDA, llvmpipe). Gate: NOT DONE**, because two
+software goldens fail (`test_prism_domain_golden_storyboard`, `test_prism_heat_golden_storyboard`).
+They fail the same way with the kernels forced onto NumPy (`PHASOR_CXX=none`), so they
+predate this milestone. They were not regenerated: someone has to look at them first. CUDA was not available, so nothing
 here says anything about tier A. Untested on Windows and macOS.
 
 ## Built
@@ -74,7 +77,13 @@ default stays at one worker on 4 cores with every core for its kernels. Earlier,
 loaded by another agent's tests, 2x2 was 7% faster (25.9 against 28.0 s). Not adopted.
 
 **Tests** (`uv run pytest`, full suite with the CPU backend live on `auto`):
-- Full run: 1475 passed, 9 failed, 129 skipped, in 61 minutes. The box was shared with
+- **Final run, at commit `bfe4493` with the `mcp` extra installed: 1485 passed, 2 failed, 128
+  skipped**, in 69 minutes on a box shared with another agent. The 2 failures are the
+  goldens below; the skips are the `gpu`-marked tests (no CUDA here) and other
+  hardware-dependent tests.
+  `phasor doctor` reports `cpu_kernels` ok (g++ 13.3, OpenMP, 4 threads of 4 cores) and
+  "tier: B - OpenGL, no CUDA: kernels run on the CPU (4 threads, g++)".
+- An earlier full run: 1475 passed, 9 failed, 129 skipped, in 61 minutes. The box was shared with
   another agent's test runs, so this time is not a measurement.
   - 7 of the failures were `ModuleNotFoundError: mcp`: this worktree had been synced without
     the `mcp` extra. After `uv sync --extra mcp`, `tests/test_mcp.py` and `tests/test_kit.py`
