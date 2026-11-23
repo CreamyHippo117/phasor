@@ -624,7 +624,9 @@ class Workspace:
         ``rounds`` (3) times; each round is undoable. Returns the score before and after and
         what is left for you to judge. Colors and sizes the scene typed (``off_palette``,
         ``off_scale``) snap to the nearest role only with ``snap=True``: ask the person."""
-        r = self.engine.polish(min(max(rounds, 1), 3), snap=bool(snap))
+        if not isinstance(snap, bool):  # a JSON "false" is truthy: never snap by accident
+            raise ToolError(f"snap must be true or false, not {snap!r}")
+        r = self.engine.polish(min(max(rounds, 1), 3), snap=snap)
         return {**r, "version": self.engine.version}
 
     def variants(self, beat: str | float, n: int = 3) -> dict[str, Any]:

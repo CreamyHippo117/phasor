@@ -433,3 +433,19 @@ def test_a_background_is_opaque_and_alpha_below_one_is_refused(tmp_path):
     # an object's color keeps its alpha (it is drawn over something)
     assert ObjectSpec(id="a", type="dot", style={"color": "#FFFFFF80"}).style["color"] == (
         "#FFFFFF80")  # fmt: skip
+
+
+def test_the_polish_tool_takes_snap_only_as_a_real_bool(tmp_path):
+    """A JSON string "false" is truthy: bool() would have snapped every typed value."""
+    from phasor.workspace.tools import ToolError, Workspace
+
+    w = Workspace(tmp_path)
+    w.scene_new(title="x", look="none")
+    w.scene_edit({"op": "add_object", "object": {"id": "a", "type": "dot",
+                                                 "style": {"color": "#00FF00"}}})  # fmt: skip
+    for bad in ("false", "true", 1, None):
+        with pytest.raises(ToolError, match="snap"):
+            w.polish(snap=bad)
+    assert w.engine.document.object("a").style["color"] == "#00FF00"
+    w.polish(snap=False)
+    assert w.engine.document.object("a").style["color"] == "#00FF00"
