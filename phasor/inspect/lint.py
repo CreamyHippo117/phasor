@@ -527,9 +527,10 @@ def run(
             if _is_label(e):
                 if (y1 - y0) < th["text_min"] * height:
                     f.add("tiny", (e["id"],), t, px=y1 - y0, what="text")
-            elif max(x1 - x0, y1 - y0) < th["tiny"] * height and e["semantic"].get(
-                "drawn", 1.0
-            ) >= 1.0:  # a curve being traced starts small; it is judged once drawn
+            elif (
+                max(x1 - x0, y1 - y0) < th["tiny"] * height
+                and e["semantic"].get("drawn", 1.0) >= 1.0
+            ):  # a curve being traced starts small; it is judged once drawn
                 f.add("tiny", (e["id"],), t, px=max(x1 - x0, y1 - y0), what="object")
             if e["semantic"].get("fill_crossing"):
                 f.add("fill_crossing", (e["id"],), t)
