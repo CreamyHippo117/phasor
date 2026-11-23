@@ -153,3 +153,121 @@ def test_a_scene_background_reaches_the_state_and_the_default_is_the_theme():
     assert e.document.meta.background == "#000000"
     assert e.apply({"op": "set_meta", "field": "background", "value": None}).ok
     assert e.state_at(0).background == theme.background
+
+
+# ---------------------------------------------------------------- 3. taste stays checked
+
+
+def _aesthetic(e, code):
+    return [i for i in e.lint(aesthetic=True) if i.code == code]
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_off_palette_warns_for_a_color_far_from_every_role(passes):
+    s = _scene(passes)
+    s.add(Dot(id="near", pos=(-2, 0), r=0.4, style={"color": "#7AA2F7"}))  # = secondary
+    s.add(Dot(id="role", pos=(0, 0), r=0.4, style={"color": "highlight"}))
+    s.add(Dot(id="green", pos=(2, 0), r=0.4, style={"color": "#83C167"}))  # Manim GREEN
+    s.marker("beat", 1.0)
+    (issue,) = _aesthetic(s.engine, "off_palette")
+    assert issue.ids == ("green",) and issue.path == "green.color"
+    assert issue.severity == "warning" and issue.times and not issue.fix
+    assert "'#83C167'" in issue.message and "highlight" in issue.message
+    assert not [i for i in s.engine.lint() if i.code == "off_palette"]  # aesthetic only
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_off_palette_judges_a_scene_background_against_the_themes(passes):
+    near = _scene(passes, background="#0B0E15")
+    near.add(Dot(id="a", pos=(0, 0), r=0.4, style={"color": "highlight"}))
+    assert not _aesthetic(near.engine, "off_palette")
+    far = _scene(passes, background="#3A2A10")
+    far.add(Dot(id="a", pos=(0, 0), r=0.4, style={"color": "highlight"}))
+    (issue,) = _aesthetic(far.engine, "off_palette")
+    assert issue.path == "meta.background" and issue.ids == () and issue.times
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_off_scale_warns_for_sizes_off_the_themes_type_and_stroke_scale(passes):
+    s = _scene(passes)
+    # camera 8 units tall: label is 0.042 x 8 = 0.336 world units; bold is 0.008 x 8 = 0.064
+    s.add(Text(id="ok", text="near label", pos=(-3, 2), style={"size": 0.34}))
+    s.add(Text(id="huge", text="huge", pos=(0, -1), style={"size": 1.5}))
+    s.add(Line(id="wide", points=[(-3, -3), (3, -3)], style={"stroke": 0.3}))
+    s.add(Line(id="fine", points=[(-3, 3), (3, 3)], style={"stroke": 0.032}))  # = regular
+    s.marker("beat", 1.0)
+    issues = {i.ids[0]: i for i in _aesthetic(s.engine, "off_scale")}
+    assert set(issues) == {"huge", "wide"}
+    assert "'title'" in issues["huge"].message and "'bold'" in issues["wide"].message
+    assert all(not i.fix and i.times for i in issues.values())
+
+
+def test_off_scale_follows_the_zoom_and_reports_when():
+    s = _scene()
+    s.add(Text(id="t", text="x", pos=(0, 0), style={"size": 0.34}))  # label at height 8
+    s.at(2.0).to("camera.height", 2, duration=0.5)  # zoomed in, it is 4 x the label
+    s.marker("late", 3.0)
+    (issue,) = _aesthetic(s.engine, "off_scale")
+    assert issue.times and min(issue.times) >= 2.0
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_explicit_widths_leave_stroke_mix_alone(passes):
+    s = _scene(passes)
+    s.add(Line(id="a", points=[(-3, 0), (3, 0)], style={"stroke": "hairline"}))
+    s.add(Line(id="b", points=[(-3, 1), (3, 1)], style={"stroke": "bold"}))
+    s.add(Line(id="c", points=[(-3, 2), (3, 2)], style={"stroke": 0.5}))
+    s.marker("beat", 1.0)
+    assert not _aesthetic(s.engine, "stroke_mix")  # two roles; the typed width is not a role
+    s.engine.autofix(aesthetic=True)
+    assert s.engine.document.object("c").style["stroke"] == 0.5
+
+
+# ---------------------------------------------------------------- 4. polish offers the snap
+
+
+def _typed_scene() -> Scene:
+    s = _scene(background="#3A2A10")
+    s.add(Dot(id="sun", pos=(0, 0), r=0.6, style={"color": "#83C167"}))
+    s.add(Text(id="name", text="sun", pos=(0, 1.5), style={"size": 1.5, "color": "#FFFFFF"}))
+    s.marker("beat", 1.0)
+    return s
+
+
+def test_critique_offers_the_snap_and_polish_does_not_apply_it():
+    e = _typed_scene().engine
+    report = e.critique()
+    by_code = {i["code"]: i for i in report["issues"]}
+    assert by_code["off_palette"]["snap"] and by_code["off_scale"]["snap"]
+    offered = [op for i in report["issues"] for op in i["snap"]]
+    assert {"op": "set_style", "id": "name", "key": "size", "role": "title"} in offered
+    assert all(not i["fix"] for i in report["issues"] if i["code"].startswith("off_"))
+    before = e.document
+    e.polish()
+    for oid in ("sun", "name"):  # nothing typed was replaced, silently or by a suggestion
+        assert e.document.object(oid).style == before.object(oid).style
+    assert e.document.meta.background == "#3A2A10"
+    e.autofix(aesthetic=True)
+    assert e.document.object("sun").style["color"] == "#83C167"
+
+
+def test_polish_snaps_only_when_asked():
+    e = _typed_scene().engine
+    r = e.polish(snap=True)
+    assert e.document.object("sun").style["color"] in ("highlight", "secondary", "primary")
+    assert e.document.object("name").style["size"] == "title"
+    assert not [i for i in r["remaining"] if i["code"] == "off_scale"]
+    # a script owns its meta: the background is reported with no snap (change the script)
+    assert e.document.meta.background == "#3A2A10"
+    (bg,) = [i for i in r["remaining"] if i["path"] == "meta.background"]
+    assert bg["snap"] == []
+
+
+def test_polish_snaps_a_documents_background_when_asked():
+    raw = _typed_scene().engine.document.model_dump(mode="json")
+    raw["meta"]["source"] = "document"
+    e = Engine(Document.model_validate(raw), passes=None)
+    e.polish()
+    assert e.document.meta.background == "#3A2A10"
+    e.polish(snap=True)
+    assert e.document.meta.background is None

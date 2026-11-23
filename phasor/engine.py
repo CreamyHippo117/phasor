@@ -419,22 +419,26 @@ class Engine:
 
     def critique(self) -> dict[str, Any]:
         """The art-director's report: the taste score (0 = nothing to criticise) and every
-        aesthetic issue with the markers it happens at, certain ``fix`` ops and judgement
-        ``suggested`` ops. See ``inspect/critic.py``."""
+        aesthetic issue with the markers it happens at, certain ``fix`` ops, judgement
+        ``suggested`` ops and offered ``snap`` ops (an explicit value to its nearest role).
+        See ``inspect/critic.py``."""
         issues = [i for i in self._aesthetic(self._snap)]
-        return critic.critique(self._snap.compiled, issues, lambda t: self._snapshot(t))
+        return critic.critique(self._snap.compiled, issues, lambda t: self._snapshot(t),
+                               lambda t: self.state_at(t))  # fmt: skip
 
-    def polish(self, rounds: int = 3) -> dict[str, Any]:
+    def polish(self, rounds: int = 3, *, snap: bool = False) -> dict[str, Any]:
         """Critique, apply the fixes (certain ones, then judgement suggestions), and repeat,
         at most ``rounds`` times (SPEC: three). Every round is undoable. Returns the score
-        before and after and what each round did; stops early when nothing is left to do."""
+        before and after and what each round did; stops early when nothing is left to do.
+        Explicit colors and sizes the scene typed are its own choice: their ``snap`` to the
+        nearest role is applied only with ``snap=True`` (else it stays in ``remaining``)."""
         history = []
         before = self.critique()
         report = before
         for k in range(1, rounds + 1):
             ops: list[dict[str, Any]] = []
             for i in report["issues"]:
-                for op in i["fix"] or i["suggested"]:
+                for op in [*(i["fix"] or i["suggested"]), *(i["snap"] if snap else ())]:
                     if op not in ops:
                         ops.append(op)
             if not ops or not self.apply(ops).ok:

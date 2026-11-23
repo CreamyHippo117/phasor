@@ -80,5 +80,6 @@ def test_weights_cover_every_aesthetic_rule():
     from phasor.inspect import aesthetic
 
     assert set(WEIGHTS) == {"focal_point", "color_restraint", "glow_clip", "density",
-                            "motion_rhythm", "margin", "stroke_mix"}  # fmt: skip
+                            "motion_rhythm", "margin", "stroke_mix", "off_palette",
+                            "off_scale"}  # fmt: skip
     assert callable(aesthetic.rules)

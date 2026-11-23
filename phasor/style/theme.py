@@ -1,7 +1,8 @@
 """Themes and style roles (SPEC "Beauty system").
 
 Scenes name roles (``highlight``, ``bold``, ``label``); the theme decides what they look
-like. Raw hex codes and pixel sizes never appear in a scene.
+like. A scene may also type an explicit color or size (``style/explicit.py``); the aesthetic
+rules ``off_palette`` and ``off_scale`` say when it is far from the theme.
 """
 
 from __future__ import annotations
@@ -75,6 +76,8 @@ _TABLES = {
         "margin",
         "stroke_mix",
         "impure",
+        "off_palette",
+        "off_scale",
     ),
     "life": (
         "glow",

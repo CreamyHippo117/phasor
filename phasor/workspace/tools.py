@@ -605,8 +605,9 @@ class Workspace:
     def critique(self) -> dict[str, Any]:
         """The art-director's report: a taste score (0 = nothing to criticise), every
         aesthetic issue with the markers it happens at and its fixes (``fix`` is certain,
-        ``suggested`` is judgement), and the rubric (STYLE.md) to judge the storyboard by.
-        Look at the picture too: no rule sees everything."""
+        ``suggested`` is judgement, ``snap`` puts an explicit color or size back on the
+        nearest role and is only offered), and the rubric (STYLE.md) to judge the storyboard
+        by. Look at the picture too: no rule sees everything."""
         from phasor.render import gallery
 
         report = self.engine.critique()
@@ -614,11 +615,12 @@ class Workspace:
         report["gallery"] = len(gallery.entries(self.root / "gallery"))
         return report
 
-    def polish(self, rounds: int = 3) -> dict[str, Any]:
+    def polish(self, rounds: int = 3, snap: bool = False) -> dict[str, Any]:
         """Apply the critic's fixes (certain ones, then judgement suggestions), at most
         ``rounds`` (3) times; each round is undoable. Returns the score before and after and
-        what is left for you to judge."""
-        r = self.engine.polish(min(max(rounds, 1), 3))
+        what is left for you to judge. Colors and sizes the scene typed (``off_palette``,
+        ``off_scale``) snap to the nearest role only with ``snap=True``: ask the person."""
+        r = self.engine.polish(min(max(rounds, 1), 3), snap=bool(snap))
         return {**r, "version": self.engine.version}
 
     def variants(self, beat: str | float, n: int = 3) -> dict[str, Any]:
