@@ -1,4 +1,4 @@
-"""Things brought in from outside: pictures (BEAUTY.md item 5).
+"""Things brought in from outside: pictures (BEAUTY.md item 5) and sound files.
 
 ``Image`` puts a PNG or JPEG file in the scene, as a flat rectangle placed, sized and
 animated like any object (it fades, moves, flashes, sits in 3D). The file's path is relative
@@ -37,6 +37,21 @@ def _read(path: str, mtime: float) -> np.ndarray:
         a = np.asarray(im, dtype=np.float32) / 255.0
     rgb = np.asarray(srgb_to_linear(a[..., :3]), dtype=np.float32)
     return np.concatenate([rgb, a[..., 3:]], axis=-1)
+
+
+@functools.lru_cache(maxsize=8)
+def read_wav(path: str, mtime: float) -> tuple[np.ndarray, float]:
+    """A .wav file as mono float64 in -1..1 and its sample rate. Cached per file version."""
+    from scipy.io import wavfile
+
+    fs, data = wavfile.read(path)
+    if data.dtype.kind == "u":  # 8-bit PCM is unsigned, centred on 128
+        x = (data.astype(np.float64) - 128.0) / 128.0
+    elif data.dtype.kind == "i":
+        x = data.astype(np.float64) / float(-np.iinfo(data.dtype).min)
+    else:
+        x = data.astype(np.float64)
+    return (x.mean(axis=1) if x.ndim > 1 else x), float(fs)
 
 
 def picture(state: SceneState, path: str) -> np.ndarray:

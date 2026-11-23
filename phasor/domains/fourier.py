@@ -16,10 +16,11 @@ from __future__ import annotations
 import functools
 import itertools
 import math
+import os
 from typing import Any, ClassVar, Literal
 
 import numpy as np
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from phasor.core.color import ramp
 from phasor.core.objects import Bounds, DrawContext, ObjectBase, ParamsBase, Pass, register
@@ -28,6 +29,7 @@ from phasor.core.values import Vec3
 from phasor.domains import fourier_math as fm
 from phasor.domains.heatmap import heat_pixels, lut_colour
 from phasor.domains.strokes import circle, disc, polyline, with_alpha
+from phasor.time.compile import resolve_file
 
 
 def _ydir(me, state: SceneState) -> float:
@@ -311,37 +313,120 @@ class Spectrum(ObjectBase):
 # ---------------------------------------------------------------- Spectrogram
 
 
+MAX_FORMULA_SAMPLES = 400_000  # a formula is evaluated sample by sample
+MAX_FRAMES = 1500  # the hop widens for long sounds so a wav never makes more columns than this
+
+
 @functools.lru_cache(maxsize=8)
-def _sg(f0, f1, duration, fs, nwin):
-    return fm.spectrogram(fm.chirp(f0, f1, duration, fs), fs, nwin)
+def _stft(source: str, ref: str, mtime: float, f0: float, f1: float, duration: float, fs: float,
+          nwin: int, hop: int, win: str) -> dict[str, Any]:  # fmt: skip
+    """The STFT of one signal, cached by everything that makes it (``mtime`` is the wav's)."""
+    if source == "wav":
+        from phasor.domains.media import read_wav
+
+        x, fs = read_wav(ref, mtime)
+    elif source == "formula":
+        from phasor.time.expr import compile_expr
+
+        if duration * fs > MAX_FORMULA_SAMPLES:  # also when a track drives duration or fs
+            raise ValueError(f"the signal is too long: {duration * fs:.0f} samples")
+        fn = compile_expr(ref)
+        x = fm.sampled(lambda t: fn({}, t), duration, fs)
+    else:
+        x = fm.chirp(f0, f1, duration, fs)
+    hop = hop or max(nwin // 4, min(nwin, -(-len(x) // MAX_FRAMES)))
+    sg = fm.spectrogram(x, fs, nwin, hop, win)
+    return {**sg, "duration": len(x) / fs, "fs": fs, "source": source}
 
 
 @register
 class Spectrogram(ObjectBase):
-    """A spectrogram of a chirp (a tone sliding from ``f0`` to ``f1`` Hz): time across,
-    frequency up, brightness for strength. A backdrop: labels may sit on it."""
+    """A spectrogram: time across, frequency up, brightness for strength. A backdrop: labels
+    may sit on it. The signal is, in this order, a ``.wav`` file next to the scene (``wav``,
+    mono or mixed down), a formula in ``t`` seconds (``signal``, such as
+    ``"sin(tau * 440 * t)"``), or a chirp sliding from ``f0`` to ``f1`` Hz. ``playhead``
+    (0..1 of the duration; a track or an expression moves it) draws a glowing line, and the
+    semantics name the strongest frequency under it."""
 
     type: ClassVar[str] = "spectrogram"
-    Style: ClassVar = {"colormap": ("colormap", "ocean"), "glow": ("glow", "none")}
+    Files: ClassVar = ("wav",)  # checked to exist when the document compiles
+    Style: ClassVar = {"colormap": ("colormap", "ocean"), "glow": ("glow", "none"),
+                       "playhead": ("emphasis", "highlight"),
+                       "stroke": ("stroke", "hairline")}  # fmt: skip
     Presets: ClassVar = {
         # the prism look: smooth, glowing where strong, contour lines of light
         "prism": {"params": {"smooth": True, "isolines": 8}, "style": {"glow": "soft"}},
     }
 
     class Params(ParamsBase):
-        f0: float = Field(200.0, gt=0)
+        f0: float = Field(200.0, gt=0)  # the chirp (no signal, no wav)
         f1: float = Field(1200.0, gt=0)
+        signal: str = ""  # a formula in t (seconds), over ``duration`` at ``fs``
+        wav: str = ""  # a .wav file next to the scene (then duration and fs are its own)
         duration: float = Field(1.0, gt=0)
         fs: float = Field(4000.0, gt=0)
         nwin: int = Field(256, ge=16, le=4096)
+        hop: int = Field(0, ge=0)  # 0: nwin / 4 (wider for long sounds)
+        window: Literal["rect", "hann", "hamming", "blackman"] = "hann"
+        fmax: float = Field(0.0, ge=0)  # top of the frequency axis in Hz; 0: half the rate
+        playhead: float = Field(-1.0, ge=-1, le=1)  # 0..1 of the duration; below 0: no line
         pos: Vec3 = (0.0, 0.0, 0.0)  # centre
         size: tuple[float, float] = (6.0, 3.0)
         smooth: bool = False  # bicubic between grid values (the prism look); else as before
         isolines: int = Field(0, ge=0, le=64)  # contour levels drawn as thin light
 
+        @field_validator("wav")
+        @classmethod
+        def _wav_file(cls, v: str) -> str:
+            if v and not v.lower().endswith(".wav"):
+                raise ValueError(f"{v!r} is not a .wav file")
+            return v
+
+        @field_validator("signal")
+        @classmethod
+        def _formula_in_t(cls, v: str) -> str:
+            if v:
+                from phasor.time.expr import ExprError, compile_expr
+
+                try:
+                    c = compile_expr(v)
+                except ExprError as e:
+                    raise ValueError(str(e)) from e
+                if c.deps:
+                    raise ValueError(f"{v!r}: a signal is a formula in t only, not "
+                                     f"{sorted(c.deps)}")  # fmt: skip
+            return v
+
+        @model_validator(mode="after")
+        def _one_source(self):
+            if self.signal and self.wav:
+                raise ValueError("give a signal formula or a wav file, not both")
+            if self.signal and self.duration * self.fs > MAX_FORMULA_SAMPLES:
+                raise ValueError(
+                    f"the signal is too long: {self.duration * self.fs:.0f} samples "
+                    f"(at most {MAX_FORMULA_SAMPLES}; lower duration or fs)"
+                )
+            return self
+
     def _rect(self, p):
         c = np.asarray(p.pos, dtype=np.float64) - np.array([p.size[0] / 2, p.size[1] / 2, 0.0])
         return c, np.array([p.size[0], 0.0, 0.0]), np.array([0.0, p.size[1], 0.0])
+
+    def _analysis(self, state: SceneState) -> dict[str, Any]:
+        """The signal's STFT (``freq``, ``time``, ``mag``) cropped to ``fmax``, with its
+        ``duration``, sample rate, ``source`` and the axis ``top``."""
+        p = self.me(state).params
+        if p.wav:
+            file = resolve_file(p.wav, state.assets)
+            source, ref, mtime = "wav", str(file.resolve()), os.path.getmtime(file)
+        elif p.signal:
+            source, ref, mtime = "formula", p.signal, 0.0
+        else:
+            source, ref, mtime = "chirp", "", 0.0
+        sg = _stft(source, ref, mtime, p.f0, p.f1, p.duration, p.fs, p.nwin, p.hop, p.window)
+        top = p.fmax if 0 < p.fmax < sg["fs"] / 2 else sg["fs"] / 2
+        keep = sg["freq"] <= top + 1e-9
+        return {**sg, "freq": sg["freq"][keep], "mag": sg["mag"][keep], "top": float(top)}
 
     def world_bounds(self, state: SceneState) -> Bounds:
         c, r, u = self._rect(self.me(state).params)
@@ -352,13 +437,21 @@ class Spectrogram(ObjectBase):
 
     def semantics(self, state: SceneState) -> dict[str, Any]:
         p = self.me(state).params
-        return {"kind": "spectrogram", "backdrop": True, "f0": p.f0, "f1": p.f1,
-                "duration": p.duration, "max_frequency": p.fs / 2}  # fmt: skip
+        a = self._analysis(state)
+        out = {"kind": "spectrogram", "backdrop": True, "source": a["source"],
+               "f0": p.f0, "f1": p.f1, "duration": a["duration"], "max_frequency": a["top"],
+               "playhead": p.playhead if p.playhead >= 0 else None, "playhead_time": None,
+               "dominant_frequency": None}  # fmt: skip
+        if p.playhead >= 0:
+            at = p.playhead * a["duration"]
+            out["playhead_time"] = at
+            out["dominant_frequency"] = fm.dominant_frequency(a, at)
+        return out
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
         me = self.me(state)
         p = me.params
-        sg = _sg(p.f0, p.f1, p.duration, p.fs, p.nwin)
+        sg = self._analysis(state)
         mag = sg["mag"] / max(float(sg["mag"].max()), 1e-12)
         lut = ramp(me.style["colormap"], np.float32)  # strongest = brightest (ocean is cyclic)
         corner, right, up = self._rect(p)
@@ -372,3 +465,10 @@ class Spectrogram(ObjectBase):
             background=state.background,
         )  # fmt: skip
         ctx.field(corner, right, up, pixels=pixels, opacity=p.opacity, glow=glow)
+        if p.playhead >= 0 and pass_ == "color":
+            cam = state.camera_for(me)
+            x = corner[0] + p.playhead * p.size[0]
+            line = [(x, corner[1], corner[2]), (x, corner[1] + p.size[1], corner[2])]
+            w = me.style["stroke"] * float(cam.units_per_height(np.asarray(line[0])))
+            polyline(ctx, cam, line, w, color=with_alpha(me.style["playhead"], p.opacity),
+                     glow=2.5)  # fmt: skip

@@ -152,14 +152,40 @@ def chirp(f0: float, f1: float, duration: float, fs: float) -> np.ndarray:
     return np.sin(2 * math.pi * (f0 * t + 0.5 * k * t**2))
 
 
-def spectrogram(x, fs: float, nwin: int = 256, hop: int | None = None) -> dict[str, np.ndarray]:
-    """Short-time Fourier magnitudes (Hann window): ``mag`` has shape (frequencies, frames)."""
+def sampled(fn, duration: float, fs: float) -> np.ndarray:
+    """``fn(t)`` (a scalar function of seconds) at ``t = k / fs``, ``duration * fs`` samples."""
+    n = int(duration * fs)
+    return np.array([float(fn(k / fs)) for k in range(n)], dtype=np.float64)
+
+
+def spectrogram(x, fs: float, nwin: int = 256, hop: int | None = None,
+                win: str = "hann") -> dict[str, np.ndarray]:  # fmt: skip
+    """Short-time Fourier magnitudes: ``mag`` has shape (frequencies, frames), amplitude-
+    corrected so a tone on a bin reads its amplitude. ``hop`` defaults to ``nwin // 4``;
+    ``win`` is one of ``WINDOWS``. A signal shorter than the window is zero-padded to one."""
+    x = np.asarray(x, dtype=np.float64)
     hop = hop or nwin // 4
-    w = np.hanning(nwin)
-    frames = range(0, max(len(x) - nwin, 0) + 1, hop)
+    w = window(win, nwin)
+    if len(x) < nwin:
+        x = np.pad(x, (0, nwin - len(x)))
+    frames = range(0, len(x) - nwin + 1, hop)
     mag = np.array([np.abs(np.fft.rfft(x[i : i + nwin] * w)) for i in frames]).T
     times = np.array([(i + nwin / 2) / fs for i in frames])
     return {"freq": np.fft.rfftfreq(nwin, 1 / fs), "time": times, "mag": mag / (w.sum() / 2)}
+
+
+def dominant_frequency(sg: dict[str, np.ndarray], t: float) -> float:
+    """The strongest frequency (Hz) in the frame nearest time ``t``, refined between bins by
+    a parabola through the peak and its two neighbours."""
+    col = sg["mag"][:, int(np.argmin(np.abs(sg["time"] - t)))]
+    k = int(np.argmax(col))
+    df = float(sg["freq"][1] - sg["freq"][0]) if len(sg["freq"]) > 1 else 0.0
+    if 0 < k < len(col) - 1:
+        a, b, c = np.log(np.maximum(col[k - 1 : k + 2], 1e-300))
+        denom = a - 2 * b + c
+        if denom < 0:
+            return float(sg["freq"][k] + 0.5 * (a - c) / denom * df)
+    return float(sg["freq"][k])
 
 
 # ---------------------------------------------------------------- convolution
