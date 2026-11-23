@@ -194,3 +194,35 @@ def test_a_render_mixes_sounds_into_the_video(tmp_path):
     loud = np.abs(pcm.astype(float))
     assert loud[: int(0.4 * rate)].max() < 0.02 * loud.max()  # silent before the clip starts
     assert loud[int(0.6 * rate) : int(0.9 * rate)].mean() > 0.2 * loud.max()
+
+
+def test_a_lying_header_costs_only_what_the_file_holds(tmp_path):
+    """Lesson 2: a header that claims 2^31 frames allocates for what is really there."""
+    import tracemalloc
+
+    p = wav(tmp_path / "liar.wav", np.full(100, 5))
+    data = bytearray(p.read_bytes())
+    data[40:44] = struct.pack("<I", 0x7FFFFFF0)
+    p.write_bytes(bytes(data))
+    tracemalloc.start()
+    x, _ = nar.read_sound(p)
+    peak = tracemalloc.get_traced_memory()[1]
+    tracemalloc.stop()
+    assert len(x) == 100 and peak < 5_000_000
+    tracemalloc.start()
+    out = nar.mix_track(None, tmp_path, 10.0, [nar.Clip("liar.wav", 0.0)] * 10)
+    peak = tracemalloc.get_traced_memory()[1]
+    tracemalloc.stop()
+    assert out is not None and peak < 50_000_000  # ten clips, a 10 s track: a few MB
+
+
+def test_only_the_rendered_window_is_mixed(tmp_path):
+    """A render of part of a long scene allocates and reads only that part."""
+    wav(tmp_path / "a.wav", np.arange(16000) % 1000)  # 2 s, a ramp to see where it was cut
+    whole, rate = nar.mix_track(None, tmp_path, 3600.0, [nar.Clip("a.wav", 1.0)])
+    part, _ = nar.mix_track(None, tmp_path, 3600.0, [nar.Clip("a.wav", 1.0)], start=1.5,
+                            end=2.5)  # fmt: skip
+    assert len(part) == rate and len(whole) == 3600 * rate
+    assert np.abs(part.astype(int) - whole[int(1.5 * rate) : int(2.5 * rate)]).max() <= 1
+    assert nar.mix_track(None, tmp_path, 3600.0, [nar.Clip("a.wav", 1.0)], start=10,
+                         end=11) is None  # fmt: skip

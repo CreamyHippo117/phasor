@@ -99,6 +99,7 @@
 - `room`: flash, size, origin, material, absorption
 - `room3d`: flash, size, origin, path, scale, material, absorption, walls, edge_angle
 - `sector`: flash, morph_from, morph, morph_kind, progress, fill_opacity, stroke_opacity, pos, r, start, angle, inner
+- `sound`: flash, path, start, gain
 - `sound_rays`: flash, room, source, time, speed, hue_step, count, bounces, trail, seed
 - `source`: flash, pos, r
 - `spectrogram`: flash, smooth, isolines, hue_cycles, hue, fade, ambient, contrast, f0, f1, duration, fs, nwin, pos, size

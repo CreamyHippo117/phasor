@@ -395,13 +395,17 @@ class S(MovingCameraScene):
     assert v(1.0)["camera.center"][0] == pytest.approx(1.5, abs=0.05)
     assert v(3.0)["camera.height"] == pytest.approx(4.5) and v(3.0)["camera.center"][0] == 2.0
     assert v(4.0)["camera.center"] == pytest.approx((0, 0, 0)) and v(4.0)["camera.height"] == 8.0
+    # a plain Scene has no frame in Manim; it imported before (as nothing): now it moves the
+    # camera, with a warning (lesson 1: what imported before still imports)
     plain = script(tmp_path, """
 class S(Scene):
     def construct(self):
-        self.camera.frame.animate.shift(LEFT)
+        self.add(Dot())
+        self.play(self.camera.frame.animate.shift(LEFT))
 """, "plain.py")  # fmt: skip
-    with pytest.raises(ManimImportError, match="MovingCameraScene"):
-        import_manim(plain)
+    r = import_manim(plain)
+    assert any("MovingCameraScene" in w for w in r.warnings)
+    assert r.scene.engine.state_at(1.0).values["camera.center"] == pytest.approx((-1, 0, 0))
 
 
 # ---------------------------------------------------------------- ids and permissions
@@ -448,7 +452,7 @@ class S(Scene):
 @pytest.mark.parametrize("body", [
     "x = 1 / 0",  # at the top of the script
     "class S(Scene):\n    def construct(self):\n        raise ValueError('mine')",
-    "class S(Scene):\n    def construct(self):\n        self.play(Wait(run_time=-1))",
+    "class S(Scene):\n    def construct(self):\n        self.play(Wait(run_time='x'))",
     "class S(Scene):\n    def construct(self)\n        pass",  # not Python
     "class S(Scene):\n    def construct(self):\n        self.construct()",  # recursion
 ])  # fmt: skip
@@ -540,3 +544,44 @@ def test_example_golden_storyboards(name, times):
         e = runpy.run_path(str(path), run_name="x")["s"].engine
     sheet = e.storyboard(times, size=(320, 180))["image"]
     _golden(name, sheet, e.pass_runner().renderer_class())
+
+
+@pytest.mark.parametrize("body, warned", [
+    ("self.play()", "no animation"),
+    ("d = Dot()\n        self.add(d)\n        self.play(FadeIn(d), run_time=-1)", "negative"),
+    ("g = VGroup(Dot(), Dot())\n        self.add(g)\n        g.target = VGroup(Dot(UP))\n"
+     "        self.play(MoveToTarget(g))", "parts"),
+])  # fmt: skip
+def test_what_imported_before_still_imports_with_a_warning(tmp_path, body, warned):
+    """Lesson 1: these imported before Milestone 20 (they did nothing, or played in no
+    time); they still import, and now say what happened."""
+    r = import_manim(script(tmp_path, f"""
+class S(Scene):
+    def construct(self):
+        {body}
+        self.wait(1)
+"""))  # fmt: skip
+    assert any(warned in w for w in r.warnings), r.warnings
+
+
+def test_a_redrawn_curve_is_bounded_by_the_numbers_it_samples(tmp_path, monkeypatch):
+    """Lesson 2: frames are bounded, and so is what they sample (a 240-point curve redrawn
+    every frame is hundreds of numbers a frame)."""
+    import json
+
+    from phasor.importers import manim as mi
+
+    monkeypatch.setattr(mi, "MAX_KEY_NUMBERS", 200_000)
+    p = script(tmp_path, """
+class S(Scene):
+    def construct(self):
+        ax = Axes()
+        k = ValueTracker(1)
+        g = always_redraw(lambda: ax.plot(lambda x: k.get_value() * np.sin(x)))
+        self.add(ax, g)
+        self.play(k.animate.set_value(3), run_time=600, rate_func=there_and_back)
+""")  # fmt: skip
+    r = import_manim(p)
+    assert any("numbers" in w for w in r.warnings)
+    size = len(json.dumps(doc_of(r).model_dump(mode="json")))
+    assert size < 4_000_000

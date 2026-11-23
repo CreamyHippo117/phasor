@@ -260,26 +260,36 @@ def wav_info(path: str | Path) -> WavInfo:
     return info
 
 
-def read_sound(path: str | Path, max_frames: int = MAX_CLIP_FRAMES) -> tuple[np.ndarray, int]:
+def read_sound(path: str | Path, max_frames: int = MAX_CLIP_FRAMES,
+               skip: int = 0) -> tuple[np.ndarray, int]:  # fmt: skip
     """A WAV clip as mono float32 in -1..1 and its rate: at most ``max_frames`` frames (and
-    never more than ``MAX_CLIP_FRAMES``), read a chunk at a time, so a lying header or a
-    huge file costs no more than that. ``ValueError`` for a file it cannot read."""
+    never more than ``MAX_CLIP_FRAMES``) after the first ``skip``, read a chunk at a time and
+    never more than the file holds, so a lying header or a huge file costs no more than what
+    is mixed. ``ValueError`` for a file it cannot read."""
+    import os
+
     info = wav_info(path)
-    want = max(0, min(int(max_frames), info.frames, MAX_CLIP_FRAMES))
-    out = np.zeros(want, dtype=np.float32)
+    frame = info.width * info.channels
+    held = os.path.getsize(path) // frame  # what the file can hold, whatever its header says
+    skip = max(0, int(skip))
+    want = max(0, min(int(max_frames), info.frames - skip, held - skip, MAX_CLIP_FRAMES))
+    chunks: list[np.ndarray] = []
     got = 0
     try:
         with wave.open(str(path), "rb") as w:
+            if want and skip:
+                w.setpos(skip)
             while got < want:
                 raw = w.readframes(min(_CHUNK, want - got))
-                n = len(raw) // (info.width * info.channels)
+                n = len(raw) // frame
                 if n == 0:
                     break
-                out[got : got + n] = _pcm(raw[: n * info.width * info.channels], info)
+                chunks.append(_pcm(raw[: n * frame], info))
                 got += n
     except (wave.Error, EOFError, OSError, struct_error) as e:
         raise ValueError(f"not a PCM WAV file ({e or type(e).__name__})") from None
-    return out[:got], info.rate
+    out = np.concatenate(chunks) if chunks else np.zeros(0, np.float32)
+    return out.astype(np.float32, copy=False), info.rate
 
 
 def _pcm(raw: bytes, info: WavInfo) -> np.ndarray:
@@ -297,12 +307,14 @@ def _pcm(raw: bytes, info: WavInfo) -> np.ndarray:
     return x.reshape(-1, info.channels).mean(axis=1)
 
 
-def resample(x: np.ndarray, rate: int, to: int) -> np.ndarray:
+def resample(x: np.ndarray, rate: int, to: int, limit: int | None = None) -> np.ndarray:
     """``x`` at ``rate`` as samples at ``to`` (linear interpolation; enough for a sound
-    effect under narration)."""
+    effect under narration), at most ``limit`` of them."""
+    n = int(len(x) * to / rate) if rate != to else len(x)
+    if limit is not None:
+        n = min(n, max(0, int(limit)))
     if rate == to or not len(x):
-        return x
-    n = int(len(x) * to / rate)
+        return x[:n]
     return np.interp(np.arange(n) * (rate / to), np.arange(len(x)), x).astype(np.float32)
 
 
@@ -322,13 +334,16 @@ def mix_track(
     duration: float,
     clips: Sequence[Clip] = (),
     problems: list[str] | None = None,
+    start: float = 0.0,
+    end: float | None = None,
 ) -> tuple[np.ndarray, int] | None:
-    """The narration and any sound clips as one mono int16 track ``duration`` seconds long
-    (at most ``MAX_TRACK_SECONDS``), each block's audio placed at its start, each clip at its
-    ``start`` and cut where the scene ends. None when nothing has audio. A clip that is
-    missing, outside the folder or unreadable is left out and said in ``problems`` (lint
-    names it too: ``missing_file``, ``bad_file``); narration audio that cannot be read
-    raises, as it always has."""
+    """The narration and any sound clips as one mono int16 track, each block's audio placed
+    at its start, each clip at its ``start`` and cut where the scene (``duration``) ends.
+    The track covers ``start`` to ``end`` (by default the scene, or the narration if it runs
+    longer), never more than ``MAX_TRACK_SECONDS``: only that window is read and mixed. None
+    when nothing has audio. A clip that is missing, outside the folder or unreadable is left
+    out and said in ``problems`` (lint names it too: ``missing_file``, ``bad_file``);
+    narration audio that cannot be read raises, as it always has."""
     from phasor.core import files
 
     root = Path(base_dir).resolve()
@@ -344,32 +359,42 @@ def mix_track(
     if len(rates) > 1:
         raise ValueError(f"narration clips have different sample rates: {sorted(rates)}")
     rate = rates.pop() if rates else SOUND_RATE
-    cap = min(max(float(duration), 0.0), MAX_TRACK_SECONDS)
-    end = max([cap] + [t + len(s) / rate for t, (s, _) in spoken])
-    end = min(end, MAX_TRACK_SECONDS)
+    scene_end = max(float(duration), 0.0)
+    lo = max(float(start), 0.0)
+    hi = max([scene_end] + [t + len(s) / rate for t, (s, _) in spoken]) if end is None else end
+    hi = min(max(float(hi), lo), lo + MAX_TRACK_SECONDS)
+    clip_end = min(scene_end, hi)  # clips stop where the scene (or the window) ends
     sounds = []
     for c in clips:
-        if not (0 <= c.start < cap):
+        if not (max(c.start, lo) < clip_end):
             continue
         try:
             file = files.regular_file(root, c.path)
             info = wav_info(file)
-            need = int(np.ceil((cap - c.start) * info.rate)) + 1
-            x, r = read_sound(file, need)
+            skip = int((max(lo - c.start, 0.0)) * info.rate)
+            span = clip_end - max(c.start, lo)
+            x, r = read_sound(file, int(np.ceil(span * info.rate)) + 1, skip)
         except ValueError as e:
             if problems is not None:
                 problems.append(f"sound {c.path!r} left out: {e}")
             continue
-        sounds.append((c.start, resample(x, r, rate) * float(10 ** (c.gain / 20))))
+        y = resample(x, r, rate, int(np.ceil(span * rate)) + 1) * float(10 ** (c.gain / 20))
+        if len(y):  # a clip that ended before the window adds nothing
+            sounds.append((max(c.start, lo), y))
     if not spoken and not sounds:
         return None
-    track = np.zeros(int(np.ceil(end * rate)), dtype=np.float32)
+    track = np.zeros(int(np.ceil((hi - lo) * rate)), dtype=np.float32)
+    stop = int(np.ceil((clip_end - lo) * rate))
     for t, (samples, _) in spoken:
-        i = round(t * rate)
-        seg = samples[: max(0, len(track) - i)]
-        track[i : i + len(seg)] += seg
+        _place(track, samples, round((t - lo) * rate), len(track))
     for t, x in sounds:
-        i = round(t * rate)
-        seg = x[: max(0, int(np.ceil(cap * rate)) - i)] * 32768.0
-        track[i : i + len(seg)] += seg
+        _place(track, x * 32768.0, round((t - lo) * rate), stop)
     return np.clip(np.round(track), -32768, 32767).astype(np.int16), rate
+
+
+def _place(track: np.ndarray, x: np.ndarray, i: int, stop: int) -> None:
+    """Add ``x`` into ``track`` from index ``i`` (negative: its start is cut), up to ``stop``."""
+    if i < 0:
+        x, i = x[-i:], 0
+    x = x[: max(0, min(stop, len(track)) - i)]
+    track[i : i + len(x)] += x

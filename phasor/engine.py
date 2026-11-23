@@ -501,11 +501,13 @@ class Engine:
             ))  # fmt: skip
         return snap.aesthetic
 
-    def audio_track(self, problems: list[str] | None = None):
+    def audio_track(self, problems: list[str] | None = None, start: float = 0.0,
+                    end: float | None = None):  # fmt: skip
         """The narration and the scene's sound clips (``media.Sound``: any object whose
         type has ``audio_clip``) as one mono int16 track covering the scene, and its sample
         rate; None when nothing has audio. A clip that cannot be read is left out and said
-        in ``problems``."""
+        in ``problems``. ``start``/``end``: only that window of the scene (a render of part of
+        it reads and mixes only that part)."""
         from phasor.time.narration import mix_track
 
         state = self.state_at(0.0)
@@ -517,7 +519,7 @@ class Engine:
         n = self.document.narration
         if n is None and not clips:
             return None
-        return mix_track(n, self.base_dir, self.duration, clips, problems)
+        return mix_track(n, self.base_dir, self.duration, clips, problems, start, end)
 
     def _lint(self, snap: _Snapshot, step: float) -> tuple[Issue, ...]:
         snap.refresh()

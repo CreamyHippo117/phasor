@@ -102,7 +102,8 @@ STROKE_UNIT = 0.004 * FRAME_HEIGHT / 4
 DEFAULT_DOT_RADIUS = 0.08
 DEFAULT_ARROW_BUFF = 0.25  # Manim's ``Arrow`` stops this far short of both ends
 UPDATE_RATE = 30  # frames a second at which updaters run (Manim: its frame rate)
-MAX_FRAMES = 20_000  # updater frames in one import; past it the rate halves, with a warning
+MAX_FRAMES = 20_000  # updater frames in one import; past it fewer a second, with a warning
+MAX_KEY_NUMBERS = 2_000_000  # numbers updater frames may sample in one import (about 20 MB)
 KEY_TOLERANCE = 1e-4  # sampled keys closer than this to a straight line between are dropped
 RATE_PIECES = 16  # a rate function phasor has no name for is sampled into this many segments
 SAMPLES = 72  # points round a circle (the box of a shape; phasor draws the true curve)
@@ -2232,8 +2233,10 @@ class Animation:
                  rate_func: Any = None, lag_ratio: float = 0.0, **kw: Any) -> None:  # fmt: skip
         self.mob = mobject
         self.run_time = None if run_time is None else _num(run_time, "run_time")
-        if self.run_time is not None and self.run_time < 0:
-            raise ManimImportError(f"run_time {run_time!r} is negative")
+        if self.run_time is not None and self.run_time < 0:  # imported before: kept, as 0
+            if _CTX is not None:
+                _CTX.warn(f"run_time {run_time!r} is negative: played as 0")
+            self.run_time = 0.0
         self.rate_func = rate_func if rate_func is not None else type(self).default_rate
 
     @property
@@ -2438,10 +2441,10 @@ class _MorphTo(Animation):
 
     def _to_goal(self, ctx: _Context, t0: float, d: float, goal: Mobject) -> None:
         mine, theirs = self.mob.leaves(), goal.leaves()
-        if len(mine) != len(theirs):
-            raise ManimImportError(f"{type(self).__name__}: the target has {len(theirs)} parts, "
-                                   f"the mobject {len(mine)}")  # fmt: skip
-        for leaf, g in zip(mine, theirs, strict=True):
+        if len(mine) != len(theirs):  # imported before (the parts both have): kept
+            ctx.warn(f"{type(self).__name__}: the target has {len(theirs)} parts, the mobject "
+                     f"{len(mine)}; only the first {min(len(mine), len(theirs))} move")  # fmt: skip
+        for leaf, g in zip(mine, theirs, strict=False):
             ctx.move(leaf, leaf, g, t0, d, self.rate_func)
             if leaf.alias is None:
                 leaf._take(g)
@@ -2804,6 +2807,14 @@ def _simplify(samples: list[tuple[float, Any]], tol: float) -> list[tuple[float,
     return [samples[k] for k in np.flatnonzero(keep)]
 
 
+def _numbers(v: Any) -> int:
+    """How many numbers a parameter value holds (a point 3, a path's subpaths many)."""
+    try:
+        return int(np.asarray(v, float).size)
+    except (TypeError, ValueError):
+        return 1
+
+
 def _seg(path: str, t0: float, t1: float, to: Any, ease: str) -> dict:
     return {"op": "add_segment", "path": path,
             "segment": {"t0": t0, "t1": t1, "to": to, "ease": ease}}  # fmt: skip
@@ -2826,6 +2837,7 @@ class _Context:
     in_frames: bool = False
     frame_t: float = 0.0  # the frame updaters run at (Scene.time, while they run)
     frames: int = 0
+    numbers: int = 0  # numbers the updater frames sampled
     rate: float = UPDATE_RATE
     sounds: int = 0
 
@@ -3152,11 +3164,14 @@ class _Frame(Mobject):
 class _Camera:
     def __init__(self, moving: bool) -> None:
         self.background_color = "#000000"
-        self.frame = _Frame() if moving else None
+        self.frame = _Frame()
+        self.moving = moving
 
     def __getattribute__(self, name: str) -> Any:
-        if name == "frame" and object.__getattribute__(self, "frame") is None:
-            raise ManimImportError("self.camera.frame needs a MovingCameraScene")
+        if name == "frame" and not object.__getattribute__(self, "moving") and _CTX is not None:
+            # Manim has no frame here; phasor's import always had one: it moves the camera
+            _CTX.warn("self.camera.frame in a Scene (Manim needs a MovingCameraScene for it): "
+                      "carried over as camera moves")  # fmt: skip
         return object.__getattribute__(self, name)
 
     def __getattr__(self, name: str) -> Any:
@@ -3231,8 +3246,8 @@ class Scene:
 
     def _updating(self) -> list[Mobject]:
         mobs = [m for m in self._family() if m.updaters and not m.suspended]
-        frame = self.camera.frame if self.moving_camera else None
-        if frame is not None and frame.updaters and not frame.suspended:
+        frame = object.__getattribute__(self.camera, "frame")
+        if frame.updaters and not frame.suspended:
             mobs.append(frame)
         return mobs
 
@@ -3240,11 +3255,14 @@ class Scene:
              lag_ratio: float | None = None, **kw: Any) -> None:  # fmt: skip
         c = self._c
         built = [_as_animation(a) for a in args]
-        if not built:
-            raise ManimImportError("play() needs at least one animation")
+        if not built:  # Manim refuses it; it imported before: nothing happens
+            c.warn("play() with no animation does nothing")
+            return
         for a in built:
             if run_time is not None:
-                a.run_time = _num(run_time, "run_time")
+                a.run_time = max(_num(run_time, "run_time"), 0.0)
+                if run_time < 0:  # imported before (as no time): kept, said
+                    c.warn(f"run_time {run_time!r} is negative: played as 0")
             if rate_func is not None:
                 a.rate_func = rate_func
         d = max((a.duration for a in built), default=0.0)
@@ -3266,7 +3284,8 @@ class Scene:
         c.trace.append({"t0": t0, "duration": d, "anims": [
             {"cls": type(a).__name__, "run_time": a.duration,
              "rate_func": _rate_name(a.rate_func)} for a in built], "mobjects": self._listing(),
-            "frame": self.moving_camera})  # fmt: skip
+            "frame": self.moving_camera or object.__getattribute__(
+                self.camera, "frame").obj_id is not None})  # fmt: skip
         for a, _, _ in flat:  # removers leave at the end
             if a.remover and a.mob in self.mobjects:
                 self.mobjects.remove(a.mob)
@@ -3315,13 +3334,18 @@ class Scene:
         # Manim's frames: t0, t0 + 1/rate, ... before t0 + d (the first with dt 0), then the
         # end, with every animation finished and the updaters run once more with dt 0
         n = math.ceil(d * c.rate - 1e-9) if d > 0 else 0
-        left = MAX_FRAMES - c.frames
+        # the budget: frames, and numbers sampled (a redrawn curve is hundreds a frame)
+        per = max(1, sum(_numbers(v) for m in self._updating() for leaf in m.leaves()
+                         if leaf.kind not in ("group", "value")
+                         for v in leaf.phasor_spec()[1].values()))  # fmt: skip
+        left = min(MAX_FRAMES - c.frames, (MAX_KEY_NUMBERS - c.numbers) // per)
         if n + 1 > left:  # past the budget: fewer frames a second (at the end, one a play)
             c.rate = max(left - 1, 0) / d if d > 0 else c.rate
-            c.warn(f"updaters run at fewer frames a second past {MAX_FRAMES} frames (the "
-                   "motion they make is coarser)")  # fmt: skip
+            c.warn(f"updaters run at fewer frames a second past {MAX_FRAMES} frames or "
+                   f"{MAX_KEY_NUMBERS} numbers (the motion they make is coarser)")  # fmt: skip
             n = math.ceil(d * c.rate - 1e-9) if d > 0 else 0
         c.frames += n + 1
+        c.numbers += (n + 1) * per
         samples: dict[tuple[int, str], list[tuple[float, Any]]] = {}
         keyed: dict[int, Mobject] = {}
         c.in_frames = True
@@ -3503,7 +3527,8 @@ ThreeDAxes = Axes
 
 _NOT_MANIM = ("ManimImport", "ManimImportError", "Path", "PhasorScene", "Document", "VerbError",
               "ValidationError", "DocumentError", "Any", "Callable", "Sequence", "TEXT_ROLES",
-              "FONT_UNIT", "STROKE_UNIT", "UPDATE_RATE", "MAX_FRAMES", "KEY_TOLERANCE",
+              "FONT_UNIT", "STROKE_UNIT", "UPDATE_RATE", "MAX_FRAMES", "MAX_KEY_NUMBERS",
+              "KEY_TOLERANCE",
               "RATE_PIECES", "SAMPLES", "MAX_SIZE")  # fmt: skip
 
 

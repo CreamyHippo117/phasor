@@ -24,13 +24,10 @@ pytestmark = [
 SCENES = {p.stem: p for p in compare.SCRIPTS}
 # Where phasor differs by design (MILESTONE_20.md, "Real Manim"): the measure is skipped.
 BY_DESIGN = {
-    "animate_timing": {"position", "size"},  # Create traces a square from another corner
-    "manim_reverb": {"position", "size"},  # the same, for the room
-    # Create's share of a curve: by arc length here, by Bezier pieces in Manim
-    "axes_plot": {"position", "size"},
-    "shapes_layout": {"size"},  # Manim's arrow tip is wider
-    "fills_colors": {"position", "size"},  # a dashed line's box ends at its last dash
-    "updaters": {"size"},  # phasor's box includes the stroke's width (a turned square)
+    # `.animate.rotate`: Manim mixes the points in a straight line (the square shrinks on the
+    # way); phasor turns it (rotation is a parameter). Sizes differ mid-way (0.10), not after.
+    "animate_timing": {"size"},
+    "shapes_layout": {"size"},  # Manim's arrow tip is wider (0.35 against phasor's 0.1)
     # text set at phasor's role sizes is narrower than Manim's (owner decision, MILESTONE_20):
     # a small text put in a corner by its edge lands that much further out
     "text_write": {"text"},

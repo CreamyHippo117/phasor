@@ -98,8 +98,15 @@ def record_phasor(script: Path, times: list[tuple[float, bool]], scene: str | No
     from phasor.importers import import_manim
 
     # the plain look: the prism look's living motion moves objects a little (by design)
+    before = os.environ.get("PHASOR_DEFAULT_LOOK")
     os.environ["PHASOR_DEFAULT_LOOK"] = "none"
-    r = import_manim(script, scene)
+    try:
+        r = import_manim(script, scene)
+    finally:  # only for this import: the rest of the process keeps its own look
+        if before is None:
+            os.environ.pop("PHASOR_DEFAULT_LOOK", None)
+        else:
+            os.environ["PHASOR_DEFAULT_LOOK"] = before
     engine = r.scene.engine
     plays = [{"t0": p["t0"], "duration": p["duration"], "anims": p["anims"]} for p in r.trace]
     samples = []
@@ -156,6 +163,22 @@ def _pair(real: list[dict], ours: list[dict]) -> list[tuple[dict, dict | None]]:
     return [(m, pool.get(m["cls"], []).pop(0) if pool.get(m["cls"]) else None) for m in real]
 
 
+# Animations that draw a shape in: while one plays, a shape is partly drawn, and phasor traces
+# from its own first point and by arc length (Manim: from its first Bezier point, by pieces).
+# Those samples are measured apart ("drawing") and reported, not held to the tolerance.
+DRAWING = {"Create", "Write", "DrawBorderThenFill", "Uncreate", "Unwrite", "ShowCreation"}
+# A dashed line's box ends at its last dash, not at the line's end.
+DASHED = {"DashedLine", "DashedVMobject"}
+
+
+def _drawing_at(plays: list[dict], sample: dict) -> bool:
+    t = sample["t"]
+    for p in plays:
+        if p["t0"] - 1e-9 <= t < p["t0"] + p["duration"] - 1e-9 and not sample.get("end"):
+            return any(a["cls"] in DRAWING for a in p["anims"])
+    return False
+
+
 def _matching_at(plays: list[dict], sample: dict) -> bool:
     """Whether a TransformMatching* plays at ``sample``: Manim then shows the pieces it
     moves in a VGroup of its own, which is not the script's."""
@@ -185,7 +208,7 @@ def compare(real: dict, ours: dict) -> Finding:
                               f"(Manim {[x['cls'] for x in a['anims']]} {ra})")  # fmt: skip
     if timing_ok and len(rp) == len(op):
         f.matched.append(f"{len(rp)} plays: durations, run times, rate functions")
-    pos_err = size_err = text_err = 0.0
+    pos_err = size_err = text_err = drawing_err = 0.0
     missing: set[str] = set()
     counts_ok = True
     frame_err = 0.0
@@ -212,10 +235,13 @@ def compare(real: dict, ours: dict) -> Finding:
                 if d > text_err:
                     text_err, where["text"] = d, at
                 continue
+            if _drawing_at(rp, rs) or m["cls"] in DASHED:
+                worst = max(d, *(abs(m[k] - o[k]) for k in ("width", "height")))
+                if worst > drawing_err:
+                    drawing_err, where["drawing"] = worst, at
+                continue
             if d > pos_err:
                 pos_err, where["position"] = d, at
-            if m["cls"] in KIT_CLASSES:
-                continue
             for k in ("width", "height"):
                 if abs(m[k] - o[k]) > size_err:
                     size_err, where["size"] = abs(m[k] - o[k]), at
@@ -225,7 +251,8 @@ def compare(real: dict, ours: dict) -> Finding:
                             fo["center"][:2]))), abs(fr["height"] - fo["height"]))  # fmt: skip
         elif "frame" in rs:
             frame_err = float("inf")
-    f.worst = {"position": pos_err, "size": size_err, "text": text_err, "frame": frame_err}
+    f.worst = {"position": pos_err, "size": size_err, "text": text_err, "frame": frame_err,
+               "drawing": drawing_err}  # fmt: skip
     f.details = [f"{k}: {v}" for k, v in where.items()]
     if counts_ok and not missing:
         f.matched.append("mobjects on screen at every sample")

@@ -71,16 +71,22 @@ either side has drawn nothing yet is skipped; Manim's internal groups (the camer
 
 | Scene | Matched | Differed (why) |
 | --- | --- | --- |
-| shapes_layout | clock; every mobject at every sample; positions within 0.008; colors (2 explicit the same, 7 class defaults as roles) | sizes 0.25: Manim's arrow tip is wider (0.35 vs phasor's), and phasor's boxes include the stroke |
-| animate_timing | clock (8 plays: run times and rate functions, `LaggedStart` 0.5, `Succession`, `Indicate`, `Rotate`) | while `Create` draws a square, phasor traces it from another corner (0.998 mid-trace; equal when done); during `Succession` Manim lists the square inside its group |
-| fills_colors | clock; every mobject; fills; the animated colors at the end (2 the same, 6 roles) | a dashed line's box ends at its last dash (0.054) |
-| text_write | clock (`Write` 1 s, linear); every mobject; positions 0.000 | text 0.54: a small text put in a corner by its edge; phasor's text is narrower (see Deferred 1) |
-| axes_plot | clock; every mobject; the curve and dot where Manim has them once drawn | mid-`Create` a curve's drawn share is by arc length here, by Bezier pieces in Manim (0.089) |
+| shapes_layout | clock; every mobject at every sample; positions within 0.008; colors (2 explicit the same, 7 class defaults as roles) | sizes 0.25: Manim's arrow tip is wider (0.35 against phasor's 0.1); phasor's boxes include the stroke |
+| animate_timing | clock (8 plays: run times and rate functions, `LaggedStart` 0.5, `Succession`, `Indicate`, `Rotate`); positions **0.000** outside drawing | sizes 0.10 mid-`.animate.scale(2).rotate(PI/4)`: Manim mixes points in a straight line (the square shrinks on the way), phasor turns it; during `Succession` Manim lists the square inside its group |
+| fills_colors | clock; every mobject; positions 0.011, sizes 0.045; fills; the animated colors at the end (2 the same, 6 roles) | none (a dashed line's box, which ends at its last dash, is measured apart) |
+| text_write | clock (`Write` 1 s, linear); every mobject; positions 0.000 | text 0.54: a small text put in a corner by its edge; phasor's text is narrower (Deferred 1) |
+| axes_plot | clock; every mobject; positions 0.003, sizes 0.026 once drawn | none |
 | math_tex | clock (`Write` linear 1 s, `TransformMatchingTex` linear); every mobject; positions 0.000; text 0.108 | none beyond fonts |
 | moving_camera | clock; camera frame within 0.000 at every sample (`move_to` + `set(width=)`, `shift` + `scale`, `Restore`) | none (sizes 0.032: the stroke) |
-| updaters | clock; positions **0.000** at every frame (a tracker-driven updater, `next_to` a moving dot, a `dt` rotation, `always_redraw`) | sizes 0.045: the stroke of a turned square |
-| manim_camera_tour (exit demo) | clock; positions 0.011; camera 0.000; colors (4 the same, 2 roles); text 0.104 | none |
-| manim_reverb (M13 demo) | clock (14.5 s); every mobject; colors (5 the same, 4 roles); text 0.303 | the room's `Create` traced from another corner (as animate_timing) |
+| updaters | clock; positions **0.000** at every frame (a tracker-driven updater, `next_to` a moving dot, a `dt` rotation, `always_redraw`) | none (sizes 0.045: the stroke of a turned square) |
+| manim_camera_tour (exit demo) | clock; positions 0.001; sizes 0.037; camera 0.000; colors (4 the same, 2 roles); text 0.104 | none |
+| manim_reverb (M13 demo) | clock (14.5 s); every mobject; positions 0.010; sizes 0.035; colors (5 the same, 4 roles); text 0.303 | none |
+
+While a `Create`/`Write`/`DrawBorderThenFill` plays, a shape is partly drawn: phasor traces
+from its own first point and by arc length, Manim from its first Bezier point by pieces (a
+square: Manim's starts at the top right going left). Those samples are measured apart
+(`drawing`, up to 1.0 mid-trace) and reported, not held to the tolerance; every other sample
+of the same scene is.
 
 Before this milestone (the same harness against the Milestone 13 stand-in): 3 scenes could not
 import at all (`NumberLine`, `Ellipse`, `save_state` missing), one refused `add_updater`; the
@@ -109,9 +115,19 @@ were off by up to 2.5.
 ## Verification
 
 - `ruff check .`, `ruff format --check .`, `lint-imports` (2 contracts kept): clean.
-- Focused suites (`uv run pytest -q ...`): `test_manim_import` 28 passed, 1 skipped (no
-  PySide6); `test_manim_parity` 40 passed; `test_sound` 26 passed; `tests/manim_real` 10 passed
-  with Manim, 10 skipped without; the gate's list below.
+- Focused suites, `-m "not slow"` (`test_manim_import`, `test_manim_parity`, `test_sound`,
+  `test_open_contract`, `test_final`, `test_lint`, `test_docs`, `test_layers`, `test_beauty`,
+  `test_engine`, `test_diagrams`, `test_shapes`, `test_glyphs`, `test_transform`,
+  `test_style_freedom`, `test_mcp`, `test_kit`, `test_narration`, `test_render`, `test_proc`,
+  `test_gui_controller`, `tests/manim_real`): 1152 passed, 18 skipped, 2 failed in 7.5 min;
+  the two (`llms.txt` stale, the kit catalogue missing the new examples) were fixed and pass
+  on rerun, and the files changed after that run (sound window, budgets, lesson-1 warnings)
+  were rerun: `test_manim_import` + `test_manim_parity` + `test_sound` 103 passed, 1
+  skipped (no PySide6); `test_narration` passes; `tests/manim_real` 10 passed with Manim, 10
+  skipped without. The full suite was not run here (over an hour; CI runs it).
+- Bounds measured: a 600 s `always_redraw` of a 240-point plot imports in 10 s as a 6 MB
+  document (the numbers budget); 3 x `wait(1e7)` with an updater in under a minute; a WAV
+  header claiming 2^31 frames costs what the file holds (under 5 MB, `tracemalloc`).
 - A render with sound, here: `phasor manim examples/manim_camera_tour.py -o tour/` then
   `phasor render tour/tour.phasor.json --preset preview`: 360 frames, an AAC track at 48 kHz,
   silent before 4.4 s and the chime from 4.5 s; `tour/assets/chime.wav` came along.
@@ -140,7 +156,14 @@ were off by up to 2.5.
    before) and `read_sound` (sound clips: any PCM width, bounded rates and frames, chunked).
    Folding narration into `read_sound` would refuse the low-rate clips narration tests and
    tools write today (lesson 1); left as two, side by side.
-6. Each `play` adds its mobjects to `self.mobjects` as Manim does (only those not already in
+6. Kept for lesson 1 (they imported before, as nothing): `self.camera.frame` in a plain
+   `Scene` (Manim has none) now moves the camera, with a warning; `play()` with no animation
+   and a negative `run_time` are warnings (Manim refuses both); `MoveToTarget`/`Restore`
+   with a different number of parts moves the parts both have, with a warning.
+7. Updater frames have two budgets: `MAX_FRAMES` (20000) and `MAX_KEY_NUMBERS` (2 million
+   numbers sampled, about 20 MB of document); past either, fewer frames a second, said.
+8. A render reads and mixes only its window of the sound (`audio_track(start, end)`).
+9. Each `play` adds its mobjects to `self.mobjects` as Manim does (only those not already in
    the scene's family); removers leave at the end. The order inside `self.mobjects` is not
    checked against Manim's.
 
@@ -150,8 +173,9 @@ were off by up to 2.5.
    text's size explicitly (Text about 0.019 world units per font point, MathTex 0.013, against
    0.008 today), and `off_scale` would warn on every imported text. Today a class-default text
    gets the theme's role (Milestone 18's rule). Which does the owner want?
-2. Morphing `Create`: phasor traces a shape from its own first point; Manim's square starts at
-   its top-right corner going left. Cosmetic, mid-trace only.
+2. `Create` traces a shape from phasor's own first point; Manim's square starts at its
+   top-right corner going left. Cosmetic, mid-trace only. `.animate.rotate` turns the shape
+   where Manim mixes points (it shrinks on the way). Arrow tips are narrower than Manim's.
 3. `Axes.get_area`, `Matrix.get_entries`, MathTex parts beyond color, rotated text, a turned
    camera frame: warnings.
 4. Sound formats other than PCM WAV (decoding MP3 would need ffmpeg in the time layer).

@@ -111,13 +111,13 @@ def render_file(
     with stage("encode"):  # the frames still queued
         writer.close()
     problems: list[str] = []
-    track = engine.audio_track(problems)
+    sound = out.suffix in (".mp4", ".mov")
+    track = engine.audio_track(problems, start, start + count / fps) if sound else None
     warnings.extend(problems)
-    sound = track is not None and out.suffix in (".mp4", ".mov")
+    sound = track is not None
     if sound:
         samples, rate = track
-        first = round(start * rate)
-        mux_audio(out, samples[first : first + round(count / fps * rate)], rate)
+        mux_audio(out, samples[: round(count / fps * rate)], rate)
     return {
         "path": str(out), "size": size, "fps": fps, "frames": count, "encoder": writer.encoder,
         "narration": bool(sound), "warnings": warnings,
