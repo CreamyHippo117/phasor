@@ -1222,3 +1222,7 @@ class Directivity(ObjectBase):
             ctx, cam, points, width * me.style["stroke"],
             color=color, glow=me.style["glow"], colors=colors,
         )  # fmt: skip
+
+
+# Wave fields of point sources (ANIMATIONS.md W1, W2) live in ``waves``; ``ac`` names them.
+from phasor.domains.waves import Interference, PhasedArray  # noqa: E402, F401

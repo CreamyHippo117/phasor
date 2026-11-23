@@ -67,6 +67,7 @@ SCENES = [
         "bifurcation",
         "the logistic map doubling into chaos as glowing points; zooms into period three",
     ),
+    ("interference", "two sources interfering, then four in a line steering a beam"),
 ]
 
 

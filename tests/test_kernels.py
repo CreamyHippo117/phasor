@@ -53,6 +53,12 @@ SPLAT_POINTS = np.r_[_SPLAT_RNG.normal(0.0, 0.45, (300, 2)), [[5.0, 5.0], [-9.0,
 SPLAT_COLORS = _SPLAT_RNG.random((302, 3)).astype(np.float32)
 SPLAT_WEIGHTS = np.r_[_SPLAT_RNG.random(301), 0.0].astype(np.float32)
 
+# Sources for the wave kernel, rows (x, y, amplitude, phase, reach); 1e30: always on.
+WAVE_ONE = np.array([[0.3, -0.2, 1.0, 0.0, 1e30]])
+WAVE_TWO = np.array([[-0.5, 0.0, 1.0, 0.0, 1e30], [0.5, 0.1, 0.8, 1.0, 1.2]])
+WAVE_FOUR = np.array([[0.0, y, 1.0, 0.9 * k, 1e30 if k else 1.5]
+                      for k, y in enumerate((-0.6, -0.2, 0.2, 0.6))])  # fmt: skip
+
 # name -> list of (tile, params) cases every backend must agree on
 CASES = {
     "escape": [
@@ -140,6 +146,13 @@ CASES = {
         (FULL, {"points": SPLAT_POINTS, "colors": SPLAT_COLORS, "center": (0.0, 0.0),
                 "height": 2.0, "weights": SPLAT_WEIGHTS, "gain": 4.0, "white": 0.8}),
     ],
+    "wave_field": [  # one source; two (one switching on, a soft front); four, a hard front
+        (FULL, {"sources": WAVE_ONE, "center": (0.0, 0.0), "height": 4.0, "wavenumber": 6.0}),
+        (OFFSET, {"sources": WAVE_TWO, "center": (0.2, -0.1), "height": 3.0,
+                  "wavenumber": 9.0, "omega_t": 1234.5, "core": 0.1, "edge": 0.3}),
+        (FULL, {"sources": WAVE_FOUR, "center": (0.0, 0.0), "height": 5.0, "wavenumber": 7.5,
+                "omega_t": -0.7, "precision": "f64"}),
+    ],
 }  # fmt: skip
 ALL_CASES = [(n, t, p) for n, cases in CASES.items() for t, p in cases]
 needs_compiler = pytest.mark.skipif(cuda_emu.compiler() is None, reason="no C++ compiler")
@@ -187,6 +200,7 @@ def test_every_kernel_has_a_reference_and_a_signature():
         "srgb8",
         "tonemap",
         "vignette",
+        "wave_field",
     ]
     assert all(callable(k.reference) and "->" in k.signature for k in ks.values())
 

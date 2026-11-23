@@ -211,3 +211,8 @@ teaches = "The Buddhabrot, cx.Fractal's cloud mode: millions of escaping orbits 
 kind = "physics"
 tier = "technique"
 teaches = "The logistic map's bifurcation diagram as a glowing point cloud: a sweep in from the left, a focus zoom into the period doublings, then into the window of period three"
+
+[examples.interference]
+kind = "physics"
+tier = "technique"
+teaches = "Wave fields on the GPU: two sources interfering, then a phased array steering its beam"

@@ -38,6 +38,7 @@ render only those: `uv run python showcase/render_all.py prism_primes deep_zoom`
 | `room_3d` | a 3D room with sound bouncing in it: rays and fronts reflecting, reverberation building |
 | `buddhabrot` | the Mandelbrot set's cloud mode: eight million escaping orbits glowing like a nebula |
 | `bifurcation` | the logistic map's bifurcation diagram as glowing points: the period doublings, chaos, the window of period three |
+| `interference` | two sources interfering, then four in a line steering a beam |
 
 Narrated scenes have sound only where a speech engine is installed (espeak-ng); without one
 the timing is estimated and the video is silent.

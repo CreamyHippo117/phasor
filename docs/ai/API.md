@@ -936,6 +936,43 @@ assert wave["frequency_ahead"] == 24.0 and wave["frequency_behind"] == 8.0
 
 Example: `examples/doppler.py`.
 
+**`ac.Interference(sources=, frequency=, speed=, time=, phases=, amplitudes=, onsets=, mode=,
+blend=, pos=, size=)`** is the field of point sources of one frequency, drawn per pixel on
+the GPU (kernel `wave_field`, a NumPy fallback without one) in the rectangle `pos`, `size`
+of the plane z = 0. `sources` are world (x, y) points; each sends out
+`amp cos(k r - w t + phase) / sqrt(r)` (2D spreading). The wavelength is `speed / frequency`
+(world units), `time` is in seconds (`expr("t")` sets the waves moving), `phases` are degrees
+and `amplitudes` plain numbers, one per source. `onsets` (one `time` per source) switch the
+sources on one by one, each sending out a ring. `mode="intensity"` (or `blend` tweened to 1)
+shows the time-averaged intensity, where the fringes stand still. The prism look colours it
+as a heat map: crests (and loud places) warm, troughs cool, the lines where the waves cancel
+dark, the sources as beacons. `gain` sets how strongly the field turns into colour.
+
+**`ac.PhasedArray(count=, spacing=, steer=, center=, layout=, axis=, ...)`** is the same field
+from `count` sources `spacing` wavelengths apart on a line (`layout="line"`, along the
+direction `axis`, default 90: up) or a ring, centred on `center`, with the phase delays that
+point the beam `steer` degrees off broadside, counterclockwise (with the default `axis`
+broadside is +x, as for `ac.Directivity`). Tween `steer` to swing the beam. It also draws
+the elements as beacons and the beam direction as a ray (`ray=False` to hide it); its
+semantics report `beam_direction_deg`, the element `phases_deg` and, for a line,
+`beamwidth_deg` (the half-power width).
+
+```python
+from phasor import Scene, ac, expr
+
+waves = Scene("waves", look="prism", passes=None)
+waves.add(ac.Interference(id="pair", sources=((-1, 0), (1, 0)), time=expr("t"), size=(8, 4.5)))
+waves.add(ac.PhasedArray(id="array", center=(-3, 0), count=4, steer=-30, time=expr("t")))
+waves.marker("swing", 1.0)
+waves.at("swing").morph("array.steer", 30.0)
+pair = waves.engine.inspect(0.5, id="pair")["objects"][0]["semantic"]
+assert pair["wavelength"] == 1.0 and pair["sources_on"] == 2
+beam = waves.engine.inspect(5.0, id="array")["objects"][0]["semantic"]
+assert beam["beam_direction_deg"] == 30.0 and beam["beamwidth_deg"] < 30
+```
+
+Example: `examples/interference.py`.
+
 **Simulations** (`phasor.core.simulation`): a `Simulation` has a fixed `dt`, `params()` (the
 seed included), `initial()` and a pure `step(state, dt)`. `runner_for(sim).state_at(t)` is the
 nearest earlier checkpoint plus the remaining steps, cached in memory and under

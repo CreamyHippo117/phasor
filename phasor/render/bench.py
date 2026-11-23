@@ -67,7 +67,17 @@ def _cases(w: int, h: int) -> dict[str, dict[str, Any]]:
             "height": 2.6,
             "gain": 4.0,
         },
-    }
+        # eight sources in a line (a phased array, W2), one still switching on
+        "wave_field": {
+            "sources": np.array([[-3.0, 0.4 * k - 1.4, 1.0, 0.8 * k, 1e30 if k else 4.0]
+                                 for k in range(8)]),
+            "center": (0.0, 0.0),
+            "height": 4.5,
+            "wavenumber": 9.0,
+            "omega_t": 2.0,
+            "edge": 0.3,
+        },
+    }  # fmt: skip
 
 
 def run_bench(width: int = 1920, height: int = 1080, repeats: int = 3) -> dict[str, Any]:
