@@ -31,7 +31,7 @@ s.add(dg.MatrixDisplay(id="matrix", entries=(("\\cos\\theta", "-\\sin\\theta"),
 s.add(dg.Code(id="code", pos=(5.6, -2.3, 0), line_numbers=True,
               code='def squares(n):\n    """the first n"""\n    return [k * k for k in range(n)]\n'
                    "\nprint(squares(4))  # [0, 1, 4, 9]"))  # fmt: skip
-s.add(Text(id="title", text="a diagram kit", pos=(0.5, 0.06), layer="overlay",
+s.add(Text(id="title", text="a diagram kit", pos=(0.5, 0.04), layer="overlay",
            style={"size": "title"}))  # fmt: skip
 
 s.marker("start", 0.3)
