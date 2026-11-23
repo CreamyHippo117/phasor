@@ -2775,23 +2775,33 @@ def _lerp(a: Any, b: Any, u: float) -> Any:
 
 
 def _simplify(samples: list[tuple[float, Any]], tol: float) -> list[tuple[float, Any]]:
-    """The keys a straight line between kept keys does not reproduce within ``tol``."""
-    if len(samples) <= 2:
+    """The keys a straight line between kept keys does not reproduce within ``tol``
+    (Douglas-Peucker over time: a key where the line strays most, until none strays; one
+    array pass for steady motion, however many frames)."""
+    n = len(samples)
+    if n <= 2:
         return samples
-    kept = [samples[0]]
-    i, j = 0, 2
-    while j < len(samples):
-        t0, v0 = samples[i]
-        t1, v1 = samples[j]
-        ok = all(_close(_lerp(v0, v1, (samples[k][0] - t0) / (t1 - t0) if t1 > t0 else 1.0),
-                        samples[k][1], tol) for k in range(i + 1, j))  # fmt: skip
-        if ok:
-            j += 1
+    try:
+        ts = np.array([t for t, _ in samples], float)
+        vs = np.array([np.asarray(v, float).ravel() for _, v in samples])
+    except (TypeError, ValueError):  # values of different shapes: keep every key
+        return samples
+    keep = np.zeros(n, bool)
+    keep[0] = keep[-1] = True
+    stack = [(0, n - 1)]
+    while stack:
+        a, b = stack.pop()
+        if b - a < 2:
             continue
-        kept.append(samples[j - 1])
-        i, j = j - 1, j + 1
-    kept.append(samples[-1])
-    return kept
+        u = (ts[a + 1 : b] - ts[a]) / (ts[b] - ts[a]) if ts[b] > ts[a] else np.ones(b - a - 1)
+        line = vs[a] + (vs[b] - vs[a]) * u[:, None]
+        err = np.abs(vs[a + 1 : b] - line).max(axis=1)
+        k = int(np.argmax(err))
+        if err[k] > tol:
+            m = a + 1 + k
+            keep[m] = True
+            stack += [(a, m), (m, b)]
+    return [samples[k] for k in np.flatnonzero(keep)]
 
 
 def _seg(path: str, t0: float, t1: float, to: Any, ease: str) -> dict:
@@ -2814,6 +2824,7 @@ class _Context:
     busy: dict[str, float] = field(default_factory=dict)  # path -> end of its last segment
     ops: list[dict] = field(default_factory=list)  # pending, applied together
     in_frames: bool = False
+    frame_t: float = 0.0  # the frame updaters run at (Scene.time, while they run)
     frames: int = 0
     rate: float = UPDATE_RATE
     sounds: int = 0
@@ -3172,7 +3183,7 @@ class Scene:
 
     @property
     def time(self) -> float:
-        return self._c.t
+        return self._c.frame_t if self._c.in_frames else self._c.t  # Manim: the frame's
 
     def add(self, *mobjects: Mobject) -> Scene:
         for m in mobjects:
@@ -3304,9 +3315,11 @@ class Scene:
         # Manim's frames: t0, t0 + 1/rate, ... before t0 + d (the first with dt 0), then the
         # end, with every animation finished and the updaters run once more with dt 0
         n = math.ceil(d * c.rate - 1e-9) if d > 0 else 0
-        if c.frames + n + 1 > MAX_FRAMES and c.rate > 1:
-            c.rate = max(1.0, c.rate / 2)
-            c.warn(f"updaters run at {c.rate:g} frames a second past {MAX_FRAMES} frames")
+        left = MAX_FRAMES - c.frames
+        if n + 1 > left:  # past the budget: fewer frames a second (at the end, one a play)
+            c.rate = max(left - 1, 0) / d if d > 0 else c.rate
+            c.warn(f"updaters run at fewer frames a second past {MAX_FRAMES} frames (the "
+                   "motion they make is coarser)")  # fmt: skip
             n = math.ceil(d * c.rate - 1e-9) if d > 0 else 0
         c.frames += n + 1
         samples: dict[tuple[int, str], list[tuple[float, Any]]] = {}
@@ -3314,7 +3327,7 @@ class Scene:
         c.in_frames = True
         try:
             for k in range(n + 1):
-                t = round(t0 + (k / c.rate if k < n else d), 9)
+                t = c.frame_t = round(t0 + (k / c.rate if k < n else d), 9)
                 for leaf, s, g, at, dur, rate in moving:
                     u = 1.0 if dur <= 0 else _rate(rate, (t - at) / dur)
                     _interpolate(leaf, s, g, u)

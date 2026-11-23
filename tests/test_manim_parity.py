@@ -339,6 +339,41 @@ class S(Scene):
     assert state(r, 20.0, "dot_1").pos[0] == pytest.approx(0.2, abs=0.01)
 
 
+def test_a_huge_wait_with_updaters_stays_bounded(tmp_path):
+    """Lesson 2: whatever the script asks, the import's work is bounded (frames, keys)."""
+    import time
+
+    p = script(tmp_path, """
+class S(Scene):
+    def construct(self):
+        d = Dot().add_updater(lambda m, dt: m.move_to(RIGHT * math.sin(self.time)))
+        self.add(d)
+        for _ in range(3):
+            self.wait(1e7)
+""")  # fmt: skip
+    p.write_text("import math\n" + p.read_text(encoding="utf-8"), encoding="utf-8")
+    start = time.perf_counter()
+    r = import_manim(p)
+    assert time.perf_counter() - start < 60
+    assert len(doc_of(r).timeline.tracks["dot_1.pos"]) <= 3 * 20_000
+
+
+def test_key_simplification_is_linear_for_steady_motion():
+    import time
+
+    from phasor.importers.manim import _simplify
+
+    samples = [(k / 30, (k * 0.01, 0.0, 0.0)) for k in range(20_000)]
+    start = time.perf_counter()
+    assert _simplify(samples, 1e-4) == [samples[0], samples[-1]]
+    assert time.perf_counter() - start < 2
+    wave = [(k / 30, (math.sin(k / 30), 0.0, 0.0)) for k in range(3000)]
+    kept = _simplify(wave, 1e-4)
+    assert 10 < len(kept) < 3000
+    u = np.interp([s[0] for s in wave], [s[0] for s in kept], [s[1][0] for s in kept])
+    assert np.abs(u - [s[1][0] for s in wave]).max() <= 1e-4 + 1e-12
+
+
 # ---------------------------------------------------------------- the camera
 
 
