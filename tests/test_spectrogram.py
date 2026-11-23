@@ -175,11 +175,14 @@ def test_a_stereo_wav_is_mixed_down_and_the_axis_can_be_cropped(tmp_path):
     assert sem["dominant_frequency"] == pytest.approx(440.0, abs=4.0)
 
 
-def test_a_missing_wav_is_refused_with_where_it_looked(tmp_path):
+def test_a_missing_wav_is_missing_file_and_draws_nothing(tmp_path):
     s = Scene("m", passes=None)
     s.engine = Engine(Document(meta=Meta(title="m")), passes=None, base_dir=tmp_path)
-    with pytest.raises(DocumentError, match=r"missing_file.*no file 'gone.wav'"):
-        s.add(Spectrogram(id="a", wav="gone.wav"))
+    s.add(Spectrogram(id="a", wav="gone.wav"))
+    (issue,) = [i for i in s.engine.lint() if i.code == "missing_file"]
+    assert "gone.wav" in issue.message
+    st = s.engine.state_at(0.0)
+    assert st["a"].impl.semantics(st)["missing_file"] == "gone.wav"
     with pytest.raises(DocumentError, match="notes.txt"):
         s.add(Spectrogram(id="b", wav="notes.txt"))
 
@@ -254,7 +257,7 @@ def test_the_ai_cannot_use_a_wav_from_outside_its_folder(tmp_path):
     ok = ws.scene_edit({"op": "add_object", "object": {"id": "a", "type": "spectrogram",
                         "params": {"wav": "inside.wav"}}})  # fmt: skip
     assert ok["ok"]
-    with pytest.raises(ToolError, match="outside the workspace"):
+    with pytest.raises(ToolError, match="leaves the scene's folder"):
         ws.scene_edit({"op": "add_object", "object": {"id": "b", "type": "spectrogram",
                        "params": {"wav": "../outside.wav"}}})  # fmt: skip
     assert [o.id for o in ws.engine.document.objects] == ["a"]

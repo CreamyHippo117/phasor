@@ -594,7 +594,7 @@ class Spectrogram(ObjectBase):
         p = self.me(state).params
         a = self._analysis(state)
         if a is None:
-            return {"kind": "spectrogram", "backdrop": True, "source": "wav", "missing": True}
+            return {"kind": "spectrogram", "backdrop": True, "source": "wav", "missing_file": p.wav}
         out = {"kind": "spectrogram", "backdrop": True, "source": a["source"],
                "f0": p.f0, "f1": p.f1, "duration": a["duration"], "max_frequency": a["top"],
                "playhead": p.playhead if p.playhead >= 0 else None, "playhead_time": None,
