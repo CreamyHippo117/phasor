@@ -505,3 +505,53 @@ def test_a_solid_fill_below_the_knee_comes_out_exactly_as_its_color():
     srgb = np.where(lin <= 0.0031308, 12.92 * lin, 1.055 * lin ** (1 / 2.4) - 0.055)
     centre = img[80:100, 150:170].reshape(-1, 3).astype(float)
     assert np.abs(centre - srgb * 255).max() <= 1.5
+
+
+# ---------------------------------------------------------------- 6. the exit demo
+
+ROOT = __import__("pathlib").Path(__file__).parents[1]
+NEW_TYPES = {"path", "circle", "ellipse", "arc", "sector", "annulus", "polygon_path",
+             "regular_polygon", "rectangle", "brace", "svg"}  # fmt: skip
+_examples: dict[str, object] = {}
+
+
+def _example(name: str):
+    import runpy
+
+    if name not in _examples:
+        _examples[name] = runpy.run_path(str(ROOT / "examples" / f"{name}.py"),
+                                         run_name="x")["s"].engine  # fmt: skip
+    return _examples[name]
+
+
+def test_the_two_examples_show_every_new_type_and_lint_clean():
+    pytest.importorskip("shapely")
+    pytest.importorskip("svgelements")
+    seen = set()
+    for name in ("shapes", "vector_toolkit"):
+        e = _example(name)
+        seen |= {o.type for o in e.state_at(e.duration).objects}
+        assert e.lint(strict=True) == [], name
+    assert seen >= NEW_TYPES
+    e = _example("vector_toolkit")
+    sem = {o["id"]: o["semantic"] for o in e.inspect(e.duration)["objects"]}
+    assert sem["emblem"]["parts"] == ["ring", "star", "badge_1", "wave"]
+    assert sem["emblem.badge_1"]["rule"] == "evenodd"
+    assert sem["frame"]["area"] == pytest.approx(3.0 * 2.4 - (4 - math.pi) * 0.0625 - 1.8 * 1.2,
+                                                 rel=1e-4)  # fmt: skip
+    assert sem["intersection"]["area"] < sem["difference"]["area"] < sem["union"]["area"]
+
+
+@pytest.mark.gl
+@pytest.mark.slow
+@pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
+@pytest.mark.parametrize("name, times", [("shapes", [1.0, 3.4, 5.8, 7.8]),
+                                         ("vector_toolkit", [1.0, 3.0, 5.2, 8.2])])  # fmt: skip
+def test_example_golden_storyboards(name, times):
+    pytest.importorskip("shapely")
+    pytest.importorskip("svgelements")
+    from tests.test_beauty import _golden
+
+    e = _example(name)
+    sheet = e.storyboard(times, size=(320, 180))["image"]
+    _golden(name, sheet, e.pass_runner().renderer_class())

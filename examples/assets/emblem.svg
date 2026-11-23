@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 80">
-  <!-- A small emblem for examples/shapes_toolkit.py: a ring, a star, a badge with a hole
+  <!-- A small emblem for examples/vector_toolkit.py: a ring, a star, a badge with a hole
        (fill-rule evenodd), and a wave drawn inside a moved group. -->
   <circle id="Ring" cx="40" cy="40" r="32" fill="none" stroke="#ffffff" stroke-width="3"/>
   <path id="star" fill="#ffffff"
