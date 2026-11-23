@@ -341,3 +341,72 @@ def test_a_render_mixes_the_sound_before_any_frame(tmp_path, monkeypatch):
     out = job.render_file(FakeEngine(), tmp_path / "v.mp4", preset="preview", fps=10)
     assert order[0] == "sound" and order.count("render") == 3
     assert "sound 'x.wav' left out: a test" in out["warnings"]
+
+
+# ---------------------------------------------------------------- bounded mixing (M20 audit)
+
+
+def test_a_window_is_the_same_samples_as_that_slice_of_the_whole_mix(tmp_path):
+    """Note 2: a window that does not start on a source sample (an 8 kHz clip in a 48 kHz
+    track, a window from 25/30 s) was off by a fraction of a sample (up to 30810 on a saw)."""
+    wav(tmp_path / "saw.wav", (np.arange(8000 * 4) % 400) * 80 - 16000)  # 8 kHz
+    wav(tmp_path / "tone.wav", (np.sin(np.arange(44100) * 0.03) * 9000).astype(int),
+        rate=44100)  # fmt: skip
+    clips = [nar.Clip("saw.wav", 0.1, -3.0), nar.Clip("tone.wav", 1.2345678)]
+    whole, rate = nar.mix_track(None, tmp_path, 4.0, clips)
+    for lo, hi in ((25 / 30, 2.0), (0.5 + 1 / 7, 3.3), (1.23456, 1.5), (3.9, 4.0)):
+        part, _ = nar.mix_track(None, tmp_path, 4.0, clips, start=lo, end=hi)
+        g0 = round(lo * rate)
+        assert np.array_equal(part, whole[g0 : g0 + len(part)]), lo
+
+
+def test_mixing_memory_does_not_grow_with_the_number_of_clips(tmp_path):
+    """S3: every resampled clip was held before summing (300 clips of a 10-minute WAV in a
+    60 s scene: 3.4 GB). Now each clip is read a chunk at a time into the track."""
+    import tracemalloc
+
+    wav(tmp_path / "long.wav", np.full(8000 * 120, 100))  # 2 minutes at 8 kHz
+    peaks = []
+    for count in (1, 60):
+        tracemalloc.start()
+        track, rate = nar.mix_track(None, tmp_path, 20.0, [nar.Clip("long.wav", 0.0)] * count)
+        peaks.append(tracemalloc.get_traced_memory()[1])
+        tracemalloc.stop()
+        assert track[rate] == min(100 * count, 32767)
+        del track
+    # the track itself (20 s at 48 kHz: 1.9 MB) and one chunk of each kind: never per clip
+    assert peaks[1] < peaks[0] * 1.5 + 1_000_000, peaks
+    assert peaks[1] < 40_000_000
+
+
+def test_the_number_of_clips_and_the_samples_mixed_are_bounded(tmp_path, monkeypatch):
+    wav(tmp_path / "a.wav", np.full(8000, 1000))
+    monkeypatch.setattr(nar, "MAX_SOUNDS", 3)
+    problems: list[str] = []
+    track, rate = nar.mix_track(None, tmp_path, 1.0, [nar.Clip("a.wav", 0.0)] * 5, problems)
+    assert track[100] == 3000
+    assert len(problems) == 2 and all("at most 3 sound clips" in p for p in problems)
+    monkeypatch.setattr(nar, "MAX_MIX_SAMPLES", rate * 2)
+    problems = []
+    track, _ = nar.mix_track(None, tmp_path, 1.0, [nar.Clip("a.wav", 0.0)] * 3, problems)
+    assert track[100] == 2000 and len(problems) == 1 and "left out" in problems[0]
+    monkeypatch.setattr(nar, "MAX_MIX_SAMPLES", rate * 5 // 2)  # the third clip: half of it
+    problems = []
+    track, _ = nar.mix_track(None, tmp_path, 1.0, [nar.Clip("a.wav", 0.0)] * 3, problems)
+    assert track[100] == 3000 and track[rate * 3 // 4] == 2000
+    assert len(problems) == 1 and "cut after 0.5 s" in problems[0]
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_sound_limit_lints_clips_the_mix_leaves_out_or_does_not_follow(tmp_path, monkeypatch,
+                                                                       passes):  # fmt: skip
+    """A clip past MAX_SOUNDS is left out; an animated start or gain is not heard (the mix
+    reads them at 0 s): both said, never silent."""
+    wav(tmp_path / "a.wav", np.full(800, 1000))
+    monkeypatch.setattr(nar, "MAX_SOUNDS", 2)
+    s = scene(tmp_path, passes=passes)
+    for k in range(3):
+        s.add(Sound(id=f"s{k}", path="a.wav", start=0.1 * k))
+    s.at(0.0).to("s0.start", 1.0, duration=1.0)
+    found = {(i.ids[0], i.path) for i in s.engine.lint() if i.code == "sound_limit"}
+    assert found == {("s2", None), ("s0", "s0.start")}

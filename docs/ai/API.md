@@ -557,6 +557,7 @@ Each issue has `code`, `severity`, `message`, `ids`, `times`, `fix_hint`, and `f
 | `morph_missing` | warning | a morph whose source (`morph_from`) is not in the scene or has no outline: the object draws itself |
 | `morph_limit` | warning | a morph between outlines with more than `morph_math.MAX_SUBPATHS` (512) subpaths a side: the rest fade |
 | `bad_file` | warning | a file an object reads is not valid (an SVG that is not SVG), or some of its shapes are skipped (points not finite or absurdly far out); what cannot be read draws nothing |
+| `sound_limit` | warning | a sound clip the mix leaves out: past `narration.MAX_SOUNDS` (256) clips in one scene; or a clip whose `start` or `gain` is animated (the mix reads them once, at 0 s, so the animation is not heard) |
 | `svg_too_complex` | warning | an SVG past a reading limit (size, elements once `<use>` is expanded, nesting, shapes, segments): its drawing is empty or cut short |
 | `crowded_ticks` | warning | numbers along an axis (or a chart's bar names) closer **on screen** than `[lint] tick_gap` text heights (every pair, so an axis a 3D camera sees end-on is caught); `path` names the axis (`ax.x`), the hint the smallest nice step that clears them, or to turn the camera when the axis points at it |
 | `truncated` | warning | a file a `Table` or `Code` reads is past a limit (rows, columns, lines); only its first part is shown |

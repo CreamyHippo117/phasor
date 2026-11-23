@@ -18,6 +18,7 @@ returns one issue per problem with the times it was seen. Rules in this mileston
 | fill_crossing | warning | a filled path whose edges cross: its fill may not follow the rule |
 | fill_unchecked | warning | a filled path with too many edges to check for crossings |
 | bad_file  | warning  | a file an object reads is not valid (or some of its shapes are skipped) |
+| sound_limit | warning | a sound clip left out (past ``MAX_SOUNDS``), or its start animated |
 | svg_too_complex | warning | an SVG past a reading limit: its drawing is empty or cut short |
 | dash_limit | warning | a dashed or dotted path with more dashes than are drawn per path |
 | crowded_ticks | warning | numbers along an axis (or a chart's bar names) too close to read |
@@ -394,6 +395,33 @@ def file_rules(c: Compiled) -> list[Issue]:
                     "missing_file", f"{path}: {why}",
                     severity="warning", ids=(o.id,), path=path, times=(0.0,),
                     fix_hint=f"put {value!r} next to the scene, or set {path} to a file that is",
+                ))  # fmt: skip
+    return out + _sound_rules(c)
+
+
+def _sound_rules(c: Compiled) -> list[Issue]:
+    """``sound_limit``: sound clips the mix leaves out or does not follow: past
+    ``narration.MAX_SOUNDS`` clips, or a clip whose ``start`` or ``gain`` is animated (the
+    mix reads them once, at time 0)."""
+    from phasor.time.narration import MAX_SOUNDS
+
+    sounds = [o for o in c.objects if hasattr(o.impl, "audio_clip")]
+    out = [
+        Issue("sound_limit", f"{o.id}: a track mixes at most {MAX_SOUNDS} sound clips; this "
+              "one is left out", severity="warning", ids=(o.id,), times=(0.0,),
+              fix_hint="join clips into one WAV file, or remove some")
+        for o in sounds[MAX_SOUNDS:]
+    ]  # fmt: skip
+    tracks = c.doc.timeline.tracks
+    for o in sounds:
+        for name in ("start", "gain"):
+            path = f"{o.id}.{name}"
+            if tracks.get(path):
+                out.append(Issue(
+                    "sound_limit", f"{path} is animated, but a clip's start and gain are read "
+                    "once, at 0 s: the animation is not heard", severity="warning",
+                    ids=(o.id,), path=path, times=(0.0,),
+                    fix_hint=f"set {path} once (clear its track), or use one clip per start",
                 ))  # fmt: skip
     return out
 

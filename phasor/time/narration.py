@@ -22,6 +22,7 @@ import wave
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -387,17 +388,6 @@ def _pcm(raw: bytes, info: WavInfo) -> np.ndarray:
     return x.reshape(-1, info.channels).mean(axis=1)
 
 
-def resample(x: np.ndarray, rate: int, to: int, limit: int | None = None) -> np.ndarray:
-    """``x`` at ``rate`` as samples at ``to`` (linear interpolation; enough for a sound
-    effect under narration), at most ``limit`` of them."""
-    n = int(len(x) * to / rate) if rate != to else len(x)
-    if limit is not None:
-        n = min(n, max(0, int(limit)))
-    if rate == to or not len(x):
-        return x[:n]
-    return np.interp(np.arange(n) * (rate / to), np.arange(len(x)), x).astype(np.float32)
-
-
 @dataclass(frozen=True)
 class Clip:
     """A sound clip to mix in (``media.Sound``): a WAV file in the scene's folder, from
@@ -420,10 +410,15 @@ def mix_track(
     """The narration and any sound clips as one mono int16 track, each block's audio placed
     at its start, each clip at its ``start`` and cut where the scene (``duration``) ends.
     The track covers ``start`` to ``end`` (by default the scene, or the narration if it runs
-    longer), never more than ``MAX_TRACK_SECONDS``: only that window is read and mixed. None
-    when nothing has audio. A clip that is missing, outside the folder or unreadable is left
-    out and said in ``problems`` (lint names it too: ``missing_file``, ``bad_file``);
-    narration audio that cannot be read raises, as it always has."""
+    longer), never more than ``MAX_TRACK_SECONDS``: only that window is read and mixed, on the
+    scene's own sample grid, so a window is the same samples as that slice of the whole mix.
+    It is mixed ``_OUT_CHUNK`` samples at a time, each clip read only for the chunk it is in:
+    memory is the track and one chunk, whatever the number or length of the clips. At most
+    ``MAX_SOUNDS`` clips and ``MAX_MIX_SAMPLES`` clip samples in all are mixed. None when
+    nothing has audio. A clip that is missing, outside the folder, unreadable or past those
+    bounds is left out and said in ``problems`` (lint names it too: ``missing_file``,
+    ``bad_file``, ``sound_limit``); narration audio that cannot be read raises, as it always
+    has."""
     from phasor.core import files
 
     root = Path(base_dir).resolve()
@@ -443,38 +438,118 @@ def mix_track(
     lo = max(float(start), 0.0)
     hi = max([scene_end] + [t + len(s) / rate for t, (s, _) in spoken]) if end is None else end
     hi = min(max(float(hi), lo), lo + MAX_TRACK_SECONDS)
-    clip_end = min(scene_end, hi)  # clips stop where the scene (or the window) ends
-    sounds = []
-    for c in clips:
-        if not (max(c.start, lo) < clip_end):
+    g0 = round(lo * rate)  # the window's first sample, on the scene's sample grid
+    size = max(0, int(np.ceil(hi * rate - 1e-6)) - g0)  # to the grid sample at or after hi
+    stop = min(g0 + size, int(np.ceil(scene_end * rate)))  # clips stop where the scene ends
+    plan = _plan_clips(root, files, clips, rate, g0, stop, problems)
+    if not spoken and not plan:
+        return None
+    out = np.empty(size, np.int16)
+    for a in range(0, size, _OUT_CHUNK):
+        b = min(size, a + _OUT_CHUNK)
+        buf = np.zeros(b - a, np.float32)
+        for t, (samples, _) in spoken:
+            _add(buf, samples, round(t * rate) - g0 - a)
+        for clip in plan:
+            clip.mix(buf, g0 + a, problems)
+        np.round(buf, out=buf)
+        np.clip(buf, -32768, 32767, out=buf)
+        out[a:b] = buf
+    return out, rate
+
+
+MAX_SOUNDS = 256  # sound clips mixed into one track; the rest are left out (lint sound_limit)
+MAX_MIX_SAMPLES = 1 << 28  # clip samples mixed in all (about 90 minutes at 48 kHz)
+_OUT_CHUNK = 1 << 20  # track samples mixed at a time
+
+
+@dataclass
+class _Planned:
+    """A clip placed on the track's sample grid: output sample ``j`` (at the track's rate) is
+    global sample ``first + j``, read from source position ``j * ratio``; ``count`` of them
+    (cut where the scene ends and at what the file holds)."""
+
+    path: Path
+    name: str
+    info: WavInfo
+    first: int
+    count: int
+    ratio: float  # source samples per track sample
+    gain: float
+    same_rate: bool
+    failed: bool = False
+
+    def mix(self, buf: np.ndarray, g: int, problems: list[str] | None) -> None:
+        """Add the part of the clip that falls in ``buf`` (global samples ``g`` on)."""
+        j0, j1 = max(0, g - self.first), min(self.count, g + len(buf) - self.first)
+        if self.failed or j1 <= j0:
+            return
+        try:
+            if self.same_rate:
+                y = _frames(self.path, self.info, j0, j1 - j0)
+            else:
+                pos = np.arange(j0, j1) * self.ratio
+                s0 = int(pos[0])
+                s1 = min(self.info.frames, MAX_CLIP_FRAMES, int(pos[-1]) + 2)
+                x = _frames(self.path, self.info, s0, s1 - s0)
+                y = np.interp(pos, np.arange(s0, s0 + len(x)), x).astype(np.float32)
+        except Exception as e:  # changed or cut on disk since it was checked: said
+            self.failed = True
+            if problems is not None:
+                problems.append(f"sound {self.name!r} left out from sample {g + j0}: {e}")
+            return
+        y = y * self.gain
+        _add(buf, y * 32768.0, self.first + j0 - g)
+
+
+def _plan_clips(root: Path, files: Any, clips: Sequence[Clip], rate: int, g0: int, stop: int,
+                problems: list[str] | None) -> list[_Planned]:  # fmt: skip
+    """Each clip that has samples in [g0, stop): checked (its header) before anything is
+    mixed, within ``MAX_SOUNDS`` and ``MAX_MIX_SAMPLES``; the rest said in ``problems``."""
+    plan: list[_Planned] = []
+    work = 0
+    for k, c in enumerate(clips):
+        if k >= MAX_SOUNDS:
+            if problems is not None:
+                problems.append(f"sound {c.path!r} left out: a track mixes at most "
+                                f"{MAX_SOUNDS} sound clips")  # fmt: skip
+            continue
+        first = round(float(c.start) * rate)
+        if not first < stop:
             continue
         try:
             file = files.regular_file(root, c.path)
             info = wav_info(file)
-            skip = int((max(lo - c.start, 0.0)) * info.rate)
-            span = clip_end - max(c.start, lo)
-            x, r = read_sound(file, int(np.ceil(span * info.rate)) + 1, skip)
         except Exception as e:  # whatever a hostile file provokes: left out, said
             if problems is not None:
                 problems.append(f"sound {c.path!r} left out: {e}")
             continue
-        y = resample(x, r, rate, int(np.ceil(span * rate)) + 1) * float(10 ** (c.gain / 20))
-        if len(y):  # a clip that ended before the window adds nothing
-            sounds.append((max(c.start, lo), y))
-    if not spoken and not sounds:
-        return None
-    track = np.zeros(int(np.ceil((hi - lo) * rate)), dtype=np.float32)
-    stop = int(np.ceil((clip_end - lo) * rate))
-    for t, (samples, _) in spoken:
-        _place(track, samples, round((t - lo) * rate), len(track))
-    for t, x in sounds:
-        _place(track, x * 32768.0, round((t - lo) * rate), stop)
-    return np.clip(np.round(track), -32768, 32767).astype(np.int16), rate
+        held = min(info.frames, MAX_CLIP_FRAMES)
+        same = info.rate == rate
+        count = held if same else int(held * rate / info.rate)
+        count = min(count, stop - first)
+        mixed = min(first + count, stop) - max(first, g0)
+        if mixed <= 0:  # it ended before the window
+            continue
+        if work + mixed > MAX_MIX_SAMPLES:
+            room = MAX_MIX_SAMPLES - work
+            if problems is not None:
+                what = "left out" if room <= 0 else f"cut after {room / rate:g} s"
+                problems.append(f"sound {c.path!r} {what}: a track mixes at most "
+                                f"{MAX_MIX_SAMPLES} clip samples in all")  # fmt: skip
+            if room <= 0:
+                continue
+            count = max(first, g0) + room - first
+            mixed = room
+        work += mixed
+        plan.append(_Planned(file, c.path, info, first, count, info.rate / rate,
+                             float(10 ** (c.gain / 20)), same))  # fmt: skip
+    return plan
 
 
-def _place(track: np.ndarray, x: np.ndarray, i: int, stop: int) -> None:
-    """Add ``x`` into ``track`` from index ``i`` (negative: its start is cut), up to ``stop``."""
+def _add(buf: np.ndarray, x: np.ndarray, i: int) -> None:
+    """Add ``x`` into ``buf`` from index ``i`` (negative: its start is cut)."""
     if i < 0:
         x, i = x[-i:], 0
-    x = x[: max(0, min(stop, len(track)) - i)]
-    track[i : i + len(x)] += x
+    x = x[: max(0, len(buf) - i)]
+    buf[i : i + len(x)] += x
