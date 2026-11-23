@@ -5,4 +5,5 @@ from phasor.render.gpu.kernels import (  # noqa: F401
     fractal,
     post,
     splat,
+    wave,
 )

@@ -196,3 +196,8 @@ teaches = "Doppler: wavefronts bunching ahead of a moving source, then the Mach 
 kind = "physics"
 tier = "technique"
 teaches = "The Lorenz attractor traced in 3D with hue along time as the camera circles"
+
+[examples.interference]
+kind = "physics"
+tier = "technique"
+teaches = "Wave fields on the GPU: two sources interfering, then a phased array steering its beam"

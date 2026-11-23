@@ -28,8 +28,8 @@ eigenvectors of a matrix, a grid being transformed.
 
 | # | What | Where | Prism version |
 |---|---|---|---|
-| W1 | **Interference**: two or more point sources, the field they make (crests, troughs, the dark lines where they cancel), animated in time | PC (a per-pixel field kernel) | the field as a prism heat map: crests warm, troughs cool, the quiet lines dark, haze |
-| W2 | **Beamforming**: a line or ring of sources with phase delays steering the beam; change the delays and the beam swings | PC (the same kernel, with phases) | as W1, plus the array as glowing beacons and the beam direction as a ray |
+| W1 | **Interference** (done: `ac.Interference`): two or more point sources, the field they make (crests, troughs, the dark lines where they cancel), animated in time | PC (a per-pixel field kernel) | the field as a prism heat map: crests warm, troughs cool, the quiet lines dark, haze |
+| W2 | **Beamforming** (done: `ac.PhasedArray`): a line or ring of sources with phase delays steering the beam; change the delays and the beam swings | PC (the same kernel, with phases) | as W1, plus the array as glowing beacons and the beam direction as a ray |
 | W3 | **Directivity** (done: `ac.Directivity`): polar patterns (an array's beam pattern, a piston, a cardioid) | here | a glowing polar curve, side lobes fainter, the main lobe brightest |
 | W4 | **Doppler** (done: `ac.Doppler`): a moving source leaving bunched and stretched wavefronts; at sound speed, the shock cone | here | wavefront circles as fading glowing rings, hue by frequency heard |
 | W5 | **3D room acoustics** | PC (beauty step 7, `pc_tasks/07_acoustics_3d.md`) | faint glowing walls, rays of light bouncing |

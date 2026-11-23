@@ -322,3 +322,31 @@ dim = 0.82
 [defaults.strange_attractor.style]
 glow = "strong"
 colormap = "spectrum"
+
+# wave fields of point sources (ANIMATIONS.md W1, W2): dark where the waves cancel, crests
+# and troughs glowing in spectrum hues half a wheel apart (the same values as waves.PRISM)
+[defaults.interference.params]
+dim = 0.88  # a little see-through: what is behind glows through
+hue_cycles = 0.5
+isolines = 5
+fade = 0.08
+ambient = 0.0
+contrast = 1.6
+gain = 1.2
+
+[defaults.interference.style]
+glow = "soft"
+colormap = "spectrum"
+
+[defaults.phased_array.params]
+dim = 0.88  # a little see-through: what is behind glows through
+hue_cycles = 0.5
+isolines = 5
+fade = 0.08
+ambient = 0.0
+contrast = 1.6
+gain = 1.2
+
+[defaults.phased_array.style]
+glow = "soft"
+colormap = "spectrum"

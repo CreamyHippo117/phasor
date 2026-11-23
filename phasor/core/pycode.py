@@ -30,6 +30,7 @@ _ALIAS = {
     "phasor.domains.dynamics": "dyn",
     "phasor.domains.convolution": "conv",
     "phasor.domains.filters": "filt",
+    "phasor.domains.waves": "ac",  # wave fields are named through ``ac``
 }
 
 

@@ -172,29 +172,55 @@ def heat_pixels(
             rgb = np.asarray(colour(val), dtype=np.float64)
         else:
             rgb = np.asarray(colour_at(val, xs / sx, ys / sy), dtype=np.float64)
-        out = np.ones((ph, pw, 4), dtype=np.float32)
-        lines = isoline_weight(np.clip((level or (lambda v: v))(val), 0, 1), isolines)
-        if weight is None and not isolines and not fade:
-            out[..., :3] = rgb
-            return out
-        w = np.zeros_like(val) if weight is None else np.clip(weight(val), 0, 1)
-        if contrast != 1:
-            w = w**contrast
-        lit = w + line_glow * lines * (1 - w)
-        # With a weight, quiet parts fall toward black and strong parts keep their colour
-        # (the prism look: light out of darkness); the contour lines are light on top.
-        bg = np.zeros(3) if background is None else np.asarray(background[:3], dtype=np.float64)
-        shade = 1.0 if weight is None else ambient + (1 - ambient) * w
-        col = bg + (rgb - bg) * np.asarray(shade)[..., None] + rgb * (line_glow * lines)[..., None]
-        if fade > 0:
-            win = edge_window(xs / sx, ys / sy, size, fade)
-            col = bg + (col - bg) * win[..., None]
-            lit = lit * win
-        out[..., :3] = col
-        out[..., 3] = lit
-        return out
+        return shade_values(val, rgb, xs / sx, ys / sy, size, level=level, isolines=isolines,
+                            weight=weight, line_glow=line_glow, background=background,
+                            ambient=ambient, fade=fade, contrast=contrast)  # fmt: skip
 
     return pixels
+
+
+def shade_values(
+    val: np.ndarray,
+    rgb: np.ndarray,
+    u: np.ndarray,
+    v: np.ndarray,
+    size: tuple[float, float],
+    *,
+    level: Callable[[np.ndarray], np.ndarray] | None = None,
+    isolines: int = 0,
+    weight: Callable[[np.ndarray], np.ndarray] | None = None,
+    line_glow: float = 0.7,
+    background: np.ndarray | None = None,
+    ambient: float = AMBIENT,
+    fade: float = 0.0,
+    contrast: float = 1.0,
+) -> np.ndarray:
+    """The ``ctx.field`` pixels (ph, pw, 4) of values ``val`` (ph, pw) already coloured
+    ``rgb`` (ph, pw, 3), at places ``u`` (pw,) across and ``v`` (ph,) up a ``size``
+    rectangle (0..1): isolines, glow weight and edge fade as in ``heat_pixels``, which samples
+    a grid and calls this; a field computed per pixel (``waves``) calls it directly."""
+    ph, pw = val.shape
+    out = np.ones((ph, pw, 4), dtype=np.float32)
+    lines = isoline_weight(np.clip((level or (lambda x: x))(val), 0, 1), isolines)
+    if weight is None and not isolines and not fade:
+        out[..., :3] = rgb
+        return out
+    w = np.zeros_like(val) if weight is None else np.clip(weight(val), 0, 1)
+    if contrast != 1:
+        w = w**contrast
+    lit = w + line_glow * lines * (1 - w)
+    # With a weight, quiet parts fall toward black and strong parts keep their colour
+    # (the prism look: light out of darkness); the contour lines are light on top.
+    bg = np.zeros(3) if background is None else np.asarray(background[:3], dtype=np.float64)
+    shade = 1.0 if weight is None else ambient + (1 - ambient) * w
+    col = bg + (rgb - bg) * np.asarray(shade)[..., None] + rgb * (line_glow * lines)[..., None]
+    if fade > 0:
+        win = edge_window(u, v, size, fade)
+        col = bg + (col - bg) * win[..., None]
+        lit = lit * win
+    out[..., :3] = col
+    out[..., 3] = lit
+    return out
 
 
 def edge_window(u: np.ndarray, v: np.ndarray, size: tuple[float, float], fade: float):
