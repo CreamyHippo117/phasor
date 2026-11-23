@@ -30,7 +30,8 @@ KAPPA = 4.0 / 3.0 * (math.sqrt(2.0) - 1.0)  # cubic handle length of a quarter c
 MAX_PIECES = 256  # most segments one cubic flattens to
 RULES = ("nonzero", "evenodd")
 OPS = ("union", "intersection", "difference", "exclusion")
-CROSSING_LIMIT = 4000  # segments: above this, a fill is not checked for crossings
+CROSSING_LIMIT = 20000  # segments: above this, a fill is not checked for crossings
+CROSSING_BLOCK = 256  # segments compared with all others at once
 SVG_MAX_BYTES = 8 * 1024 * 1024  # an SVG larger than this is not read
 
 
@@ -511,18 +512,28 @@ def crossings(polys: Sequence[np.ndarray]) -> bool:
         return (q[..., 0] - p[..., 0]) * (r[..., 1] - p[..., 1]) - (
             q[..., 1] - p[..., 1]) * (r[..., 0] - p[..., 0])  # fmt: skip
 
-    A, B = a[:, None], b[:, None]
-    C, D = a[None, :], b[None, :]
-    o1, o2 = orient(A, B, C), orient(A, B, D)
-    o3, o4 = orient(C, D, A), orient(C, D, B)
     scale = max(1e-300, float(np.abs(s).max()) ** 2) * 1e-12
-    proper = (o1 * o2 < -scale) & (o3 * o4 < -scale)
-    same = rid[:, None] == rid[None, :]
-    n = sizes[rid][:, None]
-    gap = np.abs(ix[:, None] - ix[None, :])
-    neighbours = same & ((gap <= 1) | (gap == n - 1))
-    proper &= ~neighbours
-    return bool(np.any(np.triu(proper, 1)))
+    lo, hi = np.minimum(a, b), np.maximum(a, b)
+    n_all = sizes[rid]
+    for start in range(0, len(s), CROSSING_BLOCK):  # rows in blocks: memory stays small
+        rows = slice(start, start + CROSSING_BLOCK)
+        k = np.arange(len(s))[rows]
+        # pairs (i, j), j > i, whose boxes meet
+        near = (lo[rows, None, 0] <= hi[None, :, 0]) & (lo[None, :, 0] <= hi[rows, None, 0])
+        near &= (lo[rows, None, 1] <= hi[None, :, 1]) & (lo[None, :, 1] <= hi[rows, None, 1])
+        near &= np.arange(len(s))[None, :] > k[:, None]
+        i, j = np.nonzero(near)
+        if not len(i):
+            continue
+        i = i + start
+        o1, o2 = orient(a[i], b[i], a[j]), orient(a[i], b[i], b[j])
+        o3, o4 = orient(a[j], b[j], a[i]), orient(a[j], b[j], b[i])
+        proper = (o1 * o2 < -scale) & (o3 * o4 < -scale)
+        gap = np.abs(ix[i] - ix[j])
+        neighbours = (rid[i] == rid[j]) & ((gap <= 1) | (gap == n_all[i] - 1))
+        if np.any(proper & ~neighbours):
+            return True
+    return False
 
 
 # ---------------------------------------------------------------- boolean operations

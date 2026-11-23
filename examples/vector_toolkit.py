@@ -50,19 +50,21 @@ s.add(shapes.Path.through("route", [(2.3, -3.9), (3.6, -3.6), (4.9, -3.9)], tips
 s.marker("operands", 0.3)
 s.marker("more_operands", 1.1)
 s.marker("results", 2.0)
-s.marker("names", 3.8)
-s.marker("drawing", 4.6)
-s.marker("frame", 6.0)
-s.marker("end", 8.4)
+s.marker("more_results", 2.6)
+s.marker("names", 4.4)
+s.marker("drawing", 5.0)
+s.marker("frame", 6.4)
+s.marker("end", 8.8)
 s.at("operands").reveal(*(f"{op}_{k}" for op in ops[:2] for k in "ab"))
 s.at("more_operands").reveal(*(f"{op}_{k}" for op in ops[2:] for k in "ab"))
-s.at("results").trace(*ops)
+s.at("results").trace(*ops[:2])
+s.at("more_results").trace(*ops[2:])
 s.at("names").reveal(*(f"{op}.label" for op in ops))
 s.at("drawing").reveal("emblem")
 s.at("frame").trace("frame", "route")
 
 if __name__ == "__main__":
-    for line in s.engine.inspect(8.0, detail="brief")["objects"]:
+    for line in s.engine.inspect(8.6, detail="brief")["objects"]:
         print(line)
     for issue in s.engine.lint(strict=True):
         print("lint:", issue)

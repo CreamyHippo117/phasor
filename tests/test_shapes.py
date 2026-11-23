@@ -373,6 +373,7 @@ def test_an_svg_without_its_extra_or_its_file_draws_nothing_and_lint_says_why(
 ):
     import sys
 
+    pytest.importorskip("svgelements")
     (tmp_path / "logo.svg").write_text(SVG_TEXT, encoding="utf-8")
     s = Scene("svg", passes=passes, base_dir=tmp_path)
     s.add(shapes.SVG(id="logo", path="logo.svg"))
@@ -546,7 +547,7 @@ def test_the_two_examples_show_every_new_type_and_lint_clean():
 @pytest.mark.slow
 @pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
 @pytest.mark.parametrize("name, times", [("shapes", [1.0, 3.4, 5.8, 7.8]),
-                                         ("vector_toolkit", [1.0, 3.0, 5.2, 8.2])])  # fmt: skip
+                                         ("vector_toolkit", [1.0, 3.2, 5.6, 8.6])])  # fmt: skip
 def test_example_golden_storyboards(name, times):
     pytest.importorskip("shapely")
     pytest.importorskip("svgelements")
@@ -566,3 +567,34 @@ def test_doctor_names_a_missing_extra_without_failing(monkeypatch):
     monkeypatch.setitem(sys.modules, "svgelements", None)
     c = check_extras()
     assert c.ok is None and "--extra svg" in c.detail
+
+
+def test_crossings_check_a_detailed_outline_in_bounded_memory():
+    """Edges are compared in blocks against those whose boxes meet, so a detailed outline (an
+    SVG part, a boolean result) is checked without building N x N arrays."""
+    import tracemalloc
+
+    k = np.linspace(0, 2 * np.pi, 6000, endpoint=False)
+    r = 2 + 0.3 * np.sin(40 * k)  # a wavy closed ring, 6000 edges, no crossings
+    ring = np.c_[r * np.cos(k), r * np.sin(k), np.zeros_like(k)]
+    tracemalloc.start()
+    assert not pm.crossings([ring])
+    bow = ring.copy()
+    bow[[100, 3100]] = bow[[3100, 100]]  # two far vertices swapped: edges now cross
+    assert pm.crossings([bow])
+    peak = tracemalloc.get_traced_memory()[1]
+    tracemalloc.stop()
+    assert peak < 200 * 1024 * 1024
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_tiny_waits_until_a_traced_curve_is_drawn(passes):
+    from phasor import Line
+
+    s = Scene("tiny", passes=passes)
+    s.add(Line(id="long", points=[(-3, 0), (3, 0)], progress=0.001))
+    assert [i for i in s.engine.lint() if i.code == "tiny"] == []
+    s2 = Scene("tiny2", passes=passes)
+    s2.add(Line(id="speck", points=[(0, 0), (0.005, 0)]))
+    (issue,) = [i for i in s2.engine.lint() if i.code == "tiny"]
+    assert issue.ids == ("speck",)
