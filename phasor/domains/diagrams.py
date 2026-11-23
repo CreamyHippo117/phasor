@@ -87,6 +87,15 @@ def _height(me, cam, at, key: str = "size") -> float:
     return float(me.style[key]) * float(cam.units_per_height(_vec(at)))
 
 
+def _clear_of_document(parts: list, state: SceneState, owner: str) -> list:
+    """``parts`` with a name the document holds (or has retired) under ``owner`` given the
+    next free suffix (``a1_2``), as ``SVG`` does, so a part never collides and is never lost."""
+    names = unique_names([q.id for q in parts], children(state.reserved, owner))
+    for q, name in zip(parts, names, strict=True):
+        q.id = name
+    return parts
+
+
 def _as_math(s: str) -> str:
     """A matrix entry as math: ``a_{11}`` -> ``$a_{11}$``; text already in ``$`` stays."""
     return s if text_metrics.is_math(s) else f"${s}$"
@@ -340,11 +349,11 @@ class NumberPlane(ObjectBase):
         me = self.me(state)
         p = me.params
         r = me.roles
-        if "axes" in children(state.reserved, self.id):
-            return []  # the document holds "<plane>.axes" itself: no axes part (lint says)
+        # A name the document holds under the plane gets the next free suffix (axes_2).
+        (name,) = unique_names(["axes"], children(state.reserved, self.id))
         return [
             Axes(
-                id="axes",
+                id=name,
                 dims=2,
                 x_range=p.x_range,
                 y_range=p.y_range,
@@ -737,14 +746,13 @@ class Table(ObjectBase):
         me = self.me(state)
         p = me.params
         cam, rows, widths, heights, corner, shown = self._layout(state)
-        reserved = children(state.reserved, self.id)
         out, y = [], 0.0
         for i, row in enumerate(rows[:shown]):
             x = 0.0
             role = me.roles["header"] if p.header and i == 0 else me.roles["color"]
             for j, cell in enumerate(row):
                 name = f"{dm.column_name(j)}{i + 1}"
-                if cell and name not in reserved:
+                if cell:
                     k = {"left": 0.0, "center": 0.5, "right": 1.0}[p.align]
                     inner = PAD_X * _height(me, cam, p.pos) / 2
                     dx = x + inner + k * (widths[j] - 2 * inner)
@@ -760,7 +768,7 @@ class Table(ObjectBase):
                     )
                 x += widths[j]
             y += heights[i]
-        return out
+        return _clear_of_document(out, state, self.id)
 
     def semantics(self, state: SceneState) -> dict[str, Any]:
         p = self.me(state).params
@@ -865,18 +873,17 @@ class MatrixDisplay(ObjectBase):
     def build(self, state: SceneState) -> list:
         me = self.me(state)
         cam, rows, widths, row_h, corner, *_ = self._layout(state)
-        reserved = children(state.reserved, self.id)
         style = {"color": me.roles["color"], "size": me.roles["size"]}
         out = []
         for i, row in enumerate(rows):
             x = 0.0
             for j, e in enumerate(row):
                 name = f"e{i + 1}_{j + 1}"
-                if e and name not in reserved:
+                if e:
                     at = corner + cam.right * (x + widths[j] / 2) - cam.up * (row_h * (i + 0.5))
                     out.append(Text(id=name, text=e, pos=tuple(float(c) for c in at), style=style))
                 x += widths[j]
-        return out
+        return _clear_of_document(out, state, self.id)
 
     def semantics(self, state: SceneState) -> dict[str, Any]:
         p = self.me(state).params
@@ -1064,12 +1071,11 @@ class Code(ObjectBase):
         w, hh = cols * CELL * h, len(lines) * LINE * h
         corner = _vec(p.pos) - cam.right * (w / 2) + cam.up * (hh / 2)
         shown = min(len(lines), math.ceil(p.reveal * len(lines) - 1e-9))
-        reserved = children(state.reserved, self.id)
         style = {k: me.roles[k] for k in CODE_STYLE}
         out = []
         for i, (text, classes) in enumerate(lines[:shown]):
             name = f"line_{i + 1}"
-            if not text.strip() or name in reserved:
+            if not text.strip():
                 continue
             at = corner - cam.up * (LINE * h * (i + 0.5))
             out.append(
@@ -1081,7 +1087,7 @@ class Code(ObjectBase):
                     style=style,
                 )
             )
-        return out
+        return _clear_of_document(out, state, self.id)
 
     def semantics(self, state: SceneState) -> dict[str, Any]:
         p = self.me(state).params
@@ -1094,7 +1100,7 @@ class Code(ObjectBase):
             "highlight": how,
         }
         if how == "plain" and src and not extras.available("pygments"):
-            out["missing_extra"] = "code"  # lint missing_extra: drawn plain
+            out["plain_without"] = "pygments"  # lint missing_extra: drawn plain
         if how == "unknown":
             out["unknown_language"] = p.language  # lint unknown_language
         if p.path:

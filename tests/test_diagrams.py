@@ -307,7 +307,7 @@ def test_crowded_bar_names_are_one_issue_with_a_step_that_clears_them(passes):
     assert "crowded_ticks" in codes and "overlap" not in codes
     (issue,) = [i for i in issues if i.code == "crowded_ticks"]
     assert issue.ids == ("c",) and issue.path == "c.names" and issue.times == (0.0,)
-    assert issue.fix == () and "step" in issue.fix_hint
+    assert issue.fix == () and "wider" in issue.fix_hint and "step" not in issue.fix_hint
 
 
 # ---------------------------------------------------------------- 5. table
@@ -365,13 +365,14 @@ def test_a_table_reads_a_csv_file_from_the_scenes_folder(tmp_path):
     assert _ids(s.engine) == ["t", "t.a1", "t.a2"]
 
 
-def test_a_bad_long_or_missing_csv_is_lint_and_never_raises(tmp_path):
+@pytest.mark.parametrize("passes", MODES)
+def test_a_bad_long_or_missing_csv_is_lint_and_never_raises(tmp_path, passes):
     from phasor import dg
 
     (tmp_path / "long.csv").write_text("\n".join(f"{k},x" for k in range(100)), encoding="utf-8")
     (tmp_path / "bad.csv").write_bytes(b"\xff\xfe\x00 not text")
     (tmp_path / "huge.csv").write_bytes(b"1," * (300 * 1024))
-    s = _scene(base_dir=tmp_path)
+    s = _scene(passes, base_dir=tmp_path)
     s.add(dg.Table(id="long", path="long.csv", pos=(0, 2, 0)))
     s.add(dg.Table(id="bad", path="bad.csv"))
     s.add(dg.Table(id="huge", path="huge.csv"))
@@ -502,22 +503,24 @@ def test_without_pygments_code_is_drawn_plain_and_lint_names_the_extra(monkeypat
     assert "plain" in issue.message and issue.severity == "warning"
 
 
-def test_an_unknown_language_is_drawn_plain_with_a_lint_warning():
+@pytest.mark.parametrize("passes", MODES)
+def test_an_unknown_language_is_drawn_plain_with_a_lint_warning(passes):
     pytest.importorskip("pygments")
     from phasor import dg
 
-    s = _scene()
+    s = _scene(passes)
     s.add(dg.Code(id="code", code="x := 1", language="no-such-language"))
     assert _sem(s.engine, "code")["highlight"] == "unknown"
     assert [i.code for i in s.engine.lint()] == ["unknown_language"]
 
 
-def test_code_from_a_file_is_read_cut_and_rechecked(tmp_path):
+@pytest.mark.parametrize("passes", MODES)
+def test_code_from_a_file_is_read_cut_and_rechecked(tmp_path, passes):
     from phasor import dg
 
     (tmp_path / "f.py").write_text("x = 1\n\ty = 2\x07\n", encoding="utf-8")
     (tmp_path / "long.py").write_text("pass\n" * 500, encoding="utf-8")
-    s = _scene(base_dir=tmp_path)
+    s = _scene(passes, base_dir=tmp_path)
     s.add(dg.Code(id="a", path="f.py"))
     s.add(dg.Code(id="b", path="long.py", pos=(0, 5, 0)))
     e = s.engine
@@ -594,6 +597,41 @@ def test_the_tick_gap_comes_from_the_theme():
     from phasor.style.theme import load_theme
 
     assert load_theme("midnight_glow").lint["tick_gap"] == 0.25
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_an_svg_without_its_extra_is_still_one_missing_extra_that_draws_nothing(
+    monkeypatch, passes
+):
+    """The plain-fallback rule (Code without pygments) must not fire for an SVG, whose
+    semantics also name a missing extra: one issue, the "draws nothing" one."""
+    import sys
+    from pathlib import Path
+
+    from phasor import shapes
+
+    monkeypatch.setitem(sys.modules, "svgelements", None)
+    s = _scene(passes, base_dir=Path(__file__).parents[1] / "examples")
+    s.add(shapes.SVG(id="emblem", path="assets/emblem.svg"))
+    found = [i for i in s.engine.lint() if i.code == "missing_extra"]
+    assert len(found) == 1 and "draws nothing" in found[0].message
+
+
+def test_part_names_the_document_holds_get_a_suffix_never_a_collision():
+    from phasor import Text, dg
+
+    s = _scene()
+    s.add(dg.Table(id="t", cells=(("x", "y"),)))
+    s.add(dg.NumberPlane(id="plane", x_range=(-1, 1, 1), y_range=(-1, 1, 1)))
+    s.add(dg.Code(id="code", code="x = 1"))
+    s.add(Text(id="t.a1", text="mine", pos=(0, 3, 0)))
+    s.add(Text(id="plane.axes", text="mine too", pos=(0, -3, 0)))
+    s.add(Text(id="code.line_1", text="also mine", pos=(3, 3, 0)))
+    ids = _ids(s.engine)
+    assert "t.a1_2" in ids and "t.b1" in ids
+    assert "plane.axes_2" in ids and "plane.axes_2.x_1" in ids
+    assert "code.line_1_2" in ids
+    assert len(ids) == len(set(ids))
 
 
 # ---------------------------------------------------------------- 10. bounds and hostile input
@@ -695,6 +733,7 @@ def _example(name: str):
 
 
 def test_the_examples_show_every_diagram_type_and_lint_clean():
+    pytest.importorskip("pygments")  # without it the gallery's code is (rightly) missing_extra
     seen = set()
     for name in ("diagram_kit", "data_viz"):
         e = _example(name)

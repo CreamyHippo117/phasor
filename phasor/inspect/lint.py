@@ -41,8 +41,8 @@ from typing import Any
 
 import numpy as np
 
+from phasor.core import extras, ticks
 from phasor.core import text as text_metrics
-from phasor.core import ticks
 from phasor.core.color import contrast_ratio, over
 from phasor.core.constraints import LABEL_SUFFIX
 from phasor.core.ids import parent_of
@@ -575,8 +575,8 @@ def run(
                 f.add("truncated", (e["id"],), t, why=sem["truncated"], file=sem.get("file"))
             if sem.get("unknown_language"):
                 f.add("unknown_language", (e["id"],), t, language=sem["unknown_language"])
-            if sem.get("missing_extra"):  # a type that draws without it, plainer
-                f.add("missing_extra", (e["id"],), t, extra=sem["missing_extra"])
+            if sem.get("plain_without"):  # a type that draws without its extra, plainer
+                f.add("missing_extra", (e["id"],), t, module=sem["plain_without"])
         if persp:
             for e in labels:
                 v = e["visible_fraction"]
@@ -699,11 +699,16 @@ def run(
                          f"{info['language']!r}; the code is drawn plain {when}", "warning", ids,
                          times=ts, fix_hint="use a pygments lexer name, such as 'python', "
                          "'c', 'cpp', 'rust', 'javascript' or 'text'")  # fmt: skip
-        if code == "missing_extra":
-            return Issue(code, f"{ids[0]!r}: highlighting needs the 'pygments' package, which "
-                         "is not installed; the code is drawn plain", "warning", ids, times=ts,
-                         fix_hint=f"install it: uv sync --extra {info['extra']} (or pip install "
-                         f"'phasor[{info['extra']}]')")  # fmt: skip
+        if code == "missing_extra":  # drawn without the package, plainer (file_rules: none)
+            extra, what = extras.EXTRAS[info["module"]]
+            return Issue(code, f"{ids[0]!r}: {what} needs the {info['module']!r} package, "
+                         "which is not installed; it is drawn plain", "warning", ids, times=ts,
+                         fix_hint=f"install it: uv sync --extra {extra} (or pip install "
+                         f"'phasor[{extra}]')")  # fmt: skip
+        if code == "crowded_ticks" and info["axis"] == "names":
+            return Issue(code, f"{ids[0]!r}: the bars' names crowd each other {when}", "warning",
+                         ids, path=info["path"], times=ts, fix_hint="make the chart wider, the "
+                         "names shorter, or the 'numbers' text role smaller")  # fmt: skip
         if code == "crowded_ticks":
             return Issue(code, f"{ids[0]!r}: the numbers along {info['axis']!r} crowd each "
                          f"other at a step of {info['step']:g} {when}", "warning", ids,

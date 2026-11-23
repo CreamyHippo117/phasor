@@ -10,7 +10,7 @@ from __future__ import annotations
 EXTRAS: dict[str, tuple[str, str]] = {
     "shapely": ("boolean", "boolean operations on shapes"),
     "svgelements": ("svg", "SVG drawings"),
-    "pygments": ("code", "highlighted code (drawn plain without it)"),
+    "pygments": ("code", "highlighting code"),
 }
 
 
