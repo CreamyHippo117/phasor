@@ -74,12 +74,12 @@ Untested on Windows, macOS and CUDA.
    0.384 world units, width 4 = `regular`'s 0.032); Milestone 20 compares with real Manim.
    Class default colors stay roles, so an unstyled Manim scene keeps the house look and does
    not trip `off_palette` on every object.
+9. **The reverb golden was regenerated** (it still passed at SSIM 0.97, but no longer showed
+   what the import makes).
 10. **Docs landed in later commits than the API change** (against CLAUDE.md's "same commit"
     rule): at commits 328b90c and bea305e, `test_mcp::test_llms_txt_is_current` and the
     three tests that encoded the old roles-only rule fail; they pass from 5ee0bd7 / ff1942a
     on. Squash the series on merge.
-9. **The reverb golden was regenerated** (it still passed at SSIM 0.97, but no longer showed
-   what the import makes).
 
 ## Deferred
 
