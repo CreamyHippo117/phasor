@@ -32,9 +32,11 @@ s.set("camera.height", 6)  # world units visible top to bottom
 | --- | --- | --- |
 | `Dot` | `pos`, `r` (world radius, default 0.1) | `color` (emphasis, primary), `glow` (glow, none) |
 | `Line` | `points` (2 or more), `progress`, `hue_along` (colormap cycles along the length; 0: one color), `hue` (shifts them) | `color` (emphasis, primary), `stroke` (stroke, regular), `glow` (glow, none), `colormap` (colormap, spectrum) |
-| `cx.DomainColoring` | `function` (e.g. `"1/(z**2 + 1)"`), `pos` (center), `size` (w, h), `contour` (0-1), `softness` (0-1, edge feathering), `hue` (turns the wheel); the prism look: `radius` (> 0 turns it on: zeros and poles glow this far), `ambient` (0-1, light elsewhere), `lines` (glowing rays of phase per turn, plus a ring each time \|f\| doubles) | `colormap` (colormap, phase), `glow` (glow, none; used by the prism look) |
-| `cx.Fractal` | `kind` (`mandelbrot`/`julia`), `c` (Julia constant), `pos`, `size`, `max_iter`, `density`, `hue`, `center` (exact text `"re im"`), `zoom` (powers of ten, to 280), `steady` (hold the outer color in a dive) | `colormap` (colormap, sequential) |
+| `cx.DomainColoring` | `function` (e.g. `"1/(z**2 + 1)"`; it may use the constant `a`), `a` ((re, im), the value of `a`: animate it with `.to("id.a", (re, im))` and the zeros and poles move, nothing recompiles), `pos` (center), `size` (w, h), `contour` (0-1), `softness` (0-1, edge feathering), `hue` (turns the wheel); the prism look: `radius` (> 0 turns it on: zeros and poles glow this far), `ambient` (0-1, light elsewhere), `lines` (glowing rays of phase per turn, plus a ring each time \|f\| doubles) | `colormap` (colormap, phase), `glow` (glow, none; used by the prism look) |
+| `cx.Fractal` | `kind` (`mandelbrot`/`julia`), `c` (Julia constant), `pos`, `size`, `max_iter`, `density`, `hue`, `center` (exact text `"re im"`), `zoom` (powers of ten, to 280), `steady` (hold the outer color in a dive); the prism look: `radius` (> 0 turns it on: the edge of the set glows this far, in world units of the rectangle), `ambient` (0-1, light far from the edge) | `colormap` (colormap, sequential), `glow` (glow, none; used by the prism look) |
 | `cx.RiemannSurface` | `kind` (`sqrt`/`cbrt`/`log`), `pos` (branch point), `radius`, `height` (`re`/`im`), `scale`, `rings`, `segments` | `colormap` (colormap, phase), `material` (surface, solid) |
+| `cloud.PointCloud` | `source` (`roots`/`attractor`/`buddhabrot`/`points`), `degree` and `coefficients` (roots), `kind` (`clifford`/`dejong`/`lorenz`) and `constants` (attractor), `max_iter` (buddhabrot), `points` and `values` (given directly), `count` (at most), `seed`, `pos` (centre and origin of the points), `size` (the rectangle it is seen in), `scale`, `point_size` (splat radius, px), `exposure`, `hue`, `color_by` (`source`/`phase`), `twist` (roots: turns of the last coefficient, animatable), `twinkle` (0-1, life), `white` (0-1, white-hot dense parts) | `colormap` (colormap, spectrum), `glow` (glow, none) |
+
 | `Image` | `path` (a PNG/JPEG/WebP file, relative to the scene's folder), `pos` (centre), `width`, `height` (0: keep the picture's shape), `frame` (an outline of light) | `glow` (glow, none: bright parts shine), `frame` (emphasis, muted), `stroke` (stroke, hairline). Presets `plain`, `framed`, `luminous`. A missing file is issue `missing_file`; transparent parts show the background; an AI may only name files inside its folder |
 | `Text` | `text` (`$...$` is typeset math), `pos`, `anchor` (`center`/`left`/`right`), `leader`, `leader_on` (set by layout) | `color` (emphasis, primary), `size` (text, label), `leader` (stroke, hairline) |
 | `Equation` | `parts` (math or text, set on one baseline), `colors` (an emphasis role per part), `pos` | `color` (emphasis, primary), `size` (text, math), `glow` (glow, none) |
@@ -198,6 +200,50 @@ assert me.inspect(4.0, id="comet.count")["objects"][0]["semantic"]["text"] == "$
 assert "after.ring" in [o.id for o in me.document.objects]
 ```
 
+**Smooth transitions** (`examples/prism_transitions.py`).
+
+- *Solving and rearranging.* Give each part of an `Equation` a name with `keys` (`""` for
+  none). In a `transform`, the part with the same key in the source becomes that part
+  wherever it was, even when its text changes: `+a` on the left becomes `-a` on the right,
+  and `0.6 i` turns into `0.7 i` in place. The text changes while the part moves. Parts
+  without keys pair by equal text, in order, as before.
+- *Carried parts arc.* A part carried past others travels round them by the theme's
+  `[motion] transform_arc` line heights: over them going right, under them going left. The
+  parts that keep their order go straight.
+- *Semantics.* Mid-transform they report `matched`, `changed` (pairs whose text differs)
+  and `carried_over` (pairs that arc).
+- *A function changing into another.* `cx.DomainColoring(to="...", blend=0..1)` shows
+  w = (1 - blend) f + blend g, a straight line between the two functions. Every frame is
+  then a true picture of a function: zeros glide, a pole of g grows out of a point, and
+  there are no seams. A blend in log space would cut the plane along the branch cuts of
+  log f and log g. At 0 and 1 you get exactly f and g. Both `blend` and `a` are kernel
+  arguments, so animating them never recompiles.
+- *Slow changes.* `morph(path, value, until="marker")` runs a change until a marker instead
+  of the theme's `morph` time: a constant drifting slowly while it is talked about.
+
+```python
+from phasor import Equation, Scene, cx
+
+tr = Scene("solve", passes=None)
+tr.add(
+    cx.DomainColoring(
+        id="plane",
+        function="(z**5 - 1 - a)/(z**2 + a)",
+        to="(z**3 - 1 - a)/(z**2 + a)",
+        a=(0.0, 0.6),
+    )
+)
+tr.add(Equation(id="step1", parts=("$z^2$", r"$+\,a$", "$=$", "$0$"), keys=("z", "a", "eq", "")))
+tr.add(Equation(id="step2", parts=("$z^2$", "$=$", "$-a$"), keys=("z", "eq", "a")))
+for name, t in (("solve", 1.0), ("blend", 3.0), ("done", 9.0)):
+    tr.marker(name, t)
+tr.at("solve").transform("step1", "step2").morph("plane.a", (0.5, 0.7), until="blend")
+tr.at("blend").morph("plane.blend", 1.0, until="done")
+mid = tr.engine.inspect(1.5, id="step2")["objects"][0]["semantic"]
+assert (mid["matched"], mid["changed"], mid["carried_over"]) == (3, 1, 1)
+assert len(tr.engine.inspect(9.0, id="plane")["objects"][0]["semantic"]["zeros"]) == 3
+```
+
 ## Animate by hand
 
 ```python
@@ -327,6 +373,7 @@ Each issue has `code`, `severity`, `message`, `ids`, `times`, `fix_hint`, and `f
 | `unsolved` | error | a constraint or guard does not hold |
 | `raw_motion` | warning, strict only | a transition written with raw `to()` instead of a verb |
 | `orphan_override` | error | a tweak whose object is gone |
+| `missing_file` | warning | a file an object reads (a room's `.obj`) is not in the scene's folder; it draws nothing |
 
 `engine.autofix()` applies every `fix` the linter offers (add `near` for a child label that
 overlaps, `on_screen` for something cut by the frame), lints again, and returns
@@ -381,6 +428,7 @@ from phasor.render.output import save_png
 
 save_png("out/frame.png", engine.still(3.0, (960, 540)))  # (h, w, 3) uint8 sRGB
 picture = engine.frame(3.0, (3840, 2160))  # linear, after bloom and tone map; float32
+bytes8 = engine.frame(3.0, (3840, 2160), output="srgb8")  # (h, w, 3) uint8, encoded on the card
 s.save("residues.phasor.json")  # canonical, diff-friendly
 engine = load("residues.phasor.json")  # or load("residues.py")
 ```
@@ -402,11 +450,15 @@ assert field.shape == (90, 160) and (field == -1).any()  # -1 marks points in th
 
 | Kernel | Parameters | Returns |
 | --- | --- | --- |
-| `domain` | `function`, `center`, `height`, `contour=0.35`, `lut=None`, `precision="f32"` | RGBA: hue = phase, bands = each doubling of the modulus, poles white |
-| `domain_glow` | `function`, `center`, `height`, `lut=None`, `radius=0.3`, `ambient=0.08`, `contour=0.15`, `precision="f32"`, `lines=0`, `line_glow=0.6` | RGBA: hue = phase, lit near zeros and poles (Newton distance \|f/f'\|), rays and rings about a pixel wide; alpha = glow weight |
+| `domain` | `function`, `center`, `height`, `contour=0.35`, `lut=None`, `precision="f32"`, `a=0j` (the constant `a` in the function) | RGBA: hue = phase, bands = each doubling of the modulus, poles white |
+| `domain_glow` | `function`, `center`, `height`, `lut=None`, `radius=0.3`, `ambient=0.08`, `contour=0.15`, `precision="f32"`, `lines=0`, `line_glow=0.6`, `a=0j` | RGBA: hue = phase, lit near zeros and poles (Newton distance \|f/f'\|), rays and rings about a pixel wide; alpha = glow weight |
 | `escape` | `center`, `height`, `max_iter=256`, `julia=None`, `precision=None` | smooth escape count; Mandelbrot, or the Julia set of `julia=(re, im)` |
+| `fractal_glow` | `field` (from `escape` or `deep`), `lut`, `density=0.35`, `offset=0.0`, `inside=(0,0,0)`, `radius=2.0` (pixels), `ambient=0.08` | RGBA: the palette ramp by sqrt(count), lit along the edge of the set (distance from the count's gradient, 1 / (ln 2 \|grad\|)); inside = `inside`, alpha 0; alpha = glow weight |
 | `tonemap` | `image`, `exposure=1.0` | ACES filmic curve, linear in and out (whole image) |
 | `gauss` | `image`, `sigma`, `axis` | one pass of a Gaussian blur along x (0) or y (1) (whole image) |
+| `srgb8` | `image` | linear display RGBA (0..1) -> (h, w, 3) uint8 sRGB (whole image) |
+| `accumulate` | `image`, `weight=1.0`, `acc=None` | float32 `acc + weight * image`; `image` may be float16 (whole image, any channel count; the motion-blur sum) |
+| `splat` | `points` ((n, 2) plane coordinates), `colors` ((n, 3) linear RGB, or one), `center`, `height`, `weights=None`, `sigma=1.0` (px), `gain=1.0`, `curve=True`, `white=0.0` | each point adds a Gaussian of light (integer `atomicAdd` in fixed point, so the same bits every run); rgb = mean colour (toward white by white x a^4) x a, alpha a = 1 - exp(-gain x density); `curve=False`: the raw sums |
 
 - `center` and `height` describe the view like the 2D camera: the point at the middle of
   the frame and how many units the frame is tall.
@@ -445,7 +497,7 @@ changes an old scene.
 yourself, then the preset, then the look, then the type's default. Presets: `dot`: `plain`,
 `glowing`, `beacon`; `line`: `ink`, `glowing`, `beam`, `hairline`; `domain_coloring`:
 `classic` (hard edges), `soft_phase` (restrained wheel, feathered), `vivid`, `prism` (dark, glowing zeros and poles, rays and rings of light; the `prism` looks use it); `fractal`:
-`classic`, `ember`, `ocean`; `riemann_surface`: `glass`, `soft_glass`.
+`classic`, `ember`, `ocean`, `prism` (the set dark, its edge glowing; the `prism` looks use it); `riemann_surface`: `glass`, `soft_glass`.
 
 **Palettes** are style roles (`colormap`): `phase` (the full wheel: use it where hue means
 phase), `soft_phase` (three-hue wheel), `sequential`, `ember`, `ocean` (two-tone ramps),
@@ -469,6 +521,19 @@ assert lit.engine.document.object("plane").params["radius"] > 0
 A kernel picture glows through its alpha channel: alpha is a per-pixel glow weight, and the
 object's `glow` role (above 1) turns it into light and bloom. Kernels that only paint leave
 alpha at 1 and the role at `none`.
+
+**Prism fractals**: `cx.Fractal(preset="prism")` (or the `prism` looks) keeps the set dark
+(the background), colours the outside from the palette by escape time, and lights the edge
+of the set out to `radius` world units, with haze. The glow is sized on screen, so it stays
+as fine through a deep zoom (the perturbation path glows too). Palettes still apply.
+
+```python
+from phasor import Scene, cx
+
+edge = Scene("glowing edge", look="prism", passes=None)
+edge.add(cx.Fractal(id="j", kind="julia", c=(-0.7741, 0.1501), size=(8, 4.5)))
+assert edge.engine.document.object("j").params["radius"] > 0
+```
 
 **Living motion** (`life`: `off`, `subtle`, `lively`): glow breathes, dots drift a fraction
 of their radius, color fields turn a few percent of the wheel, all a deterministic function
@@ -536,6 +601,19 @@ epicycles, parametric curves, contours, the algebra and PDE drawings. Its theme
 `prism_vivid` starts from `prism` (`base = "prism"`) and adds `[strokes] hue_along`, which
 any theme may set. Strokes that do not glow (axes, grids) keep their color, and objects that
 color by meaning (flow lines by speed, fields by strength) keep theirs.
+
+**The prism look on a field** (`look="prism_field"`, for domain coloring scenes) is `prism`
+with two changes, and `prism_domain` and `prism_transitions` use it:
+
+- Equations drift less. `Equation(drift=)` is the share of the theme's `[life] float` that
+  an equation drifts; the look sets it to 0.6.
+- The field is more see-through, with more light. A shorter haze (`radius`), a darker wash
+  (`ambient`), brighter rays and rings (`line_glow`, 0.6 by default) and more emitted light
+  (`light`, which scales what the glow role adds; 1 by default).
+
+A look file may start from another with `base = "prism"` and change only what it names.
+During a `transform`, an equation's drift passes from the source's to the target's, so
+nothing jumps.
 
 **Palettes within the prism looks.** The lens and glow stay; the colors are a choice:
 `Scene(..., look="prism_everywhere", palette="moonlight")`. `spectrum` is the prism rainbow
@@ -812,6 +890,17 @@ shine and haze and quiet parts melt into the background. A wave glows both ways,
 and cool for down (`positive` and `negative` roles). `preset="prism"` sets all three; the
 `prism` looks use it. Plain pictures are unchanged.
 
+The prism preset also colours by the spectrum: `hue_cycles` > 0 reads the `colormap` role
+(`spectrum` in the prism looks, or the scene's `palette`) as a wheel, its hue turning that
+many times over the value range, so each contour line has the hue of its level; on a
+`Spectrogram` the hue runs up the frequency axis, so a sliding tone's trace runs through the
+spectrum like a prism stroke. Brightness then comes from the field's strength alone: the
+glow weight raised to `contrast` (above 1, only the strongest parts light up), with
+`ambient` the share a quiet pixel keeps (0: the dark ground). `fade` melts the edges into the
+background over that share of the shorter side, so there is no square border and no square
+halo. `hue` turns the colours; a lively look drifts it a little. All default to the plain
+picture; they are taste knobs for looks and presets, not numbers for a scene to type.
+
 ```python
 from phasor import Scene
 from phasor.domains import pde
@@ -819,7 +908,105 @@ from phasor.domains import pde
 hot = Scene("hot plate", look="prism", passes=None)
 hot.add(pde.Field(id="plate", kind="heat", mode=(0, 0), time=0.1, scale=0.3))
 assert hot.engine.document.object("plate").params["isolines"] == 8
+plate = hot.engine.document.object("plate")
+assert plate.params["hue_cycles"] > 0 and plate.params["fade"] > 0
+assert plate.style["colormap"] == "spectrum"
 ```
+
+The height mode, `pde.Surface`, has a prism preset too (the prism looks use it): with
+`hue_cycles` > 0 the surface is dark where the field is quiet and takes the spectrum's hue of
+its value where it is strong (`contrast` as above), under a net of `lines` grid lines each
+way drawn as glowing strokes in the same hues (`stroke` and `glow` roles). Give the scene an
+orbit camera (`examples/prism_drum_3d.py`).
+
+```python
+from phasor import Scene
+from phasor.domains import pde
+
+drum = Scene("drum", look="prism", passes=None)
+drum.use_camera("orbit")
+drum.add(pde.Surface(id="skin", kind="wave", mode=(2, 3), scale=1.2))
+assert drum.engine.document.object("skin").params["lines"] > 0
+```
+
+**Point clouds.** `from phasor import cloud`. `cloud.PointCloud` splats many points (a
+million is fine on the GPU) as tiny Gaussians of light that add up, so dense regions glow and
+the structure at their edges shows. Sources: `roots` (the roots of every polynomial of
+`degree` with coefficients from `coefficients`, the leading one 1; a random sample when
+there are more than `count` roots), `attractor` (`kind` clifford, dejong or lorenz, fitted to
+[-1, 1]^2), `buddhabrot` (escaping orbits up to `max_iter`) or `points` given directly. A point
+sits at world `pos + scale * point`; the cloud is seen inside the `size` rectangle round `pos`
+and only the part on screen is splatted, so zooming in keeps it sharp. `exposure` is light
+per point against the mean density at the current zoom (resolution does not change it);
+`color_by="phase"` colours by each point's angle round `pos`, `source` by what the source
+says (the polynomial's place in the list). Presets `prism` (the `prism` looks use it) and
+`plain`. Points are cached per source parameters, so animating `hue`, `exposure` or the
+camera does not recompute them. Numerics: `phasor.domains.cloud_math`.
+
+Motion: `twist` (roots) turns the last coefficient of the set round the origin by that share
+of a turn (b -> b e^(2 pi i twist); the leading coefficient stays), so tweening it with
+`.to("id.twist", 0.06)` makes every root glide and the fractal edge tear and morph; the same
+polynomials are used at every value, so colours stay with them. A million roots solve in about
+half a second (LAPACK on all cores) per new value. `twinkle` flickers each point's light by up
+to that share (the roots of one polynomial together), slowly; it is life: `lively` gives the
+full amount, `subtle` half, `off` or an `exact` tag none. `white` turns the colour of the
+densest parts toward white (by `white * a^4`, a the tone curve's light), never the light
+itself. The `prism` preset sets `white` 0.8 and `twinkle` 0.6.
+
+```python
+from phasor import Scene, cloud
+
+sky = Scene("roots", look="prism", passes=None)
+sky.add(cloud.PointCloud(id="roots", source="roots", degree=8, size=(4.5, 2.6)))
+seen = sky.engine.inspect(0.0, id="roots")["objects"][0]["semantic"]
+assert seen["points"] == 2**8 * 8 and seen["backdrop"]  # every +-1 polynomial of degree 8
+assert sky.engine.document.object("roots").style["glow"] == "strong"
+sky.at(0.5).to("roots.twist", 0.05, duration=3.0)  # the roots glide; the ring tears open
+assert 0 < sky.engine.state_at(2.0)["roots"].params.twist < 0.05
+```
+
+**A 3D room with sound bouncing in it** (`ac`, BEAUTY.md step 7). Give the scene an orbit
+camera.
+- `ac.Room3D(size=(8, 5, 3), origin=, material=)`: a shoebox, or any closed room read from a
+  Wavefront `.obj` file with `path="assets/l_room.obj"` (relative to the scene's folder, and
+  inside it: an absolute path or `..` is refused; `scale` turns file units into meters). Drawn
+  as faint glowing lines along its edges (for a mesh, its creases: `edge_angle`, so the
+  diagonals of flat walls stay hidden) and faint glass walls (`walls`, 0 for lines only;
+  `preset="outline"`). A file that is not there is lint `missing_file` and draws nothing.
+  Semantics: volume, surface area, walls, Sabine and Eyring RT60.
+- `ac.SoundRays(room="room", source=, time=expr("t - 1"), speed=0.01, count=1200,
+  bounces=6, trail=1.5)`: rays leaving the source evenly in every direction, reflecting off
+  the walls (angle in = angle out). `time` is scene seconds since the sound left, `speed`
+  the slow motion (seconds of sound per scene second): each ray is drawn up to
+  `343 * speed * time` meters along its path, as a streak `trail` meters long (0: the whole
+  path). Brightness is the energy left, (1 - absorption) ** reflections; color comes from the
+  `colormap` (the palette) by reflection count, `hue_step` apart. `seed` turns the ray set.
+  Semantics: distance, reflections so far, energy left.
+- `ac.Wavefront3D(room="room", source=, time=, speed=, order=2, shell=0.12)`: the expanding
+  front drawn where it meets the walls, with the reflected fronts (image sources up to
+  `order` reflections in a shoebox; one per wall, only where the sound really reaches, in
+  any other room). `shell` draws the fronts themselves inside the room, faintly.
+- The numerics are `ac_math`: `box_mesh`, `load_obj`, `feature_edges`, `mesh_stats`, `trace`
+  and `rays` (specular ray tracing: points, path lengths, energy per bounce),
+  `ray_segments` (what has been reached by a distance), `sphere_wall_arcs`, `front_visible`.
+
+An object type that reads files lists the parameters that name them in `Files = ("path",)`
+(`phasor.core.files`): validated to stay in the folder, checked by `missing_file`.
+
+```python
+from phasor import Scene, ac, expr
+
+room = Scene("clap", look="prism", passes=None)
+room.use_camera("orbit", target=(4, 2.5, 1.5), distance=15)
+room.add(ac.Room3D(id="room", size=(8, 5, 3), material="wood"))
+clap = dict(room="room", source=(2, 2, 1.5), time=expr("t - 1"), speed=0.01)
+room.add(ac.SoundRays(id="rays", count=500, bounces=8, **clap))
+room.add(ac.Wavefront3D(id="front", **clap))
+rays = room.engine.inspect(3.0, id="rays")["objects"][0]["semantic"]
+assert abs(rays["distance"] - 6.86) < 1e-6 and rays["reflections_so_far"] > 1
+assert room.engine.inspect(0.0, id="room")["objects"][0]["semantic"]["volume"] == 120.0
+```
+
 ## Graphs and networks (`nw`)
 
 `nw.Network` draws a graph: nodes joined by edges, thousands of them in one draw call. Give
@@ -1247,8 +1434,10 @@ Example: `examples/strange_attractor.py`.
 | `phasor inspect SCENE [--t T] [--id ID] [--detail brief\|standard\|full]` | M1 | What is on screen at time t |
 | `phasor lint SCENE [--fix] [--strict] [--json] [--step S]` | M2 | Lint; exit 1 on errors (`--strict`: on warnings too). `--fix` applies suggested fixes and saves them |
 | `phasor storyboard SCENE [-o PNG] [--t T]... [--marks] [--json]` | M2 | Keyframe contact sheet plus what the inspector sees |
-| `phasor render SCENE [-o OUT] [--preset preview\|final\|4k] [--fps F] [--start S] [--end E] [--frame T]` | M3 | Video (`.mp4`; `.mov` is ProRes; a folder or `%05d.png` is a PNG sequence) or one PNG with `--frame` |
+| `phasor render SCENE [-o OUT] [--preset preview\|final\|4k] [--fps F] [--start S] [--end E] [--frame T] [--workers N]` | M3 | Video (`.mp4`; `.mov` is ProRes; a folder or `%05d.png` is a PNG sequence) or one PNG with `--frame`. `--workers`: render processes (default a quarter of the CPU threads, 1 to 4); the result is the same file as one process makes |
+| `phasor kit [FOLDER]` | kit | Set up or update a folder where an AI writes scenes (default `Documents/phasor`): `CLAUDE.md`, the AI docs, the examples sorted by kind, the `/scene` command, `TASTE.md`, and the phasor tools in `.mcp.json`. Your `TASTE.md`, `WISHLIST.md` and `scenes/` are never replaced |
 | `phasor bench [--width W] [--height H]` | M3 | ms per frame per kernel and peak VRAM; saved in `benchmarks/` |
+| `phasor bench --frames SCENE [--count N] [--preset P]` | GPU_SPEED.md | ms per final frame per stage (state, simulation, draw, gpu draw, readback, widen, blur sum, post, srgb, encode); saved in `benchmarks/` |
 | `phasor mcp [--root DIR] [--allow-scripts] [--attach]` | M5, M10 | MCP server; `--attach` edits the scene open in a running `phasor gui` |
 | `phasor gui [SCENE] [--root DIR] [--no-ai] [--install-shortcut]` | M10 | The desktop app (needs `uv sync --extra gui`): a start screen, or the editor on SCENE; also `phasor-gui`; a Manim script opens too |
 | `phasor web SCENE [-o PAGE.html] [--steps N]` | M12 | Bake a self-contained interactive web page from the scene's sliders |

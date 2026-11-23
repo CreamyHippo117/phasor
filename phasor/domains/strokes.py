@@ -3,6 +3,8 @@ on screen, so every domain draws strokes the same way the built-in ``Line`` does
 
 from __future__ import annotations
 
+import functools
+
 import numpy as np
 
 from phasor.core.objects import DrawContext
@@ -15,14 +17,40 @@ def hue_colors(pts, lut, cycles: float, shift: float = 0.0, total: float | None 
     """(N, 4) colors running ``lut`` (a wrapped ramp) along a polyline by arc length:
     ``cycles`` times over ``total`` length (default: this polyline's), shifted by ``shift``."""
     pts = np.asarray(pts, dtype=np.float64)
-    lut = np.asarray(lut, dtype=np.float64)
     along = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(pts, axis=0), axis=1))])
     total = max(float(along[-1] if total is None else total), 1e-12)
-    g = ((along / total * cycles + shift) % 1.0) * len(lut)
+    return lut_colors(lut, along / total * cycles + shift)
+
+
+def lut_colors(lut, where):
+    """(N, 4) opaque colors of ``lut`` (a wrapped ramp) at positions ``where`` (N,), each a
+    share of the ramp (wrapping at 1)."""
+    lut = np.asarray(lut, dtype=np.float64)
+    g = (np.asarray(where, dtype=np.float64) % 1.0) * len(lut)
     k0 = np.floor(g).astype(int) % len(lut)
     f = (g - np.floor(g))[:, None]
     rgb = lut[k0] * (1 - f) + lut[(k0 + 1) % len(lut)] * f
-    return np.c_[rgb, np.ones(len(pts))]
+    out = np.empty((len(rgb), 4))
+    out[:, :3], out[:, 3] = rgb, 1.0
+    return out
+
+
+@functools.lru_cache(maxsize=256)
+def _strip_indices(n: int) -> np.ndarray:
+    """The triangles of a stroke of ``n`` points (vertices 2i, 2i+1 either side of point i):
+    every first triangle of a quad, then every second one. Shared and read-only."""
+    k = 2 * np.arange(n - 1)
+    out = np.empty((2 * (n - 1), 3), dtype=k.dtype)
+    out[: n - 1, 0], out[: n - 1, 1], out[: n - 1, 2] = k, k + 1, k + 2
+    out[n - 1 :, 0], out[n - 1 :, 1], out[n - 1 :, 2] = k + 1, k + 3, k + 2
+    out.setflags(write=False)
+    return out
+
+
+def _row_norm(v: np.ndarray) -> np.ndarray:
+    """``np.linalg.norm(v, axis=-1)`` for rows of 2, the same arithmetic without its
+    overhead (it is called thousands of times a frame)."""
+    return np.sqrt(v[..., 0] * v[..., 0] + v[..., 1] * v[..., 1])
 
 
 def polyline(ctx: DrawContext, cam: Camera, pts, width, *, color, glow: float = 1.0,
@@ -33,33 +61,61 @@ def polyline(ctx: DrawContext, cam: Camera, pts, width, *, color, glow: float = 
     glowing stroke runs the theme's ``[strokes]`` hue when the theme turns it on (the
     ``prism_everywhere`` look); plain strokes (axes, grids) keep their color."""
     pts = np.asarray(pts, dtype=np.float64)
-    if len(pts) < 2:
+    n = len(pts)
+    if n < 2:
+        return
+    width = np.asarray(width, dtype=np.float64)
+    if width.shape not in ((), (n,)):
+        width = np.broadcast_to(width, (n,))  # one per point, or an error
+    polylines(ctx, cam, pts[None], width[None] if width.ndim else width, color=color,
+              glow=glow, colors=None if colors is None else np.asarray(colors)[None])  # fmt: skip
+
+
+def polylines(ctx: DrawContext, cam: Camera, pts, width, *, color, glow: float = 1.0,
+              colors=None) -> None:  # fmt: skip
+    """``S`` separate strokes of ``N`` points each, ``pts`` (S, N, 3), as one draw: exactly
+    the triangles of ``S`` ``polyline`` calls, in the same order (nothing joins one stroke
+    to the next). ``width``: a number or (S, N); ``colors``: None or (S, N, 4). One
+    ``color`` and ``glow`` for all of them (with per-point ``colors`` only its alpha, the
+    opacity, is used)."""
+    pts = np.asarray(pts, dtype=np.float64)
+    count, n = pts.shape[0], pts.shape[1]
+    if count == 0 or n < 2:
         return
     theme_hue = getattr(ctx, "stroke_hue", None)
     if colors is None and theme_hue is not None and glow > 1.0:
         lut, cycles, shift = theme_hue
-        colors = hue_colors(pts, lut, cycles, shift)
-    width = np.broadcast_to(np.asarray(width, dtype=np.float64), (len(pts),))
-    flat = np.c_[pts @ cam.right, pts @ cam.up]  # coordinates in the camera plane
-    seg = np.diff(flat, axis=0)
-    norm = np.linalg.norm(seg, axis=1, keepdims=True)
+        colors = np.stack([hue_colors(p, lut, cycles, shift) for p in pts])
+    width = np.asarray(width, dtype=np.float64)
+    if width.ndim:
+        width = np.broadcast_to(width, (count, n))
+    half = (width[..., None] if width.ndim else width) / 2
+    right, up = np.asarray(cam.right, dtype=np.float64), np.asarray(cam.up, dtype=np.float64)
+    rows = pts.reshape(-1, 3)
+    flat = np.empty((count, n, 2))  # coordinates in the camera plane
+    flat[..., 0], flat[..., 1] = (rows @ right).reshape(count, n), (rows @ up).reshape(count, n)
+    seg = flat[:, 1:] - flat[:, :-1]
+    norm = _row_norm(seg)[..., None]
     seg = seg / np.where(norm == 0, 1, norm)
-    normals = np.c_[-seg[:, 1], seg[:, 0]]
-    n_prev = np.vstack([normals[:1], normals])
-    n_next = np.vstack([normals, normals[-1:]])
+    n_prev = np.empty((count, n, 2))  # each point's incoming and outgoing segment normals
+    n_prev[:, 1:, 0], n_prev[:, 1:, 1] = -seg[..., 1], seg[..., 0]
+    n_prev[:, 0] = n_prev[:, 1]
+    n_next = np.empty((count, n, 2))
+    n_next[:, :-1], n_next[:, -1] = n_prev[:, 1:], n_prev[:, -1]
     miter = n_prev + n_next
-    miter /= np.maximum(np.linalg.norm(miter, axis=1, keepdims=True), 1e-9)
-    scale = 1 / np.maximum((miter * n_prev).sum(1), 0.25)  # miter limit 4x
-    offset = (miter * scale[:, None]) * (width[:, None] / 2)
-    off3 = np.outer(offset[:, 0], cam.right) + np.outer(offset[:, 1], cam.up)
-    positions = np.empty((2 * len(pts), 3))
-    positions[0::2], positions[1::2] = pts + off3, pts - off3
-    k = 2 * np.arange(len(pts) - 1)
-    indices = np.vstack([np.c_[k, k + 1, k + 2], np.c_[k + 1, k + 3, k + 2]])
+    miter /= np.maximum(_row_norm(miter)[..., None], 1e-9)
+    scale = 1 / np.maximum(miter[..., 0] * n_prev[..., 0] + miter[..., 1] * n_prev[..., 1], 0.25)
+    offset = (miter * scale[..., None]) * half  # miter limit 4x (the 0.25 above)
+    off3 = offset[..., 0, None] * right + offset[..., 1, None] * up
+    positions = np.empty((count, 2 * n, 3))
+    positions[:, 0::2], positions[:, 1::2] = pts + off3, pts - off3
+    indices = _strip_indices(n)
+    if count > 1:  # each stroke's triangles, moved past the vertices of those before it
+        indices = (indices[None] + (2 * n * np.arange(count))[:, None, None]).reshape(-1, 3)
     per_vertex = None
     if colors is not None:
-        per_vertex = np.repeat(np.asarray(colors, dtype=np.float64), 2, axis=0)
-    ctx.triangles(positions, indices, color=color, glow=glow, colors=per_vertex)
+        per_vertex = np.repeat(np.asarray(colors, dtype=np.float64), 2, axis=1).reshape(-1, 4)
+    ctx.triangles(positions.reshape(-1, 3), indices, color=color, glow=glow, colors=per_vertex)
 
 
 def segments(ctx: DrawContext, cam: Camera, pairs, width, *, color, glow: float = 1.0) -> None:

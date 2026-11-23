@@ -48,21 +48,9 @@ from phasor.gui.app import EXPORTS, TEMPLATES, ExportJob, Settings, examples, in
 from phasor.gui.controller import Editor
 from phasor.gui.window import EditorWindow, make_workspace, qt_app, start_ai_server
 from phasor.workspace import ToolError
+from phasor.workspace.paths import scenes_folder
 
 SCENE_FILTER = "phasor scenes (*.phasor.json *.py);;All files (*)"
-
-
-def scenes_folder() -> Path:
-    """Where new scenes and copied examples go by default: Documents/phasor. On Windows,
-    the Documents folder Explorer shows (often moved into OneDrive), when it is inside
-    the home folder."""
-    from phasor.gui.app import windows_documents
-
-    home = Path.home()
-    docs = windows_documents() or home / "Documents"
-    if not docs.is_relative_to(home) or not docs.is_dir():
-        docs = home / "Documents"
-    return (docs if docs.is_dir() else home) / "phasor"
 
 
 # ---------------------------------------------------------------- the app
@@ -79,6 +67,7 @@ class Desktop:
         self.serve_ai = serve_ai
         self.windows: list[DesktopWindow] = []
         self.start: StartScreen | None = None
+        self._closing: list[QWidget] = []  # closed start screens Qt has yet to delete
         with contextlib.suppress(ValueError):
             text.set_math_engine(self.settings.math_engine)
 
@@ -123,8 +112,15 @@ class Desktop:
         if show:
             win.show()
         if self.start is not None:
-            self.start.close()
-            self.start = None
+            # Hide it now and let Qt delete it in the event loop: open() usually runs inside
+            # one of the start screen's own buttons, and dropping the last Python reference
+            # here would delete the widget on the spot (an access violation at exit on
+            # Windows, 2026-11-20). The reference lives until Qt has deleted it.
+            st, self.start = self.start, None
+            st.close()
+            self._closing.append(st)
+            st.destroyed.connect(lambda *_: self._closing.remove(st))
+            st.deleteLater()
         return win
 
     def closed(self, win: DesktopWindow) -> None:

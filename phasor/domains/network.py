@@ -16,13 +16,13 @@ from typing import Any, ClassVar, Literal
 import numpy as np
 from pydantic import Field, model_validator
 
+from phasor.core import files
 from phasor.core.objects import Bounds, DrawContext, ObjectBase, ParamsBase, Pass, register
 from phasor.core.rng import rng
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
 from phasor.domains import network_math as nm
 from phasor.domains.strokes import disc_batch, segment_batch
-from phasor.time.compile import resolve_file
 
 SPRING_BUDGET = 2e8  # node pairs x iterations the spring layout may spend (big graphs: fewer)
 DENSE = 1500  # above this many edges each edge gets fainter (1 / sqrt), so light piles up
@@ -121,14 +121,21 @@ class Network(ObjectBase):
             given = [bool(self.path), bool(self.edges), bool(self.generator)]
             if sum(given) != 1:
                 raise ValueError("give exactly one of path, edges or generator")
+            if self.path:  # relative and inside the scene's folder (core/files.py)
+                object.__setattr__(self, "path", files.relative_path(self.path))
             return self
 
     # ------------------------------------------------------------ data
 
     def _key(self, state: SceneState):
         p = self.me(state).params
-        if p.path:
-            return "file", ("file", str(resolve_file(p.path, state.assets).resolve()))
+        if p.path:  # in the scene's folder; the key changes when the file does (re-read)
+            try:
+                f = files.resolve(state.base_dir, p.path)
+                st = f.stat()
+                return "file", ("file", str(f), st.st_mtime_ns, st.st_size)
+            except (OSError, ValueError):
+                return "edges", ("edges", (), ())  # missing: an empty graph (lint missing_file)
         if p.edges:
             return "edges", ("edges", tuple(p.nodes), tuple(p.edges))
         g = p.generator

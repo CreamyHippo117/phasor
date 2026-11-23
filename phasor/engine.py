@@ -21,6 +21,7 @@ from phasor.core.issues import DocumentError, Issue
 from phasor.core.patch import TWEAK_OPS, apply_ops, apply_overrides, parse_patch, record_tweaks
 from phasor.core.schema import Document, Meta, Overrides
 from phasor.core.state import SceneState
+from phasor.core.timing import stage
 from phasor.inspect import aesthetic as aesthetic_rules
 from phasor.inspect import critic, inspector
 from phasor.inspect import events as event_log
@@ -118,8 +119,7 @@ class Engine:
         base_dir: str | Path | None = None,
     ) -> None:
         base = document or Document(meta=Meta(title=title))
-        # The folder that files the document refers to (narration audio, pictures) are
-        # relative to.
+        # The folder that files the document refers to (narration audio, meshes) are relative to.
         self.base_dir = Path(base_dir) if base_dir is not None else Path.cwd()
         self._snap = _build(base, overrides or Overrides(), str(self.base_dir))
         self._undo: list[_Snapshot] = []
@@ -127,6 +127,42 @@ class Engine:
         self._checkpoints: dict[str, _Snapshot] = {}  # named points to go back to
         self._version = 0
         self._passes = passes
+
+    def fingerprint(self) -> str:
+        """A hash of the current document and overrides (canonical JSON): what a bake was
+        made for."""
+        import hashlib
+
+        text = io.dumps(self._snap.base) + io.dumps(self._snap.overrides)
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    def worker_payload(self) -> dict[str, Any]:
+        """What a render worker needs to draw this scene without baking it again (ADR 0003):
+        the document and overrides as canonical JSON, this engine's bake (baked here first
+        if need be) and the fingerprint it was made for. Plain data: it pickles."""
+        return {
+            "document": io.dumps(self._snap.base),
+            "overrides": io.dumps(self._snap.overrides),
+            "bake": self._bake(self._snap),
+            "fingerprint": self.fingerprint(),
+            "base_dir": str(self.base_dir),
+        }
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any], **kwargs: Any) -> Engine:
+        """The engine of a render worker: ``worker_payload``'s document with its parent's
+        bake applied as is, never baked here (ADR 0003). A bake made for another document is
+        refused."""
+        import json
+
+        doc = io.parse_document(json.loads(payload["document"]))
+        overrides = Overrides.model_validate_json(payload["overrides"])
+        kwargs.setdefault("base_dir", payload["base_dir"])
+        engine = cls(doc, overrides=overrides, **kwargs)
+        if engine.fingerprint() != payload["fingerprint"]:
+            raise ValueError("this bake was made for another document; bake it here instead")
+        engine._snap.bake = payload["bake"]
+        return engine
 
     def fork(self) -> Engine:
         """A private copy of this engine's current scene (document and overrides) with its own
@@ -160,20 +196,18 @@ class Engine:
         into another folder, so they are found next to it there."""
         import shutil
 
+        from phasor.core import files
         from phasor.core.objects import get_type
-        from phasor.time.compile import resolve_file
 
         for spec in self.document.objects:
             for name in getattr(get_type(spec.type), "Files", ()):
                 raw = spec.params.get(name)
-                if (
-                    not isinstance(raw, str)
-                    or not raw
-                    or Path(raw).is_absolute()
-                    or ".." in Path(raw).parts
-                ):
+                if not isinstance(raw, str) or not raw:
                     continue
-                src, dst = resolve_file(raw, str(self.base_dir)), folder / raw
+                try:
+                    src, dst = files.resolve(self.base_dir, raw), folder / files.relative_path(raw)
+                except ValueError:
+                    continue
                 if src.is_file() and src.resolve() != dst.resolve():
                     dst.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(src, dst)
@@ -281,7 +315,8 @@ class Engine:
                 step=step,
             )
             snap.lint[step] = (*snap.orphans, *self._bake(snap).issues,
-                               *lint_rules.control_rules(snap.compiled), *visual)  # fmt: skip
+                               *lint_rules.control_rules(snap.compiled),
+                               *lint_rules.file_rules(snap.compiled), *visual)  # fmt: skip
         return snap.lint[step]
 
     def _oracle(self) -> PassOracle | None:
@@ -300,7 +335,8 @@ class Engine:
 
     def state_at(self, t: float) -> SceneState:
         """Pure function of (document, t), layout included. Cached per document version."""
-        return self._state(self._snap, t)
+        with stage("state"):
+            return self._state(self._snap, t)
 
     def _state(self, snap: _Snapshot, t: float) -> SceneState:
         t = float(t)
@@ -538,17 +574,42 @@ class Engine:
 
         return encode_srgb8(self.frame(t, size))
 
-    def frame(self, t: float, size: tuple[int, int] | None = None):
+    def frame(self, t: float, size: tuple[int, int] | None = None, *, output: str = "linear"):
         """The finished picture at ``t`` in linear light: color pass, bloom, tone map.
-        (h, w, 4) float32, row 0 = top. ``still`` and ``phasor render`` both use this."""
+        (h, w, 4) float32, row 0 = top. ``still`` and ``phasor render`` both use this.
+        ``output="srgb8"``: the (h, w, 3) sRGB bytes instead, encoded on the card."""
+        return self._finished([t], size, output)
+
+    def _finished(self, times: list[float], size, output: str):
+        """The average light of the color pass at ``times`` (one time: the frame itself),
+        bloomed, tone-mapped and encoded once. Each sample goes to the card once as float16
+        and is widened and added there in float32, in a fixed order (GPU_SPEED.md step 2);
+        with one sample the sum is the widened sample exactly. Without a card the same sum
+        runs in NumPy."""
+        from phasor.render.gpu import Tile, run
         from phasor.render.passes import GLRenderer
-        from phasor.render.post import finish
+        from phasor.render.post import card_sync, finish
 
         runner = self.pass_runner()
         if not isinstance(runner, GLRenderer):
             raise RuntimeError("no OpenGL renderer on this machine (run `phasor doctor`)")
-        picture, emission = runner.color_and_emission(self.state_at(t), size)
-        return finish(picture, self._snap.compiled.theme, emission)
+        weight = 1.0 / len(times)
+        pic = glow = None
+        # Start every sample before collecting any: the card copies one sample off while
+        # the next is drawn (asynchronous readback). Same samples, same order of the sum.
+        pending = [runner.start_color_raw(self.state_at(ts), size) for ts in times]
+        try:
+            for job in pending:
+                p, g = job.collect()
+                with stage("blur sum" if len(times) > 1 else "widen", sync=card_sync):
+                    tile = Tile.full(p.shape[1], p.shape[0])
+                    pic = run("accumulate", tile, image=p, weight=weight, acc=pic)
+                    glow = run("accumulate", tile, image=g, weight=weight, acc=glow)
+        finally:
+            for job in pending:
+                job.release()
+        # rows bottom-up as GL stores them -> top-down (a view, wherever the sum is)
+        return finish(pic[::-1], self._snap.compiled.theme, glow[::-1], output=output)
 
     def timeline(self) -> dict[str, Any]:
         """What a timeline panel shows: the duration, the markers, for every animated
@@ -588,34 +649,20 @@ class Engine:
         shutter: float = 0.5,
         samples: int = 4,
         size: tuple[int, int] | None = None,
+        output: str = "linear",
     ):
         """Like ``frame`` but with motion blur: the average of ``samples`` frames spread over
         a shutter open ``shutter`` of a frame interval (0.5 is the film standard "180
         degrees"), centered on ``t``. Where nothing is moving it is exactly ``frame``, so
-        still moments stay sharp and cost nothing extra. Linear light, deterministic."""
-        import numpy as np
-
+        still moments stay sharp and cost nothing extra. Life (slow wiggle) does not count
+        as moving (``is_moving``). Linear light, deterministic."""
         half = shutter / fps / 2
         if samples <= 1 or shutter <= 0 or not self.is_moving(t - half, t + half):
-            return self.frame(t, size)
-        times = [t + (k + 0.5) / samples * (2 * half) - half for k in range(samples)]
-        from phasor.render.passes import GLRenderer
-        from phasor.render.post import finish
-
-        runner = self.pass_runner()
-        if not isinstance(runner, GLRenderer):
-            raise RuntimeError("no OpenGL renderer on this machine (run `phasor doctor`)")
+            return self.frame(t, size, output=output)
         # Average the light before the tone map (which then runs once, contract 4): a bright
         # moving glow smears at its real brightness instead of an already squashed one.
-        pic = glow = None
-        for ts in times:
-            p, g = runner.color_and_emission(self.state_at(min(max(ts, 0.0), self.duration)), size)
-            pic = p.astype(np.float64) if pic is None else pic + p
-            if g is not None:
-                glow = g.astype(np.float64) if glow is None else glow + g
-        n = len(times)
-        return finish((pic / n).astype(np.float32), self._snap.compiled.theme,
-                      None if glow is None else (glow / n).astype(np.float32))  # fmt: skip
+        times = [min(max(ts, 0.0), self.duration) for ts in blur_times(t, fps, shutter, samples)]
+        return self._finished(times, size, output)
 
     def storyboard_times(self, count: int = 6) -> list[float]:
         """Start, every marker and the end; padded with evenly spaced times up to ``count``."""
@@ -671,6 +718,13 @@ class Engine:
         if id is not None and self.document.object(id) is None:
             known = sorted(o.id for o in self.document.objects)
             raise KeyError(f"no object {id!r}; objects are {known}")
+
+
+def blur_times(t: float, fps: float, shutter: float = 0.5, samples: int = 4) -> list[float]:
+    """The ``samples`` moments ``Engine.frame_blurred`` averages: evenly spread over a
+    shutter open ``shutter`` of a frame interval, centered on ``t``."""
+    half = shutter / fps / 2
+    return [t + (k + 0.5) / samples * (2 * half) - half for k in range(samples)]
 
 
 def _drop_superseded(overrides: Overrides, patch: Any) -> Overrides:

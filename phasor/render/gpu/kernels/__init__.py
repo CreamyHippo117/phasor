@@ -1,3 +1,8 @@
 """Built-in kernels. Importing this package registers them."""
 
-from phasor.render.gpu.kernels import domain_coloring, fractal, post  # noqa: F401
+from phasor.render.gpu.kernels import (  # noqa: F401
+    domain_coloring,
+    fractal,
+    post,
+    splat,
+)

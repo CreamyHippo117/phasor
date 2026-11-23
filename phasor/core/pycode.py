@@ -25,6 +25,7 @@ _ALIAS = {
     "phasor.domains.algebra": "algebra",
     "phasor.domains.calc": "calc",
     "phasor.domains.geometry": "geo",
+    "phasor.domains.cloud": "cloud",
     "phasor.domains.network": "nw",
     "phasor.domains.dynamics": "dyn",
     "phasor.domains.convolution": "conv",

@@ -19,6 +19,7 @@ import numpy as np
 import sympy as sp
 
 Z = sp.Symbol("z")
+A = sp.Symbol("a")  # a complex constant the kernel takes as an argument, so it can animate
 _NAMES = {"z": Z, "i": sp.I, "I": sp.I, "j": sp.I, "pi": sp.pi, "e": sp.E}
 _FUNCS = {
     "exp": sp.exp, "log": sp.log, "sqrt": sp.sqrt, "sin": sp.sin, "cos": sp.cos,
@@ -76,6 +77,8 @@ def _real(value: sp.Expr) -> str:
 def _emit(e: sp.Expr) -> str:
     if e == Z:
         return "z"
+    if e == A:
+        return "a"
     if e.is_number and e.is_real and e.is_finite:
         return f"c_make({_real(e)}, R(0.0))"
     if e == sp.I:
@@ -127,12 +130,14 @@ class ComplexFunction:
     expr: sp.Expr
 
     @classmethod
-    def parse(cls, source: str) -> ComplexFunction:
+    def parse(cls, source: str, *, constant: bool = False) -> ComplexFunction:
+        """``constant=True`` also allows the name ``a``: a complex constant given at run
+        time (``c()`` then reads a ``cplx a`` in scope, ``numpy()`` takes ``a=``)."""
         try:
             tree = ast.parse(source.strip(), mode="eval")
         except SyntaxError as e:
             raise FunctionError(f"cannot read {source!r}: {e.msg}") from e
-        expr = sp.sympify(_build(tree, source))
+        expr = sp.sympify(_build(tree, source, {**_NAMES, "a": A} if constant else None))
         if expr.has(sp.zoo, sp.nan, sp.oo):
             raise FunctionError(f"{source!r} is not finite anywhere")
         return cls(source, expr)
@@ -142,12 +147,13 @@ class ComplexFunction:
         return _emit(self.expr)
 
     def numpy(self):
-        """``f(z)`` for complex NumPy arrays; poles give inf or nan, never a warning."""
-        fn = sp.lambdify(Z, self.expr, "numpy")
+        """``f(z)`` for complex NumPy arrays; poles give inf or nan, never a warning. A
+        function of the constant ``a`` takes it as ``f(z, a=...)`` (default 0)."""
+        fn = sp.lambdify((Z, A), self.expr, "numpy")
 
-        def call(z: np.ndarray) -> np.ndarray:
+        def call(z: np.ndarray, a: complex = 0j) -> np.ndarray:
             with np.errstate(all="ignore"):
-                w = fn(np.asarray(z, dtype=np.complex128))
+                w = fn(np.asarray(z, dtype=np.complex128), complex(a))
             return np.broadcast_to(np.asarray(w, dtype=np.complex128), np.shape(z))
 
         return call

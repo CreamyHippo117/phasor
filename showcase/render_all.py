@@ -24,8 +24,15 @@ OUT = Path(__file__).resolve().parent / "videos"
 SCENES = [
     ("prism_primes", "the prism look: primes heard through the zeta zeros, glowing strokes"),
     ("prism_domain", "domain coloring in the prism look: glowing zeros, poles, rays and rings"),
+    (
+        "prism_transitions",
+        "transitions: a constant drifting, a function blending, equations solved",
+    ),
     ("prism_heat", "heat maps in the prism look: a hot spot, a vibrating drum, a chirp"),
     ("prism_spectrogram", "a spectrogram of a formula, the playhead a glowing line sweeping it"),
+    ("prism_drum_3d", "a vibrating drum in 3D, a net of glowing lines, orbiting"),
+    ("point_cloud", "a million polynomial roots that glide and tear open, falling toward z = i"),
+    ("prism_fractal", "fractals in the prism look: a morphing Julia set, a dive, glowing edges"),
     ("picture", "a picture placed in a scene: it fades in framed in light, a curve traces it"),
     ("game_tree", "every game of tic-tac-toe: its 765 positions fanning out move by move"),
     (
@@ -54,6 +61,7 @@ SCENES = [
     ("directivity", "polar patterns: beam steering, a baffled piston and a cardioid"),
     ("room_acoustics", "a room, its echoes and the pressure wave"),
     ("doppler", "wavefront compression, the sonic pileup, and the Mach cone"),
+    ("room_3d", "a 3D room with sound bouncing in it: rays and fronts reflecting off the walls"),
 ]
 
 

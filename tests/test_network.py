@@ -123,8 +123,11 @@ def test_a_network_from_a_file_next_to_the_scene(tmp_path):
     assert (sem["nodes"], sem["edges"], sem["max_degree"]) == (4, 4, 3)
     b = s.engine.state_at(0.0)["f"].impl.world_bounds(s.engine.state_at(0.0))
     assert max(np.abs(b.lo).max(), np.abs(b.hi).max()) == pytest.approx(2.0)
-    with pytest.raises(DocumentError, match="missing_file"):
-        s.add(nw.Network(id="g", path="nobody.csv"))
+    s.add(nw.Network(id="g", path="nobody.csv"))  # missing: lint warning, an empty graph
+    assert any(i.code == "missing_file" for i in s.engine.lint())
+    assert s.engine.inspect(0.0, id="g")["objects"][0]["semantic"]["nodes"] == 0
+    with pytest.raises(DocumentError, match="folder|absolute"):
+        s.add(nw.Network(id="h", path="../outside.csv"))
 
 
 def test_a_network_needs_exactly_one_source_and_a_known_colour():
@@ -190,6 +193,10 @@ def test_the_ai_can_make_and_load_networks(tmp_path):
     ok = ws.scene_edit({"op": "add_object", "object": {"id": "g", "type": "network",
                         "params": {"path": "g.csv"}}})  # fmt: skip
     assert ok["ok"]
-    with pytest.raises(ToolError, match="outside the workspace"):
-        ws.scene_edit({"op": "add_object", "object": {"id": "h", "type": "network",
-                       "params": {"path": "../outside.csv"}}})  # fmt: skip
+    # refused by the path rule (core/files.py) or by the workspace check behind it
+    try:
+        r = ws.scene_edit({"op": "add_object", "object": {"id": "h", "type": "network",
+                           "params": {"path": "../outside.csv"}}})  # fmt: skip
+        assert not r["ok"] and "folder" in str(r)
+    except ToolError as e:
+        assert "outside" in str(e)

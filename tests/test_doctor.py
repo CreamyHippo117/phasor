@@ -46,12 +46,9 @@ def _enc(name: str, working: list[str]) -> Check:
 @pytest.mark.parametrize(
     ("pyav", "ffmpeg", "want"),
     [
-        (
-            ["hevc_nvenc", "h264_nvenc", "libx264"],
-            ["libx264"],
-            "pyav:h264_nvenc",
-        ),  # plays on Windows
+        (["hevc_nvenc", "h264_nvenc", "libx264"], ["libx264"], "pyav:h264_nvenc"),
         (["hevc_nvenc", "libx264"], [], "pyav:hevc_nvenc"),
+        (["libx264"], ["hevc_nvenc", "h264_nvenc", "libx264"], "ffmpeg:h264_nvenc"),
         (["h264_nvenc", "libx264"], [], "pyav:h264_nvenc"),
         (["libx264"], ["h264_nvenc", "libx264"], "ffmpeg:h264_nvenc"),
         (["libx264"], ["libx264"], "ffmpeg:libx264"),

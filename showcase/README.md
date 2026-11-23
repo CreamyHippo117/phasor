@@ -15,8 +15,12 @@ render only those: `uv run python showcase/render_all.py prism_primes deep_zoom`
 |---|---|
 | `prism_primes` | the prism look: primes heard through the zeta zeros, glowing rainbow strokes |
 | `prism_domain` | domain coloring in the prism look: glowing zeros, poles, rays and rings |
+| `prism_transitions` | transitions: a constant drifting, one function blending into another, equations solved |
 | `prism_heat` | heat maps in the prism look: a hot spot, a vibrating drum, a chirp |
 | `prism_spectrogram` | a spectrogram of a formula, the playhead a glowing line sweeping it |
+| `prism_drum_3d` | a vibrating drum in 3D, a net of glowing lines, orbiting |
+| `point_cloud` | a million polynomial roots as glowing points, falling toward z = i |
+| `prism_fractal` | fractals in the prism look: a morphing Julia set, then a dive, edges glowing |
 | `picture` | a picture placed in a scene: it fades in framed in light, a curve traces it |
 | `game_tree` | every game of tic-tac-toe: its 765 positions fanning out move by move |
 | `strange_attractor` | the Lorenz trajectory builds its two lobes under an orbiting camera |
@@ -31,6 +35,7 @@ render only those: `uv run python showcase/render_all.py prism_primes deep_zoom`
 | `directivity` | beam steering, a narrowing piston pattern, and a cardioid |
 | `room_acoustics` | a room, its echoes and the pressure wave |
 | `doppler` | wavefront compression, the sonic pileup, and the Mach cone |
+| `room_3d` | a 3D room with sound bouncing in it: rays and fronts reflecting, reverberation building |
 
 Narrated scenes have sound only where a speech engine is installed (espeak-ng); without one
 the timing is estimated and the video is silent.

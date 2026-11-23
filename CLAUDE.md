@@ -14,10 +14,15 @@ compounding. If this file and SPEC.md disagree, stop and ask.
   the owner's RTX 4070 Ti, 2026-11-21; C gaps to do).
 - Now (owner, 2026-11-22): the beauty plan in `BEAUTY.md`, in its order (prism domain
   coloring, heat maps, point clouds, fractals, image import, graph import, 3D acoustics).
-  Keep `prism_primes`' look exactly. Steps 3, 4 and 7 are for Claude Code on the owner's PC:
-  `pc_tasks/README.md`. Next animations (signal, waves, dynamics): `ANIMATIONS.md`. Changes
-  waiting for the owner's OK go in `pending/` (a patch and a before/after picture). Render speed (profile, keep frames on the card) and the finished
-  Windows app come after, unless the owner says otherwise.
+  Keep `prism_primes`' look exactly. Steps 3, 4 and 7 run on the PC from `pc_tasks/`.
+  Next animations (signal, waves, dynamics): `ANIMATIONS.md`. Changes waiting for the
+  owner's OK go in `pending/` (a patch and a before/after picture). Render speed and the
+  finished Windows app come after, unless the owner says otherwise.
+- Desktop app (owner, 2026-11-22): code-first, one shared script that the person, the AI and
+  the app all edit. Plan: `APP_PLAN.md` (answered); ADR 0004 (tweaks inside the script,
+  touches contract 2) accepted by the owner; phase 1 not started.
+- Render speed: `GPU_SPEED.md` (steps 1-4 done, workers included); resume at its "Next
+  session"; measure with wall clock before and after each step.
 - One milestone per branch. No work on milestone N+1 until N's exit demo and tests pass.
 - Before declaring a milestone done, run the `phasor-milestone-gate` skill.
 
@@ -33,6 +38,9 @@ compounding. If this file and SPEC.md disagree, stop and ask.
    IDs: `[a-z][a-z0-9_]*`, dots for children, never reused (removed ids go to
    `retired_ids`), named by meaning not counters.
 3. **Time is pure.** `Engine.state_at(t)` depends only on (document, t) and the occlusion oracle (ADR 0002), returns frozen data.
+   It may also depend on files the document names (an object's `Files` params, e.g. a
+   `Room3D` `.obj`), read only from inside the scene's folder, re-read when they change;
+   a missing one is lint `missing_file` (owner, 2026-11-22).
    Params are a DAG (constants, tracks, expressions); a cycle is a validation error.
    Narration is a separate `TimeMap`. Simulations use fixed dt, seed, cached checkpoints.
    Randomness only via `rng(object_id, seed)`.
@@ -50,6 +58,7 @@ compounding. If this file and SPEC.md disagree, stop and ask.
 7. **Layout is baked.** Solver runs at markers + samples and writes tracks; renderers and
    inspector both read the bake. kiwisolver for linear relations, then the label placer
    (8 compass + leader slots, hysteresis 20%). Unsatisfiable constraints become lint issues.
+   A render worker applies its parent Engine's bake for the same document (ADR 0003).
 
 ## Conventions
 
@@ -71,6 +80,8 @@ compounding. If this file and SPEC.md disagree, stop and ask.
   The shared context lives on one thread: GL work from anywhere else goes through
   `glcontext.on_gl_thread(fn)` (a context current in one thread fails in every other).
 - Text files are read and written with `encoding="utf-8"` (Windows defaults to cp1252).
+- Every `subprocess` call passes `creationflags=NO_WINDOW` (`core/proc.py`), or the Windows
+  desktop app flashes a console window; `tests/test_proc.py` checks it.
 - Golden stills live in `tests/golden/<software|gpu>/`; regenerate with
   `PHASOR_UPDATE_GOLDEN=1 uv run pytest -k golden` and look at them before committing.
 - Layout runs only inside `layout/bake.py`, and only `Engine` runs or applies the bake.
@@ -136,7 +147,8 @@ uv run pytest                             # gl/gpu tests skip themselves without
 uv run phasor doctor
 ```
 
-Headless Linux needs `libegl1 libgl1-mesa-dri` for the GL tests.
+Headless Linux needs `libegl1 libgl1-mesa-dri` for the GL tests. The CPU-emulator kernel
+tests need `g++` on PATH (Windows: `winget install BrechtSanders.WinLibs.POSIX.UCRT`).
 
 ## Model use
 

@@ -34,9 +34,15 @@ static emu_dim3 blockIdx, threadIdx, blockDim;
 extern "C" void emu_set(unsigned b, unsigned t, unsigned d) {
     blockIdx.x = b; threadIdx.x = t; blockDim.x = d;
 }
+// Threads run one after another here, so an atomic add is a plain add (returns the old value).
+static inline float atomicAdd(float* a, float v) { float old = *a; *a = old + v; return old; }
+static inline unsigned long long atomicAdd(unsigned long long* a, unsigned long long v) {
+    unsigned long long old = *a; *a = old + v; return old;
+}
 """
 _CTYPES = {np.int32: ctypes.c_int, np.float32: ctypes.c_float, np.float64: ctypes.c_double}
 _DIR = Path(tempfile.mkdtemp(prefix="phasor_emu_"))
+_LIBS: dict[str, ctypes.CDLL] = {}  # compiled kernels, by source hash
 
 
 def compiler() -> str | None:
@@ -53,7 +59,8 @@ class _StrictCupy:
     """The part of CuPy launchers may use, with CuPy's rule that host arrays must be copied
     to the device with ``asarray`` first."""
 
-    float32, float64, int32 = np.float32, np.float64, np.int32
+    float32, float64, int32, uint8 = np.float32, np.float64, np.int32, np.uint8
+    uint64 = np.uint64
 
     @staticmethod
     def asarray(a, dtype=None):
@@ -71,11 +78,15 @@ class _StrictCupy:
         return np.empty(shape, dtype=dtype).view(DeviceArray)
 
     @staticmethod
+    def zeros(shape, dtype=np.float32):
+        return np.zeros(shape, dtype=dtype).view(DeviceArray)
+
+    @staticmethod
     def empty_like(a, dtype=None):
         return np.empty_like(a, dtype=dtype).view(DeviceArray)
 
     def __getattr__(self, name):
-        raise AttributeError(f"launchers may use only asarray, ascontiguousarray, empty, "
+        raise AttributeError(f"launchers may use only asarray, ascontiguousarray, empty, zeros, "
                              f"empty_like and dtypes from cp, not cp.{name}")  # fmt: skip
 
 
@@ -83,7 +94,9 @@ class EmuGpu:
     cp = _StrictCupy()
 
     def __init__(self) -> None:
-        self._libs: dict[str, ctypes.CDLL] = {}
+        # One cache for every instance: a loaded library cannot be overwritten on Windows,
+        # so a second EmuGpu must reuse it rather than link the same file again.
+        self._libs = _LIBS
 
     def compile(self, source: str, entry: str, precision: str = "f32"):
         code = PRELUDE + HEADER + source
@@ -108,7 +121,12 @@ class EmuGpu:
             if isinstance(a, np.ndarray):
                 if not isinstance(a, DeviceArray):
                     raise TypeError("a host (NumPy) array passed to a kernel: cp.asarray it")
-                assert a.flags.c_contiguous and a.dtype in (np.float32, np.float64), (
+                assert a.flags.c_contiguous and a.dtype in (
+                    np.float32,
+                    np.float64,
+                    np.uint8,
+                    np.uint64,
+                ), (
                     a.dtype,
                     a.flags,
                 )

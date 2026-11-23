@@ -33,18 +33,27 @@ SUPERSAMPLE = 2  # kernel pixels per output pixel, per side, for clean contour e
 def _parse(source: str):
     from phasor.render.gpu.codegen import ComplexFunction
 
-    return ComplexFunction.parse(source)
+    return ComplexFunction.parse(source, constant=True)  # ``a``: DomainColoring's constant
 
 
-@functools.cache
-def _zeros_and_poles(source: str) -> tuple[tuple[complex, ...], tuple[complex, ...]]:
-    """Zeros and poles of a rational function, with multiplicity; () for anything else."""
+@functools.lru_cache(maxsize=256)
+def _zeros_and_poles(
+    source: str, a: complex = 0j, to: str = "", blend: float = 0.0
+) -> tuple[tuple[complex, ...], tuple[complex, ...]]:
+    """Zeros and poles of a rational function (with the constant ``a`` put in; with ``to``,
+    of the blend (1 - blend) f + blend g), with multiplicity; () for anything else."""
     import sympy as sp
     from mpmath.libmp.libhyper import NoConvergence
 
-    from phasor.render.gpu.codegen import Z
+    from phasor.render.gpu.codegen import A, Z
 
     expr = _parse(source).expr
+    if to.strip() and blend >= 1:
+        expr = _parse(to.strip()).expr
+    elif to.strip() and blend > 0:
+        b = sp.Float(blend)
+        expr = (1 - b) * expr + b * _parse(to.strip()).expr
+    expr = expr.subs(A, sp.Float(a.real) + sp.I * sp.Float(a.imag))
     num, den = sp.fraction(sp.cancel(sp.together(expr)))
     if not (num.is_polynomial(Z) and den.is_polynomial(Z)):
         return (), ()
@@ -120,12 +129,22 @@ class DomainColoring(_Plane):
         radius: float = Field(0.0, ge=0)  # > 0: the prism look, lit this far round zeros/poles
         ambient: float = Field(0.06, ge=0, le=1)  # prism look: light away from zeros and poles
         lines: int = Field(0, ge=0, le=64)  # prism look: glowing rays of phase per turn, + rings
+        # the constant ``a`` the function may use, as (re, im): animate it to move zeros/poles
+        a: tuple[float, float] = (0.0, 0.0)
+        # A second function and how far along to it (0: ``function``, 1: ``to``); between,
+        # (1 - blend) f + blend g. Animate ``blend`` to change one function into the other.
+        to: str = ""
+        blend: float = Field(0.0, ge=0, le=1)
+        line_glow: float = Field(0.6, ge=0, le=4)  # prism look: how bright rays and rings are
+        light: float = Field(1.0, ge=0, le=4)  # prism look: scales the light the glow role adds
 
-        @field_validator("function")
+        @field_validator("function", "to")
         @classmethod
-        def _check(cls, v: str) -> str:
+        def _check(cls, v: str, info) -> str:
             from phasor.render.gpu.codegen import FunctionError
 
+            if info.field_name == "to" and not v.strip():
+                return v  # no second function
             try:
                 _parse(v.strip())
             except FunctionError as e:
@@ -141,7 +160,8 @@ class DomainColoring(_Plane):
 
     def features(self, state: SceneState) -> dict[str, np.ndarray]:
         p = self.me(state).params
-        zeros, poles = _zeros_and_poles(p.function.strip())
+        zeros, poles = _zeros_and_poles(p.function.strip(), complex(*p.a), p.to.strip(),
+                                        float(p.blend))  # fmt: skip
         return {
             "center": np.asarray(p.pos),
             "zeros": self._inside(state, zeros),
@@ -156,7 +176,17 @@ class DomainColoring(_Plane):
             "kind": "domain_coloring",
             "backdrop": True,
             "function": f.source,
+            "a": [round(float(p.a[0]), 6), round(float(p.a[1]), 6)],
             "latex": f.latex(),
+            **(
+                {
+                    "to": p.to.strip(),
+                    "to_latex": _parse(p.to.strip()).latex(),
+                    "blend": round(float(p.blend), 6),
+                }
+                if p.to.strip()
+                else {}
+            ),
             "zeros": [[round(float(x), 6), round(float(y), 6)] for x, y, _ in feats["zeros"]],
             "poles": [[round(float(x), 6), round(float(y), 6)] for x, y, _ in feats["poles"]],
         }
@@ -168,6 +198,10 @@ class DomainColoring(_Plane):
         lut = np.asarray(me.style["colormap"], dtype=np.float32)
         lut = np.roll(lut, -round(p.hue * len(lut)), axis=0)
         f = _parse(p.function.strip())
+        # A second function only while it shows (blend 0 is the plain kernel, no extra cost)
+        blend = {"to": _parse(p.to.strip()), "blend": float(p.blend)} if (
+            p.to.strip() and p.blend > 0) else {}  # fmt: skip
+        lit = {"line_glow": float(p.line_glow)} if p.line_glow != 0.6 else {}  # 0.6: default
 
         def pixels(pw: int, ph: int, center: tuple[float, float], height: float) -> np.ndarray:
             from phasor.render import gpu
@@ -177,12 +211,17 @@ class DomainColoring(_Plane):
             if p.radius > 0:
                 return gpu.render("domain_glow", pw, ph, supersample=SUPERSAMPLE, function=f,
                                   lut=lut, radius=p.radius, ambient=p.ambient,
-                                  contour=p.contour, lines=p.lines, **view)  # fmt: skip
+                                  contour=p.contour, lines=p.lines, a=complex(*p.a),
+                                  **blend, **lit, **view)  # fmt: skip
             return gpu.render("domain", pw, ph, supersample=SUPERSAMPLE, function=f,
-                              contour=p.contour, soft=p.softness, lut=lut, **view)  # fmt: skip
+                              contour=p.contour, soft=p.softness, lut=lut, a=complex(*p.a),
+                              **blend, **view)  # fmt: skip
 
+        glow = float(me.style.get("glow", 1.0))
+        if p.light != 1.0:  # more (or less) of the light the glow role adds
+            glow = 1.0 + max(glow - 1.0, 0.0) * p.light
         ctx.field(corner, r, u, pixels=pixels, opacity=p.opacity,
-                  glow=float(me.style.get("glow", 1.0)) if p.radius > 0 else 1.0)  # fmt: skip
+                  glow=glow if p.radius > 0 else 1.0)  # fmt: skip
 
 
 @functools.lru_cache(maxsize=64)
@@ -239,15 +278,23 @@ class Fractal(_Plane):
     size (SPEC "Precision policy"): float32, then float64 under 1e-5, then perturbation
     against an arbitrary-precision reference orbit under 1e-10 per pixel (Mandelbrot only),
     good to a zoom of about 1e280. For a dive, animate ``zoom`` and set ``steady=True``.
+
+    With ``radius`` above 0 (the ``prism`` preset) it is the prism look instead: the set
+    dark (the background), the edge of the set glowing out to about ``radius`` world units
+    (of the rectangle as drawn, so the glow keeps its size on screen through a dive), and
+    ``ambient`` light far from it; the ``glow`` style role sets how bright the light is and
+    how much it blooms.
     """
 
     type: ClassVar[str] = "fractal"
     Life: ClassVar = frozenset({"hue", "glow"})
-    Style: ClassVar = {"colormap": ("colormap", "sequential")}
+    Style: ClassVar = {"colormap": ("colormap", "sequential"), "glow": ("glow", "none")}
     Presets: ClassVar = {
         "classic": {"style": {"colormap": "sequential"}},
         "ember": {"style": {"colormap": "ember"}, "params": {"density": 0.3}},
         "ocean": {"style": {"colormap": "ocean"}, "params": {"density": 0.3}},
+        # the set dark, its edge glowing with haze (the look of the prism strokes)
+        "prism": {"params": {"radius": 0.01, "ambient": 0.03}, "style": {"glow": "soft"}},
     }  # fmt: skip
 
     class Params(ParamsBase):
@@ -263,6 +310,8 @@ class Fractal(_Plane):
         # Keep the outermost color fixed as counts grow (a dive's colors then stay put while
         # the structure flows); off: colors cycle with the escape count itself.
         steady: bool = False
+        radius: float = Field(0.0, ge=0)  # > 0: the prism look, the edge lit this far
+        ambient: float = Field(0.05, ge=0, le=1)  # prism look: light far from the edge
 
         @field_validator("center")
         @classmethod
@@ -307,7 +356,8 @@ class Fractal(_Plane):
             from phasor.render import gpu
             from phasor.render.gpu.bridge import to_host
 
-            field = _escape_field(p, c, k, pw, ph, center, height)
+            s = SUPERSAMPLE if p.radius > 0 else 1  # the glowing edge is anti-aliased
+            field = _escape_field(p, c, k, pw * s, ph * s, center, height)
             offset = p.hue
             if p.steady:  # hold the color of the rectangle's outermost (lowest) count
                 w, h = p.size
@@ -315,11 +365,19 @@ class Fractal(_Plane):
                                        (w / 2, h / 2), h)  # fmt: skip
                 out_ = coarse[coarse >= 0]
                 offset -= p.density * float(np.sqrt(out_.min())) if out_.size else 0.0
-            out = gpu.run("palette", gpu.Tile.full(pw, ph), field=field, lut=lut,
-                          density=p.density, offset=offset, inside=inside)  # fmt: skip
-            return to_host(out)
+            if p.radius <= 0:
+                out = gpu.run("palette", gpu.Tile.full(pw, ph), field=field, lut=lut,
+                              density=p.density, offset=offset, inside=inside)  # fmt: skip
+                return to_host(out)
+            out = to_host(gpu.run("fractal_glow", gpu.Tile.full(pw * s, ph * s), field=field,
+                                  lut=lut, density=p.density, offset=offset, inside=inside,
+                                  radius=p.radius / height * ph * s,  # world units -> pixels
+                                  ambient=p.ambient))  # fmt: skip
+            return out.reshape(ph, s, pw, s, 4).mean(axis=(1, 3), dtype=np.float64).astype(
+                np.float32)  # fmt: skip
 
-        ctx.field(corner, r, u, pixels=pixels, opacity=p.opacity)
+        ctx.field(corner, r, u, pixels=pixels, opacity=p.opacity,
+                  glow=float(me.style.get("glow", 1.0)) if p.radius > 0 else 1.0)  # fmt: skip
 
 
 # ---------------------------------------------------------------- Riemann surfaces
@@ -466,12 +524,14 @@ class ComplexMap(ObjectBase):
         @field_validator("function")
         @classmethod
         def _check(cls, v: str) -> str:
-            from phasor.render.gpu.codegen import FunctionError
+            from phasor.render.gpu.codegen import A, FunctionError
 
             try:
-                _parse(v.strip())
+                f = _parse(v.strip())
             except FunctionError as e:
                 raise ValueError(str(e)) from None
+            if f.expr.has(A):
+                raise ValueError("the constant a is for cx.DomainColoring only")
             return v
 
         @field_validator("lines")
@@ -481,21 +541,9 @@ class ComplexMap(ObjectBase):
                 raise ValueError("lines is (vertical, horizontal), each 0 to 200, not both 0")
             return v
 
-    def _runs(self, p) -> list[tuple[int, np.ndarray]]:
-        """[(family 0 vertical / 1 horizontal, (K, 3) world points)]."""
-        from phasor.domains import cx_math as xm
-
-        f = _parse(p.function.strip()).numpy()
-        z0 = complex(*p.center)
-        shift = complex(p.pos[0], p.pos[1]) - z0
-        out = []
-        for k, line in enumerate(xm.grid_lines(z0, p.extent, p.lines, p.samples)):
-            fam = 0 if k < p.lines[0] else 1
-            w = xm.deform(f, line, p.amount)
-            for run in xm.split_runs(w, p.limit):
-                run = run + shift
-                out.append((fam, np.stack([run.real, run.imag, np.full(len(run), p.pos[2])], 1)))
-        return out
+    def _runs(self, p) -> tuple[tuple[int, np.ndarray], ...]:
+        """((family 0 vertical / 1 horizontal, (K, 3) world points), ...), read-only."""
+        return _map_runs(p)
 
     def world_bounds(self, state: SceneState) -> Bounds:
         p = self.me(state).params
@@ -524,3 +572,24 @@ class ComplexMap(ObjectBase):
         for fam, pts in self._runs(p):
             polyline(ctx, cam, pts, me.style["stroke"] * cam.units_per_height(pts),
                      color=cols[fam], glow=me.style["glow"])  # fmt: skip
+
+
+@functools.lru_cache(maxsize=32)
+def _map_runs(p) -> tuple[tuple[int, np.ndarray], ...]:
+    """The deformed grid of a ComplexMap's parameters, kept: bounds, semantics and drawing
+    all ask for it at every moment, and building it means evaluating f on every line."""
+    from phasor.domains import cx_math as xm
+
+    f = _parse(p.function.strip()).numpy()
+    z0 = complex(*p.center)
+    shift = complex(p.pos[0], p.pos[1]) - z0
+    out = []
+    for k, line in enumerate(xm.grid_lines(z0, p.extent, p.lines, p.samples)):
+        fam = 0 if k < p.lines[0] else 1
+        w = xm.deform(f, line, p.amount)
+        for run in xm.split_runs(w, p.limit):
+            run = run + shift
+            pts = np.stack([run.real, run.imag, np.full(len(run), p.pos[2])], 1)
+            pts.setflags(write=False)
+            out.append((fam, pts))
+    return tuple(out)

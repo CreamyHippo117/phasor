@@ -386,3 +386,100 @@ def vignette(gpu, tile: Tile, image, strength: float = 0.3):
     gpu.launch(compiled, tile.n, (np.int32(tile.n), np.int32(tile.w), np.int32(tile.h),
                                   np.float32(strength), src, out))  # fmt: skip
     return out
+
+
+# ---------------------------------------------------------------- display bytes
+
+SRGB = """
+extern "C" __global__ void phasor_srgb8(int n, const float* in, unsigned char* out)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    for (int c = 0; c < 3; c++) {
+        // Double precision and the same constants as core.color.linear_to_srgb, then
+        // round half to even like np.round, so the card and NumPy agree byte for byte
+        // (up to pow's last bit). NaN and negatives become 0, above 1 becomes 1.
+        double x = (double)in[4 * (long long)i + c];
+        if (!(x > 0.0)) x = 0.0;
+        if (x > 1.0) x = 1.0;
+        double y = x <= 0.0031308 ? x * 12.92 : 1.055 * pow(x, 1.0 / 2.4) - 0.055;
+        out[3 * (long long)i + c] = (unsigned char)rint(y * 255.0);
+    }
+}
+"""
+
+
+def srgb8_reference(tile: Tile, image: np.ndarray) -> np.ndarray:
+    from phasor.render.output import encode_srgb8
+
+    _check(tile, image)
+    return encode_srgb8(image)
+
+
+@kernel(
+    "srgb8",
+    "(tile, image) -> uint8[h, w, 3]; linear display RGBA (0..1) -> sRGB bytes",
+    reference=srgb8_reference,
+)
+def srgb8(gpu, tile: Tile, image):
+    """The sRGB encode of ``render.output.encode_srgb8`` on the card, after the tone map
+    (contract 4: still once per pixel). The frame comes back as 6 MB of bytes at 1080p
+    instead of 33 MB of float32."""
+    _check(tile, image)
+    src = gpu.cp.ascontiguousarray(gpu.cp.asarray(image))
+    out = gpu.cp.empty((tile.h, tile.w, 3), dtype=gpu.cp.uint8)
+    compiled = gpu.compile(SRGB, "phasor_srgb8")
+    gpu.launch(compiled, tile.n, (np.int32(tile.n), src, out))
+    return out
+
+
+# ---------------------------------------------------------------- motion-blur sum
+
+ACCUMULATE = """
+extern "C" __global__ void phasor_accumulate(int n, float weight, const float* in,
+                                             const float* acc, int has_acc, float* out)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    float x = weight * in[i];
+    out[i] = has_acc ? acc[i] + x : x;
+}
+"""
+
+
+def _check_sum(tile: Tile, image, acc) -> None:
+    if (tile.x0, tile.y0, tile.w, tile.h) != (0, 0, tile.full_w, tile.full_h):
+        raise KernelError("post-processing kernels need the whole image, not a tile")
+    if tuple(image.shape[:2]) != (tile.h, tile.w) or str(image.dtype) not in ("float16", "float32"):
+        raise KernelError(f"image must be float16 or float32 with shape ({tile.h}, {tile.w}, "
+                          f"c), got {image.dtype} {tuple(image.shape)}")  # fmt: skip
+    if acc is not None and (tuple(acc.shape) != tuple(image.shape) or str(acc.dtype) != "float32"):
+        raise KernelError(f"acc must be float32 with shape {tuple(image.shape)}, "
+                          f"got {acc.dtype} {tuple(acc.shape)}")  # fmt: skip
+
+
+def accumulate_reference(tile: Tile, image: np.ndarray, weight: float = 1.0,
+                         acc: np.ndarray | None = None) -> np.ndarray:  # fmt: skip
+    _check_sum(tile, image, acc)
+    x = np.float32(weight) * image.astype(np.float32)
+    return x if acc is None else (acc + x).astype(np.float32)  # a new array: inputs untouched
+
+
+@kernel(
+    "accumulate",
+    "(tile, image, weight=1.0, acc=None) -> float32[h, w, c]; acc + weight * image",
+    reference=accumulate_reference,
+)
+def accumulate(gpu, tile: Tile, image, weight: float = 1.0, acc=None):
+    """One step of a weighted sum in float32 (``Engine.frame_blurred``: the motion-blur
+    samples). A float16 ``image`` (the renderer's raw read) goes to the card at half the
+    bytes and is widened there; the sum stays on the card for ``post.finish``. Any number of
+    channels. Fixed order, no atomics: the same samples give the same bits."""
+    _check_sum(tile, image, acc)
+    src = gpu.cp.ascontiguousarray(gpu.cp.asarray(image).astype(np.float32))
+    out = gpu.cp.empty_like(src)
+    prev = src if acc is None else gpu.cp.ascontiguousarray(gpu.cp.asarray(acc))
+    compiled = gpu.compile(ACCUMULATE, "phasor_accumulate")
+    gpu.launch(compiled, int(src.size), (np.int32(src.size), np.float32(weight), src, prev,
+                                         np.int32(acc is not None), out))  # fmt: skip
+    return out

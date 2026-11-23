@@ -50,17 +50,17 @@ Then the long ones: `$env:PHASOR_LONG_RENDER=2000; uv run pytest tests/test_gpu.
 
 On the owner's PC (RTX 4070 Ti, Windows 11, CuPy 14.2): all 58 GPU tests pass, and the full
 suite passes with OpenGL on the RTX card (1,178 passed). `phasor bench` saved. Still to do:
-2,000 frames, the packaged app, real TeX.
+2,000 frames, real TeX.
 
 | # | What | Status |
 |---|---|---|
 | B1 | Full suite on Windows **without** OpenGL (what CI sees) and **with** it | **with OpenGL: pass** 2026-11-21 (1,178 passed, 63 skipped; 17 failures fixed first). Without OpenGL: to do |
 | B2 | Windows paths: spaces, backslashes, a non-English user name, CRLF, deleting a temp file still open, `%APPDATA%` settings | to do |
-| B3 | Packaged `.exe`: build, start with no console window, Start-menu shortcut, exports that do not flash a console | to do |
+| B3 | Packaged `.exe`: build, start with no console window, Start-menu shortcut, exports that do not flash a console | **pass** 2026-11-20 (Windows 11). Found and fixed: programs the app starts in its own process (TeX, doctor, the shortcut) flashed a console window; every `subprocess` call now passes `NO_WINDOW` (`tests/test_proc.py`) |
 | B4 | CUDA: every kernel against NumPy on the card; CUDA picked automatically; CUDA frames reach OpenGL unchanged (odd sizes, HDR) | **pass** 2026-11-21 on an RTX 4070 Ti, Windows 11 (58 GPU tests; two bugs found and fixed first) |
 | B5 | GPU reference pictures (`tests/golden/gpu/`): regenerate and look; the same kernel and the same whole frame twice are identical; a whole frame on the card matches the NumPy frame | **done** 2026-11-21: 17 pictures from the RTX 4070 Ti, checked by eye; 16 match the software ones (SSIM >= 0.99, antialiasing only). `riemann_sqrt` depended on the speech engine (cue times); its storyboard now uses estimated timing everywhere |
 | B6 | Deep zoom at 1e-30 on the card against exact iteration; real float64 on the card; tiling and supersampling; a 4K frame within the VRAM budget; the card faster than NumPy; `phasor bench`; memory flat over 300 (or 2,000) frames; clean fallback with the card hidden or CuPy broken | tests written, to run (fallback passes on Linux) |
-| B7 | A packaged app with CuPy in it: `PHASOR_PACKAGE_GPU=1` and `PHASOR_TEST_PACKAGE=1`, then `pytest tests/test_packaging.py` | tests written, to run |
+| B7 | A packaged app with CuPy in it: `PHASOR_PACKAGE_GPU=1` and `PHASOR_TEST_PACKAGE=1`, then `pytest tests/test_packaging.py` | **pass** 2026-11-20 on the RTX 4070 Ti (7 tests). Found and fixed: CuPy needed `graphlib`, which PyInstaller missed (the app said "CuPy not installed" and ran on NumPy); the app was 2.7 GB with CUDA libraries phasor never calls, now 664 MB |
 | B8 | Real TeX (MiKTeX): the LaTeX engine end to end, conversion on real LaTeX, a clear message for a missing LaTeX package | to do |
 
 ## C. Gaps in the suite
@@ -112,7 +112,16 @@ suite passes with OpenGL on the RTX card (1,178 passed). `phasor bench` saved. S
     weak goal could never trigger), preferred smoothness over a clear view, stopped at 50%
     hidden with no margin under the event log, and gave up after 3 refine rounds. Test:
     `test_without_a_speech_engine_the_orbit_is_clean_too`.
-- No C++ compiler on the PC, so the 36 CPU-emulator kernel tests skip there (they run on Linux).
+- No C++ compiler on the PC, so the CPU-emulator kernel tests skipped there. Fixed
+  2026-11-21: WinLibs g++ (`winget install BrechtSanders.WinLibs.POSIX.UCRT`; its `mingw64in`
+  must be on PATH when the tests run, for gcc's runtime DLLs). All 42 then passed after one
+  Windows-only harness fix: each test made a new `EmuGpu` with its own library cache, so the
+  second case of a kernel linked the same `.so` again, and Windows refuses to overwrite a
+  loaded library. The cache is now shared (`tests/cuda_emu.py` `_LIBS`).
+- **The suite passed but pytest exited 127** (2026-11-20): opening a scene dropped the last
+  reference to the start screen, so the widget was deleted on the spot instead of by Qt's
+  event loop, and Python aborted with an access violation at exit. The app itself quit
+  cleanly. `Desktop.open` now hands the start screen to `deleteLater`.
 - OpenGL ran on the processor's built-in AMD graphics: the monitor was plugged into the
   motherboard. Moved to the RTX card, OpenGL runs on the RTX 4070 Ti.
 

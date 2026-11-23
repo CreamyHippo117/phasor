@@ -23,6 +23,8 @@ from tests import cuda_emu
 FULL = Tile.full(64, 64)
 OFFSET = Tile(8, 4, 48, 40, 64, 48)  # not at the origin, not square: catches index mix-ups
 F = ComplexFunction.parse("1/(z**2 + 1)")
+FA = ComplexFunction.parse("(z**3 - 1) / (z**2 + a)", constant=True)  # a: a run-time constant
+FB = ComplexFunction.parse("(z**5 - 1) / (z - a)", constant=True)  # a blend's second function
 
 
 def _rgba(seed=0, shape=(24, 32)):
@@ -32,6 +34,11 @@ def _rgba(seed=0, shape=(24, 32)):
 
 IMAGE = _rgba()
 IMAGE_TILE = Tile.full(32, 24)
+# Display-range values for the sRGB encode, plus the edges: 0, the curve's linear/power
+# switch at 0.0031308, half-way, 1, NaN, negative, above 1 and infinity.
+DISPLAY = np.ascontiguousarray(_rgba(3) / np.float32(4.0))
+DISPLAY[0, :9, :3] = np.array([0.0, 0.0031308, 0.0031309, 0.5, 1.0, np.nan, -0.2, 1.7, np.inf],
+                              dtype=np.float32)[:, None]  # fmt: skip
 
 # Reference orbits for the perturbation kernel: one at the spiral of test_deep_zoom.py (lasts
 # every step) and one that escapes after 19, so pixels must rebase onto its start.
@@ -39,6 +46,12 @@ DEEP_ORBIT = fm.reference_orbit(fm.parse_point(
     "-0.7756837680090537974694835039347410457282 0.1364673682946901247332744096178487651978"),
     128, 2000)  # fmt: skip
 EARLY_ORBIT = fm.reference_orbit(fm.parse_point("-0.75 0.2"), 64, 300)
+
+# Points for the splat kernel: a cloud round the origin, a few far off every tile.
+_SPLAT_RNG = np.random.default_rng(3)
+SPLAT_POINTS = np.r_[_SPLAT_RNG.normal(0.0, 0.45, (300, 2)), [[5.0, 5.0], [-9.0, 0.0]]]
+SPLAT_COLORS = _SPLAT_RNG.random((302, 3)).astype(np.float32)
+SPLAT_WEIGHTS = np.r_[_SPLAT_RNG.random(301), 0.0].astype(np.float32)
 
 # name -> list of (tile, params) cases every backend must agree on
 CASES = {
@@ -59,6 +72,10 @@ CASES = {
         (OFFSET, {"function": F, "center": (0.3, -0.2), "height": 3.0, "contour": 0.0,
                   "precision": "f64"}),
         (FULL, {"function": F, "center": (0.0, 0.0), "height": 4.0, "soft": 0.8}),
+
+        (FULL, {"function": FA, "center": (0.0, 0.0), "height": 4.0, "a": 0.3 + 0.7j}),
+        (OFFSET, {"function": FA, "center": (0.1, 0.0), "height": 3.0, "a": 0.6j, "to": FB,
+                  "blend": 0.4, "precision": "f64"}),
     ],
     "domain_glow": [
         (FULL, {"function": F, "center": (0.0, 0.0), "height": 4.0, "precision": "f64"}),
@@ -67,6 +84,11 @@ CASES = {
         (FULL, {"function": F, "center": (0.0, 0.0), "height": 4.0}),
         (FULL, {"function": F, "center": (0.0, 0.0), "height": 4.0, "lines": 12,
                 "precision": "f64"}),
+
+        (FULL, {"function": FA, "center": (0.0, 0.0), "height": 4.0, "lines": 12,
+                "a": -0.2 + 0.6j, "precision": "f64"}),
+        (FULL, {"function": FA, "center": (0.0, 0.0), "height": 4.0, "lines": 12,
+                "a": 0.6j, "to": FB, "blend": 0.65, "precision": "f64"}),
     ],
     "tonemap": [
         (IMAGE_TILE, {"image": IMAGE, "exposure": 1.7}),
@@ -83,12 +105,40 @@ CASES = {
                              "lut": phase_lut(), "density": 0.4, "offset": 0.2,
                              "inside": (0.05, 0.1, 0.2)}),
     ],
+    "fractal_glow": [
+        (Tile.full(64, 64), {"field": get("escape").reference(FULL, (-0.5, 0.0), 2.5, 100),
+                             "lut": phase_lut(), "density": 0.4, "offset": 0.2,
+                             "inside": (0.05, 0.1, 0.2), "radius": 1.5, "ambient": 0.1}),
+        (Tile.full(48, 40), {"field": get("escape").reference(OFFSET, (0.0, 0.0), 3.0,
+                                                              julia=(-0.8, 0.156)),
+                             "lut": phase_lut()}),
+        (Tile.full(64, 64), {"field": get("deep").reference(FULL, (0.0, 0.0), 1e-20,
+                                                            DEEP_ORBIT, 2000),
+                             "lut": phase_lut(), "radius": 3.0, "ambient": 0.0}),
+    ],
     "fringe": [(IMAGE_TILE, {"image": IMAGE, "amount": 0.01}),
                (IMAGE_TILE, {"image": IMAGE, "amount": 0.0})],
     "vignette": [(IMAGE_TILE, {"image": IMAGE, "strength": 0.6})],
+    "srgb8": [(IMAGE_TILE, {"image": DISPLAY}), (IMAGE_TILE, {"image": IMAGE})],
+    "accumulate": [  # the first blur sample (float16, as GL stores it), then a running sum
+        (IMAGE_TILE, {"image": IMAGE.astype(np.float16), "weight": 0.25}),
+        (IMAGE_TILE, {"image": IMAGE.astype(np.float16), "weight": 0.25, "acc": _rgba(7)}),
+        (IMAGE_TILE, {"image": IMAGE, "weight": 1.0 / 6, "acc": _rgba(8)}),
+        (IMAGE_TILE, {"image": IMAGE[..., :1].copy(), "weight": 0.5}),  # any channel count
+    ],
     "gauss": [
         (IMAGE_TILE, {"image": IMAGE, "sigma": 1.5, "axis": 0}),
         (IMAGE_TILE, {"image": IMAGE, "sigma": 2.2, "axis": 1}),
+    ],
+    "splat": [  # some points fall off the tile, some share pixels, one has no weight
+        (FULL, {"points": SPLAT_POINTS, "colors": SPLAT_COLORS, "center": (0.0, 0.0),
+                "height": 2.0}),
+        (OFFSET, {"points": SPLAT_POINTS, "colors": SPLAT_COLORS, "center": (0.1, -0.05),
+                  "height": 1.6, "weights": SPLAT_WEIGHTS, "sigma": 1.4, "gain": 3.0}),
+        (OFFSET, {"points": SPLAT_POINTS, "colors": (1.0, 0.5, 0.25), "center": (0.0, 0.0),
+                  "height": 2.0, "sigma": 0.7, "curve": False}),
+        (FULL, {"points": SPLAT_POINTS, "colors": SPLAT_COLORS, "center": (0.0, 0.0),
+                "height": 2.0, "weights": SPLAT_WEIGHTS, "gain": 4.0, "white": 0.8}),
     ],
 }  # fmt: skip
 ALL_CASES = [(n, t, p) for n, cases in CASES.items() for t, p in cases]
@@ -98,7 +148,13 @@ needs_compiler = pytest.mark.skipif(cuda_emu.compiler() is None, reason="no C++ 
 def _close(name: str, got: np.ndarray, want: np.ndarray, *, strict: bool) -> None:
     """Agreement between a kernel and its reference. Color kernels may differ on the few
     pixels that sit on a discontinuity (a contour edge, a branch cut); real GPUs also fuse
-    multiply-adds, which moves fractal pixels on the set's boundary."""
+    multiply-adds, which moves fractal pixels on the set's boundary. Byte outputs (sRGB)
+    may differ by one step where pow's last bit tips the rounding, and nowhere else."""
+    if want.dtype == np.uint8:
+        assert got.shape == want.shape and got.dtype == np.uint8
+        diff = np.abs(got.astype(np.int16) - want)
+        assert diff.max() <= 1 and (diff > 0).mean() <= 1e-4, (name, int(diff.max()))
+        return
     assert got.shape == want.shape and got.dtype == want.dtype == np.float32
     err = np.abs(got.astype(np.float64) - want)
     if got.ndim == 3:
@@ -116,15 +172,19 @@ def test_every_kernel_has_a_reference_and_a_signature():
     ks = registered()
     assert sorted(ks) == sorted(CASES)
     assert sorted(ks) == [
+        "accumulate",
         "bright",
         "deep",
         "domain",
         "domain_glow",
         "escape",
+        "fractal_glow",
         "fringe",
         "gauss",
         "palette",
         "resize",
+        "splat",
+        "srgb8",
         "tonemap",
         "vignette",
     ]
@@ -497,3 +557,40 @@ def test_vignette_leaves_the_middle_and_darkens_the_corners():
     assert out[20, 30, 0] == pytest.approx(1.0, abs=1e-3)
     assert out[0, 0, 0] < 0.6 and out[0, 0, 0] > 0.4  # 1 - 0.5 r^4 with r near 1
     assert (out[..., 3] == 1).all()
+
+
+def test_the_constant_a_is_a_kernel_argument_not_part_of_the_source():
+    """Animating ``a`` must not recompile: the CUDA source is the same for every value, and
+    the reference with ``a`` set matches the function with that number written in."""
+    from phasor.render.gpu.kernels.domain_coloring import domain_reference, source_for
+
+    fixed = ComplexFunction.parse("(z**3 - 1) / (z**2 + (0.3+0.7j))")
+    assert "(a," in FA.c() and "(a," not in ComplexFunction.parse("z + 1").c()
+    assert source_for(FA) == source_for(FA)  # one source, whatever a is
+    tile = Tile.full(24, 16)
+    got = domain_reference(tile, FA, (0.0, 0.0), 4.0, a=0.3 + 0.7j)
+    want = domain_reference(tile, fixed, (0.0, 0.0), 4.0)
+    assert np.allclose(got, want, atol=1e-5)
+    with pytest.raises(FunctionError):
+        ComplexFunction.parse("z + a")  # only where the caller allows the constant
+
+
+@pytest.mark.parametrize("name", ["domain", "domain_glow"])
+def test_a_blend_ends_exactly_on_each_function_and_mixes_linearly_between(name):
+    """``to`` + ``blend``: at 0 the pixels are the first function's, at 1 the second's (to the
+    bit, poles included); in between, w = (1 - b) f + b g, the straight line between them."""
+    from phasor.render.gpu.kernels import domain_coloring as dc
+
+    k = get(name).reference
+    tile, kw = Tile.full(40, 30), {"center": (0.0, 0.0), "height": 4.0, "a": 0.6j}
+    np.testing.assert_array_equal(k(tile, FA, to=FB, blend=0.0, **kw), k(tile, FA, **kw))
+    np.testing.assert_array_equal(k(tile, FA, to=FB, blend=1.0, **kw), k(tile, FB, **kw))
+    z = np.array([0.3 + 0.2j, -1.1 + 0.4j])
+    w = dc.blended(FA, FB, 0.25)(z, 0.6j)
+    assert np.allclose(w, 0.75 * FA.numpy()(z, 0.6j) + 0.25 * FB.numpy()(z, 0.6j))
+    # without ``to`` the source is the one-function source, as before; the blend value is a
+    # kernel argument, never part of the source (an animated blend never recompiles)
+    one = dc.source_for(FA) if name == "domain" else dc.glow_source_for(FA)
+    assert "blend" not in one and "phasor_f(cplx z, cplx a) { return " + FA.c() in one
+    two = dc.source_for(FA, FB) if name == "domain" else dc.glow_source_for(FA, FB)
+    assert "double blend" in two and "0.25" not in two

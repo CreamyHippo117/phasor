@@ -147,7 +147,7 @@ def _cmd_render(args: argparse.Namespace) -> int:
     from phasor.core.issues import DocumentError
     from phasor.render.encode import EncodeError
     from phasor.render.job import render_file
-    from phasor.scene import load
+    from phasor.scene import default_workers, load, parallel_frames
 
     def progress(k: int, n: int) -> None:
         if not args.quiet:
@@ -157,10 +157,12 @@ def _cmd_render(args: argparse.Namespace) -> int:
     try:
         engine = load(args.scene)
         default = stem + (".png" if args.frame is not None else ".mp4")
+        workers = default_workers() if args.workers is None else args.workers
+        source = parallel_frames(engine, workers) if workers > 1 else None
         r = render_file(
             engine, args.out or default, preset=args.preset, fps=args.fps, start=args.start,
             end=args.end, frame=args.frame, progress=progress, shutter=args.shutter,
-            blur_samples=args.blur_samples,
+            blur_samples=args.blur_samples, frame_source=source,
         )  # fmt: skip
     except (DocumentError, OSError, ValueError, RuntimeError, EncodeError) as e:
         print(f"\nphasor render: {e}", file=sys.stderr)
@@ -174,6 +176,23 @@ def _cmd_render(args: argparse.Namespace) -> int:
         sound = ", with narration" if r["narration"] else ""
         print(f"\nwrote {r['path']}: {r['frames']} frames, {w}x{h} at {r['fps']:g} fps, "
               f"{r['encoder']}{sound}")  # fmt: skip
+    return 0
+
+
+def _cmd_kit(args: argparse.Namespace) -> int:
+    from phasor.workspace.kit import KitError, install
+    from phasor.workspace.paths import scenes_folder
+
+    try:
+        r = install(args.folder or scenes_folder())
+    except (KitError, OSError) as e:
+        print(f"phasor kit: {e}", file=sys.stderr)
+        return 1
+    print(f"the AI kit is in {r['dest']}")
+    print("  written: " + ", ".join(r["written"]))
+    if r["kept"]:
+        print("  kept (yours): " + ", ".join(r["kept"]))
+    print(f'start an AI there: cd "{r["dest"]}" and run claude; then /scene <your idea>')
     return 0
 
 
@@ -207,6 +226,8 @@ def _cmd_style(args: argparse.Namespace) -> int:
 
 
 def _cmd_bench(args: argparse.Namespace) -> int:
+    if args.frames:
+        return _cmd_bench_frames(args)
     from phasor.render.bench import run_bench, save
 
     result = run_bench(args.width, args.height, args.repeats)
@@ -216,6 +237,35 @@ def _cmd_bench(args: argparse.Namespace) -> int:
         print(f"  {name:8s} {r['ms']:10.2f} ms")
     if result["peak_vram_bytes"] is not None:
         print(f"  peak VRAM {result['peak_vram_bytes'] / 2**20:.0f} MB")
+    print(f"saved {path}")
+    return 0
+
+
+def _cmd_bench_frames(args: argparse.Namespace) -> int:
+    """Where a final frame's time goes, stage by stage (GPU_SPEED.md, step 0)."""
+    from pathlib import Path
+
+    from phasor.core.issues import DocumentError
+    from phasor.render.bench import run_frame_bench, save_frames
+    from phasor.scene import load
+
+    scene = Path(args.frames)
+    if not scene.exists() and (Path("examples") / f"{args.frames}.py").exists():
+        scene = Path("examples") / f"{args.frames}.py"  # an example by name
+    try:
+        engine = load(str(scene))
+        r = run_frame_bench(engine, scene.name.split(".")[0], args.count, args.preset)
+    except (DocumentError, OSError, ValueError, RuntimeError) as e:
+        print(f"phasor bench: {e}", file=sys.stderr)
+        return 1
+    path = save_frames(r, args.dir)
+    w, h = r["frame"]
+    blur = ", motion blur" if r["motion_blur"] else ""
+    print(f"{r['scene']}: {r['frames']} frames, {w}x{h}{blur}, kernels on {r['backend']}, "
+          f"GL on {r['gl_renderer']}, {r['encoder']}")  # fmt: skip
+    for name, ms in r["stages_ms_per_frame"].items():
+        print(f"  {name:10s} {ms:9.1f} ms/frame")
+    print(f"  {'total':10s} {r['ms_per_frame']:9.1f} ms/frame  (setup {r['setup_s']:.1f} s, once)")
     print(f"saved {path}")
     return 0
 
@@ -282,8 +332,16 @@ def build_parser() -> argparse.ArgumentParser:
                    help="shutter as a share of a frame (0 off, 0.5 film standard); "
                    "default: off for preview, 0.5 for final and 4k")  # fmt: skip
     r.add_argument("--blur-samples", type=int, help="sub-frames per frame when blurring (4)")
+    r.add_argument("--workers", type=int,
+                   help="render processes (default: a quarter of the CPU threads, 1 to 4; "
+                   "1 renders in this process)")  # fmt: skip
     r.add_argument("--quiet", action="store_true")
     r.set_defaults(func=_cmd_render)
+
+    k = sub.add_parser("kit", help="set up (or update) a folder where an AI writes scenes")
+    k.add_argument("folder", nargs="?",
+                   help="where (default: Documents/phasor, the app's scenes folder)")  # fmt: skip
+    k.set_defaults(func=_cmd_kit)
 
     st = sub.add_parser("style", help="what your recorded choices say about your taste")
     st.add_argument("action", choices=["tune"], help="tune: tally style/choices.jsonl")
@@ -306,6 +364,11 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--height", type=int, default=1080)
     b.add_argument("--repeats", type=int, default=3)
     b.add_argument("--dir", default="benchmarks", help="where results are saved")
+    b.add_argument("--frames", metavar="SCENE", help="time whole frames of SCENE (a file or "
+                   "an example name) stage by stage, instead of single kernels")  # fmt: skip
+    b.add_argument("--count", type=int, default=60, help="frames to time (with --frames)")
+    b.add_argument("--preset", default="final", choices=["preview", "final", "4k"],
+                   help="render preset (with --frames)")  # fmt: skip
     b.set_defaults(func=_cmd_bench)
 
     # Client commands (mcp, gui) register themselves through the "phasor.commands"

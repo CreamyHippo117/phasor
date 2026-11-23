@@ -41,7 +41,9 @@ def _offenders(pattern: str, allowed: set[str]) -> list[str]:
         (
             "contract 3: state depends on (document, t), never on the clock or global randomness",
             r"\btime\.time\(|\bperf_counter\(|datetime\.now\(|\brandom\.\w+\(|np\.random\.",
-            {"core/rng.py", "render/bench.py"},
+            # bench and timing read the clock only to report where time went (GPU_SPEED.md);
+            # nothing they measure flows back into a scene's state.
+            {"core/rng.py", "render/bench.py", "core/timing.py"},
         ),
         (
             "contract 4: sRGB encoding happens once, in render/output.py",

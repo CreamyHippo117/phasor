@@ -53,9 +53,21 @@ def free_vram() -> int | None:
         return None
 
 
+_SHARE = 1.0  # this process's share of the card (render workers split it, ADR 0003)
+
+
+def set_share(share: float) -> None:
+    """Use only ``share`` (0 to 1] of the free memory: each of N render workers on one card
+    gets 1/N, so together they plan tiles for the card they actually share."""
+    global _SHARE
+    if not 0 < share <= 1:
+        raise ValueError(f"share must be in (0, 1], got {share}")
+    _SHARE = share
+
+
 def budget_bytes() -> int:
     free = free_vram()
-    return HOST_BUDGET if free is None else int(free * VRAM_FRACTION)
+    return HOST_BUDGET if free is None else int(free * VRAM_FRACTION * _SHARE)
 
 
 def plan_tiles(

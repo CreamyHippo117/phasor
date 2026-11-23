@@ -252,8 +252,8 @@ class Workspace:
     def _files_inside(self) -> None:
         """Every file the scene names (a picture's ``path``) is inside the workspace folder:
         the AI may show only what is in its folder."""
+        from phasor.core import files
         from phasor.core.objects import get_type
-        from phasor.time.compile import resolve_file
 
         e = self.engine
         for spec in e.document.objects:
@@ -261,7 +261,10 @@ class Workspace:
             for name in getattr(cls, "Files", ()):
                 raw = spec.params.get(name)
                 if isinstance(raw, str) and raw:
-                    self._inside(resolve_file(raw, str(e.base_dir)))
+                    try:
+                        self._inside(files.resolve(e.base_dir, raw))
+                    except ValueError as err:  # outside the scene's folder
+                        raise ToolError(str(err)) from None
 
     def _with_defaults(self, patch: Any) -> Any:
         """The patch as a list of ops, with ``preset`` and the scene's look resolved in every
@@ -318,7 +321,8 @@ class Workspace:
         """Animate with a choreography verb starting at a marker (or seconds). Timing comes
         from the theme. Returns when it starts and ends so the next step can follow it.
         ``orbit`` swings the 3D camera ``value`` degrees (default 360), until marker ``until``
-        if given. ``transform`` and ``become`` take ``targets=[from, to]``; ``sweep`` takes
+        if given; ``morph`` too runs until ``until`` if given. ``transform`` and
+        ``become`` take ``targets=[from, to]``; ``sweep`` takes
         ``path`` and ``value``; ``circumscribe`` takes one target and ``value`` "circle" or
         "box"."""
         if verb not in VERBS:
@@ -333,7 +337,7 @@ class Workspace:
         if verb in ("morph", "settle"):
             if path is None or value is None:
                 raise ToolError(f"{verb} needs path and value, e.g. path='dot.pos', value=[1, 2]")
-            args: tuple = (path, value)
+            args: tuple = (path, value, until) if verb == "morph" else (path, value)
         elif verb == "orbit":
             args = (360.0 if value is None else float(value), until)
         elif verb == "focus_pull":

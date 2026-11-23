@@ -10,7 +10,15 @@ each optional:
 - ``isolines``: that many contour levels drawn as thin light about a pixel wide at any zoom
   (the distance to a level is measured in pixels through the local gradient);
 - a glow weight per pixel (alpha), so with the object's ``glow`` role the strong parts of the
-  field shine and haze. See ``DrawContext.field``.
+  field shine and haze. See ``DrawContext.field``;
+- ``hue_cycles``: colour from the colormap read as a wheel (the prism ``spectrum``), its hue
+  running ``hue_cycles`` times over the value range the way it runs along a prism stroke, so
+  each isoline has the hue of its level; brightness comes from the glow weight alone;
+- ``fade``: the field melts into the background over that share of the panel's shorter side
+  at its edges (no hard rectangle), glow weight included, so the haze has no edge either.
+
+Every type that draws a heat map has these parameters (``HeatParams``); their defaults draw
+what the plain pictures always drew.
 """
 
 from __future__ import annotations
@@ -18,9 +26,49 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import numpy as np
+from pydantic import Field
+
+from phasor.core.objects import ParamsBase
 
 Pixels = Callable[[int, int, tuple[float, float], float], np.ndarray]
 AMBIENT = 0.12  # with a glow weight: the share of colour a quiet (weight 0) pixel keeps
+
+
+class HeatParams(ParamsBase):
+    """The heat-map parameters every type that draws one shares (the prism preset sets them)."""
+
+    smooth: bool = False  # bicubic between grid values (the prism look); else as before
+    isolines: int = Field(0, ge=0, le=64)  # contour levels drawn as thin light
+    # > 0: colour from the colormap as a wheel, this many turns over the value range (prism)
+    hue_cycles: float = Field(0.0, ge=0, le=8)
+    hue: float = 0.0  # with hue_cycles: turns the colours (share of a turn); life adds a little
+    fade: float = Field(0.0, ge=0, le=0.5)  # edges melt into the background over this share
+    ambient: float = Field(AMBIENT, ge=0, le=1)  # with glow: the colour a quiet pixel keeps
+    # with glow: the weight is raised to this power, so > 1 keeps the light to the strongest
+    # parts and lets the rest fall dark (structure glowing out of darkness)
+    contrast: float = Field(1.0, ge=0.25, le=8)
+
+    def drawing(self) -> dict:
+        """The ``heat_pixels`` keywords these parameters set."""
+        return {"isolines": self.isolines, "ambient": self.ambient, "fade": self.fade,
+                "contrast": self.contrast}  # fmt: skip
+
+
+# The prism preset of every heat-map type (BEAUTY.md item 2): smooth, dark where the field is
+# quiet and glowing where strong, in hues of the spectrum that run with the value, contour
+# lines of light in the hue of their level, edges melting into the background. The prism
+# looks repeat these values in their tables.
+PRISM: dict = {
+    "params": {
+        "smooth": True,
+        "isolines": 8,
+        "hue_cycles": 1.6,
+        "fade": 0.1,
+        "ambient": 0.0,
+        "contrast": 2.0,
+    },
+    "style": {"glow": "soft", "colormap": "spectrum"},
+}
 
 
 def _catmull_rom(t: np.ndarray) -> list[np.ndarray]:
@@ -91,15 +139,23 @@ def heat_pixels(
     weight: Callable[[np.ndarray], np.ndarray] | None = None,
     line_glow: float = 0.7,
     background: np.ndarray | None = None,
+    ambient: float = AMBIENT,
+    fade: float = 0.0,
+    contrast: float = 1.0,
+    colour_at: Callable[[np.ndarray, np.ndarray, np.ndarray], np.ndarray] | None = None,
 ) -> Pixels:
     """``ctx.field`` pixels for ``grid[x, y]`` spanning a ``size`` rectangle.
 
     ``cells``: grid values sit at cell centres (``x / w * nx - 0.5``), else at nodes from edge
-    to edge (``x / w * (nx - 1)``). ``colour(value) -> (ph, pw, 3)`` linear RGB. ``level``
-    maps a value to 0..1 for the isolines (default: the value). ``weight(value)`` is the glow
-    weight 0..1 (default: none, alpha 1 as before): with one, colour scales from ``AMBIENT`` at
-    weight 0 to full at 1, from ``background`` (the scene's, so a quiet field melts into it);
-    the isolines add to the weight and brighten."""
+    to edge (``x / w * (nx - 1)``). ``colour(value) -> (ph, pw, 3)`` linear RGB, or
+    ``colour_at(value, u, v)`` where ``u`` (pw,) and ``v`` (ph,) are the pixels' places across
+    and up the rectangle (0..1). ``level`` maps a value to 0..1 for the isolines (default: the
+    value). ``weight(value)`` is the glow weight 0..1 (default: none, alpha 1 as before): with
+    one, colour scales from ``ambient`` at weight 0 to full at 1, from ``background`` (the
+    scene's, so a quiet field melts into it), the weight first raised to ``contrast``; the
+    isolines add to the weight and brighten.
+    ``fade``: colour and weight fall to the background over that share of the shorter side at
+    the rectangle's edges."""
     nx, ny = grid.shape
     sx, sy = size
 
@@ -112,33 +168,69 @@ def heat_pixels(
         else:
             g, h = xs / sx * (nx - 1), ys / sy * (ny - 1)
         val = sample(grid, g, h, how)
-        rgb = np.asarray(colour(val), dtype=np.float64)
+        if colour_at is None:
+            rgb = np.asarray(colour(val), dtype=np.float64)
+        else:
+            rgb = np.asarray(colour_at(val, xs / sx, ys / sy), dtype=np.float64)
         out = np.ones((ph, pw, 4), dtype=np.float32)
         lines = isoline_weight(np.clip((level or (lambda v: v))(val), 0, 1), isolines)
-        if weight is None and not isolines:
+        if weight is None and not isolines and not fade:
             out[..., :3] = rgb
             return out
         w = np.zeros_like(val) if weight is None else np.clip(weight(val), 0, 1)
+        if contrast != 1:
+            w = w**contrast
         lit = w + line_glow * lines * (1 - w)
         # With a weight, quiet parts fall toward black and strong parts keep their colour
         # (the prism look: light out of darkness); the contour lines are light on top.
         bg = np.zeros(3) if background is None else np.asarray(background[:3], dtype=np.float64)
-        shade = 1.0 if weight is None else AMBIENT + (1 - AMBIENT) * w
-        out[..., :3] = (
-            bg + (rgb - bg) * np.asarray(shade)[..., None] + rgb * (line_glow * lines)[..., None]
-        )
+        shade = 1.0 if weight is None else ambient + (1 - ambient) * w
+        col = bg + (rgb - bg) * np.asarray(shade)[..., None] + rgb * (line_glow * lines)[..., None]
+        if fade > 0:
+            win = edge_window(xs / sx, ys / sy, size, fade)
+            col = bg + (col - bg) * win[..., None]
+            lit = lit * win
+        out[..., :3] = col
         out[..., 3] = lit
         return out
 
     return pixels
 
 
+def edge_window(u: np.ndarray, v: np.ndarray, size: tuple[float, float], fade: float):
+    """(len(v), len(u)): 1 inside the rectangle, falling smoothly to 0 at its edges over
+    ``fade`` of its shorter side. ``u``, ``v``: places across and up it (0..1)."""
+    short = max(min(size), 1e-12)
+
+    def ramp_(d: np.ndarray) -> np.ndarray:
+        x = np.clip(d / (fade * short), 0, 1)
+        return x * x * (3 - 2 * x)
+
+    across = ramp_(np.minimum(u, 1 - u) * size[0])
+    up = ramp_(np.minimum(v, 1 - v) * size[1])
+    return up[:, None] * across[None, :]
+
+
+def wheel_colour(colormap, p: HeatParams) -> Callable[[np.ndarray], np.ndarray]:
+    """The prism colouring of ``p`` (``hue_cycles`` > 0): a value's place 0..1 (its level) to
+    a colour read round ``colormap`` as a wheel, ``hue_cycles`` turns over the range."""
+    wheel = lut_colour(np.asarray(colormap, dtype=np.float64)[:, :3], "wrap")
+    return lambda x: wheel(p.hue_cycles * x + p.hue)
+
+
 def lut_colour(lut: np.ndarray, how: str = "nearest") -> Callable[[np.ndarray], np.ndarray]:
     """A colour function from a (n, 3) colormap table for values in 0..1: the table entry
-    (``nearest``, as the plain pictures always did) or blended between entries (``linear``,
-    no visible steps)."""
+    (``nearest``, as the plain pictures always did), blended between entries (``linear``, no
+    visible steps), or the table as a wheel (``wrap``: any value, its fraction read round the
+    table and blended, last entry into the first, as hue runs along a prism stroke)."""
+    lut = np.asarray(lut)
 
     def colour(v: np.ndarray) -> np.ndarray:
+        if how == "wrap":
+            x = np.mod(v, 1.0) * len(lut)
+            k = np.floor(x).astype(int) % len(lut)
+            t = (x - np.floor(x))[..., None]
+            return lut[k] * (1 - t) + lut[(k + 1) % len(lut)] * t
         x = np.clip(v, 0, 1) * (len(lut) - 1)
         if how == "nearest":
             return lut[np.clip(x.astype(int), 0, len(lut) - 1)]

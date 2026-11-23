@@ -81,13 +81,20 @@ def load_look(name: str) -> Look:
     if not path.exists():
         raise LookError(f"unknown look {name!r}; available: {available_looks()}")
     raw = tomllib.loads(path.read_text(encoding="utf-8"))
-    theme, life = raw.get("theme", DEFAULT_THEME), raw.get("life", "off")
+    # ``base = "prism"``: start from that look; this file changes only what it names.
+    base = load_look(raw["base"]) if "base" in raw else None
+    theme = raw.get("theme", base.theme if base else DEFAULT_THEME)
+    life = raw.get("life", base.life if base else "off")
     if theme not in available_themes():
         raise ThemeError(f"look {name!r} names unknown theme {theme!r}")
     if life not in LEVELS:
         raise LookError(f"look {name!r}: life must be one of {LEVELS}")
     defaults = {
-        t: {"params": dict(v.get("params", {})), "style": dict(v.get("style", {}))}
-        for t, v in raw.get("defaults", {}).items()
+        t: {"params": dict(v["params"]), "style": dict(v["style"])}
+        for t, v in (base.defaults if base else {}).items()
     }
+    for t, v in raw.get("defaults", {}).items():
+        d = defaults.setdefault(t, {"params": {}, "style": {}})
+        d["params"].update(v.get("params", {}))
+        d["style"].update(v.get("style", {}))
     return Look(name, theme, life, raw.get("description", ""), defaults)

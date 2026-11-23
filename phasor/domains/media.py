@@ -15,12 +15,12 @@ from typing import Any, ClassVar
 import numpy as np
 from pydantic import Field, field_validator
 
+from phasor.core import files
 from phasor.core.color import srgb_to_linear
 from phasor.core.objects import Bounds, DrawContext, ObjectBase, ParamsBase, Pass, register
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
 from phasor.domains.strokes import polyline
-from phasor.time.compile import resolve_file
 
 MAX_SOURCE_PX = 8192  # larger pictures are scaled down once, when read
 
@@ -54,9 +54,14 @@ def read_wav(path: str, mtime: float) -> tuple[np.ndarray, float]:
     return (x.mean(axis=1) if x.ndim > 1 else x), float(fs)
 
 
-def picture(state: SceneState, path: str) -> np.ndarray:
-    file = resolve_file(path, state.assets)
-    return _read(str(file.resolve()), os.path.getmtime(file))
+def picture(state: SceneState, path: str) -> np.ndarray | None:
+    """The picture ``path`` names in the scene's folder (core/files.py), re-read when the file
+    changes; None while it is missing or unreadable (lint ``missing_file``: draws nothing)."""
+    try:
+        file = files.resolve(state.base_dir, path)
+        return _read(str(file), os.path.getmtime(file))
+    except (OSError, ValueError):
+        return None
 
 
 @register
@@ -67,7 +72,7 @@ class Image(ObjectBase):
     ``frame`` draws a thin outline of light round it."""
 
     type: ClassVar[str] = "image"
-    Files: ClassVar = ("path",)  # checked to exist when the document compiles
+    Files: ClassVar = ("path",)  # in the scene's folder (core/files.py); missing: lint
     Style: ClassVar = {"glow": ("glow", "none"), "frame": ("emphasis", "muted"),
                        "stroke": ("stroke", "hairline")}  # fmt: skip
     Presets: ClassVar = {
@@ -77,7 +82,7 @@ class Image(ObjectBase):
     }
 
     class Params(ParamsBase):
-        path: str = Field(min_length=1)  # relative to the scene's folder, or absolute
+        path: str = Field(min_length=1)  # relative to the scene's folder, and inside it
         pos: Vec3 = (0.0, 0.0, 0.0)  # centre
         width: float = Field(4.0, gt=0)
         height: float = Field(0.0, ge=0)  # 0: from the picture's aspect ratio
@@ -89,13 +94,16 @@ class Image(ObjectBase):
             ext = v.lower().rsplit(".", 1)[-1] if "." in v else ""
             if ext not in {"png", "jpg", "jpeg", "webp", "bmp", "gif", "tif", "tiff"}:
                 raise ValueError(f"{v!r} is not a picture file (png, jpg, webp, ...)")
-            return v
+            return files.relative_path(v)
 
     def _size(self, state: SceneState) -> tuple[float, float]:
         p = self.me(state).params
         if p.height > 0:
             return p.width, p.height
-        h, w = picture(state, p.path).shape[:2]
+        src = picture(state, p.path)
+        if src is None:  # missing: a 16:9 placeholder rectangle (nothing is drawn in it)
+            return p.width, p.width * 9 / 16
+        h, w = src.shape[:2]
         return p.width, p.width * h / w
 
     def _rect(self, state: SceneState):
@@ -114,8 +122,9 @@ class Image(ObjectBase):
 
     def semantics(self, state: SceneState) -> dict[str, Any]:
         p = self.me(state).params
-        h, w = picture(state, p.path).shape[:2]
-        return {"kind": "image", "path": p.path, "pixels": [w, h],
+        src = picture(state, p.path)
+        h, w = src.shape[:2] if src is not None else (0, 0)
+        return {"kind": "image", "path": p.path, "pixels": [w, h], "missing": src is None,
                 "size": [round(v, 6) for v in self._size(state)]}  # fmt: skip
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
@@ -123,6 +132,8 @@ class Image(ObjectBase):
         p = me.params
         corner, right, up = self._rect(state)
         src = picture(state, p.path)
+        if src is None:
+            return  # missing file: lint missing_file says so; nothing to draw
         bg = np.asarray(state.background[:3], dtype=np.float32)
         glow = float(me.style.get("glow", 1.0))
         rw, uh = float(right[0]), float(up[1])

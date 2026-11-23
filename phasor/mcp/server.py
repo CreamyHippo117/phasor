@@ -19,15 +19,18 @@ from phasor.workspace import docs
 from phasor.workspace.tools import ToolError, Workspace
 
 INSTRUCTIONS = """\
-phasor makes math animations you can see, check and fix. Work in this loop:
-1. object_types and docs_search tell you what exists. scene_new starts a scene.
-2. scene_edit adds objects (patches: add_object, set_param, add_constraint...). Name objects
-   by meaning (pole_i, loop, loop.label). Style takes role names, never raw colors.
-3. narrate gives the scene a voice; animate (verbs) anchors motion to the words.
-4. review checks everything at once: lint, what is on screen at each marker, a storyboard
-   picture. Fix the todo items (scene_edit, or lint with fix=true) and review again until clean.
-5. scene_save, then render. Report what you built and anything you could not fix.
-Every change is one undoable step (undo), and checkpoint/restore/diff let you branch and compare."""
+phasor makes math animations you can see, check and fix. A scene is a Python script that
+builds one Scene; it is the source that you and the person both edit. Work in this loop:
+1. Start from the closest example (kit/examples/INDEX.md in a kit folder). docs_search and
+   object_types tell you exact names, parameters and style roles: look up, do not guess.
+2. Write or edit the script. Name objects by meaning (pole_i, loop, loop.label). Style takes
+   role names, never raw colors; labels are placed by constraints, never by position.
+3. scene_open the script (again after every edit), then review: lint, what is on screen at
+   each marker, and a storyboard picture. Fix in the script and review again until clean,
+   and look at the picture: lint cannot tell you a layout is ugly.
+4. render a preview. Report what you built and anything you could not fix.
+Scenes with no script: scene_new, then scene_edit with patches (narrate, animate);
+undo, checkpoint, restore and diff work on those."""
 
 
 TOOL_NAMES = (

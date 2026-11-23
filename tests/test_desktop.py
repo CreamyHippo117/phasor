@@ -569,11 +569,12 @@ def test_the_windows_shortcut_is_made_by_powershell(home, monkeypatch):
 
 def test_scenes_go_to_the_documents_folder_windows_shows(home, monkeypatch):
     """On Windows, OneDrive often moves Documents (C:/Users/<you>/OneDrive/Documents)."""
-    from phasor.gui import app, desktop
+    from phasor.gui import desktop
+    from phasor.workspace import paths
 
     moved = home / "OneDrive" / "Documents"
     moved.mkdir(parents=True)
-    monkeypatch.setattr(app, "windows_documents", lambda: moved)
+    monkeypatch.setattr(paths, "windows_documents", lambda: moved)
     assert desktop.scenes_folder() == moved / "phasor"
-    monkeypatch.setattr(app, "windows_documents", lambda: home.parent / "elsewhere")
+    monkeypatch.setattr(paths, "windows_documents", lambda: home.parent / "elsewhere")
     assert desktop.scenes_folder() == home / "Documents" / "phasor"  # not someone else's

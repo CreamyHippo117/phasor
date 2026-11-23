@@ -36,6 +36,7 @@ _MODULES = {  # domain modules: ``from phasor import cx``
     "algebra": "phasor.domains.algebra",
     "calc": "phasor.domains.calc",
     "geo": "phasor.domains.geometry",
+    "cloud": "phasor.domains.cloud",
     "nw": "phasor.domains.network",
     "dyn": "phasor.domains.dynamics",
     "conv": "phasor.domains.convolution",

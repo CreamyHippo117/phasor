@@ -28,6 +28,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from phasor.core.proc import NO_WINDOW
 from phasor.workspace.tools import ToolError, Workspace
 
 HANDOFF = Path(".phasor") / "gui.json"  # inside the workspace root
@@ -203,5 +204,5 @@ def _windows_private(path: Path) -> None:
     who = f"{domain}\\{user}" if domain else user
     subprocess.run(
         ["icacls", str(path), "/inheritance:r", "/grant:r", f"{who}:F"],
-        check=True, capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW,
+        check=True, capture_output=True, creationflags=NO_WINDOW,
     )  # fmt: skip

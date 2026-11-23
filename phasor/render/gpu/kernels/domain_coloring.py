@@ -20,19 +20,76 @@ from phasor.render.gpu.registry import VIEW_BODY, VIEW_PARAMS, kernel, plane, vi
 POLE = 1e30  # |f| above this is drawn as a pole
 
 
-def source_for(function: ComplexFunction) -> str:
+# ---------------------------------------------------------------- blending two functions
+#
+# ``to`` and ``blend`` (0-1) show w = (1 - blend) f + blend g: a straight line between the two
+# functions (a homotopy), so every frame is the picture of a holomorphic function. Zeros glide
+# along continuous paths, a pole of g grows out of a point (its share of the plane scales with
+# blend), and there are no seams. Blending in log space, f^(1-b) g^b, looks plausible but cuts
+# the plane along the branch cuts of log f and log g, where the colours jump. At blend 0 and 1
+# the pixels are exactly those of f and of g. Without ``to`` the source is the one-function
+# source, unchanged; with it the kernel takes ``blend`` as an argument, so a blend that
+# animates never recompiles.
+
+
+def _prelude(function: ComplexFunction, to: ComplexFunction | None) -> str:
+    """The device function ``phasor_f(z, a)`` the kernels call: ``function``, or with ``to``
+    the blend of the two (a macro reading the kernel's ``blend`` argument)."""
+    if to is None:
+        return "static __device__ cplx phasor_f(cplx z, cplx a) { return " + function.c() + "; }"
     return (
-        "static __device__ cplx phasor_f(cplx z) { return "
-        + function.c()
-        + """; }
+        "static __device__ cplx phasor_f0(cplx z, cplx a) { return " + function.c() + "; }\n"
+        "static __device__ cplx phasor_f1(cplx z, cplx a) { return " + to.c() + "; }\n"
+        """static __device__ cplx phasor_mix(cplx z, cplx a, real b) {
+    if (b <= R(0)) return phasor_f0(z, a);
+    if (b >= R(1)) return phasor_f1(z, a);
+    cplx p = phasor_f0(z, a), q = phasor_f1(z, a);
+    return c_make((R(1) - b) * p.re + b * q.re, (R(1) - b) * p.im + b * q.im);
+}
+#define phasor_f(z, a) phasor_mix(z, a, (real)blend)"""
+    )
+
+
+def _blend_param(to: ComplexFunction | None) -> str:
+    return "" if to is None else ", double blend"
+
+
+def blended(function: ComplexFunction, to: ComplexFunction | None = None, blend: float = 0.0):
+    """The NumPy counterpart of ``_prelude``: ``f(z, a)`` of the blend."""
+    f = function.numpy()
+    if to is None or blend <= 0:
+        return f
+    g = to.numpy()
+    if blend >= 1:
+        return g
+
+    def mix(z, a=0j):
+        with np.errstate(all="ignore"):
+            return (1 - blend) * f(z, a) + blend * g(z, a)
+
+    return mix
+
+
+def _blend_arg(to: ComplexFunction | None, blend: float) -> tuple:
+    return () if to is None else (np.float64(blend),)
+
+
+def source_for(function: ComplexFunction, to: ComplexFunction | None = None) -> str:
+    return (
+        _prelude(function, to)
+        + """
 
 extern "C" __global__ void phasor_domain("""
         + VIEW_PARAMS
-        + """, const float* lut, int lut_n, float contour, float soft, float* out)
+        + """, double a_re, double a_im"""
+        + _blend_param(to)
+        + """,
+    const float* lut, int lut_n, float contour, float soft, float* out)
 {"""
         + VIEW_BODY
         + """
-    cplx w = phasor_f(c_make(x, y));
+    cplx a = c_make((real)a_re, (real)a_im);
+    cplx w = phasor_f(c_make(x, y), a);
     float* o = out + 4 * (long long)i;
     real m = c_abs(w);
     o[3] = 1.0f;
@@ -69,10 +126,13 @@ def domain_reference(
     lut: np.ndarray | None = None,
     precision: str = "f32",
     soft: float = 0.0,
+    a: complex = 0j,
+    to: ComplexFunction | None = None,
+    blend: float = 0.0,
 ) -> np.ndarray:
     lut = phase_lut() if lut is None else np.asarray(lut, dtype=np.float32)
     x, y = plane(tile, center, height)
-    w = function.numpy()(x + 1j * y)
+    w = blended(function, to, blend)(x + 1j * y, a)
     with np.errstate(all="ignore"):
         m = np.abs(w)
         pole = ~(m <= POLE)
@@ -96,7 +156,8 @@ def domain_reference(
 
 @kernel(
     "domain",
-    "(tile, function, center, height, contour=0.35, lut=None, precision='f32', soft=0.0) "
+    "(tile, function, center, height, contour=0.35, lut=None, precision='f32', soft=0.0, a=0j, "
+    "to=None, blend=0.0) "
     "-> float32[h, w, 4] linear RGBA",
     reference=domain_reference,
 )
@@ -110,14 +171,19 @@ def domain(
     lut: np.ndarray | None = None,
     precision: str = "f32",
     soft: float = 0.0,
+    a: complex = 0j,
+    to: ComplexFunction | None = None,
+    blend: float = 0.0,
 ):
     """Color ``function`` over the view. ``contour`` (0-1) is how dark modulus bands get;
     ``soft`` (0-1) feathers the band edge;
-    ``lut`` is an (n, 3) cyclic table of linear RGB, default ``core.color.phase_lut()``."""
+    ``lut`` is an (n, 3) cyclic table of linear RGB, default ``core.color.phase_lut()``.
+    With ``to``, the picture is of (1 - ``blend``) function + ``blend`` to (see ``_prelude``)."""
     table = np.ascontiguousarray(phase_lut() if lut is None else lut, dtype=np.float32)
-    compiled = gpu.compile(source_for(function), "phasor_domain", precision)
+    compiled = gpu.compile(source_for(function, to), "phasor_domain", precision)
     out = gpu.cp.empty((tile.h, tile.w, 4), dtype=gpu.cp.float32)
-    args = (*view_args(tile, center, height), gpu.cp.asarray(table),
+    args = (*view_args(tile, center, height), np.float64(complex(a).real),
+            np.float64(complex(a).imag), *_blend_arg(to, blend), gpu.cp.asarray(table),
             np.int32(len(table)), np.float32(contour), np.float32(soft), out)  # fmt: skip
     gpu.launch(compiled, tile.n, args)
     return out
@@ -133,26 +199,29 @@ def domain(
 # bands; alpha carries w, the glow weight the renderer turns into light and bloom.
 
 
-def glow_source_for(function: ComplexFunction) -> str:
+def glow_source_for(function: ComplexFunction, to: ComplexFunction | None = None) -> str:
     return (
-        "static __device__ cplx phasor_f(cplx z) { return "
-        + function.c()
-        + """; }
+        _prelude(function, to)
+        + """
 
 extern "C" __global__ void phasor_domain_glow("""
         + VIEW_PARAMS
-        + """, const float* lut, int lut_n, float radius, float ambient, float contour,
+        + """, double a_re, double a_im"""
+        + _blend_param(to)
+        + """,
+    const float* lut, int lut_n, float radius, float ambient, float contour,
     int lines, float line_glow, float* out)
 {"""
         + VIEW_BODY
         + """
+    cplx a = c_make((real)a_re, (real)a_im);
     float* o = out + 4 * (long long)i;
     cplx z = c_make(x, y);
-    cplx w = phasor_f(z);
+    cplx w = phasor_f(z, a);
     real m = c_abs(w);
     if (!(m <= R(1e30))) { o[0] = 1.0f; o[1] = 1.0f; o[2] = 1.0f; o[3] = 1.0f; return; }
     real hs = (real)(0.5 * height / (double)full_h);  // half a pixel
-    cplx dw = c_sub(phasor_f(c_make(x + hs, y)), phasor_f(c_make(x - hs, y)));
+    cplx dw = c_sub(phasor_f(c_make(x + hs, y), a), phasor_f(c_make(x - hs, y), a));
     real dm = c_abs(dw) / (R(2) * hs);                 // |f'|
     real wt = R(0);
     if (m == R(0)) wt = R(1);
@@ -205,10 +274,17 @@ def domain_glow_reference(
     precision: str = "f32",
     lines: int = 0,
     line_glow: float = 0.6,
+    a: complex = 0j,
+    to: ComplexFunction | None = None,
+    blend: float = 0.0,
 ) -> np.ndarray:
     lut = phase_lut() if lut is None else np.asarray(lut, dtype=np.float32)
     x, y = plane(tile, center, height)
-    f = function.numpy()
+    f0 = blended(function, to, blend)
+
+    def f(z):
+        return f0(z, a)
+
     hs = 0.5 * height / tile.full_h
     with np.errstate(all="ignore"):
         w = f(x + 1j * y)
@@ -246,7 +322,8 @@ def domain_glow_reference(
 @kernel(
     "domain_glow",
     "(tile, function, center, height, lut=None, radius=0.3, ambient=0.08, contour=0.15, "
-    "precision='f32', lines=0, line_glow=0.6) -> float32[h, w, 4] linear RGB, alpha = glow",
+    "precision='f32', lines=0, line_glow=0.6, a=0j, to=None, blend=0.0) "
+    "-> float32[h, w, 4] linear RGB, alpha = glow",
     reference=domain_glow_reference,
 )
 def domain_glow(
@@ -262,18 +339,23 @@ def domain_glow(
     precision: str = "f32",
     lines: int = 0,
     line_glow: float = 0.6,
+    a: complex = 0j,
+    to: ComplexFunction | None = None,
+    blend: float = 0.0,
 ):
     """The prism look of ``function``: phase as hue, lit near its zeros and poles (within
     about ``radius`` world units), ``ambient`` light elsewhere, soft modulus bands of depth
     ``contour``; ``lines`` rays of constant phase per turn plus a ring each time |f|
-    doubles, about a pixel wide, lit by ``line_glow``; alpha is the glow weight."""
+    doubles, about a pixel wide, lit by ``line_glow``; alpha is the glow weight. With ``to``,
+    the picture is of (1 - ``blend``) function + ``blend`` to."""
     if radius <= 0:
         raise ValueError("radius must be positive")
     table = np.ascontiguousarray(phase_lut() if lut is None else lut, dtype=np.float32)
-    compiled = gpu.compile(glow_source_for(function), "phasor_domain_glow", precision)
+    compiled = gpu.compile(glow_source_for(function, to), "phasor_domain_glow", precision)
     out = gpu.cp.empty((tile.h, tile.w, 4), dtype=gpu.cp.float32)
-    args = (*view_args(tile, center, height), gpu.cp.asarray(table), np.int32(len(table)),
-            np.float32(radius), np.float32(ambient), np.float32(contour), np.int32(lines),
-            np.float32(line_glow), out)  # fmt: skip
+    args = (*view_args(tile, center, height), np.float64(complex(a).real),
+            np.float64(complex(a).imag), *_blend_arg(to, blend), gpu.cp.asarray(table),
+            np.int32(len(table)), np.float32(radius), np.float32(ambient),
+            np.float32(contour), np.int32(lines), np.float32(line_glow), out)  # fmt: skip
     gpu.launch(compiled, tile.n, args)
     return out

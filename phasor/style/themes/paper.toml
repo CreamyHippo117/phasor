@@ -153,6 +153,7 @@ subtle = 0.5
 stagger = 0.12
 dim_level = 0.25
 orbit_swing = 35.0   # degrees the camera swings during orbit_reveal
+transform_arc = 0.9   # line heights a part arcs by when transform moves it past other parts
 
 [motion.reveal]
 duration = 0.6

@@ -22,6 +22,7 @@ import numpy as np
 
 from phasor.core import text as text_metrics
 from phasor.core.state import ObjectState, SceneState
+from phasor.core.timing import stage
 from phasor.layout.geometry import occludes
 from phasor.render.glcontext import on_gl_thread, shared_context
 
@@ -289,6 +290,44 @@ class _Collector:
         )  # fmt: skip
 
 
+class PendingRead:
+    """A color pass on its way off the card (``GLRenderer.start_color_raw``)."""
+
+    def __init__(self, renderer: GLRenderer, packs: list, size: tuple[int, int]) -> None:
+        self._renderer, self._packs, self.size = renderer, packs, size
+
+    def collect(self) -> tuple[np.ndarray, np.ndarray]:
+        """Wait for the copy; the picture and emission as (h, w, 4) float16, rows
+        bottom-up, read-only. The pack buffers go back to the renderer's pool."""
+        if self._packs is None:
+            raise RuntimeError("this read was already collected or released")
+        packs, self._packs = self._packs, None
+        w, h = self.size
+        with stage("readback"):
+            data = self._renderer._finish_read(packs, self.size, read=True)
+        pic, glow = (np.frombuffer(d, dtype=np.float16).reshape(h, w, 4) for d in data)
+        return pic, glow
+
+    def release(self) -> None:
+        """Give the buffers back unread (after an error). Harmless once collected."""
+        if self._packs is not None:
+            packs, self._packs = self._packs, None
+            self._renderer._finish_read(packs, self.size, read=False)
+
+
+ARENA_MIN_BYTES = 64 * 1024  # first size of a reused vertex or index buffer; it doubles
+
+
+def _refill(buffer, data: np.ndarray) -> None:
+    """Replace a reused buffer's contents with ``data``: fresh storage (orphaned, so no draw
+    still reading the old contents makes us wait), grown by doubling when too small."""
+    size = buffer.size
+    while size < data.nbytes:
+        size *= 2
+    buffer.orphan(size)
+    buffer.write(data)
+
+
 class GLRenderer:
     """Renders SceneStates. Also satisfies ``phasor.inspect.passes.PassRunner``."""
 
@@ -302,6 +341,8 @@ class GLRenderer:
         self._fields: OrderedDict[tuple, np.ndarray] = OrderedDict()
         self._emit_clear: dict[tuple[int, int], Any] = {}
         self._bridge = None
+        self._arena: dict[tuple, tuple] = {}  # (program, layout, indexed) -> (vao, vbos, ibo)
+        self._free_packs: dict[tuple[int, int], list] = {}  # size -> free pack-buffer pairs
 
     # ------------------------------------------------------------ resources
 
@@ -360,6 +401,31 @@ class GLRenderer:
             self._text_textures[key] = tex
         return self._text_textures[key]
 
+    def _vertex_array(self, prog, layout: tuple, arrays: list, indices=None):
+        """A vertex array over ``arrays`` (one per ``layout`` entry ``(format, *names)``)
+        and ``indices``, ready to draw, and its vertex count (GPU_SPEED.md step 3a).
+
+        One vertex array per (program, layout, indexed) lives as long as the renderer; its
+        buffers grow to the largest draw seen and are orphaned and refilled for each draw,
+        so the card never waits for a draw still reading the old contents. The draw is the
+        same as with fresh buffers: same data, same order, same count."""
+        key = (prog, layout, indices is not None)
+        if key not in self._arena:
+            ctx = self.ctx
+            vbos = [ctx.buffer(reserve=ARENA_MIN_BYTES) for _ in layout]
+            ibo = ctx.buffer(reserve=ARENA_MIN_BYTES) if indices is not None else None
+            vao = ctx.vertex_array(prog, [(b, *f) for b, f in zip(vbos, layout, strict=True)],
+                                   index_buffer=ibo, index_element_size=4)  # fmt: skip
+            self._arena[key] = (vao, vbos, ibo)
+        vao, vbos, ibo = self._arena[key]
+        for b, a in zip(vbos, arrays, strict=True):
+            _refill(b, np.ascontiguousarray(a, dtype="f4"))
+        if ibo is None:
+            return vao, len(arrays[0])
+        idx = np.ascontiguousarray(indices, dtype="i4")
+        _refill(ibo, idx)
+        return vao, idx.size
+
     # ------------------------------------------------------------ drawing
 
     def _commands(self, state, obj: ObjectState, pass_) -> list:
@@ -369,7 +435,6 @@ class GLRenderer:
 
     def _draw_object(self, state, obj: ObjectState, pass_, size, order: int, zoom: float,
                      commands=None) -> None:  # fmt: skip
-        ctx = self.ctx
         cam = state.camera_for(obj)
         for kind, c in self._commands(state, obj, pass_) if commands is None else commands:
             if kind == "surface" and pass_ == "color":
@@ -413,13 +478,10 @@ class GLRenderer:
                 prog["u_glow"].value = float(c.get("glow", 1.0)) * (1.0 + 1.5 * flash)
             elif pass_ == "id":
                 prog["u_id"].value = obj.index
-            buffers = []
             if kind == "image":
                 c["quad"][1].use(0)
                 prog["u_tex"].value = 0
-                vbo = ctx.buffer(c["quad"][0].tobytes())
-                vao = ctx.vertex_array(prog, [(vbo, "3f 2f", "in_pos", "in_uv")])
-                buffers = [vbo]
+                vao, n = self._vertex_array(prog, (("3f 2f", "in_pos", "in_uv"),), [c["quad"][0]])
             elif kind == "text":
                 corner, wv, hv = text_metrics.quad(
                     c["text"], c["origin"], c["height"], c["anchor"], cam.right, cam.up
@@ -443,30 +505,17 @@ class GLRenderer:
                     ],
                     dtype="f4",
                 )
-                vbo = ctx.buffer(quad.tobytes())
-                vao = ctx.vertex_array(prog, [(vbo, "3f 2f", "in_pos", "in_uv")])
-                buffers = [vbo]
+                vao, n = self._vertex_array(prog, (("3f 2f", "in_pos", "in_uv"),), [quad])
+            elif kind == "vmesh":
+                layout = (("3f", "in_pos"), ("4f", "in_color"))
+                vao, n = self._vertex_array(prog, layout, [c["positions"], c["colors"]],
+                                            c["indices"])  # fmt: skip
             else:
-                vbo = ctx.buffer(np.ascontiguousarray(c["positions"], dtype="f4").tobytes())
-                buffers = [vbo]
-                ibo = None
-                if c["indices"] is not None:
-                    ibo = ctx.buffer(np.ascontiguousarray(c["indices"], dtype="i4").tobytes())
-                    buffers.append(ibo)
-                if kind == "vmesh":
-                    cbo = ctx.buffer(np.ascontiguousarray(c["colors"], dtype="f4").tobytes())
-                    buffers.append(cbo)
-                    vao = ctx.vertex_array(prog, [(vbo, "3f", "in_pos"), (cbo, "4f", "in_color")],
-                                           index_buffer=ibo)  # fmt: skip
-                else:
-                    vao = ctx.vertex_array(prog, [(vbo, "3f", "in_pos")], index_buffer=ibo)
-            vao.render()
-            vao.release()
-            for b in buffers:
-                b.release()
+                vao, n = self._vertex_array(prog, (("3f", "in_pos"),), [c["positions"]],
+                                            c["indices"])  # fmt: skip
+            vao.render(vertices=n)
 
     def _draw_lit(self, state, cam, c, order: int, zoom: float) -> None:
-        ctx = self.ctx
         prog = self._program("color", "lit")
         light = state.light
         prog["u_vp"].write(cam.view_proj.astype("f4").T.tobytes())
@@ -488,14 +537,9 @@ class GLRenderer:
         data = np.empty((n, 12), dtype="f4")
         data[:, 0:3], data[:, 3:6] = c["positions"], c["normals"]
         data[:, 6:10], data[:, 10:12] = c["colors"], c["uv"]
-        vbo = ctx.buffer(data.tobytes())
-        ibo = ctx.buffer(np.ascontiguousarray(c["indices"], dtype="i4").tobytes())
-        vao = ctx.vertex_array(prog, [(vbo, "3f 3f 4f 2f", "in_pos", "in_normal", "in_rgba",
-                                       "in_uv")], index_buffer=ibo)  # fmt: skip
-        vao.render()
-        vao.release()
-        vbo.release()
-        ibo.release()
+        layout = (("3f 3f 4f 2f", "in_pos", "in_normal", "in_rgba", "in_uv"),)
+        vao, count = self._vertex_array(prog, layout, [data], c["indices"])
+        vao.render(vertices=count)
 
     def _field_quad(self, state, obj, cam, c, size, zoom):
         """Compute a kernel-drawn quad's visible pixels and upload them through the bridge.
@@ -545,14 +589,15 @@ class GLRenderer:
         return verts, tex
 
     def _render(self, state, pass_, size, **kwargs) -> np.ndarray:
-        return on_gl_thread(self._render_on_gl_thread, state, pass_, size, **kwargs)
+        with stage("draw"):
+            return on_gl_thread(self._render_on_gl_thread, state, pass_, size, **kwargs)
 
     def _render_on_gl_thread(self, state, pass_, size, **kwargs) -> np.ndarray:
         with self.ctx:  # make our context current: another one may have been used since
             return self._render_current(state, pass_, size, **kwargs)
 
     def _render_current(
-        self, state, pass_, size, *, only=None, force=frozenset(), zoom=1.0
+        self, state, pass_, size, *, only=None, force=frozenset(), zoom=1.0, raw=False
     ) -> np.ndarray:
         import moderngl
 
@@ -599,14 +644,32 @@ class GLRenderer:
             self._draw_deferred(state, deferred, size, zoom)
         if resolved is not target:
             ctx.copy_framebuffer(resolved, target)
+        if raw != "async":
+            # Measured runs only: wait for the card to finish drawing here, so the read
+            # below is charged for the copy alone (a read otherwise waits for the drawing
+            # too). An asynchronous read must not wait: that is its point.
+            with stage("gpu draw", sync=ctx.finish):
+                pass
+        return self._read(resolved, pass_, size, raw=raw)
+
+    def _read(self, resolved, pass_, size, raw=False):
         w, h = size
+        if pass_ == "color" and raw:  # as stored: float16, rows bottom-up, not widened
+            free = self._free_packs.setdefault(size, [])
+            packs = free.pop() if free else [self.ctx.buffer(reserve=w * h * 8) for _ in (0, 1)]
+            for buffer, attachment in zip(packs, (0, 1), strict=True):  # returns at once
+                resolved.read_into(buffer, components=4, dtype="f2", attachment=attachment)
+            return PendingRead(self, packs, size)
         if pass_ == "color":
             out = []
             for attachment in (0, 1):
-                raw = resolved.read(components=4, dtype="f2", attachment=attachment)
-                px = np.frombuffer(raw, dtype=np.float16).reshape(h, w, 4)[::-1]
-                out.append(px.astype(np.float32))
-            return np.stack(out)
+                with stage("readback"):
+                    raw = resolved.read(components=4, dtype="f2", attachment=attachment)
+                with stage("widen"):  # float16 rows bottom-up -> float32 rows top-down
+                    px = np.frombuffer(raw, dtype=np.float16).reshape(h, w, 4)[::-1]
+                    out.append(px.astype(np.float32))
+            with stage("widen"):
+                return np.stack(out)
         if pass_ == "id":
             raw = np.frombuffer(resolved.read(components=1, dtype="u4"), dtype=np.uint32)
             return raw.reshape(h, w)[::-1].copy()
@@ -657,6 +720,33 @@ class GLRenderer:
         size = size or (state.width, state.height)
         both = self._render(state, "color", size)
         return both[0], both[1]
+
+    def color_and_emission_raw(
+        self, state: SceneState, size: tuple[int, int] | None = None
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """``color_and_emission`` as the targets store it: (h, w, 4) float16, rows
+        bottom-up (row 0 = the bottom of the frame), read-only. For sums made on the card
+        (``Engine.frame_blurred``), which widen and flip there instead of on the host."""
+        return self.start_color_raw(state, size).collect()
+
+    def start_color_raw(
+        self, state: SceneState, size: tuple[int, int] | None = None
+    ) -> PendingRead:
+        """Draw the color pass and start copying both targets off the card, without
+        waiting: ``collect()`` on the result gives what ``color_and_emission_raw`` gives.
+        Start several before collecting any, and the card copies one frame while the next
+        is being built. Every started read must be collected (or ``release``d)."""
+        size = size or (state.width, state.height)
+        return self._render(state, "color", size, raw="async")
+
+    def _finish_read(self, packs: list, size, read: bool) -> list[bytes] | None:
+        def run():
+            with self.ctx:
+                data = [b.read() for b in packs] if read else None
+            self._free_packs.setdefault(size, []).append(packs)
+            return data
+
+        return on_gl_thread(run)
 
     def id_buffer(self, state, size, force: frozenset[str] = frozenset()) -> np.ndarray:
         return self._cached(

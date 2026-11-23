@@ -28,7 +28,7 @@ from phasor.core.objects import Bounds, DrawContext, ObjectBase, ParamsBase, Pas
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
 from phasor.domains import geometry_math as gm
-from phasor.domains.strokes import field_arrows, polyline, with_alpha
+from phasor.domains.strokes import field_arrows, polyline, polylines, with_alpha
 
 T = ("t",)
 UV = ("u", "v")
@@ -656,12 +656,18 @@ class FlowParticles(ObjectBase):
         seg, alpha = gm.particles(paths, phase, state.t, p.lifetime, max(p.tail, 0.02))
         top = float(np.nanmax(strength)) if np.isfinite(strength).any() else 1.0
         rgb = gm.sample_ramp(ramp(me.style["colormap"]), gm.normalize01(strength, 0.0, top))
-        for pts, a, c in zip(seg, alpha, rgb, strict=True):
-            if a.max() <= 0.01 or np.linalg.norm(pts[-1] - pts[0]) < 1e-9:
-                continue
-            cols = np.c_[np.tile(c, (len(pts), 1)), a * p.opacity]
-            polyline(ctx, cam, pts, me.style["stroke"] * cam.units_per_height(pts),
-                     color=(*c, p.opacity), glow=me.style["glow"], colors=cols)  # fmt: skip
+        # Skip the invisible and the still; draw the rest as one batch of strokes, in order.
+        keep = (alpha.max(axis=1) > 0.01) & (np.linalg.norm(seg[:, -1] - seg[:, 0], axis=1) >= 1e-9)
+        seg, alpha, rgb = seg[keep], alpha[keep], rgb[keep]
+        if not len(seg):
+            return
+        count, k = seg.shape[:2]
+        cols = np.empty((count, k, 4))
+        cols[..., :3], cols[..., 3] = rgb[:, None, :], alpha * p.opacity
+        width = me.style["stroke"] * np.asarray(cam.units_per_height(seg.reshape(-1, 3)))
+        # Per-point colors carry the hue; of ``color`` the shader uses only the opacity.
+        polylines(ctx, cam, seg, width.reshape(count, k), color=(1.0, 1.0, 1.0, p.opacity),
+                  glow=me.style["glow"], colors=cols)  # fmt: skip
 
 
 @functools.lru_cache(maxsize=32)

@@ -17,15 +17,22 @@ datas = copy_metadata("phasor")
 datas += collect_data_files("phasor", include_py_files=False)  # themes, looks, icons
 datas += collect_data_files("matplotlib", subdir="mpl-data")  # mathtext fonts
 datas += [(str(ROOT / "docs" / "ai"), "phasor/_docs/docs/ai"),
-          (str(ROOT / "examples"), "examples")]
+          (str(ROOT / "examples"), "examples"),
+          (str(ROOT / "kit"), "phasor/_docs/kit"),  # the AI kit (phasor kit)
+          (str(ROOT / "skills"), "phasor/_docs/skills"),
+          (str(ROOT / "STYLE.md"), "phasor/_docs")]
 hidden = collect_submodules("phasor") + ["moderngl", "glcontext", "av", "kiwisolver"]
 binaries = []
 excludes = ["cupy", "tkinter", "IPython", "ipywidgets", "notebook", "pytest"]
-# PHASOR_PACKAGE_GPU=1 bundles CuPy and its CUDA libraries (NVIDIA machines; about 1 GB more).
-# The app still runs on a machine without a card: the kernels fall back to NumPy.
+# PHASOR_PACKAGE_GPU=1 bundles CuPy and the CUDA libraries it needs (NVIDIA machines; about
+# 340 MB more). The app still runs on a machine without a card: the kernels fall back to NumPy.
+# phasor's kernels need only NVRTC and the CUDA runtime: cuBLAS, cuSOLVER, cuSPARSE, cuFFT,
+# cuRAND and nvJitLink (2 GB) are left out; checked on an RTX 4070 Ti, 2026-11-20.
 if os.environ.get("PHASOR_PACKAGE_GPU"):
     excludes.remove("cupy")
-    for package in ("cupy", "cupy_backends", "fastrlock", "nvidia"):
+    hidden += ["graphlib"]  # CuPy imports it out of PyInstaller's sight (Windows, 2026-11-20)
+    for package in ("cupy", "cupy_backends", "fastrlock", "nvidia.cuda_runtime",
+                    "nvidia.cuda_nvrtc"):
         try:
             d, b, h = collect_all(package)
         except Exception:  # nvidia.* wheels are absent with older CuPy

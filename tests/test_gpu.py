@@ -233,7 +233,8 @@ def test_bench_runs_on_the_card():
 @pytest.mark.slow
 def test_memory_stays_flat_over_a_long_render():
     """B6: VRAM and host memory flat over a long render (300 frames by default; the full
-    2,000 with PHASOR_LONG_RENDER=2000). Every frame differs, so no cache can hide a leak."""
+    2,000 with PHASOR_LONG_RENDER=2000). Every frame differs, so no cache can hide a leak.
+    Half the frames are motion-blurred (GPU_SPEED.md step 2: the sum lives on the card)."""
     import cupy
 
     from phasor import Scene, cx
@@ -252,7 +253,10 @@ def test_memory_stays_flat_over_a_long_render():
 
     vram, rss = [], []
     for k in range(frames):
-        e.frame(k / 30, (480, 270))
+        if k % 2:  # every other frame motion-blurred: the blur sum on the card must not leak
+            e.frame_blurred(k / 30, 30, size=(480, 270), output="srgb8")
+        else:
+            e.frame(k / 30, (480, 270))
         if k in (frames // 10, frames - 1):
             v, r = sample()
             vram.append(v)

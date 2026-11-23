@@ -30,41 +30,104 @@ lines = 12
 [defaults.domain_coloring.style]
 glow = "strong"
 
+[defaults.fractal.params]  # the prism preset: the set dark, its edge glowing (BEAUTY.md item 4)
+radius = 0.01
+ambient = 0.03
+
 [defaults.fractal.style]
 colormap = "ocean"
+glow = "soft"  # owner 2026-11-22: strong glow whited out the dense filaments of a dive
 
-# heat maps: smooth, glowing where strong, contour lines of light (BEAUTY.md item 2)
+# heat maps: smooth, dark where quiet and glowing where strong in spectrum hues that
+# run with the value, contour lines of light, edges melting into the dark
+# (BEAUTY.md item 2; the same values as heatmap.PRISM)
 [defaults.pde_field.params]
 dim = 0.88  # a little see-through: what is behind glows through
 smooth = true
 isolines = 8
+hue_cycles = 1.6
+fade = 0.1
+ambient = 0.0
+contrast = 2.0
 
 [defaults.pde_field.style]
 glow = "soft"
+colormap = "spectrum"
 
 [defaults.pde_slice.params]
 dim = 0.88  # a little see-through: what is behind glows through
 smooth = true
 isolines = 8
+hue_cycles = 1.6
+fade = 0.1
+ambient = 0.0
+contrast = 2.0
 
 [defaults.pde_slice.style]
 glow = "soft"
+colormap = "spectrum"
 
 [defaults.pressure_slice.params]
 dim = 0.88  # a little see-through: what is behind glows through
 smooth = true
 isolines = 8
+hue_cycles = 1.6
+fade = 0.1
+ambient = 0.0
+contrast = 2.0
 
 [defaults.pressure_slice.style]
 glow = "soft"
+colormap = "spectrum"
 
 [defaults.spectrogram.params]
 dim = 0.88  # a little see-through: what is behind glows through
 smooth = true
 isolines = 8
+hue_cycles = 1.6
+fade = 0.1
+ambient = 0.0
+contrast = 2.0
 
 [defaults.spectrogram.style]
 glow = "soft"
+colormap = "spectrum"
+
+# the height mode in 3D: a dark landscape in spectrum hues under a net of glowing
+# lines (the same values as pde.Surface's prism preset)
+[defaults.pde_surface.params]
+hue_cycles = 1.6
+contrast = 1.5
+lines = 24
+
+[defaults.pde_surface.style]
+colormap = "spectrum"
+glow = "strong"
+material = "glass"
+
+# point clouds: palette hue, glow and haze (BEAUTY.md item 3)
+[defaults.point_cloud.params]
+exposure = 0.06
+point_size = 0.9
+white = 0.8     # the densest parts run white-hot
+twinkle = 0.6   # each point's light flickers a little (life)
+
+[defaults.point_cloud.style]
+colormap = "spectrum"
+glow = "strong"
+
+# a 3D room with sound bouncing in it (BEAUTY.md item 7): faint glowing edges, rays and
+# fronts colored from the palette by reflection count
+[defaults.room3d.style]
+glow = "soft"
+
+[defaults.sound_rays.style]
+glow = "strong"
+colormap = "spectrum"
+
+[defaults.wavefront3d.style]
+glow = "strong"
+colormap = "spectrum"
 
 [defaults.counter.style]
 glow = "soft"
@@ -93,9 +156,6 @@ glow = "soft"
 glow = "strong"
 
 [defaults.parametric_surface.style]
-material = "glass"
-
-[defaults.pde_surface.style]
 material = "glass"
 
 [defaults.riemann_surface.style]

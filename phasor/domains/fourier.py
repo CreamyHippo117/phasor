@@ -22,14 +22,14 @@ from typing import Any, ClassVar, Literal
 import numpy as np
 from pydantic import Field, field_validator, model_validator
 
+from phasor.core import files
 from phasor.core.color import ramp
 from phasor.core.objects import Bounds, DrawContext, ObjectBase, ParamsBase, Pass, register
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
 from phasor.domains import fourier_math as fm
-from phasor.domains.heatmap import heat_pixels, lut_colour
+from phasor.domains.heatmap import PRISM, HeatParams, heat_pixels, lut_colour, wheel_colour
 from phasor.domains.strokes import circle, disc, hue_colors, polyline, with_alpha
-from phasor.time.compile import resolve_file
 
 
 def _ydir(me, state: SceneState) -> float:
@@ -502,16 +502,16 @@ class Spectrogram(ObjectBase):
     semantics name the strongest frequency under it."""
 
     type: ClassVar[str] = "spectrogram"
-    Files: ClassVar = ("wav",)  # checked to exist when the document compiles
+    Files: ClassVar = ("wav",)  # in the scene's folder (core/files.py); missing: lint
     Style: ClassVar = {"colormap": ("colormap", "ocean"), "glow": ("glow", "none"),
                        "playhead": ("emphasis", "highlight"),
                        "stroke": ("stroke", "hairline")}  # fmt: skip
-    Presets: ClassVar = {
-        # the prism look: smooth, glowing where strong, contour lines of light
-        "prism": {"params": {"smooth": True, "isolines": 8}, "style": {"glow": "soft"}},
-    }
+    # the prism look (heatmap.PRISM); here the hue runs up the frequency axis, so a sliding
+    # tone's trace runs through the spectrum the way hue runs along a prism stroke
+    Presets: ClassVar = {"prism": PRISM}
+    Life: ClassVar = frozenset({"hue", "glow"})
 
-    class Params(ParamsBase):
+    class Params(HeatParams):
         f0: float = Field(200.0, gt=0)  # the chirp (no signal, no wav)
         f1: float = Field(1200.0, gt=0)
         signal: str = ""  # a formula in t (seconds), over ``duration`` at ``fs``
@@ -525,8 +525,6 @@ class Spectrogram(ObjectBase):
         playhead: float = Field(-1.0, ge=-1, le=1)  # 0..1 of the duration; below 0: no line
         pos: Vec3 = (0.0, 0.0, 0.0)  # centre
         size: tuple[float, float] = (6.0, 3.0)
-        smooth: bool = False  # bicubic between grid values (the prism look); else as before
-        isolines: int = Field(0, ge=0, le=64)  # contour levels drawn as thin light
 
         @field_validator("wav")
         @classmethod
@@ -565,13 +563,17 @@ class Spectrogram(ObjectBase):
         c = np.asarray(p.pos, dtype=np.float64) - np.array([p.size[0] / 2, p.size[1] / 2, 0.0])
         return c, np.array([p.size[0], 0.0, 0.0]), np.array([0.0, p.size[1], 0.0])
 
-    def _analysis(self, state: SceneState) -> dict[str, Any]:
+    def _analysis(self, state: SceneState) -> dict[str, Any] | None:
         """The signal's STFT (``freq``, ``time``, ``mag``) cropped to ``fmax``, with its
-        ``duration``, sample rate, ``source`` and the axis ``top``."""
+        ``duration``, sample rate, ``source`` and the axis ``top``; None while the ``wav`` is
+        missing or unreadable (lint ``missing_file``: draws nothing)."""
         p = self.me(state).params
         if p.wav:
-            file = resolve_file(p.wav, state.assets)
-            source, ref, mtime = "wav", str(file.resolve()), os.path.getmtime(file)
+            try:
+                file = files.resolve(state.base_dir, p.wav)
+                source, ref, mtime = "wav", str(file), os.path.getmtime(file)
+            except (OSError, ValueError):
+                return None
         elif p.signal:
             source, ref, mtime = "formula", p.signal, 0.0
         else:
@@ -591,6 +593,8 @@ class Spectrogram(ObjectBase):
     def semantics(self, state: SceneState) -> dict[str, Any]:
         p = self.me(state).params
         a = self._analysis(state)
+        if a is None:
+            return {"kind": "spectrogram", "backdrop": True, "source": "wav", "missing": True}
         out = {"kind": "spectrogram", "backdrop": True, "source": a["source"],
                "f0": p.f0, "f1": p.f1, "duration": a["duration"], "max_frequency": a["top"],
                "playhead": p.playhead if p.playhead >= 0 else None, "playhead_time": None,
@@ -605,17 +609,24 @@ class Spectrogram(ObjectBase):
         me = self.me(state)
         p = me.params
         sg = self._analysis(state)
+        if sg is None:
+            return
         mag = sg["mag"] / max(float(sg["mag"].max()), 1e-12)
         lut = ramp(me.style["colormap"], np.float32)  # strongest = brightest (ocean is cyclic)
         corner, right, up = self._rect(p)
         glow = float(me.style.get("glow", 1.0))
         paint = lut_colour(lut, "linear" if p.smooth else "nearest")
+        wheel = wheel_colour(me.style["colormap"], p)
+
+        def up_hue(v, u, h):  # prism: the hue of the frequency (its place up the panel)
+            return np.broadcast_to(wheel(h)[:, None], (*v.shape, 3))
+
         pixels = heat_pixels(
             mag.T, p.size, lambda v: paint(np.sqrt(np.clip(v, 0, 1))), cells=True,
-            how="smooth" if p.smooth else "nearest", isolines=p.isolines,
-            level=lambda v: np.sqrt(np.clip(v, 0, 1)),
+            how="smooth" if p.smooth else "nearest", level=lambda v: np.sqrt(np.clip(v, 0, 1)),
             weight=(lambda v: np.sqrt(np.clip(v, 0, 1))) if glow > 1 else None,
-            background=state.background,
+            background=state.background, **p.drawing(),
+            colour_at=up_hue if p.hue_cycles > 0 else None,
         )  # fmt: skip
         ctx.field(corner, right, up, pixels=pixels, opacity=p.opacity, glow=glow)
         if p.playhead >= 0 and pass_ == "color":

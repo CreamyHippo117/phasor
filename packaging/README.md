@@ -13,15 +13,16 @@ uv run python packaging/make_icon.py          # only if you changed the icon dra
 uv run pyinstaller packaging/phasor.spec --noconfirm
 ```
 
-The result is `dist/phasor/` (about 480 MB on Linux, most of it Qt, SciPy and SymPy). Zip
+The result is `dist/phasor/` (about 480 MB on Linux, most of it Qt, SciPy and SymPy; 664 MB on
+Windows with `PHASOR_PACKAGE_GPU=1`). Zip
 that folder to share it, or run `dist/phasor/phasor` directly.
 
 | System | State |
 | --- | --- |
 | Linux (x86-64) | built and run here: the command line inside the app renders, lints and runs `doctor`; the window opens |
-| Windows | **untested**: the recipe uses `icon.ico` and hides the console; build it on Windows and try it |
+| Windows | built and run on Windows 11 (2026-11-20): `tests/test_packaging.py` passes; no console window, none flashing behind it (`core/proc.py`); the Start-menu shortcut starts it |
 | macOS | **untested**: the recipe also makes `dist/phasor.app` |
-| NVIDIA / CUDA | **untested**: CuPy is left out of the app (it is large and needs a matching driver); kernels run on NumPy. Add `--extra gpu` and drop `"cupy"` from `excludes` in the spec to try |
+| NVIDIA / CUDA | built with `PHASOR_PACKAGE_GPU=1` (and `--extra gpu`) on an RTX 4070 Ti: the app is tier A, kernels run on the card and match NumPy. Only NVRTC and the CUDA runtime are bundled (2 GB of unused CUDA libraries left out). Without the variable CuPy is left out and kernels run on NumPy |
 
 To check a build: `PHASOR_TEST_PACKAGE=1 uv run pytest tests/test_packaging.py` builds the
 app and runs every command, a render with typeset maths, and the window.
@@ -33,7 +34,10 @@ uv run phasor-gui --install-shortcut
 ```
 
 On Linux that writes `~/.local/share/applications/phasor.desktop`; on Windows a Start-menu
-entry (untested); on macOS build the `.app` instead.
+entry (checked on Windows 11 with the packaged app); on macOS build the `.app` instead.
+
+To install on Windows: copy `dist/phasor` to `%LOCALAPPDATA%\Programs\phasor`, then run
+`phasor.exe --install-shortcut` from there once.
 
 Settings (recent scenes, the math typesetting choice) live in `%APPDATA%\phasor`,
 `~/Library/Application Support/phasor` or `~/.config/phasor`. New scenes and copies of

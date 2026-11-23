@@ -252,3 +252,17 @@ def test_heat3d_mode_decays_at_the_exact_rate_and_slices_match():
     np.testing.assert_allclose(sl, s["u"][:, :, 8])
     with pytest.raises(ValueError, match="unstable"):
         pm.Heat3D(k=1.0, size=1.0, n=16, dt=1.0)
+
+
+def test_a_field_moves_between_solver_steps():
+    """A solver step longer than a frame must not freeze the picture for several frames:
+    between two steps the state is blended, and at a step it is that step exactly."""
+    from phasor.domains import pde
+
+    sim = pde._sim("wave2d", (("mode", (2, 3)), ("n", 64), ("size", (4.6, 4.6)), ("speed", 1.0)))
+    t0 = 40 * sim.dt
+    a, b = pde._state(sim, t0)["u"], pde._state(sim, t0 + sim.dt)["u"]
+    mid = pde._state(sim, t0 + 0.25 * sim.dt)["u"]
+    assert not np.array_equal(mid, a) and not np.array_equal(mid, b)
+    assert np.allclose(mid, 0.75 * a + 0.25 * b)
+    assert np.array_equal(pde._state(sim, t0)["u"], a)  # pure: same time, same state

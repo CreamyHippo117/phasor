@@ -65,7 +65,7 @@ These seven decisions are hard to change later. Build them exactly as written in
 
 **3. Time is a pure function**
 
-- `Engine.state_at(t) -> SceneState` depends only on (document, t), given the machine's occlusion oracle: the layout bake reads the real id pass where OpenGL exists and geometry where it does not, so a near-tie can place a label differently on two machines (ADR 0002). `SceneState` is immutable (frozen dataclasses) and holds every object's resolved parameters.
+- `Engine.state_at(t) -> SceneState` depends only on (document, t), given the machine's occlusion oracle: the layout bake reads the real id pass where OpenGL exists and geometry where it does not, so a near-tie can place a label differently on two machines (ADR 0002). It may also depend on files the document names: an object type lists its file-path params in `Files` (e.g. `Room3D.path`, a Wavefront `.obj`); paths are relative and stay inside the scene's folder (`core/files.py`), a changed file is re-read (cached on its mtime and size), and a missing one draws nothing and is lint `missing_file` (owner approved, 2026-11-22). `SceneState` is immutable (frozen dataclasses) and holds every object's resolved parameters.
 - Parameters form a DAG of constants, tracks (piecewise segments with easing) and expressions over other parameters. Evaluate in topological order; a cycle is a validation error.
 - Narration lives in a separate `TimeMap` (marker name to seconds). Tracks store marker-relative anchors. Re-recording audio rebuilds only the `TimeMap`.
 - Simulations (PDE, FDTD, particles) are `Simulation` objects with `step(state, dt)`, a fixed dt, a seed, and checkpoints every N steps cached in `.phasor_cache/` under a hash of their parameters. `state_at(t)` = nearest earlier checkpoint + remaining steps.
@@ -103,6 +103,7 @@ Every object type implements the `SceneObject` protocol. A type missing any memb
 - Stage 2: label placer. Candidates = 8 compass slots around the anchor plus leader-line slots. Cost = overlap area + occlusion (from the ID buffer) + distance from anchor + movement since the previous key time.
 - Hysteresis: a label changes slot only when cost improves by more than 20%, so labels never jitter.
 - Constraints the solver cannot satisfy are returned as lint issues, never dropped silently.
+- A render worker process may apply the bake its parent `Engine` computed for the same document (`Engine.worker_payload` / `Engine.from_payload`, checked by a fingerprint of the document); it never bakes itself (ADR 0003, accepted 2026-11-22).
 - Layer order and dependency inversion for render output: `docs/decisions/0001-layers.md` (accepted).
 
 ## Scene document and semantic scene graph
@@ -304,6 +305,7 @@ Two renderers share one scene: a fast preview for iteration and a CUDA-accelerat
 **Look**
 
 - Linear HDR pipeline, wide-gamut option. Tone mapping is a shoulder curve: identity below the theme's knee (so paint colors show exactly as the theme defines them), then a smooth roll-off to white. ACES and AgX shift every color, including flat paint, so they are not the default; a theme may add them later as an option.
+- The sRGB encode follows the tone map once per pixel: `render/output.py` `encode_srgb8` on the host, and its twin, the `srgb8` kernel, on the card (`finish(..., output="srgb8")`, used by every render), which must agree with it to one 8-bit step.
 - Physically based bloom and glow with per-object emission strength: the color pass writes a second target holding only the light glow roles add, and the bloom (a blurred pyramid) is built from that, so plain paint never blooms and thin curves bloom by their energy at any resolution.
 - Kernel-drawn planes (domain coloring, fractals) are backdrops: layout lets labels sit on them, and lint judges the label by contrast against the real color pass.
 - Depth of field, film grain, vignette, chromatic aberration (all subtle and optional).
@@ -350,7 +352,7 @@ CUDA does the math, OpenGL draws the picture, and one narrow bridge connects the
 
 **Encoding**
 
-- `render/encode.py` probes at startup, in order: PyAV with `h264_nvenc`/`hevc_nvenc` (H.264 first: Windows plays it without an extension), a system `ffmpeg.exe` fed raw frames over a pipe, then PyAV `libx264`. A probe must encode real frames: PyAV wheels list NVENC codecs even on machines without an NVIDIA GPU.
+- `render/encode.py` probes at startup, in order: PyAV with `h264_nvenc`/`hevc_nvenc`, a system `ffmpeg.exe` fed raw frames over a pipe, then PyAV `libx264`. H.264 comes first because it plays everywhere (owner, 2026-11-20); `h264_nvenc` runs at constant quality (cq 19), `libx264` at crf 16. A probe must encode real frames: PyAV wheels list NVENC codecs even on machines without an NVIDIA GPU.
 - Audio is muxed in the same step from the narration blocks.
 
 **Hardware tiers**
@@ -580,7 +582,7 @@ The GUI is a third editor on the same scene document, so human tweaks and AI edi
 
 **As built (Milestone 10).** Qt (PySide6-Essentials, the `gui` extra): it runs headless on Qt's `offscreen` platform, so the window is tested in CI, and it is mature on Windows. The viewport shows the engine's own frames (`Engine.still`) as an image rather than embedding a GL widget, so the editor sees exactly the final look. All logic is `phasor.gui.controller.Editor` (no Qt; every edit through the shared `Workspace` and so `Engine.apply`); `gui/window.py` draws it. Built: viewport (click to select, drag the selected object in its plane; a dashed box from the inspector's bounds), timeline (markers, one lane per animated parameter from `Engine.timeline()`, click or drag to scrub, play), inspector (each parameter as a JSON/text field, style roles as menus, constraints, semantics; animated parameters show their value at the playhead), lint panel (click to jump to object and time), looks tab (apply a look to the whole scene as one undo step; variants of a beat, a pick recorded as the person's), MCP attach (`Workspace` moved to `phasor.workspace`, shared by both clients; `workspace/remote.py` serves it on 127.0.0.1 with a token in `<root>/.phasor/gui.json`, mode 600; `phasor mcp --attach` builds the same MCP server on a proxy with identical tool signatures; calls share the editor's lock). Not built: 3D gizmos and orbit/pan of the view (the camera is a document object: edit it in the inspector), audio waveform and narration text in the timeline, dragging spans to retime, the AI chat dock (an MCP client such as Claude attaches instead), the two-way code view, the sketch layer (since built: Milestone 11, the Sketch tab). The exit demo uses the prism scene, since the reverb scene was skipped in Milestone 8.
 
-**As built (desktop app, after Milestone 13).** `phasor-gui` is a desktop program: a start screen (templates, open, recent, examples copied to `Documents/phasor` before opening), one window per scene with a menu bar, unsaved-change prompts, Save As anywhere (the workspace folder moves with it), settings (math typesetting) in the platform's settings folder, and File > Export (picture, video, web page) run as a separate `phasor` process with progress and cancel, so the GL context is never shared between threads. Logic in `gui/app.py` (no Qt), widgets in `gui/desktop.py`. Packaged with PyInstaller (`packaging/`): built and run on Linux; Windows and macOS builds untested; CuPy left out of the package.
+**As built (desktop app, after Milestone 13).** `phasor-gui` is a desktop program: a start screen (templates, open, recent, examples copied to `Documents/phasor` before opening), one window per scene with a menu bar, unsaved-change prompts, Save As anywhere (the workspace folder moves with it), settings (math typesetting) in the platform's settings folder, and File > Export (picture, video, web page) run as a separate `phasor` process with progress and cancel, so the GL context is never shared between threads. Logic in `gui/app.py` (no Qt), widgets in `gui/desktop.py`. Packaged with PyInstaller (`packaging/`): built and run on Linux and Windows 11 (macOS untested); CuPy left out of the package unless `PHASOR_PACKAGE_GPU=1`, which bundles it with NVRTC and the CUDA runtime only.
 
 ## Tech stack, Windows, repo layout
 
