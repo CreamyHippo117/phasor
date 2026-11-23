@@ -126,3 +126,17 @@ Touched in the style layer: `phasor/style/theme.py` (two entries in `ROLE_GROUPS
 before `[colormap]`). `inspect/aesthetic.py`, `core/schema.py`, looks and `polish` are
 untouched. `inspect/lint.py`: `file_rules` (missing_extra), the per-frame loop (`tiny`,
 `fill_crossing`), the `make` messages and the module table.
+
+## Gate (phasor-milestone-gate, 2026-11-23, by the authoring model)
+
+| Step | Result | Evidence |
+| --- | --- | --- |
+| ruff check, ruff format --check, lint-imports | pass | all clean; 2 import contracts kept |
+| full `uv run pytest -q` | not run | over an hour on this box; the focused set below instead |
+| focused suites | pass | test_final, test_lint, test_beauty, test_aesthetic, test_open_contract, test_layers, test_kit, test_contracts, test_algebra, test_linalg, test_strokes, test_shapes, test_engine, test_inspect, test_layout, test_doctor, test_pycode, test_docs, test_mcp, test_workers with `-k "not slow or shapes or vector_toolkit"`: 838 passed, 4 skipped (CUDA, an empty parametrization, `value` draws nothing). test_remote, test_manim_import, test_time: 109 passed, 1 skipped (no PySide6). Without the extras, the tests that need them skip and name the extra |
+| `phasor doctor` | tier B | llvmpipe OpenGL 4.5, CPU kernels (g++), extras installed |
+| exit demo | pass (Linux) | `examples/shapes.py`, `examples/vector_toolkit.py`: strict lint empty; both goldens looked at |
+| contract audit | done by the authoring model, not independently | no write path besides `Engine.apply`; state depends on the document, t and named files (SVG through `Files`; the engine's caches are dropped when a named file changes); layers kept (lint-imports); every type has the five members after registration; deviations above |
+| docs and artifacts | pass | API.md section with running blocks, examples, goldens, this file |
+
+**MILESTONE 16: DONE on Linux, pending an independent audit.** Untested on Windows, macOS and CUDA.
