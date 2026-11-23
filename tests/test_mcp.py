@@ -44,11 +44,32 @@ def test_bad_patch_changes_nothing_and_says_why(ws):
     assert list(ws.summary()["objects"]) == ["pole"]  # the good op in the same patch did not land
 
 
-def test_style_takes_roles_not_raw_colors(ws):
+def test_style_takes_roles_or_explicit_colors_and_review_says_when_they_are_off(ws):
+    """Milestone 18 (owner, 2026-11-23): an explicit color is allowed beside roles; a glow
+    still takes roles only; the critic offers the snap and polish applies it only when
+    asked."""
     r = ws.scene_edit(
-        {"op": "add_object", "object": {"id": "d", "type": "dot", "style": {"color": "#ff0000"}}}
+        {"op": "add_object", "object": {"id": "g", "type": "dot", "style": {"glow": "#ff0000"}}}
     )
     assert not r["ok"]
+    r = ws.scene_edit(
+        {
+            "op": "add_object",
+            "object": {
+                "id": "d",
+                "type": "dot",
+                "params": {"r": 0.5},
+                "style": {"color": "#83C167"},
+            },
+        }
+    )
+    assert r["ok"]
+    (off,) = [i for i in ws.critique()["issues"] if i["code"] == "off_palette"]
+    assert off["snap"] and not off["fix"]
+    ws.polish()
+    assert ws.engine.document.object("d").style["color"] == "#83C167"
+    ws.polish(snap=True)
+    assert ws.engine.document.object("d").style["color"] != "#83C167"
 
 
 def test_undo_redo(ws):

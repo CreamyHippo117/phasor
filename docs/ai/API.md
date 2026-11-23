@@ -22,7 +22,9 @@ s.set("camera.height", 6)  # world units visible top to bottom
 - IDs match `[a-z][a-z0-9_]*`, with dots for children (`res.pole_i` needs `res` to exist).
   Name them by meaning (`pole_i`), never by counter (`dot3`).
 - Points are world space: x = Re, y = Im, z up. `(x, y)` means z = 0.
-- `style` takes role names only. Raw colors and sizes are rejected.
+- `style` takes role names (the default, and what an AI should write). A color, text size
+  or stroke key may instead hold an explicit value (`"#58C4DD"`, a size in world units):
+  see "Explicit colors and sizes" below.
 - `tags=["key"]` marks an object other objects are located relative to (see `where`).
 - A wrong call raises `DocumentError` at that line and changes nothing.
 
@@ -37,6 +39,8 @@ s.set("camera.height", 6)  # world units visible top to bottom
 | `cx.RiemannSurface` | `kind` (`sqrt`/`cbrt`/`log`), `pos` (branch point), `radius`, `height` (`re`/`im`), `scale`, `rings`, `segments` | `colormap` (colormap, phase), `material` (surface, solid) |
 | `cloud.PointCloud` | `source` (`roots`/`attractor`/`buddhabrot`/`points`), `degree` and `coefficients` (roots), `kind` (`clifford`/`dejong`/`lorenz`) and `constants` (attractor), `max_iter` (buddhabrot), `points` and `values` (given directly), `count` (at most), `seed`, `pos` (centre and origin of the points), `size` (the rectangle it is seen in), `scale`, `point_size` (splat radius, px), `exposure`, `hue`, `color_by` (`source`/`phase`), `twist` (roots: turns of the last coefficient, animatable), `twinkle` (0-1, life), `white` (0-1, white-hot dense parts) | `colormap` (colormap, spectrum), `glow` (glow, none) |
 
+| `Value` | `value` (a named number to animate; nothing is drawn: see "Your own types") | none |
+| `Sound` | `path` (a WAV file in the scene's folder), `start` (seconds into the scene), `gain` (dB, -60 to 24); nothing is drawn: `phasor render` mixes it in (see "Narrate") | none |
 | `Image` | `path` (a PNG/JPEG/WebP file, relative to the scene's folder), `pos` (centre), `width`, `height` (0: keep the picture's shape), `frame` (an outline of light) | `glow` (glow, none: bright parts shine), `frame` (emphasis, muted), `stroke` (stroke, hairline). Presets `plain`, `framed`, `luminous`. A missing file is issue `missing_file`; transparent parts show the background; an AI may only name files inside its folder |
 | `Text` | `text` (`$...$` is typeset math), `pos`, `anchor` (`center`/`left`/`right`), `leader`, `leader_on` (set by layout) | `color` (emphasis, primary), `size` (text, label), `leader` (stroke, hairline) |
 | `Equation` | `parts` (math or text, set on one baseline), `colors` (an emphasis role per part), `pos` | `color` (emphasis, primary), `size` (text, math), `glow` (glow, none) |
@@ -48,7 +52,9 @@ Every type also has `opacity` (0-1; below 0.5 it stops hiding things behind it),
 
 Roles: emphasis `primary secondary muted highlight danger`; stroke `hairline regular bold`;
 text `title label annotation math`; glow `none soft strong`; colormap `phase sequential`;
-surface `solid glass wire emissive` (3D materials; glass is see-through and hides nothing).
+surface `solid glass wire emissive` (3D materials; glass is see-through and hides nothing);
+fill `none soft solid` (a closed path's fill opacity, from the theme); dash `solid dashed
+dotted` (how a path's stroke is cut).
 
 `cx` objects are rectangles of the complex plane drawn by GPU kernels: world x is Re z and
 world y is Im z, so the camera zooms into them like into anything else. They are
@@ -109,6 +115,147 @@ Operators `+ - * / ** %`, indexing `dot.pos[0]`, constants `pi tau e`, functions
 `sin cos tan exp log sqrt floor ceil abs min max clamp lerp vec length normalize dot midpoint`.
 Scalars broadcast over vectors. A cycle is an error.
 
+## Your own types, composites and updaters (ADR 0005)
+
+A type needs two members: `Params` and `draw(ctx, state)`. Its `world_bounds`, `features`
+and `semantics` are worked out from what `draw` emits (`core/record.py`), so the inspector,
+layout and lint know it like any shipped type:
+
+```python
+import numpy as np
+from typing import ClassVar
+
+from phasor import Dot, Line, Scene, Text, Value
+from phasor.core.objects import ObjectBase, ParamsBase, register
+from phasor.core.values import Vec3
+
+
+@register
+class Kite(ObjectBase):
+    type: ClassVar[str] = "doc_kite"
+    Style: ClassVar = {"color": ("emphasis", "highlight")}
+
+    class Params(ParamsBase):
+        pos: Vec3 = (0.0, 0.0, 0.0)
+        r: float = 0.4
+
+    def draw(self, ctx, state):
+        (x, y, z), r = self.me(state).params.pos, self.me(state).params.r
+        pts = np.array([[x, y + r, z], [x + r / 2, y, z], [x, y - r, z], [x - r / 2, y, z]])
+        ctx.triangles(pts, np.array([[0, 1, 2], [0, 2, 3]]), color=self.me(state).style["color"])
+
+
+k = Scene("kites")
+k.add(Kite(id="kite", pos=(1, 0)))
+seen = k.engine.inspect(0.0, id="kite", detail="full")["objects"][0]
+assert seen["semantic"]["type"] == "doc_kite" and "top" in seen["features"]
+```
+
+- Derived `world_bounds`: the box of everything drawn (a `field`'s quad corners; its pixels
+  are never computed). Derived `features`: `center` and the box's compass points (`top`,
+  `top_right`, ...), plus `start`, `end` and `curve` when the object draws one stroke through
+  `domains/strokes.py`. Derived `semantics`: `{"type", "params"}`.
+- Write any of the three yourself when you know more (a pole, a tip, `"kind": "point"`);
+  yours wins. `draw(self, ctx, state, pass_)` still works: the pass is optional.
+- A recording is cached per (type, id, parameters, style, camera, and each file the type
+  names in `Files`: a changed file is drawn again); `draw` may read other objects
+  (`state["other"]`), `state.t` and `state.values`, and the recording is made again when what
+  it read changes. Its arrays (`curve`, `start`, `end`) are shared and read-only.
+
+**Composites.** `build(self, state)` instead of `draw` returns other objects. Each part
+gets the id `<composite>.<name>`, is drawn and inspected as itself (`"part_of"` in the
+inspector), fades with its composite and may not reuse a retired id. The composite's bounds
+are the union of its parts', its features are the box's plus each part's as `<part>.<name>`:
+
+```python
+@register
+class Signpost(ObjectBase):
+    type: ClassVar[str] = "doc_signpost"
+
+    class Params(ParamsBase):
+        pos: Vec3 = (0.0, 0.0, 0.0)
+
+    def build(self, state):
+        x, y, z = self.me(state).params.pos
+        return [
+            Line(id="post", points=[(x, y, z), (x, y + 1.2, z)]),
+            Kite(id="sign", pos=(x, y + 1.2, z), r=0.3),
+        ]
+
+
+k.add(Signpost(id="post", pos=(-2, -1)))
+state = k.engine.state_at(0.0)
+assert [o.id for o in state.objects if o.parent == "post"] == ["post.post", "post.sign"]
+```
+
+Constraints name document objects; a part is placed through its composite. A part has no
+updater (`bad_part`): put it on the composite.
+
+**Updaters.** `obj.always(fn)` with `fn(t, look) -> {param: value}` keeps parameters set
+from time and other objects. `look("id")` gives that object's parameters at `t`
+(`look("dot").pos`); each one read is an edge in the parameter graph, so a cycle is an
+error, and a read the updater did not make at t = 0 is an error too, as is a parameter it
+did not return then (read and return the same things at every t). It must be pure:
+`lint(strict=True)` calls every updater again, in another order, and reports
+`impure_updater` when answers differ (threshold: the theme's `[lint] impure`), and
+`bad_updater` with the times when one fails (it tries every sample time and at least the
+first two seconds, so a scene with no markers is checked past t = 0). Plain lint reports a
+time the scene cannot be evaluated at as an error with its times, instead of raising.
+Something that needs the previous frame is a `Simulation`. `look` sees parameters before
+living motion: tag an object `exact` when something must sit on it exactly.
+
+**`Value`** is a named number to animate with no drawing (Manim's `ValueTracker`): read
+it in an expression (`expr("speed.value")`), in an updater, or show it with a `Counter`.
+
+```python no-run
+# no-run: an updater must be defined in a file in the scene's folder (the document names
+# it), and this page's text is not one. examples/open_contract.py runs the same thing, and
+# tests/test_open_contract.py checks it.
+def above(t, look):
+    x, y, z = look("ball").pos
+    return {"pos": (x, y + 0.5, z)}
+
+
+def roll(t, look):
+    return {"pos": (look("speed").value * t, 0.0, 0.0)}
+
+
+k.add(Value(id="speed", value=0.5))
+k.add(Dot(id="ball", r=0.15, tags=["exact"]).always(roll))
+k.add(Text(id="ball.label", text="ball").always(above))
+assert k.engine.state_at(2.0)["ball.label"].params.pos == (1.0, 0.5, 0.0)
+assert not [i for i in k.engine.lint(strict=True) if i.code == "impure_updater"]
+```
+
+**Where the code lives.** A type or updater defined in the scene script, or in a
+`*.types.py` file next to it, is named by the document: `meta.modules` lists the file and
+`always` lists `"<file>:<function>"`. Opening the document loads those modules only where
+scripts may run (`phasor.load("scene.py")`, `Engine(..., allow_scripts=True)`, the MCP
+server's `--allow-scripts`, and `--allow-scripts` on `phasor inspect`, `lint`, `storyboard`,
+`render`, `web`, `bench --frames` and `sketch`; render workers get exactly the engine's own
+`allow_scripts`), only from inside the scene's folder. The desktop app runs a `.py` the
+person opens (their own script); a `.phasor.json` it opens runs none of the modules it
+names until the person trusts them (`Editor.trust_scene_code()`, which keeps unsaved edits
+and starts undo again). An AI attached to the app (`phasor mcp --attach`) never makes code
+run: it cannot call that, opens documents without their code, and an edit of its that
+changes `meta.modules` or adds an updater is refused (`scene_code`). A missing, refused or
+broken module is lint `missing_type`: the object draws as a placeholder box and keeps its
+parameters and overrides (saving it changes nothing). An updater defined anywhere else (a
+notebook cell, a prompt) is refused: the document could not find it again. Types shipped in phasor still get an entry here, an
+example and a storyboard test; scene-local types do not need them.
+
+Scene code belongs to its file. A type or updater a script defines (`python scene.py`,
+`load`, `runpy`, or a module the engine loaded) is reached only by a document that lists
+that file in its own `meta.modules`, and only where scripts may run, even if this process
+already ran it: two scenes may both define `gem` or `scene.py:orbit` and never see each
+other's, and a document opened without `allow_scripts` never runs a script's code. A scene's
+own type may not take the name of a type shipped in phasor. Code from an imported module (a
+package, a test file) and from a notebook cell is shared by the process, as phasor's own
+types are. A `Scene(...)` built in a script may run that script's code; one built by imported
+code may not unless it passes `allow_scripts=True`, and so does an `Engine` made from a
+scene's document (`Engine(s.engine.base, ..., allow_scripts=True)`; `engine.fork()` keeps
+the permission). `engine.type_of(name)` gives the class a document uses.
+
 ## Narrate: words drive time
 
 ```python
@@ -137,7 +284,40 @@ assert s4.engine.lint(strict=True) == []
   are cached in `<title>.narration/` beside the script. Your own recordings:
   `phasor.voice.from_recordings(script, wavs, aligner, base_dir, theme)` with
   `WhisperX()` or `TimingsFile()`.
-- `phasor render` muxes the narration into the video.
+- `phasor render` muxes the narration into the video, with any **sound clips**: a `Sound`
+  (Manim's `add_sound`) plays a WAV file in the scene's folder from `start` seconds, `gain`
+  dB louder, cut where the scene ends. PCM WAV only (8 to 32-bit, 8 to 192 kHz, 1 to 16
+  channels, mixed down to mono and resampled to the narration's rate, else 48 kHz); at most
+  `MAX_CLIP_FRAMES` (2^26) frames of a clip are read, the track covers at most 3 hours, and
+  at most `MAX_SOUNDS` (256) clips and `MAX_MIX_SAMPLES` (2^30) clip samples in all are
+  mixed. The mix is made a chunk at a time on the scene's own sample grid (a render of part
+  of the scene gets exactly that part of the whole mix), before any frame is rendered. A
+  missing file is lint `missing_file`; one phasor cannot mix (not PCM WAV, or a header that
+  claims more than the file holds) is `bad_file`; a clip past the limits, or whose `start`
+  or `gain` is animated (the mix reads them at 0 s), is `sound_limit`. The render leaves
+  such clips out and lists them in its warnings; the semantics' `seconds` is what the file
+  really holds.
+
+```python
+import tempfile
+import wave
+from pathlib import Path
+
+from phasor import Dot, Scene, Sound
+
+folder = Path(tempfile.mkdtemp())
+with wave.open(str(folder / "click.wav"), "wb") as w:  # 0.1 s of a quiet click
+    w.setnchannels(1), w.setsampwidth(2), w.setframerate(8000)
+    w.writeframes(b"\x00\x10" * 800)
+s5 = Scene("clicks", passes=None, base_dir=folder)
+s5.add(Dot(id="tick"))
+s5.add(Sound(id="click", path="click.wav", start=0.5, gain=-6.0))
+s5.marker("end", 2.0)
+track, rate = s5.engine.audio_track()
+assert rate == 48000 and len(track) == 2 * 48000  # the scene's length, no narration needed
+assert track[:24000].max() == 0 and track[24000 : 24000 + 4800].max() > 0
+assert s5.engine.inspect(0.0, id="click")["objects"][0]["semantic"]["seconds"] == 0.1
+```
 
 ## Animate with verbs
 
@@ -152,9 +332,10 @@ assert s4.engine.lint(strict=True) == []
 | `focus_pull(id, margin=0.15)` | move the camera onto an object |
 | `morph(path, value)` | change any parameter smoothly (a whole-number one, such as `terms`, in whole steps) |
 | `settle(path, value)` | move like a released spring (overshoot, then rest) |
-| `transform(a, b)` | equation `a` becomes `b`: parts that appear in both glide over (and change color); the rest fade |
+| `transform(a, b)` | `a` becomes `b`. Two equations (as pictures): parts that appear in both glide over (and change color); the rest fade. Anything else with an outline (paths, shapes, text, an equation as shapes, an SVG): the outline morphs (see "Text as shapes and morphing") |
+| `transform_matching(a, b)` | `a` becomes `b` piece by piece: equal pieces move to their new place (equations: by TeX and keys; anything else: glyph or path by shape), the rest fade |
 | `become(a, b)` | curve `a` turns into the shape of curve `b` (a circle into a square), then `b` takes its place |
-| `write(*ids)` | write text or an equation in, left to right (`write` 0 to 1) |
+| `write(*ids)` | write text or an equation in, left to right (`write` 0 to 1); drawn `as_shapes`, each glyph's outline is drawn, then filled |
 | `travel(*ids)` | send `Tracer`s along their curves, trailing light (`progress` 0 to 1) |
 | `flash(*ids)` | a quick brightening (every object has `flash`, 0 to 1) |
 | `circumscribe(id, shape="circle")` | draw a ring (or `"box"`) around an object, then fade it: the child `<id>.ring` |
@@ -257,8 +438,8 @@ Raw `to()` is allowed but lints as `raw_motion` with `engine.lint(strict=True)`:
 Any parameter is animatable by its path, cameras included (`camera.center`, `camera.height`).
 Times anchored to a marker move with it. Segments on one parameter must not overlap.
 A parameter set by `expr(...)` cannot also have a track; animate what it reads.
-Easings: `linear smooth smoother in out in_out`, and `back spring` (these overshoot: not for
-opacity). Custom easing functions are not supported: a document must mean the same
+Easings: `linear smooth smoother sigmoid in out in_out`, and `back spring` (these overshoot:
+not for opacity). `sigmoid` is Manim's `smooth` (slower to start; the Manim import uses it). Custom easing functions are not supported: a document must mean the same
 everywhere.
 
 ## Engine: state, patches, undo
@@ -373,7 +554,21 @@ Each issue has `code`, `severity`, `message`, `ids`, `times`, `fix_hint`, and `f
 | `unsolved` | error | a constraint or guard does not hold |
 | `raw_motion` | warning, strict only | a transition written with raw `to()` instead of a verb |
 | `orphan_override` | error | a tweak whose object is gone |
-| `missing_file` | warning | a file an object reads (a room's `.obj`) is not in the scene's folder; it draws nothing |
+| `missing_file` | warning | a file an object reads (a room's `.obj`) is not in the scene's folder, or is not a regular file (a folder, a FIFO, a device, a link that loops); it draws nothing |
+| `missing_extra` | warning | an object needs an optional package that is not installed (`SVG` needs the `svg` extra); it draws nothing. A `Code` without pygments (the `code` extra) is drawn plain instead |
+| `fill_crossing` | warning | a filled path whose edges cross: the fill may not follow its rule |
+| `fill_unchecked` | warning | a filled path with more edges than are checked for crossings (`path_math.CROSSING_LIMIT`, 20000) |
+| `dash_limit` | warning | a dashed or dotted path that would need more than `MAX_DASHES` (2000) dashes: they are drawn longer |
+| `glyph_limit` | warning | text or an equation drawn `as_shapes` with more than `glyph_math.MAX_GLYPHS` (400) glyphs, or with glyphs past `path.MAX_COORD` (1e9 world units): those are not drawn |
+| `morph_missing` | warning | a morph whose source (`morph_from`) is not in the scene or has no outline: the object draws itself |
+| `morph_limit` | warning | a morph between outlines with more than `morph_math.MAX_SUBPATHS` (512) subpaths a side: the rest fade |
+| `bad_file` | warning | a file an object reads is not valid (an SVG that is not SVG), or some of its shapes are skipped (points not finite or absurdly far out); what cannot be read draws nothing |
+| `sound_limit` | warning | a sound clip the mix leaves out: past `narration.MAX_SOUNDS` (256) clips in one scene; or a clip whose `start` or `gain` is animated (the mix reads them once, at 0 s, so the animation is not heard) |
+| `svg_too_complex` | warning | an SVG past a reading limit (size, elements once `<use>` is expanded, nesting, shapes, segments): its drawing is empty or cut short |
+| `crowded_ticks` | warning | numbers along an axis (or a chart's bar names) closer **on screen** than `[lint] tick_gap` text heights (every pair, so an axis a 3D camera sees end-on is caught); `path` names the axis (`ax.x`), the hint the smallest nice step that clears them, or to turn the camera when the axis points at it |
+| `truncated` | warning | a file a `Table` or `Code` reads is past a limit (rows, columns, lines); only its first part is shown |
+| `unknown_language` | warning | a `Code` language pygments does not know: drawn plain |
+| `clamped` | warning | less is drawn than asked: an axis range past 100 ticks (drawn at a wider nice step), a span lost in rounding (no ticks), axis labels past one per axis or that cannot be typeset (left out), bars outside a chart's `y_range` (cut at it) |
 
 `engine.autofix()` applies every `fix` the linter offers (add `near` for a child label that
 overlaps, `on_screen` for something cut by the frame), lints again, and returns
@@ -465,8 +660,26 @@ assert field.shape == (90, 160) and (field == -1).any()  # -1 marks points in th
 - `gpu.render(name, width, height_px, supersample=1, backend="auto", **params)` runs tile by
   tile within the VRAM budget and returns a NumPy array. `gpu.run(name, tile, **params)`
   runs one tile and returns a CuPy array on CUDA.
-- With no CUDA the NumPy reference runs instead: same result, slower. `backend="cuda"`
-  demands the GPU; `backend="reference"` forces NumPy.
+- With no CUDA (tier B) the same CUDA source is compiled for the CPU by g++ or clang++
+  (found at run time, cached in the user cache) and runs on every core; with no compiler
+  either, the NumPy reference runs: same picture, slower. `backend="cuda"` demands the GPU,
+  `backend="cpu"` the CPU backend, `backend="reference"` forces NumPy. `gpu.run(...,
+  threads=n)`, `phasor.render.cpu.set_threads(n)` or `PHASOR_THREADS` set the CPU threads
+  (default: every core); results are the same bits at any thread count.
+
+```python
+import numpy as np
+
+from phasor.render import cpu, gpu
+from phasor.render.gpu.registry import active_backend
+
+print(active_backend(), cpu.threads(), cpu.find_compiler())  # e.g. "cpu", 4, g++ 13.3
+if cpu.find_compiler() is not None:
+    lit = np.ones((4, 8, 4), dtype=np.float32)
+    one = gpu.run("vignette", gpu.Tile.full(8, 4), image=lit, backend="cpu", threads=1)
+    all_cores = gpu.run("vignette", gpu.Tile.full(8, 4), image=lit, backend="cpu")
+    assert np.array_equal(one, all_cores)  # the thread count never changes a result
+```
 - `escape` picks float64 by itself once `height` is under 1e-5.
 - Formulas may use `z`, `i`, `pi`, `e`, numbers, `+ - * / **` and
   `exp log sqrt sin cos tan sinh cosh tanh conj abs`. Anything else is a `FunctionError`.
@@ -654,7 +867,8 @@ assert p.engine.inspect(0, id="eq")["objects"][0]["semantic"]["colors"][1] == "s
 
 **Taste, the art director and variants.** `lint(aesthetic=True)` adds the taste rules:
 `focal_point` (one `highlight` per beat), `color_restraint` (three saturated hues at most;
-phase coloring exempt), `glow_clip`, `density`, `motion_rhythm`, `margin`, `stroke_mix`.
+phase coloring exempt), `glow_clip`, `density`, `motion_rhythm`, `margin`, `stroke_mix`,
+and for explicit values `off_palette` and `off_scale` (below).
 Thresholds are the theme's `[lint]`. `engine.critique()` scores them (0 is nothing to
 criticise) with the markers and the fixes; `engine.polish(rounds=3)` applies them, each round
 one undo step; `engine.variants(beat)` shows calmer and bolder looks of one beat side by side;
@@ -673,6 +887,76 @@ rough.marker("beat", 1.0)
 before = rough.engine.critique()["score"]
 report = rough.engine.polish(rounds=3)
 assert report["after"] < before and len(report["rounds"]) <= 3
+```
+
+**Explicit colors and sizes** (owner, 2026-11-23). Beside a role, a style key may hold an
+explicit value; roles stay the default and the AI-friendly path.
+
+| style key group | explicit value |
+| --- | --- |
+| `emphasis` (`color`, `accent`, ...) | `"#58C4DD"` (sRGB, decoded to linear once) or linear `(r, g, b, a)` in 0..1 |
+| `text` (`size`) | text height in world units (positive, at most 1e6) |
+| `stroke` (`stroke`, `leader`) | stroke width in world units (positive, at most 1e6) |
+| `glow`, `surface`, `colormap` | roles only (`bad_role` otherwise) |
+
+`Scene(..., background="#101820")` (or `set_meta` `background`) gives the scene its own
+background; None is the theme's. A background is opaque: a color with alpha below 1 is
+refused. A world size is exact in 2D at any zoom; in 3D it is exact at the object's `pos`; on
+an overlay-layer object its units are frame heights (the overlay's units). Taste stays checked: `lint(aesthetic=True)` warns with `off_palette`
+when an explicit color is farther than the theme's `[lint] off_palette` (an OKLab distance)
+from every palette role, or a background from the theme's, and with `off_scale` when a size
+is more than `[lint] off_scale` times off the nearest text or stroke role (a composite's
+parts are judged too, but not the glyph parts of a text drawn `as_shapes`: the text is). Neither has a
+`fix` (the value may be meant): `critique()` lists a `snap` op per issue (the nearest
+role), and `polish(snap=True)` applies it, only when asked. A scripted scene's background
+is changed in its script.
+
+```python
+from phasor import Dot, Line, Scene, Text
+
+own = Scene("own_colors", passes=None, look="none", background="#101820")
+own.set("camera.height", 8)
+own.add(Dot(id="sun", pos=(0, 0), r=0.5, style={"color": "#83C167"}, tags=["key"]))
+own.add(Text(id="name", text="sun", pos=(0, 1.2), style={"size": 0.34}))  # ~ label
+own.add(Line(id="orbit", points=[(-3, -2), (3, -2)], style={"stroke": 0.3}))  # very wide
+own.marker("beat", 1.0)
+st = own.engine.state_at(1.0)
+assert abs(st["name"].style["size"] * st.camera.units_per_height() - 0.34) < 1e-9
+codes = {i.code: i for i in own.engine.lint(aesthetic=True)}
+assert codes["off_palette"].ids == ("sun",) and codes["off_scale"].ids == ("orbit",)
+offered = [op for i in own.engine.critique()["issues"] for op in i["snap"]]
+assert {"op": "set_style", "id": "orbit", "key": "stroke", "role": "bold"} in offered
+own.engine.polish()  # fixes and suggestions only: typed values stay
+assert own.engine.document.object("sun").style["color"] == "#83C167"
+own.engine.polish(snap=True)  # asked: snapped to the nearest roles
+assert own.engine.document.object("orbit").style["stroke"] == "bold"
+```
+
+**Style transitions.** A track on `<id>.style.<key>` moves a style key from the role (or
+explicit value) it holds to another: `s.at("go").morph("dot.style.color", "highlight")` (the
+theme's `morph` timing; strict-lint clean) or a raw `.to("dot.style.color", "#58C4DD",
+duration=1)`. Colors (`emphasis` keys: `color`, `fill_color`, ...) mix in linear RGBA; `fill`
+(the fill's opacity), `stroke` and text `size` move as numbers, and an explicit world size
+follows the camera at every t. Glow, surface, colormap and dash keys cannot be animated
+(`bad_style_track`). The document stores a role or a value at each key and in each segment
+(a hex target is stored upper case). `state.roles[key]` is the typed value nearer in time
+(the start until half-way, then the target); the inspector shows a transition in progress
+as `restyling: {key: {from, to, progress}}`; `off_palette` judges an explicit target where
+it is reached (its snap is left to the track). A child object named `<id>.style` keeps its
+own parameter paths. On a `Line` with `hue_along` the colors come from the colormap, so a
+color transition does not show on it.
+
+```python
+from phasor import Dot, Scene
+
+fade = Scene("restyle", passes=None, look="none")
+fade.marker("go", 1.0)
+fade.add(Dot(id="dot", pos=(0, 0), style={"color": "primary"}))
+fade.at("go").morph("dot.style.color", "highlight")
+st = fade.engine.state_at(1.5)
+assert st["dot"].restyling["color"]["to"] == "highlight"
+assert fade.engine.document.object("dot").style["color"] == "primary"  # still a role
+assert not [i for i in fade.engine.lint(strict=True) if i.code == "raw_motion"]
 ```
 
 Finals render with motion blur (`phasor render --preset final`; `--motion-blur 0` turns it
@@ -989,6 +1273,308 @@ sem = g.engine.inspect(0, id="tree")["objects"][0]["semantic"]
 assert (sem["nodes"], sem["edges"], sem["depth"]) == (63, 62, 5)
 ```
 
+## Paths, fills and shapes (`shapes`)
+
+`from phasor import shapes`. Every outline is a **`shapes.Path`**: subpaths of cubic Béziers
+(each subpath is an anchor, then handle, handle, anchor per cubic; closed when it ends where
+it began), drawn with a **fill** and a **stroke**. Curves are flattened by their size on
+screen, so they stay smooth at any zoom. The shapes below are paths with their own
+parameters; they all lie in the plane z = `pos.z` (the screen in 2D). Angles in degrees,
+counterclockwise.
+
+| Type | Parameters | Semantics (`kind`, besides `length`, `area`, `closed`, `subpaths`, `rule`, `fill`, `dash`) |
+| --- | --- | --- |
+| `shapes.Path` | `subpaths`, `rule` (`nonzero`/`evenodd`), `tips` (`none`/`start`/`end`/`both`: arrow tips on the open ends); `Path.through(id, points, closed=False)` builds one of straight segments | `path` |
+| `shapes.Circle` | `pos`, `r` | `circle`: `center`, `radius` |
+| `shapes.Ellipse` | `pos`, `width`, `height`, `rotation` | `ellipse` |
+| `shapes.Arc` | `pos`, `r`, `start`, `angle` (-360 to 360, not 0; negative: clockwise), `tips` | `arc` (open, even a full turn: no area unless filled) |
+| `shapes.Sector` | `pos`, `r`, `start`, `angle`, `inner` (> 0: a slice of a ring) | `sector` |
+| `shapes.Annulus` | `pos`, `outer`, `inner` | `annulus` (a fill with a hole) |
+| `shapes.Polygon` (type `polygon_path`) | `vertices` (3 or more, in order) | `polygon`; feature `vertices` |
+| `shapes.RegularPolygon` | `n`, `pos`, `r` (circumradius), `rotation` (first vertex at the top) | `polygon`: `side`; feature `vertices` |
+| `shapes.Rectangle` | `pos`, `width`, `height`, `corner_radius`, `rotation` | `rectangle`; feature `vertices` |
+| `shapes.Brace` | `start`, `end`, `depth` (left to right it points down) | `brace`: `tip`; feature `tip` (put a label there) |
+| `shapes.SVG` | `path` (an .svg file in the scene's folder), `pos` (middle of its view box), `height` | `svg`: `parts` |
+
+Every path and shape also has `progress` (the drawn share of the stroke: `trace` draws it
+in and fades its fill in with it), `fill_opacity` and `stroke_opacity` (0-1, times the
+role's; `stroke_opacity=0` is a fill with no outline). Style keys: `color` (emphasis,
+primary), `stroke` (stroke, regular; `Brace`: bold), `glow` (glow, none), `fill` (fill,
+none; `SVG`: solid), `fill_color` (emphasis, primary), `dash` (dash, solid). Presets
+`outline`, `filled`, `solid`, `glowing`, `dashed`. Every number of a path (a size, a
+position, a point) is within ±1e9 (`MAX_COORD`); beyond that is a validation error when it
+is set.
+
+- **Fills** are plain paint: they never glow, and a color below the theme's bloom knee comes
+  out exactly as written. `rule="evenodd"`: every nested subpath flips inside and outside;
+  `nonzero`: a subpath that runs the other way is a hole. A filled path whose edges cross
+  is lint `fill_crossing` (split it, or use a boolean `union`).
+- **Dashes** are cut by arc length from each subpath's start, so they stay where they are
+  while a path is traced or grows. `dotted` draws round dots. A path draws at most
+  `MAX_DASHES` (2000) dashes or dots: a longer one gets longer dashes (lint `dash_limit`).
+  A theme's `[dash]` periods are 0 (solid) or at least 0.002 frame heights.
+- **Boolean operations**: `shapes.union(a, b, id=...)`, `intersection`, `difference`,
+  `exclusion` take two shapes or paths (not yet in a scene, or already added) and return a
+  new `Path` of straight segments, measured once when called; it takes `a`'s style unless
+  given one. They need the `boolean` extra (shapely): without it they raise an error that
+  says how to install it. Input too degenerate for GEOS (a ring with no area beside a tiny
+  one) is snapped and tried again; failing that, a `ValueError` names the operation.
+- **`SVG`**: each shape of the file becomes a part `<id>.<name>`, named from its `id`
+  attribute (lower case, other characters `_`, at most 40 characters; one without an id by
+  its kind, `circle`, `circle_2`, in file order, so give shapes ids to keep constraints on
+  them). A name the document already uses or retired under the `SVG` (a `logo.label`) gets
+  the next free suffix (`label_2`). Filled shapes are filled with `fill_color`, stroked
+  ones stroked; the file's own colors are not used. Text, pictures and external references
+  are ignored. The file is read again when it changes (a `path` on a track: every file it
+  names). A bad or hostile file never makes the scene fail: missing (or not a regular
+  file) is lint `missing_file`, not valid SVG is `bad_file`, past a limit (8 MB, 50000
+  elements once `<use>` is expanded, nesting 100 deep, 10000 shapes, 200000 segments;
+  constants in `path_math`) is `svg_too_complex`, and without the `svg` extra
+  (svgelements) it is `missing_extra`; it then draws nothing (or what fits the limits).
+- A render worker never re-reads a changed file: one that changes while a scene renders
+  stops the render with an error ("render it again"), so no video mixes old and new frames.
+- A `Tracer` can travel along any path or shape.
+
+```python
+import math
+
+from phasor import Scene, Text, shapes
+from phasor.domains import path_math as pm
+
+s = Scene("shapes_demo", passes=None)
+s.add(shapes.Circle(id="disc", r=1.2, style={"fill": "soft", "glow": "soft"}))
+s.add(
+    shapes.Rectangle(
+        id="card", pos=(3.5, 0), width=2.5, height=1.5, corner_radius=0.3, style={"dash": "dashed"}
+    )
+)
+s.add(shapes.Arc(id="swing", pos=(-3.5, 0), r=1.0, start=0, angle=200, tips="end"))
+s.add(shapes.Brace(id="span", start=(-1.2, -1.5), end=(1.2, -1.5)))
+s.add(Text(id="span.label", text="2.4"))
+s.constrain("label(span) below span")
+# path_math builds subpaths (circle, arc, rectangle, sector, brace, polyline, ...)
+outer, inner = pm.circle((0, 2.6, 0), 0.6), pm.circle((0, 2.6, 0), 0.3)
+s.add(
+    shapes.Path(
+        id="ring",
+        rule="evenodd",
+        style={"fill": "solid"},
+        subpaths=[outer.tolist(), inner.tolist()],
+    )
+)
+s.at(0.2).trace("disc", "swing")
+e = s.engine
+seen = {o["id"]: o["semantic"] for o in e.inspect(2.0)["objects"]}
+assert seen["disc"]["kind"] == "circle" and abs(seen["disc"]["area"] - math.pi * 1.44) < 1e-3
+assert abs(seen["ring"]["area"] - math.pi * (0.36 - 0.09)) < 1e-3  # even-odd: a hole
+assert seen["swing"]["tips"] == "end" and "area" not in seen["swing"]
+assert e.lint() == []
+```
+
+```python
+from phasor import Scene, shapes
+
+b = Scene("booleans", passes=None)
+left = shapes.Circle(id="left", pos=(-0.5, 0), style={"fill": "soft"})
+right = shapes.Circle(id="right", pos=(0.5, 0))
+b.add(shapes.intersection(left, right, id="lens"))  # needs the boolean extra (shapely)
+b.add(shapes.exclusion(left, right, id="moon"))
+seen = {o["id"]: o["semantic"] for o in b.engine.inspect(0)["objects"]}
+assert seen["lens"]["area"] < 1.3 < seen["moon"]["area"]
+```
+
+```python no-run
+# needs a file: an .svg next to the scene (examples/vector_toolkit.py runs this)
+s.add(
+    shapes.SVG(
+        id="emblem",
+        path="assets/emblem.svg",
+        pos=(0, -2),
+        height=3,
+        style={"fill": "soft", "fill_color": "highlight"},
+    )
+)
+# parts: emblem.ring, emblem.star, emblem.badge_1, emblem.wave
+```
+
+## Diagrams: number lines, planes, charts, tables, matrices, code (`dg`)
+
+`from phasor import dg`. Each is a composite that draws its own furniture (lines, ticks,
+grid, rules, brackets) and builds everything a reader reads as a **part** the inspector,
+layout and lint see by itself. Parts are placed by their composite (they take no
+constraints: put a `label(x) near x` on a document object instead); numbers along one axis
+are judged together by lint `crowded_ticks`, not pair by pair. Sizes and colors come from
+roles; explicit values are allowed (`off_palette` / `off_scale` warn).
+
+| Type | Parameters | Parts | Semantics `kind` |
+| --- | --- | --- | --- |
+| `dg.NumberLine` | `x_range` (min, max, step; step 0: a nice 1-2-5 step), `pos` (middle), `scale` (world units per unit), `angle` (degrees), `tick`, `numbers`, `digits` (-1: as the step needs), `tips` (`none`/`end`/`both`), `label` | `n_2`, `n_m1`, `n_0p5` (a number per tick) | `number_line`; features `start`, `end`, `zero` |
+| `dg.NumberPlane` | `x_range`, `y_range`, `pos` (where 0, 0 is), `scale`, `x_scale`, `y_scale` (0: `scale`), `faint` (lighter lines between, 0-4), `numbers`, `digits`, `labels` | `axes` (a `geo.Axes`), whose numbers are `axes.x_2`, `axes.y_m1` | `number_plane`, a backdrop (labels may sit on it) |
+| `dg.BarChart` | `values` (1-40), `names`, `colors` (emphasis roles per bar, cycled), `pos` (middle), `width`, `height`, `y_range` ((0, 0, 0): fit the values), `gap`, `grow` (0-1: animate it), `numbers`, `show_values`, `digits` | a `Rectangle` per bar named after its name (`bees`; `bar_1` without names), `bees_name`, `bees_value`, `y_2` | `bar_chart`: `bars`, `largest`, `y_range` |
+| `dg.Table` | `cells` (rows of text; maths in `$...$`) **or** `path` (a `.csv` in the scene's folder), `pos`, `header`, `lines` (`none`/`header`/`grid`), `align`, `reveal` (0-1: rows shown) | a `Text` per cell named like a spreadsheet's: `a1`, `b2` | `table`: `rows`, `columns`, `header` |
+| `dg.MatrixDisplay` | `entries` (rows of maths: `"a_{11}"`, `"\\frac{1}{2}"`), `bracket` (`square`/`round`/`bar`/`none`), `pos` | `e1_2` (row 1, column 2) | `matrix_display` |
+| `dg.Code` | `code` **or** `path` (a source file in the scene's folder), `language` (a pygments name), `pos`, `line_numbers`, `reveal` (0-1: lines shown) | a `CodeLine` per line, `line_3` (blank lines have none unless numbered) | `code`: `lines`, `highlight` (`pygments`, `plain`, `unknown`) |
+| `dg.CodeLine` | `text`, `classes` (a letter per character: `p` plain, `k` keyword, `f` name, `s` string, `n` number, `c` comment, `g` line number), `pos` (left end) | | `label` |
+
+- **Axes with numbers and unequal scales** are `geo.Axes(numbers=True, x_scale=..., y_scale=...)`
+  (below). A **number that animates** is `Counter` (`group=True` writes 1,234,567, `sign=True`
+  a `+`); point its `value` at a `Value` you morph. A live 2x2 or 3x3 matrix of numbers that
+  follows another object is `linalg.Matrix`; `MatrixDisplay` is any matrix of maths.
+- **Code is monospace by placement**: each character is centered in a cell 0.52 text
+  heights wide (wide letters are set a little smaller on the same baseline), in phasor's text
+  font. Highlighting needs pygments, the `code` extra (`uv sync --extra code`); without it the
+  code is drawn plain and lint says `missing_extra`. A language pygments does not know is
+  drawn plain with `unknown_language`. Style keys: `color` (plain), `keyword`, `name`,
+  `string`, `number`, `comment`, `size`.
+- **Bounds** (`core/ticks.py`, `domains/diagrams_math.py`): a range of a new diagram type
+  is finite, within ±1e9, `min < max`, and makes at most `MAX_TICKS` (100) ticks
+  (`geo.Axes`, older, only finite and `min < max`: past 100 ticks it is drawn at a wider step,
+  lint `clamped`); tables at most 40 rows, 12 columns,
+  300 cells of 60 characters; matrices 10 by 10; charts 40 bars; code 120 lines of 120
+  characters (12000 in all, no control characters). Past a bound is a validation error when
+  it is set. A file read for a table or code is cut to the bounds instead (lint
+  `truncated`); one that is not UTF-8 (or not CSV) is `bad_file`; a missing one (or a
+  folder, a FIFO) is `missing_file`, and the object draws nothing. A file changed on disk
+  is read again.
+- Numbers at ticks are written as maths (a true minus sign) in the `numbers` text role and
+  named by value: `x_m2` is -2, `x_2p5` is 2.5. Zero is left out where axes cross; a number
+  line writes it (`n_0`).
+
+```python
+from phasor import Counter, Scene, Value, dg, expr, geo
+
+s = Scene("kit", passes=None)
+s.set("camera.height", 12)
+s.add(dg.NumberLine(id="line", x_range=(-3, 3, 1), pos=(0, -4.6, 0), tips="end"))
+s.add(
+    dg.NumberPlane(id="plane", x_range=(-3, 3, 1), y_range=(-2, 2, 1), pos=(-7, 2, 0), y_scale=0.8)
+)
+s.add(
+    geo.Axes(
+        id="plot",
+        dims=2,
+        x_range=(0, 10, 2),
+        y_range=(0, 1, 0.5),
+        x_scale=0.4,
+        y_scale=3,
+        pos=(-1.5, 0.5, 0),
+        numbers=True,
+        labels=("t", "p"),
+    )
+)
+s.add(
+    dg.BarChart(
+        id="sales",
+        values=(3, 5, 2),
+        names=("ants", "bees", "cats"),
+        pos=(6, 2, 0),
+        width=4,
+        height=3,
+    )
+)
+s.add(dg.Table(id="t", cells=(("x", "$x^2$"), ("2", "4"), ("3", "9")), pos=(-6, -2.5, 0)))
+s.add(dg.MatrixDisplay(id="m", entries=(("1", "2"), ("3", "4")), pos=(-1.5, -2.5, 0)))
+s.add(dg.Code(id="code", code="def f(x):\n    return x * x", pos=(5, -2.5, 0)))
+s.add(Value(id="n", value=0.0))
+s.add(Counter(id="count", value=expr("n.value"), digits=0, group=True, pos=(5, -4.2, 0)))
+s.marker("go", 0.5)
+s.marker("done", 2.0)
+s.at("go").morph("n.value", 25000.0, until="done")
+e = s.engine
+seen = {o["id"]: o["semantic"] for o in e.inspect(2.0)["objects"]}
+assert seen["plot.y_0p5"]["text"] == "$0.5$" and seen["plot"]["axes"]["y"]["scale"] == 3
+assert seen["sales"]["largest"] == "bees" and "sales.bees_name" in seen
+assert seen["t.b1"]["text"] == "$x^2$" and seen["m.e2_1"]["text"] == "$3$"
+assert seen["code.line_2"]["text"] == "return x * x" and seen["count"]["text"] == "$25{,}000$"
+assert "plane.axes.x_m3" in seen and seen["plane"]["backdrop"]
+assert e.lint() == []
+```
+
+A crowded axis is one issue with the step that clears it:
+
+```python
+from phasor import Scene, geo
+
+s = Scene("crowded", passes=None)
+s.add(geo.Axes(id="ax", dims=2, x_range=(0, 1000, 25), x_scale=0.006, numbers=True))
+(issue,) = [i for i in s.engine.lint() if i.code == "crowded_ticks"]
+assert issue.path == "ax.x" and "step of at least" in issue.fix_hint
+assert not [i for i in s.engine.lint() if i.code == "overlap"]  # not pair by pair
+```
+
+### Text as shapes and morphing
+
+**Glyph outlines.** `Text(..., as_shapes=True)` and `Equation(..., as_shapes=True)` draw
+their glyphs as outlines (matplotlib's font code: plain text in the picture's font, Aileron;
+maths through mathtext in Computer Modern), one `Path` part per glyph named by what it shows:
+`word.cap_h`, `word.e`, `word.l`, `word.l_2`, `eq.plus`, `eq.pi`, `eq.bar` (a fraction
+bar), clear of the document's ids. They lie in the box the picture would fill. Parameters:
+`fill_opacity` (default 1) and `stroke_opacity` (the outline once written, default 0); the outline
+is `basic.OUTLINE` (0.04) of the line height wide, so it scales with the text; an
+equation's `colors` color each part's glyphs. `write` draws each glyph's outline, then fills
+it, glyph after glyph (`basic.WRITE_SPAN` of the write each). A text that is not drawn as
+shapes draws as before. At most `glyph_math.MAX_GLYPHS` (400) glyphs (all parts of an
+equation together) are drawn, and none past `path.MAX_COORD` world units (lint `glyph_limit`).
+With the `latex` math engine the picture comes from TeX but the outlines from mathtext: a text
+mathtext cannot read has no outline (a morph from it is `morph_missing`, a morph into it
+draws its picture; as shapes it is refused when added).
+
+**`transform` between any two outlines.** Paths, every shape, text and equations can be
+morphed into (`morph_from`, `morph`, `morph_kind` parameters, set by the verbs); paths,
+shapes, text, equations and SVGs (their parts) can be morphed from. The target draws the
+in-between every frame from the source as the state has it at that time (a moving source is
+followed; nothing is baked into the document): subpaths are put in a canonical order, the
+side with fewer is split (its longest piece at half its length) until the counts agree,
+pieces pair by least travel, each pair is resampled by arc length and aligned (two rings keep
+the target's winding, so holes stay holes, and turn to the start that moves least; an open
+piece runs the shorter way). Colors, widths and fill opacity mix in linear light; the fill
+crossfades from the source's layout to the target's, so both ends are exact. Identical
+outlines are an identity at every step. Dashes and arrow tips are not drawn in between.
+Bounds (`morph_math`): `MAX_SUBPATHS` 512 a side (the shortest beyond fade; lint
+`morph_limit`), `MAX_POINTS` 512 points a piece, `MAX_TOTAL` 40 000 in all, `MAX_ASSIGN` 256
+pairs by optimal assignment (more pair in canonical order), `SAMPLE_CUBICS` 2048 cubics a
+subpath is sampled through; the in-between's fill triangulates at most `morph.MAX_FILL_RING`
+(4096) points a ring (a longer ring keeps every k-th point, also at the first frame when one
+subpath is split into many pieces; strokes keep all). Plans are
+cached by both outlines in the world (pairs are by least travel, so a source that moves or
+a camera that zooms makes a plan a frame), in a pool of `morph.PLAN_BYTES` (64 MB) measured
+by their arrays. A source that is gone is lint `morph_missing` (it draws itself); a source
+whose id is longer than `core.ids.MAX_REF` (200) characters is refused by the verbs.
+One object can become itself several times (`morph_from` switches at each verb). The
+`morph` verb also animates style keys (see "Style transitions").
+
+**`transform_matching`** pairs pieces: two equations' parts by key, then by equal TeX in
+reading order (a part moved across the `=` still pairs); an equal part glides glyph by glyph,
+a keyed part whose text changes morphs its outline; anything else pairs glyphs (same font
+glyph) or paths (`morph_math.signature`: the same outline at any place and size) in reading
+order. Pairs carried past others arc round them (`[motion] transform_arc`, on equations); the
+source's other pieces fade out in the first half, the target's fade in in the second. Two
+equations drawn `as_shapes` use it for `transform` too (their changed parts morph instead of
+crossfading). Inspector semantics while morphing: `morphing_from`, `morph`, `morph_kind`.
+
+```python
+from phasor import Equation, Scene, Text, shapes
+
+m = Scene("text_shapes_demo", passes=None, look="none")
+m.set("camera.height", 8)
+m.marker("write", 0.2)
+m.marker("morph", 2.0)
+m.add(Text(id="word", text="circle", pos=(-3, 1), as_shapes=True, style={"size": "title"}))
+m.add(shapes.Circle(id="disc", pos=(3, 1), r=1.0, style={"fill": "soft"}))
+m.add(Equation(id="one", parts=("$a$", "$+$", "$b$", "$=$", "$c$"), pos=(0, -2), as_shapes=True))
+m.add(Equation(id="two", parts=("$a$", "$=$", "$c$", "$-$", "$b$"), pos=(0, -2), as_shapes=True))
+m.at("write").write("word", "one")
+m.at("morph").transform("word", "disc").transform_matching("one", "two")
+st = m.engine.state_at(2.3)
+assert [o.id for o in m.engine.state_at(1.9).objects if o.parent == "word"][:2] == [
+    "word.c",
+    "word.i",
+]
+assert st["disc"].impl.semantics(st)["morphing_from"] == "word"
+assert st["two"].params.morph_kind == "matching"
+assert m.engine.lint(strict=True) == []
+```
+
 ## Space: axes, curves, surfaces and fields (`geo`)
 
 `from phasor import geo`. Give the scene an orbit camera (`s.use_camera("orbit")`) to turn
@@ -996,7 +1582,15 @@ around them: the `orbit` verb, or drag in the editor. Formulas are text in `t` (
 `v` (surfaces) or `x`, `y`, `z` (fields), read by the whitelist parser, never run as Python.
 
 - `geo.Axes(dims=3, x_range=(-3, 3, 1), z_range=..., labels=("x", "y", "z"))`: axes with ticks
-  (ranges are (min, max, tick step); `scale` is world units per unit).
+  (ranges are (min, max, tick step), step 0 a nice one; `scale` is world units per unit, and
+  `x_scale`, `y_scale`, `z_scale` (0: `scale`) make them unequal). `numbers=True` writes the
+  value at every tick but zero as parts (`axes.x_2`, `axes.y_m1`; the `numbers` text role,
+  `digits` -1 as the step needs). An axis that points straight at a flat camera (the z axis
+  of default `dims=3` axes in a 2D scene) gets no numbers. A range is drawn with at most 100 ticks: a step that would
+  make more is drawn at the next nice step that makes fewer, and lint `clamped` says so.
+  Axes predate these limits, so a saved document past them still loads: more labels than
+  axes, or a label that cannot be typeset, is left out (`clamped`); labels and ranges have
+  no other limit.
 - `geo.ParametricCurve(fx="cos(t)", fy="sin(t)", fz="0.2*t", t_range=(0, 37.7),
   color_by="t")`: a curve; `color_by` is `none`, `t`, `speed`, `x`, `y` or `z` (through the
   `colormap`); `progress` traces it. Semantics: length, closed, color range.
@@ -1108,22 +1702,41 @@ assert s.engine.document.object("set").params["c"] == (-0.8, 0.156)  # the scene
 against a stand-in for the `manim` module and records the scene it builds: `self.add` and
 `self.play` become objects and transitions at Manim's own times (`run_time`, `wait`), in
 Manim's frame (8 units tall, y up). The result is a plain phasor scene you can edit, lint and
-render. It runs your code: only import scripts you trust.
+render. It runs your code: only import scripts you trust. The stand-in is checked against
+real Manim CE 0.22.1 (`tests/manim_real`): its clock, rate functions, default sizes and
+colors are Manim's own.
 
 | Carries over | How |
 | --- | --- |
-| `Scene`, `MovingCameraScene`, `ThreeDScene` (`set_camera_orientation`, ambient rotation) | `construct` runs; 3D uses the orbit camera |
-| `Dot`, `Circle`, `Square`, `Rectangle`, `Triangle`, `Polygon`, `RegularPolygon`, `Line`, `Arrow`, `Vector`, `ParametricFunction` | `dot`, `line` (closed outlines), `arrow` |
-| `Text`, `Tex`, `MathTex` | `text`; math is typeset (`$...$`); `font_size` picks the nearest text role |
-| `Axes`, `NumberPlane`, `axes.plot`, `c2p` | `axes` and a sampled `line` |
-| `VGroup` and `shift`, `move_to`, `next_to`, `to_edge`, `to_corner`, `scale`, `rotate`, `arrange`, `align_to` | positions are computed as Manim would |
-| `Create`, `Uncreate`, `Write`, `FadeIn`, `FadeOut`, `GrowFromCenter`, `Transform`, `ReplacementTransform`, `Rotate`, `Indicate`, `MoveToTarget`, `AnimationGroup`, `LaggedStart`, `Succession`, `.animate` | tracks on `progress`, `opacity`, `pos`, `r`, `points` |
-| Colors (`RED`, `"#58C4DD"`) | the nearest style role (`primary`, `secondary`, `muted`, `highlight`, `danger`) |
+| `Scene`, `ThreeDScene` (`set_camera_orientation`, ambient rotation) | `construct` runs; 3D uses the orbit camera |
+| `MovingCameraScene`: `self.camera.frame` (`.animate.move_to`, `shift`, `scale`, `set(width=)`, `save_state` / `Restore`) | tracks on `camera.center` and `camera.height` (the frame's width is its height x 16/9) |
+| `Circle`, `Ellipse`, `Arc`, `ArcBetweenPoints`, `Sector`, `AnnularSector`, `Annulus`, `Polygon`, `RegularPolygon`, `Triangle`, `Rectangle`, `Square`, `RoundedRectangle`, `Brace` (`get_text`, `get_tex`, `get_tip`) | phasor's `shapes` (`circle`, `rectangle`, ...) with their fills (`fill_opacity`, `fill_color`, `set_fill`; `stroke_width=0` is `stroke_opacity` 0); stretched out of its kind (`stretch`, `apply_matrix`, a 3D turn) a shape is a `shapes.Path` |
+| `Line`, `DashedLine`, `DashedVMobject`, `VMobject.set_points_as_corners`, `ParametricFunction`, `axes.plot` | a `shapes.Path` (dashed: the `dash` style `dashed`); `Arrow`, `Vector`: `arrow` (Manim's `buff` of 0.25 at both ends kept); `Dot`: `dot` |
+| `SVGMobject("logo.svg")` | `shapes.SVG` (a file inside the scene's folder; one outside it is left out, with a warning) |
+| `Text`, `Tex`, `MathTex` | `text` (`Tex` is text mode with `$...$` maths, `MathTex` maths); `MathTex("a", "+", "b")` is an `equation` with a part each (`eq[1].set_color` colors that part by the nearest role); a `font_size` the script sets is an explicit size (48 is the `math` role's height), and `scale` scales it (a negative factor is a flip) |
+| `Axes` (`c2p`, `p2c`, `i2gp`, `get_axis_labels`, `add_coordinates`, `include_numbers`), `NumberPlane`, `ComplexPlane`, `NumberLine` (`n2p`), `BarChart`, `Table`, `MathTable`, `Matrix`, `Code` (`code_string` or a `code_file` in the scene's folder), `DecimalNumber`, `Integer` | `geo.Axes` (unequal scales; labels and numbers as its own), `dg.NumberPlane` (with its grid), `dg.NumberLine`, `dg.BarChart`, `dg.Table`, `dg.MatrixDisplay`, `dg.Code`, `Counter`; a step that makes more than 100 ticks is widened to a nice one, with a warning |
+| `VGroup` and `shift`, `move_to`, `next_to`, `to_edge`, `to_corner`, `scale`, `rotate`, `stretch`, `set_width`, `align_to`, `arrange`, `arrange_in_grid` | positions are computed as Manim would |
+| `Create`, `Uncreate`, `Write`, `Unwrite`, `DrawBorderThenFill`, `FadeIn`/`FadeOut` (`shift`, `scale`), `GrowFromCenter`, `GrowFromPoint`, `GrowArrow`, `ShrinkToCenter`, `Rotate`, `Indicate`, `Circumscribe`, `Flash`, `Wiggle`, `MoveToTarget`, `Restore`, `ApplyMethod`, `AnimationGroup`, `LaggedStart`, `Succession`, `.animate` (place, size and color: `set_color`, `set_fill`, `set_opacity`) | tracks with Manim's own run times and rate functions: `smooth` is the `sigmoid` easing, `linear`, `smoothstep` ... exactly; any other rate function (`there_and_back`, `double_smooth`, your own) becomes straight pieces within 0.2% of the motion (at most 64, Douglas-Peucker). Colors move as style tracks (mixed in linear light) |
+| `Transform`, `ReplacementTransform`, `TransformMatchingTex`, `TransformMatchingShapes`, `FadeTransform` | the same kind moves its parameters; different outlines (shapes, paths, text, equations) morph (`transform`, `transform_matching`; text becomes `as_shapes`), played in Manim's run time; the rest crossfade |
+| `ValueTracker` (`get_value`, `set_value`, `.animate.set_value`) | a `Value` with a track |
+| updaters (`add_updater`, with or without `dt`), `always_redraw`, `always`, `f_always` | run by the stand-in at Manim's frames (`config.frame_rate`: 30 a second, Manim's `-qm`, unless the script sets 1 to 120; `dt` 1/30, the first frame of a play with `dt` 0, as Manim does) with every animated mobject where Manim has it; what they change becomes tracks (keys a straight line between does not reproduce within 1e-4 are kept). A baked record: the document never runs the script again, so changing the `Value` later does not move what the updater drove. The work is bounded per import: at most 20000 updater frames, 2 million updater calls and 1 million sampled numbers (a document of at most about 11 MB of keys). Past half of any of them, updaters run at fewer frames a second (down to 2), each at one of Manim's frame times and with `dt` adding up to Manim's; when they are spent, updaters stop and the warning says at what time (what they moved stays where it was). Measured: 200 half-second plays driving an `always_redraw` plot import in 9 s as an 11 MB document (updaters stop at 69 s); 2000 dots with updaters over `wait(30)` in 8 s |
+| `self.wait_until(condition, max_time)`, `self.wait(t, stop_condition=)` | the condition is checked after each frame of the wait, with Manim's clock one frame on (as Manim CE 0.22.1 does), and the wait ends at the first frame where it is true; a condition that fails is a `ManimImportError` |
+| `self.add_sound("click.wav", time_offset, gain)` | a `media.Sound` (a WAV file inside the scene's folder) mixed in when the scene renders; a start before 0 or a gain outside -60 to 24 dB is clamped, with a warning |
+| Colors the script sets (`RED`, `"#58C4DD"`), `stroke_width` / `set_stroke(width=)`, `camera.background_color` | explicit style values (a hex color; a width in world units, 4 is the `regular` role's); a class's own default color is the nearest role. A negative or too large width or font size keeps the role, with a warning; a background's alpha is dropped, with a warning (a background is opaque). `lint(aesthetic=True)` says which are off the theme (`off_palette`, `off_scale`) |
 
-What does not: fills (drawn as outlines), updaters and `always_redraw` (baked at their first
-look), `ValueTracker` animations, arbitrary colors (roles only), font sizes (roles), `Transform`
-between different shapes (a crossfade). Each is listed in `ManimImport.warnings` (printed by
-the command); a Manim name phasor lacks raises an error that says so.
+What does not carry over, with a warning in `ManimImport.warnings` (printed by the command):
+a turned or stretched text (drawn level), a turned camera frame, a part of a `MathTex` other
+than its color, an updater that turns a mobject into another kind of shape, `Axes.get_area`,
+a file outside the scene's folder, a color phasor cannot read. A shape phasor cannot draw as
+its own kind (a zero radius, a coordinate past 1e9) is drawn as a path or a line, with a
+warning. A Manim name phasor lacks raises an error that says so; an updater, rate function
+or wait condition that fails, `exit()` in the script, and a script still running after
+`MAX_IMPORT_SECONDS` (600 s; checked at each play and updater call) are a
+`ManimImportError` naming it. The import applies its document in one patch at the end
+(and before each morph, which reads it), so its time grows with what the script makes, not
+with the number of plays. `lint(strict=True)` names every moving object of an import in
+`raw_motion`, by design: its motion is tracks at Manim's own times, never verbs anchored to
+markers (`examples/manim_camera_tour.py` is clean in `lint()` and has only that).
 
 ```python
 import tempfile
@@ -1134,19 +1747,23 @@ from phasor.importers import import_manim
 path = Path(tempfile.mkdtemp()) / "demo.py"
 path.write_text(
     "from manim import *\n"
-    "class Demo(Scene):\n"
+    "class Demo(MovingCameraScene):\n"
     "    def construct(self):\n"
-    "        c = Circle(radius=1, color=BLUE)\n"
+    "        c = Circle(radius=1, color=BLUE, fill_opacity=0.5)\n"
+    "        t = ValueTracker(0)\n"
+    "        d = Dot().add_updater(lambda m: m.move_to(c.point_at_angle(t.get_value())))\n"
     "        self.play(Create(c), run_time=2)\n"
-    "        self.play(c.animate.shift(RIGHT * 2), run_time=1)\n"
+    "        self.add(d)\n"
+    "        self.play(t.animate.set_value(PI), self.camera.frame.animate.scale(0.5), run_time=1)\n"
     "        self.wait(1)\n"
 )
 result = import_manim(path)
-assert result.duration == 4.0 and len(result.scene.engine.document.objects) == 1
+assert result.duration == 4.0 and result.warnings == []
 state = result.scene.engine.state_at
-assert state(0.0)["circle_1"].params.progress == 0.0
-assert state(2.0)["circle_1"].params.progress == 1.0
-assert abs(state(3.5)["circle_1"].params.points[0][0] - 3.0) < 1e-9  # moved 2 to the right
+assert state(0.0)["circle_1"].params.progress == 0.0 and state(2.0)["circle_1"].params.r == 1.0
+assert state(1.0)["circle_1"].params.fill_opacity == 0.5  # a filled shapes.Circle
+assert abs(state(3.0)["dot_1"].params.pos[0] + 1.0) < 1e-6  # the updater: half way round
+assert abs(state(3.5).values["camera.height"] - 4.0) < 1e-9  # the frame zoomed in
 ```
 
 ## Sketch: draw on the scene (Milestone 11)
@@ -1289,21 +1906,27 @@ field and nullclines kept faint.
 
 | Command | Status | Purpose |
 | --- | --- | --- |
-| `phasor doctor [--json] [--require A\|B\|C]` | M0 | Prove CUDA, NVRTC, OpenGL 4.3, encoders; print tier |
-| `phasor inspect SCENE [--t T] [--id ID] [--detail brief\|standard\|full]` | M1 | What is on screen at time t |
-| `phasor lint SCENE [--fix] [--strict] [--json] [--step S]` | M2 | Lint; exit 1 on errors (`--strict`: on warnings too). `--fix` applies suggested fixes and saves them |
-| `phasor storyboard SCENE [-o PNG] [--t T]... [--marks] [--json]` | M2 | Keyframe contact sheet plus what the inspector sees |
-| `phasor render SCENE [-o OUT] [--preset preview\|final\|4k] [--fps F] [--start S] [--end E] [--frame T] [--workers N]` | M3 | Video (`.mp4`; `.mov` is ProRes; a folder or `%05d.png` is a PNG sequence) or one PNG with `--frame`. `--workers`: render processes (default a quarter of the CPU threads, 1 to 4); the result is the same file as one process makes |
+| `phasor doctor [--json] [--require A\|B\|C]` | M0 | Prove CUDA, NVRTC, OpenGL 4.3, encoders and, without CUDA, the C++ compiler for CPU kernels (name, version, threads); print tier |
+| `phasor inspect SCENE [--t T] [--id ID] [--detail brief\|standard\|full] [--allow-scripts]` | M1 | What is on screen at time t |
+| `phasor lint SCENE [--fix] [--strict] [--json] [--step S] [--allow-scripts]` | M2 | Lint; exit 1 on errors (`--strict`: on warnings too). `--fix` applies suggested fixes and saves them |
+| `phasor storyboard SCENE [-o PNG] [--t T]... [--marks] [--json] [--allow-scripts]` | M2 | Keyframe contact sheet plus what the inspector sees |
+| `phasor render SCENE [-o OUT] [--preset preview\|final\|4k] [--fps F] [--start S] [--end E] [--frame T] [--workers N] [--threads T] [--allow-scripts]` | M3 | Video (`.mp4`; `.mov` is ProRes; a folder or `%05d.png` is a PNG sequence) or one PNG with `--frame`. `--workers`: render processes (default a quarter of the CPU threads, 1 to 4); the result is the same file as one process makes. `--threads`: CPU kernel threads per process without CUDA (default: the cores shared out, workers x threads <= cores) |
 | `phasor kit [FOLDER]` | kit | Set up or update a folder where an AI writes scenes (default `Documents/phasor`): `CLAUDE.md`, the AI docs, the examples sorted by kind, the `/scene` command, `TASTE.md`, and the phasor tools in `.mcp.json`. Your `TASTE.md`, `WISHLIST.md` and `scenes/` are never replaced |
 | `phasor bench [--width W] [--height H]` | M3 | ms per frame per kernel and peak VRAM; saved in `benchmarks/` |
-| `phasor bench --frames SCENE [--count N] [--preset P]` | GPU_SPEED.md | ms per final frame per stage (state, simulation, draw, gpu draw, readback, widen, blur sum, post, srgb, encode); saved in `benchmarks/` |
+| `phasor bench --frames SCENE [--count N] [--preset P] [--allow-scripts]` | GPU_SPEED.md | ms per final frame per stage (state, simulation, draw, gpu draw, readback, widen, blur sum, post, srgb, encode); saved in `benchmarks/` |
 | `phasor mcp [--root DIR] [--allow-scripts] [--attach]` | M5, M10 | MCP server; `--attach` edits the scene open in a running `phasor gui` |
 | `phasor gui [SCENE] [--root DIR] [--no-ai] [--install-shortcut]` | M10 | The desktop app (needs `uv sync --extra gui`): a start screen, or the editor on SCENE; also `phasor-gui`; a Manim script opens too |
-| `phasor web SCENE [-o PAGE.html] [--steps N]` | M12 | Bake a self-contained interactive web page from the scene's sliders |
+| `phasor web SCENE [-o PAGE.html] [--steps N] [--allow-scripts]` | M12 | Bake a self-contained interactive web page from the scene's sliders |
 | `phasor manim SCRIPT [--scene NAME] [-o OUT] [--code]` | M13 | Import a Manim Community scene as a phasor scene |
 | `phasor sketch SCENE STROKES.json [--t T] [--accept [K ...]] [--text K=TEXT]` | M11 | Turn drawn strokes into proposals; `--accept` applies them |
 
 `SCENE` is a `.phasor.json` document or a `.py` script that defines exactly one `Scene`.
+`--allow-scripts` (off by default) runs the Python modules a saved document names in
+`meta.modules` (its own object types and updaters); without it those objects are
+`missing_type` placeholder boxes. A `.py` scene is code you ran, so it needs no flag.
+`phasor gui SCENE.phasor.json` (and the app's Open, recent scenes and examples) likewise
+opens a document without running its modules; the person trusts them in the editor
+(`Editor.trust_scene_code()`).
 
 ## The desktop app (`phasor-gui`)
 

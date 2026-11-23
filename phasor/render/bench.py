@@ -14,11 +14,14 @@ import numpy as np
 
 from phasor.core.color import phase_lut
 from phasor.render import gpu
+from phasor.render.cpu import threads as cpu_threads
 from phasor.render.gpu import ComplexFunction, Tile
+from phasor.render.gpu.registry import active_backend
 
 
 def _cases(w: int, h: int) -> dict[str, dict[str, Any]]:
     rng = np.random.default_rng(0)
+    slow = active_backend() == "reference"
     image = np.ascontiguousarray(rng.random((h, w, 4), dtype=np.float32) * 3)
     field = gpu.run("escape", Tile.full(w, h), center=(-0.6, 0.0), height=2.6, max_iter=256,
                     backend="reference")  # fmt: skip
@@ -56,9 +59,9 @@ def _cases(w: int, h: int) -> dict[str, dict[str, Any]]:
         "tonemap": {"image": image, "bloom": image},
         "srgb8": {"image": np.ascontiguousarray(image / np.float32(3.0))},  # display range
         "accumulate": {"image": image.astype(np.float16), "weight": 0.25, "acc": image},
-        # a million points on the GPU; a few thousand for the NumPy reference (tests, no GPU)
+        # a million points on CUDA or the CPU backend; a few thousand for the NumPy reference
         "splat": {
-            "points": rng.normal(0.0, 0.6, (1_000_000 if gpu.default_gpu() else 4000, 2)),
+            "points": rng.normal(0.0, 0.6, (4000 if slow else 1_000_000, 2)),
             "colors": (1.0, 0.6, 0.3),
             "center": (0.0, 0.0),
             "height": 2.6,
@@ -70,7 +73,7 @@ def _cases(w: int, h: int) -> dict[str, dict[str, Any]]:
 def run_bench(width: int = 1920, height: int = 1080, repeats: int = 3) -> dict[str, Any]:
     """Time every kernel on one ``width`` x ``height`` frame (``resize`` halves it)."""
     cuda = gpu.default_gpu()
-    backend = "cuda" if cuda is not None else "reference"
+    backend = active_backend()
     results: dict[str, Any] = {}
     peak = None
     for name, params in _cases(width, height).items():
@@ -94,6 +97,7 @@ def run_bench(width: int = 1920, height: int = 1080, repeats: int = 3) -> dict[s
         "machine": platform.node(),
         "platform": platform.platform(),
         "backend": backend,
+        "threads": cpu_threads() if backend == "cpu" else None,
         "frame": [width, height],
         "repeats": repeats,
         "peak_vram_bytes": peak,
@@ -149,7 +153,7 @@ def run_frame_bench(engine: Any, name: str, count: int = 60, preset: str = "fina
     setup = sw.seconds.get("setup", 0.0)  # once per render: kept out of the per-frame times
     per = {s: round(1000 * sw.seconds.get(s, 0.0) / frames, 2) for s in STAGES}
     per["other"] = round(1000 * sw.other() / frames, 2)
-    cuda = gpu.default_gpu()
+    backend = active_backend()
     return {
         "when": datetime.now(UTC).isoformat(timespec="seconds"),
         "machine": platform.node(),
@@ -160,7 +164,8 @@ def run_frame_bench(engine: Any, name: str, count: int = 60, preset: str = "fina
         "frames": frames,
         "motion_blur": r["motion_blur"],
         "encoder": r["encoder"],
-        "backend": "cuda" if cuda is not None else "reference",
+        "backend": backend,
+        "threads": cpu_threads() if backend == "cpu" else None,
         "gl_renderer": engine.pass_runner().on_gl_info("GL_RENDERER"),
         "commit": _commit(),
         "wall_s": round(sw.wall, 3),

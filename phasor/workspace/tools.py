@@ -11,7 +11,9 @@ failed patch changes nothing.
 
 from __future__ import annotations
 
+import contextlib
 import re
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +21,7 @@ from phasor.core import io
 from phasor.core.diff import diff_documents
 from phasor.core.ids import file_stem
 from phasor.core.issues import DocumentError, Issue
-from phasor.core.objects import get_type, registered_types
+from phasor.core.objects import is_builtin, registered_types
 from phasor.core.schema import Document, Meta
 from phasor.engine import Engine
 from phasor.scene import Scene, load
@@ -41,6 +43,7 @@ VERBS = (
     "orbit",
     "orbit_reveal",
     "transform",
+    "transform_matching",
     "become",
     "write",
     "travel",
@@ -97,8 +100,98 @@ class Workspace:
         # Who changed the scene, in order: the editor's person ("you") and an attached AI ("ai").
         self.activity: list[dict[str, Any]] = []
         self.import_notes: list[str] = []  # what the last Manim import could not carry over
+        # Set on the thread that runs an attached AI's call (``workspace.remote``): that call
+        # never makes new code run, whatever the person allowed (``_no_new_code``).
+        self._caller = threading.local()
 
     # ------------------------------------------------------------ plumbing
+
+    @contextlib.contextmanager
+    def _as_ai(self):
+        """The calls made inside are an attached AI's (``RemoteServer`` wraps each one)."""
+        before = self._by_ai
+        self._caller.ai = True
+        try:
+            yield
+        finally:
+            self._caller.ai = before
+
+    @property
+    def _by_ai(self) -> bool:
+        return getattr(self._caller, "ai", False)
+
+    def _no_new_code(self, ops: list[Any]) -> None:
+        """An attached AI may not make code run that the person did not ask for: no change to
+        ``meta.modules`` and no new updater (``always``), even where the scene's own code may
+        run (the person trusted the modules it named, not ones the AI names). Checked on the
+        document the engine will edit, before anything is built, since building runs code."""
+        if not self._by_ai:
+            return
+        from phasor.core.patch import SetMeta, apply_ops, parse_patch
+
+        e = self.engine
+        doc = e.document if e.scripted else e.base  # what ``Engine.apply`` applies the ops to
+        try:
+            parsed = parse_patch(ops)
+        except (DocumentError, ValueError):
+            return  # ``Engine.apply`` refuses the same patch the same way: nothing is built
+        named = [op.value for op in parsed.ops if isinstance(op, SetMeta) and op.field == "modules"]
+        new: list[str] = []
+        if not named:
+            try:
+                after = apply_ops(doc, parsed, e.code_scope)
+            except (DocumentError, ValueError):
+                return  # refused the same way by ``Engine.apply``: nothing is built
+
+            def refs(d: Document) -> set[str]:
+                return {r for o in d.objects for r in o.always}
+
+            new = sorted(refs(after) - refs(doc))
+            if not new:
+                return
+        what = f"meta.modules {list(named[-1] or ())}" if named else f"updaters {new}"
+        msg = (f"an attached AI may not make new code run ({what}): only the person at the "
+               "editor may name a scene's modules or updaters")  # fmt: skip
+        hint = "ask the person to make this change in the editor, or use phasor's own types"
+        raise ToolError(msg, [Issue("scene_code", msg, fix_hint=hint)])
+
+    def _open(self, path: str, *, allow_scripts: bool) -> dict[str, Any]:
+        """``scene_open`` with the permission given here, not the workspace's: the editor
+        passes ``True`` only for a script the person opened or ran themselves."""
+        p = self._inside(path, must_exist=True)
+        if p.suffix == ".py" and not allow_scripts:
+            raise ToolError(
+                "this server does not run scripts (a .py scene is code). Open the saved "
+                ".phasor.json instead, or start the server with --allow-scripts"
+            )
+        from phasor.importers import import_manim, looks_like_manim
+        from phasor.importers.manim import ManimImportError
+
+        if p.suffix == ".py" and looks_like_manim(p):
+            # A Manim script: run through the stand-in module; the result is a plain scene
+            # (saved beside the script as name.phasor.json), free to edit.
+            try:
+                result = self._guard(lambda: import_manim(p))
+            except ManimImportError as e:
+                raise ToolError(f"{p.name} could not be imported: {e}") from e
+            self._engine = Engine(result.document(), base_dir=p.parent)
+            self.path = p.with_suffix(io.DOC_SUFFIX)
+            self.import_notes = result.warnings
+            return {**self.summary(), "imported_from": "manim", "notes": result.warnings}
+        self._engine = self._guard(lambda: load(p, allow_scripts=allow_scripts))
+        self.path = p
+        return self.summary()
+
+    def _trust_code(self) -> dict[str, Any]:
+        """Let the open scene's own modules (``meta.modules``) run: the person at the editor
+        asked (``Editor.trust_scene_code``). Not a tool: an attached AI cannot call it. The
+        scene keeps its unsaved edits; its undo history starts again."""
+        if self._by_ai:
+            raise ToolError("only the person at the editor may trust a scene's code")
+        e = self.engine
+        self._engine = e.fork(allow_scripts=True)
+        return {"modules": list(self._engine.document.meta.modules),
+                "version": self._engine.version}  # fmt: skip
 
     @property
     def engine(self) -> Engine:
@@ -122,6 +215,8 @@ class Workspace:
             raise ToolError(str(e), e.issues) from e
         except (KeyError, ValueError, OSError) as e:
             raise ToolError(str(e.args[0]) if isinstance(e, KeyError) and e.args else str(e)) from e
+        except SystemExit as e:  # a scene script that calls exit(): the server goes on
+            raise ToolError(f"the script called exit({e.code!r})") from None
 
     def summary(self) -> dict[str, Any]:
         e = self.engine
@@ -187,7 +282,8 @@ class Workspace:
         for spec in e.document.objects:
             # Without a look, only lines that run a hue along themselves change.
             runs_hue = spec.type != "line" or look is not None or spec.params.get("hue_along", 0)
-            if spec.type in targets and "colormap" in _style_keys(spec.type) and runs_hue:
+            keys = getattr(e.type_of(spec.type), "Style", {})
+            if spec.type in targets and "colormap" in keys and runs_hue:
                 ops.append({"op": "set_style", "id": spec.id, "key": "colormap", "role": role})
         r = e.apply(ops, origin="tweak")
         return {**_slim_result(r.to_dict()), "palette": palette}
@@ -195,26 +291,9 @@ class Workspace:
     def scene_open(self, path: str) -> dict[str, Any]:
         """Open ``name.phasor.json`` (or a ``.py`` script when the server allows scripts; a
         script that imports ``manim`` is run through phasor's Manim stand-in and opens as a
-        plain scene, with ``notes`` on what could not be carried over)."""
-        p = self._inside(path, must_exist=True)
-        if p.suffix == ".py" and not self.allow_scripts:
-            raise ToolError(
-                "this server does not run scripts (a .py scene is code). Open the saved "
-                ".phasor.json instead, or start the server with --allow-scripts"
-            )
-        from phasor.importers import import_manim, looks_like_manim
-
-        if p.suffix == ".py" and looks_like_manim(p):
-            # A Manim script: run through the stand-in module; the result is a plain scene
-            # (saved beside the script as name.phasor.json), free to edit.
-            result = self._guard(lambda: import_manim(p))
-            self._engine = Engine(result.document(), base_dir=p.parent)
-            self.path = p.with_suffix(io.DOC_SUFFIX)
-            self.import_notes = result.warnings
-            return {**self.summary(), "imported_from": "manim", "notes": result.warnings}
-        self._engine = self._guard(lambda: load(p))
-        self.path = p
-        return self.summary()
+        plain scene, with ``notes`` on what could not be carried over). The modules a
+        document names run only where scripts may run; never for an attached AI."""
+        return self._open(path, allow_scripts=self.allow_scripts and not self._by_ai)
 
     def scene_save(self, path: str | None = None) -> dict[str, Any]:
         """Save the document (``name.phasor.json``); tweaks to a script scene go to its
@@ -239,8 +318,11 @@ class Workspace:
         """Apply a patch (one op, a list of ops, or ``{"ops": [...]}``). Atomic: if any op
         is invalid nothing changes. Returns the result and the lint issues it added or fixed.
         An ``add_object`` may name a ``preset`` (see ``object_types``); the scene's look fills
-        in what is left unset, and explicit values always win."""
-        r = self.engine.apply(self._with_defaults(patch), origin="tweak")
+        in what is left unset, and explicit values always win. Attached to the editor, an
+        edit that changes ``meta.modules`` or adds an updater is refused (``scene_code``)."""
+        ops = self._with_defaults(patch)
+        self._no_new_code(ops)
+        r = self.engine.apply(ops, origin="tweak")
         if r.ok:
             try:
                 self._files_inside()
@@ -253,11 +335,10 @@ class Workspace:
         """Every file the scene names (a picture's ``path``) is inside the workspace folder:
         the AI may show only what is in its folder."""
         from phasor.core import files
-        from phasor.core.objects import get_type
 
         e = self.engine
         for spec in e.document.objects:
-            cls = get_type(spec.type)
+            cls = e.type_of(spec.type)  # a scene's own type too: its files are checked
             for name in getattr(cls, "Files", ()):
                 raw = spec.params.get(name)
                 if isinstance(raw, str) and raw:
@@ -280,7 +361,7 @@ class Workspace:
                 out.append(op)
                 continue
             spec = dict(op["object"])
-            cls = get_type(str(spec.get("type")))
+            cls = self.engine.type_of(str(spec.get("type")))
             preset = spec.pop("preset", None)
             params, style = dict(spec.get("params", {})), dict(spec.get("style", {}))
             if preset is not None:
@@ -321,8 +402,8 @@ class Workspace:
         """Animate with a choreography verb starting at a marker (or seconds). Timing comes
         from the theme. Returns when it starts and ends so the next step can follow it.
         ``orbit`` swings the 3D camera ``value`` degrees (default 360), until marker ``until``
-        if given; ``morph`` too runs until ``until`` if given. ``transform`` and
-        ``become`` take ``targets=[from, to]``; ``sweep`` takes
+        if given; ``morph`` too runs until ``until`` if given. ``transform``,
+        ``transform_matching`` and ``become`` take ``targets=[from, to]``; ``sweep`` takes
         ``path`` and ``value``; ``circumscribe`` takes one target and ``value`` "circle" or
         "box"."""
         if verb not in VERBS:
@@ -344,7 +425,7 @@ class Workspace:
             if len(targets) != 1:
                 raise ToolError("focus_pull needs exactly one target id")
             args = (targets[0],)
-        elif verb in ("transform", "become"):
+        elif verb in ("transform", "transform_matching", "become"):
             if len(targets) != 2:
                 raise ToolError(f"{verb} needs two target ids: [from, to]")
             args = (targets[0], targets[1])
@@ -421,7 +502,8 @@ class Workspace:
             if path is None or not path.exists():
                 raise ToolError("nothing saved yet")
             # The saved document as it takes effect: base plus its overrides, like "current".
-            return self._guard(lambda: Engine.open(path, passes=None).document)
+            allow = self.allow_scripts and not self._by_ai
+            return self._guard(lambda: Engine.open(path, passes=None, allow_scripts=allow).document)
         if ref in self.engine.checkpoints():
             return self.engine.checkpoint_document(ref)
         raise ToolError(
@@ -530,8 +612,9 @@ class Workspace:
     def critique(self) -> dict[str, Any]:
         """The art-director's report: a taste score (0 = nothing to criticise), every
         aesthetic issue with the markers it happens at and its fixes (``fix`` is certain,
-        ``suggested`` is judgement), and the rubric (STYLE.md) to judge the storyboard by.
-        Look at the picture too: no rule sees everything."""
+        ``suggested`` is judgement, ``snap`` puts an explicit color or size back on the
+        nearest role and is only offered), and the rubric (STYLE.md) to judge the storyboard
+        by. Look at the picture too: no rule sees everything."""
         from phasor.render import gallery
 
         report = self.engine.critique()
@@ -539,11 +622,14 @@ class Workspace:
         report["gallery"] = len(gallery.entries(self.root / "gallery"))
         return report
 
-    def polish(self, rounds: int = 3) -> dict[str, Any]:
+    def polish(self, rounds: int = 3, snap: bool = False) -> dict[str, Any]:
         """Apply the critic's fixes (certain ones, then judgement suggestions), at most
         ``rounds`` (3) times; each round is undoable. Returns the score before and after and
-        what is left for you to judge."""
-        r = self.engine.polish(min(max(rounds, 1), 3))
+        what is left for you to judge. Colors and sizes the scene typed (``off_palette``,
+        ``off_scale``) snap to the nearest role only with ``snap=True``: ask the person."""
+        if not isinstance(snap, bool):  # a JSON "false" is truthy: never snap by accident
+            raise ToolError(f"snap must be true or false, not {snap!r}")
+        r = self.engine.polish(min(max(rounds, 1), 3), snap=snap)
         return {**r, "version": self.engine.version}
 
     def variants(self, beat: str | float, n: int = 3) -> dict[str, Any]:
@@ -658,9 +744,11 @@ class Workspace:
     def object_types(self) -> dict[str, Any]:
         """What a patch may add: object types (use these exact names in ``add_object``) with their
         parameters and defaults and style keys (role group, default role), the role names each
-        group accepts (style takes roles, never raw colors), and the themes."""
+        group accepts (style takes roles; color, text-size and stroke keys may instead hold an
+        explicit value, checked by review), and the themes."""
         out: dict[str, Any] = {}
-        for name, cls in sorted(registered_types().items()):
+        scope = self._engine.code_scope if self._engine is not None else None
+        for name, cls in sorted(registered_types(scope).items()):
             params = {}
             for k, f in cls.Params.model_fields.items():
                 params[k] = (
@@ -671,6 +759,8 @@ class Workspace:
             }
             out[name] = {"params": _jsonable(params), "style": style,
                          "presets": sorted(getattr(cls, "Presets", {}))}  # fmt: skip
+            if not is_builtin(cls):  # defined by a scene or a package, not shipped (ADR 0005)
+                out[name]["scene_local"] = True
         return {
             "types": out,
             "roles": {g: list(r) for g, r in ROLE_GROUPS.items()},
@@ -742,10 +832,3 @@ def _resolve(doc: Document, snap: list[dict[str, Any]], query: str) -> list[dict
     scored.sort(key=lambda s: (-s[0], s[1]))
     return [{"id": i, "score": round(s, 2), "why": w, "region": by_id.get(i, {}).get("region")}
             for s, i, w in scored]  # fmt: skip
-
-
-def _style_keys(type_name: str) -> set[str]:
-    from phasor.core.objects import get_type
-
-    cls = get_type(type_name)
-    return set(getattr(cls, "Style", {})) if cls else set()

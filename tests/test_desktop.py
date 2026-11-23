@@ -461,6 +461,99 @@ def test_closing_cancels_a_running_export_and_stops_the_ai(home, monkeypatch):
     assert job.cancelled and w.server is None and not handoff.exists()
 
 
+# ---------------------------------------------------------------- opening a file runs no code
+# Re-audit of Milestone 15 (B1): a document opened in the app does not run the modules it
+# names, whichever way it is opened; the attached AI cannot make code run either.
+
+CODE = """
+import pathlib
+from typing import ClassVar
+
+from phasor.core.objects import ObjectBase, ParamsBase, register
+
+(pathlib.Path(__file__).parent / "ran.txt").write_text("ran", encoding="utf-8")
+
+
+@register
+class Evil(ObjectBase):
+    type: ClassVar[str] = "m15_desktop_evil"
+
+    class Params(ParamsBase):
+        pass
+
+    def draw(self, ctx, state):
+        pass
+"""
+
+
+def code_scene(folder: Path) -> Path:
+    """``evil.phasor.json`` naming its module ``evil.phasor.py`` (copied with it as an
+    example), and ``other.py``: each writes ``ran.txt`` beside it when it runs."""
+    from phasor.core import io
+    from phasor.core.schema import Document, Meta, ObjectSpec
+
+    folder.mkdir(parents=True, exist_ok=True)
+    for name, kind in (("evil.phasor.py", "m15_desktop_evil"), ("other.py", "other")):
+        (folder / name).write_text(CODE.replace("m15_desktop_evil", kind), "utf-8")
+    path = folder / "evil.phasor.json"
+    io.save(path, Document(meta=Meta(title="evil", modules=("evil.phasor.py",)),
+                           objects=(ObjectSpec(id="e", type="m15_desktop_evil"),)))  # fmt: skip
+    return path
+
+
+@pytest.mark.parametrize("how", ["command line", "open dialog", "recent", "example"])
+def test_opening_a_document_in_the_app_runs_none_of_its_code(desk, home, monkeypatch, how):
+    from PySide6.QtWidgets import QFileDialog
+
+    path = code_scene(home / "got")
+    if how == "command line":
+        w = desk.open(str(path))
+    elif how == "open dialog":
+        monkeypatch.setattr(QFileDialog, "getOpenFileName",
+                            staticmethod(lambda *a, **k: (str(path), "")))  # fmt: skip
+        w = desk.ask_open()
+    elif how == "recent":
+        desk.settings.opened(path)
+        first = desk.open(plain_scene(home / "a.phasor.json"))
+        first.fill_recent()
+        (action,) = [a for a in first.recent_menu.actions() if a.toolTip() == str(path.resolve())]
+        action.trigger()
+        w = desk.windows[-1]
+    else:
+        w = desk.open_example({"name": "evil", "path": str(path)})
+    assert w is not None and Path(w.ed.path).name == "evil.phasor.json"
+    assert w.ed.engine.allow_scripts is False and w.ed.ws.allow_scripts is False
+    assert [i["ids"] for i in w.ed.lint_items() if i["code"] == "missing_type"] == [["e"]]
+    assert not list(home.rglob("ran.txt"))
+    w.ed.trust_scene_code()  # the person's choice: now it runs
+    assert [i for i in w.ed.lint_items() if i["code"] == "missing_type"] == []
+    assert len(list(home.rglob("ran.txt"))) == 1
+
+
+def test_the_ai_attached_to_a_window_cannot_make_code_run(home):
+    from phasor.gui.desktop import Desktop
+    from phasor.workspace.remote import RemoteWorkspace
+    from phasor.workspace.tools import ToolError
+
+    path = code_scene(home / "mine")
+    d = Desktop(serve_ai=True)
+    w = d.open(path)
+    try:
+        ai = RemoteWorkspace.from_handoff(path.parent)
+        w.ed.trust_scene_code()
+        (path.parent / "ran.txt").unlink()
+        with pytest.raises(ToolError, match="may not make new code run"):
+            ai.scene_edit([{"op": "set_meta", "field": "modules",
+                            "value": ["evil.phasor.py", "other.py"]},
+                           {"op": "add_object", "object": {"id": "o", "type": "other"}}])  # fmt: skip
+        ai.scene_open("evil.phasor.json")
+        assert w.ed.engine.allow_scripts is False
+        assert not (path.parent / "ran.txt").exists()
+    finally:
+        w.ed.saved_version = w.ed.version
+        w.close()
+
+
 # ---------------------------------------------------------------- A6: shortcuts
 
 

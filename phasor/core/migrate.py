@@ -51,6 +51,21 @@ def _v6_to_v7(raw: dict[str, Any]) -> dict[str, Any]:
     return raw
 
 
+def _v7_to_v8(raw: dict[str, Any]) -> dict[str, Any]:
+    """Version 8 added ``meta.modules`` (code the scene needs, ADR 0005) and per-object
+    ``always`` (its updaters). Older documents need no code and have no updaters."""
+    raw.setdefault("meta", {}).setdefault("modules", [])
+    raw["objects"] = [{**o, "always": o.get("always", [])} for o in raw.get("objects", [])]
+    return raw
+
+
+def _v8_to_v9(raw: dict[str, Any]) -> dict[str, Any]:
+    """Version 9 lets a style key hold an explicit value beside a role name (old documents
+    hold only roles, which read the same) and added ``meta.background`` (None: the theme's)."""
+    raw.setdefault("meta", {}).setdefault("background", None)
+    return raw
+
+
 MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {
     1: _v1_to_v2,
     2: _v2_to_v3,
@@ -58,6 +73,8 @@ MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {
     4: _v4_to_v5,
     5: _v5_to_v6,
     6: _v6_to_v7,
+    7: _v7_to_v8,
+    8: _v8_to_v9,
 }
 
 

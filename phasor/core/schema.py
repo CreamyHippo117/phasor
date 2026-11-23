@@ -7,16 +7,20 @@ Meaning (object types, parameter types, expressions, tracks, cycles) is checked 
 
 from __future__ import annotations
 
+import math
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, PlainValidator, model_validator
 
 from phasor.core.constraints import PRIORITIES, RuleError, normalize_rule, parse_rule
-from phasor.core.ids import is_valid_id, is_valid_name, parent_of, split_path
+from phasor.core.files import relative_path
+from phasor.core.ids import is_valid_id, is_valid_name, parent_of, split_path, split_style_path
 from phasor.core.values import normalize
 
-SCHEMA_VERSION = 7  # 2: `constraints` (M2); 3: `retired_ids`; 4: `narration`, `Segment.verb` (M4);
-# 5: `meta.life`, `meta.seed`, `meta.look` (M7); 6: `controls` (M12); 7: `meta.palette`
+SCHEMA_VERSION = 9  # 2: `constraints` (M2); 3: `retired_ids`; 4: `narration`, `Segment.verb` (M4);
+# 5: `meta.life`, `meta.seed`, `meta.look` (M7); 6: `controls` (M12); 7: `meta.palette`;
+# 8: `meta.modules`, `ObjectSpec.always` (M15, ADR 0005); 9: explicit style values beside
+# roles, `meta.background` (M18)
 OVERRIDES_VERSION = 1
 
 
@@ -63,13 +67,103 @@ class Segment(Model):
     verb: str | None = None  # the choreography verb that made it; None is a raw transition
 
 
+def _check_module(path: str) -> str:
+    """A code module the document needs: a ``.py`` file inside the scene's folder."""
+    path = relative_path(path)
+    if not path.endswith(".py"):
+        raise ValueError(f"module {path!r} must be a .py file (a scene script or *.types.py)")
+    return path
+
+
+def _check_updater(ref: str) -> str:
+    module, sep, name = ref.rpartition(":") if isinstance(ref, str) else ("", "", "")
+    if not sep or not module or not name:
+        raise ValueError(f"updater {ref!r} must be written '<module>.py:<function>'")
+    return f"{_check_module(module)}:{name}"
+
+
+# The largest explicit size (text height, stroke width) a document takes, in world units. Any
+# finite bound keeps the drawing code's pixel arithmetic finite (1e308 made it round(inf));
+# this one is far above any frame a scene uses (the default frame is 8 units high).
+MAX_SIZE = 1e6
+
+
+def _float(x: Any) -> float:
+    """``float(x)`` for a validator: an int too large for a float is a ValueError (pydantic
+    reports it), not the OverflowError ``float`` raises."""
+    try:
+        return float(x)
+    except OverflowError:
+        raise ValueError(f"{str(x)[:20]}... is too large a number") from None
+
+
+def check_color(v: Any) -> str | tuple[float, float, float, float]:
+    """An explicit color: ``"#rrggbb"`` / ``"#rgb"`` / ``"#rrggbbaa"`` (sRGB, stored upper
+    case) or linear RGBA (3 or 4 numbers in 0..1, stored as 4). Raises ``ValueError``."""
+    if isinstance(v, str):
+        h = v[1:] if v.startswith("#") else ""
+        if len(h) == 3:
+            h = "".join(ch * 2 for ch in h)
+        if len(h) not in (6, 8) or any(ch not in "0123456789abcdefABCDEF" for ch in h):
+            raise ValueError(f"bad color {v!r}: write '#rrggbb' (sRGB) or linear (r, g, b, a)")
+        return "#" + h.upper()
+    numbers = isinstance(v, list | tuple) and len(v) in (3, 4)
+    if numbers and all(isinstance(x, int | float) and not isinstance(x, bool) for x in v):
+        rgba = tuple(_float(x) for x in (*v, 1.0)[:4])
+        if all(math.isfinite(x) and 0.0 <= x <= 1.0 for x in rgba):
+            return rgba  # type: ignore[return-value]
+    raise ValueError(f"bad color {v!r}: linear RGBA takes 3 or 4 numbers in 0..1 (paint; "
+                     "light comes from the glow roles)")  # fmt: skip
+
+
+def color_alpha(c: str | tuple[float, ...]) -> float:
+    """The alpha of a color ``check_color`` returned."""
+    if isinstance(c, str):
+        return int(c[7:9], 16) / 255 if len(c) == 9 else 1.0
+    return float(c[3])
+
+
+def _check_background(v: Any) -> str | tuple[float, float, float, float]:
+    """A scene background: a color (``check_color``) that is opaque. Nothing is behind the
+    background, so an alpha below 1 would be dropped silently: it is refused instead."""
+    c = check_color(v)
+    if color_alpha(c) < 1.0:
+        raise ValueError(f"bad background {v!r}: a background is opaque (alpha 1); write "
+                         "'#rrggbb' or linear (r, g, b)")  # fmt: skip
+    return c
+
+
+def _check_style_value(v: Any) -> str | float | tuple[float, ...]:
+    """A style value: a role name (the default, AI-friendly path), or an explicit value
+    (M18): a color (see ``check_color``) or a size in world units (a positive number, at
+    most ``MAX_SIZE``). Which keys take which is checked against the theme's role groups
+    when compiling."""
+    if isinstance(v, str) and not v.startswith("#"):
+        return v
+    if isinstance(v, int | float) and not isinstance(v, bool):
+        f = _float(v)
+        if not (math.isfinite(f) and 0 < f <= MAX_SIZE):
+            raise ValueError(f"bad size {v!r}: a size is a positive number of world units, "
+                             f"at most {MAX_SIZE:g}")  # fmt: skip
+        return f
+    return check_color(v)
+
+
+# A style value: a role name or an explicit value (hex or linear RGBA color, world size).
+StyleValue = Annotated[Any, PlainValidator(_check_style_value)]
+BackgroundValue = Annotated[Any, PlainValidator(_check_background)]
+
+
 class ObjectSpec(Model):
     id: str
     type: str
     params: dict[str, ParamSpec] = Field(default_factory=dict)
-    style: dict[str, str] = Field(default_factory=dict)  # style key -> role name
+    style: dict[str, StyleValue] = Field(default_factory=dict)  # style key -> role or value
     tags: tuple[str, ...] = ()
     layer: Literal["world", "overlay"] = "world"
+    # Pure updaters (ADR 0005), each ``"<module>:<function>"``: a function in one of the
+    # document's ``meta.modules`` that sets parameters of this object from (t, look).
+    always: tuple[Annotated[str, PlainValidator(_check_updater)], ...] = ()
 
 
 class CameraSpec(Model):
@@ -162,6 +256,12 @@ class Meta(Model):
     # The colors run along strokes (a colormap role: "spectrum", the prism rainbow, or
     # "moonlight", "gold", "glacier", "borealis", "rose"); None: the theme's own.
     palette: str | None = None
+    # A background color of the scene's own (hex sRGB or linear RGBA, opaque, M18); None:
+    # the theme's. Lint ``off_palette`` (aesthetic) says when it is far from the theme's.
+    background: BackgroundValue | None = None
+    # Code the scene needs (ADR 0005): the scene script or ``*.types.py`` files in its folder
+    # that define its own object types and updaters. Loaded only where scripts may run.
+    modules: tuple[Annotated[str, PlainValidator(_check_module)], ...] = ()
     # "script": built by a Python script; later tweaks go to name.overrides.json.
     source: Literal["document", "script"] = "document"
 
@@ -192,7 +292,7 @@ class Control(Model):
 
 
 class Document(Model):
-    schema_version: Literal[7] = SCHEMA_VERSION
+    schema_version: Literal[9] = SCHEMA_VERSION
     meta: Meta
     objects: tuple[ObjectSpec, ...] = ()
     constraints: tuple[ConstraintSpec, ...] = ()
@@ -213,7 +313,12 @@ class Document(Model):
                 raise ValueError(f"duplicate id {thing.id!r}")
             seen.add(thing.id)
         object_ids = {o.id for o in self.objects}
+        modules = set(self.meta.modules)
         for o in self.objects:
+            for ref in o.always:
+                if ref.rpartition(":")[0] not in modules:
+                    raise ValueError(f"{o.id}: updater {ref!r} names a module that is not in "
+                                     f"meta.modules {sorted(modules)}")  # fmt: skip
             parent = parent_of(o.id)
             if parent is not None and parent not in object_ids:
                 raise ValueError(f"object {o.id!r} needs its parent {parent!r} to exist")
@@ -247,6 +352,17 @@ class Document(Model):
     def camera(self, camera_id: str) -> CameraSpec | None:
         return next((c for c in self.cameras if c.id == camera_id), None)
 
+    def style_track(self, path: str) -> tuple[str, str] | None:
+        """(object id, style key) when the track ``path`` animates a style key
+        (``dot.style.color``); None for a parameter path. A real object ``<id>.style``
+        keeps its own parameter paths (existence first)."""
+        found = split_style_path(path)
+        if found is None or self.object(found[0]) is None:
+            return None
+        if self.object(f"{found[0]}.style") is not None or self.camera(found[0]) is not None:
+            return None
+        return found
+
 
 class Overrides(Model):
     """GUI/AI tweaks to a scripted scene, keyed by ``<id>.<param>`` / ``<id>.<style key>``,
@@ -254,7 +370,7 @@ class Overrides(Model):
 
     schema_version: Literal[1] = OVERRIDES_VERSION
     params: dict[str, ParamSpec] = Field(default_factory=dict)
-    styles: dict[str, str] = Field(default_factory=dict)
+    styles: dict[str, StyleValue] = Field(default_factory=dict)  # a role or explicit value
     constraints: tuple[ConstraintSpec, ...] = ()  # rules added on top of the script's own
 
     @model_validator(mode="after")

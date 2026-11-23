@@ -45,8 +45,10 @@ def test_a_helix_has_the_arc_length_the_formula_gives():
 def test_ticks_skip_zero_and_stay_inside_the_range():
     np.testing.assert_allclose(gm.tick_values(-3, 3, 1), [-3, -2, -1, 1, 2, 3])
     np.testing.assert_allclose(gm.tick_values(0, 2, 0.5), [0.5, 1.0, 1.5, 2.0])
+    # Milestone 19: step 0 asks for a nice step (it was refused before); a negative one is not.
+    np.testing.assert_allclose(gm.tick_values(-1, 1, 0), [-1.0, -0.5, 0.5, 1.0])
     with pytest.raises(ValueError):
-        gm.tick_values(-1, 1, 0)
+        gm.tick_values(-1, 1, -1)
 
 
 def test_color_by_output_normalizes_and_samples_a_ramp():

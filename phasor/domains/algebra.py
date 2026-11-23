@@ -21,6 +21,7 @@ from phasor.core.objects import Bounds, DrawContext, ObjectBase, ParamsBase, Pas
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
 from phasor.domains import algebra_math as am
+from phasor.domains.path_math import regular_vertices
 from phasor.domains.strokes import arrow, circle, disc, polyline, with_alpha
 
 
@@ -67,9 +68,7 @@ class Polygon(ObjectBase):
 
     def _verts(self, p) -> np.ndarray:
         """Screen-plane vertex positions (n, 3): vertex 1 starts at the top."""
-        k = np.arange(p.n)
-        ang = math.pi / 2 + 2 * math.pi * k / p.n  # vertex 1 at the top, counterclockwise
-        base = np.stack([np.cos(ang), np.sin(ang)], axis=1) * p.r
+        base = regular_vertices(p.n, p.r)[:, :2]  # vertex 1 at the top, counterclockwise
         t = math.radians(p.rotation)
         rot = np.array([[math.cos(t), -math.sin(t)], [math.sin(t), math.cos(t)]])
         mirror = np.array([[math.cos(math.pi * p.flip), 0.0], [0.0, 1.0]])

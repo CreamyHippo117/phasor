@@ -32,7 +32,9 @@ def _run(args: argparse.Namespace) -> int:
     from phasor.engine import Engine
 
     doc = result.document()
-    Engine(doc, passes=None).save(out)
+    # files the scene names (an SVG, a sound) go with it into the folder it is saved in
+    out.parent.mkdir(parents=True, exist_ok=True)
+    Engine(doc, passes=None, base_dir=str(script.resolve().parent)).save(out)
     print(f"{result.name}: {len(doc.objects)} objects, {result.duration:g} s -> {out}")
     for w in result.warnings:
         print(f"  note: {w}")
@@ -44,7 +46,8 @@ def _run(args: argparse.Namespace) -> int:
         code = out.with_name(out.name.removesuffix(".phasor.json") + ".scene.py")
         code.write_text(document_to_python(doc), encoding="utf-8")
         print(f"  code: {code}")
-    issues = [i for i in Engine(doc, passes=None).lint() if i.severity == "error"]
+    issues = [i for i in Engine(doc, passes=None, base_dir=str(out.resolve().parent)).lint()
+              if i.severity == "error"]  # fmt: skip
     for i in issues:
         print(f"  lint error: {i.message}")
     return 1 if issues else 0

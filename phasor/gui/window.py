@@ -15,7 +15,6 @@ from __future__ import annotations
 import json
 import keyword
 import re
-from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -53,6 +52,7 @@ from PySide6.QtWidgets import (
 )
 
 from phasor.gui.controller import Editor
+from phasor.style import explicit
 from phasor.style.theme import ROLE_GROUPS
 from phasor.workspace import ToolError
 
@@ -386,10 +386,18 @@ class Inspector(QWidget):
         for key, role in panel["style"].items():
             group = self.ed.engine.state_at(self.ed.t)[oid].impl.Style.get(key, (None,))[0]
             box = QComboBox()
-            box.addItems(list(ROLE_GROUPS.get(group, (role,))))
-            box.setCurrentText(role)
+            # A value the scene typed (a color, a size) is shown as it is, first; picking a
+            # role replaces it, and nothing replaces it unasked.
+            typed = None if explicit.is_role(role) else role
+            label = json.dumps(typed) if typed is not None else None
+            if label is not None:
+                box.addItem(label)
+            box.addItems(list(ROLE_GROUPS.get(group, () if label else (role,))))
+            box.setCurrentText(label if label is not None else role)
             box.currentTextChanged.connect(
-                lambda r, k=key: self.edited.emit(self.ed.set_style(oid, k, r))
+                lambda r, k=key, keep=label: (
+                    None if r == keep else self.edited.emit(self.ed.set_style(oid, k, r))
+                )
             )
             self.form.addRow(f"style: {key}", box)
             self.roles[key] = box
@@ -845,20 +853,11 @@ QStatusBar { color: #8a93a8; }
 
 
 def make_workspace(path: str | None, root: str | None = None):
-    """A workspace with ``path`` open (a .phasor.json, or a .py builder script: the person
-    at the keyboard may open code; an attached AI still may not), or a new scene."""
-    from phasor.workspace import Workspace
+    """A workspace with ``path`` open, or a new scene (``controller.open_workspace``: a .py
+    the person opens runs; a .phasor.json opens without running the modules it names)."""
+    from phasor.gui.controller import open_workspace
 
-    ws = Workspace(root or (Path(path).parent if path else Path.cwd()))
-    if path:
-        ws.allow_scripts = True  # only for this one call, made by the person
-        try:
-            ws.scene_open(str(Path(path).resolve()))
-        finally:
-            ws.allow_scripts = False
-    else:
-        ws.scene_new("untitled")
-    return ws
+    return open_workspace(path, root)
 
 
 def start_ai_server(ws, lock):

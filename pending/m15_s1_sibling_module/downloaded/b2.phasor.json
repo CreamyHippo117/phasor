@@ -1,0 +1,1 @@
+{"schema_version": 8, "meta": {"title": "b2", "modules": ["gemlib.py"]}, "objects": [{"id": "evil", "type": "gem2", "params": {"pos": [5, 5, 0]}}]}

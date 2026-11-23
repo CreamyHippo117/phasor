@@ -15,10 +15,16 @@ person both edit. The `phasor` MCP tools (when connected) let you see what it re
    otherwise) and start from its structure. Look up names in the API docs (`docs_search`,
    or `kit/docs/API.md`); call `object_types` for exact parameters and style roles.
 2. Write or edit the script. Name objects by meaning (`pole_i`, `loop.label`). Labels are
-   `<owner>.label` with a `label(x) near x` constraint. Style takes roles, never raw colors.
+   `<owner>.label` with a `label(x) near x` constraint. Style takes roles; type a color or
+   size only when the person asks for one (review flags it if it is off the theme).
    Positions are world coordinates (x = Re, y = Im).
 3. For a narrated scene: narration with `[[markers]]`, and every motion anchored to a
    marker with a verb (`reveal`, `trace`, `dim_others`, `morph`, ...).
+   One thing becoming another: `transform(a, b)` morphs any outline (path, shape, text,
+   SVG) into another; between two equations drawn as pictures it glides equal parts and
+   crossfades the rest. To rearrange a formula so each symbol travels to its new place,
+   draw both equations `as_shapes=True` and use `transform` or `transform_matching`
+   (matching pieces move, the rest fade; also for text into text).
 4. Check: `scene_open` the script (again after every edit), then `review`: lint, what is on
    screen at each marker, and a storyboard picture. Without the tools: `phasor lint SCENE
    --aesthetic`, then `phasor storyboard SCENE --marks` and read the picture. Fix each item
@@ -29,7 +35,8 @@ person both edit. The `phasor` MCP tools (when connected) let you see what it re
 
 ## Never
 
-- Type label positions, raw colors or pixel sizes. Use constraints and roles.
+- Type label positions. Use constraints. Prefer roles to typed colors and sizes, and never
+  snap a typed value to a role (`polish` with `snap`) without asking.
 - Animate by raw seconds in a narrated scene. Use markers and verbs.
 - Claim it looks good without having looked at the storyboard.
 - Reach for a rainbow everywhere: the full wheel is for where hue means phase (domain

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from phasor.core.life import LEVELS
+from phasor.style import explicit
 from phasor.style.theme import ThemeError, available_themes
 
 LOOK_DIR = Path(__file__).parent / "looks"
@@ -51,16 +52,30 @@ class Look:
     # object type -> {"params": {...}, "style": {...}}; filled in only where a scene says nothing
     defaults: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
 
-    def fill(self, type_name: str, params: dict[str, Any], style: dict[str, str],
+    def fill(self, type_name: str, params: dict[str, Any], style: dict[str, Any],
              palette: str | None = None):  # fmt: skip
         """``params`` and ``style`` with this look's defaults for ``type_name`` added where
         the object did not set them. With a ``palette``, what the look runs a hue along (its
-        lines) takes the palette's colors."""
-        d = self.defaults.get(type_name, {})
-        d_style = dict(d.get("style", {}))
-        if palette is not None and ("colormap" in d_style or "hue_along" in d.get("params", {})):
+        lines) takes the palette's colors. An object whose color the scene typed (an explicit
+        value) keeps that color: the look runs no hue along it."""
+        d_params, d_style = self.defaults_for(type_name, style)
+        if palette is not None and ("colormap" in d_style or "hue_along" in d_params):
             d_style["colormap"] = palette
-        return {**d.get("params", {}), **params}, {**d_style, **style}
+        return {**d_params, **params}, {**d_style, **style}
+
+    def defaults_for(self, type_name: str, style: dict[str, Any]):
+        """This look's ``(params, style)`` defaults for an object of ``type_name`` whose style
+        is ``style``, without what would replace a value the scene typed: no default for a
+        key holding an explicit value, and no hue along (or colormap) when the color is
+        typed. Used by ``fill`` and when a look is applied to objects already there."""
+        d = self.defaults.get(type_name, {})
+        d_params = dict(d.get("params", {}))
+        typed = {k for k, v in style.items() if not explicit.is_role(v)}
+        d_style = {k: v for k, v in d.get("style", {}).items() if k not in typed}
+        if "color" in typed:
+            d_params.pop("hue_along", None)
+            d_style.pop("colormap", None)
+        return d_params, d_style
 
     def palette_targets(self) -> set[str]:
         """The object types whose colors a palette sets (the ones the look runs a hue along)."""

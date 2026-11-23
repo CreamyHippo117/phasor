@@ -16,7 +16,7 @@ def _codes(e, **kw):
 
 
 AESTHETIC = {"focal_point", "color_restraint", "glow_clip", "density", "motion_rhythm",
-             "margin", "stroke_mix"}  # fmt: skip
+             "margin", "stroke_mix", "off_palette", "off_scale"}  # fmt: skip
 
 
 def _base(passes, **kw):

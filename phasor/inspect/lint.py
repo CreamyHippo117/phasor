@@ -14,6 +14,23 @@ returns one issue per problem with the times it was seen. Rules in this mileston
 | unsolved  | error    | a constraint that does not hold (from the bake, or a guard)    |
 | occluded_label | warning | 3D: a label partly hidden by something in front of it      |
 | missing_file | warning | a file an object reads (a mesh) is not in the scene's folder    |
+| missing_extra | warning | an object needs an optional package that is not installed (SVG) |
+| fill_crossing | warning | a filled path whose edges cross: its fill may not follow the rule |
+| fill_unchecked | warning | a filled path with too many edges to check for crossings |
+| bad_file  | warning  | a file an object reads is not valid (or some of its shapes are skipped) |
+| sound_limit | warning | a sound clip left out (past ``MAX_SOUNDS``), or its start animated |
+| svg_too_complex | warning | an SVG past a reading limit: its drawing is empty or cut short |
+| dash_limit | warning | a dashed or dotted path with more dashes than are drawn per path |
+| crowded_ticks | warning | numbers along an axis (or a chart's bar names) too close to read |
+| truncated | warning | a file a table or code block reads is past a limit: only part shown |
+| unknown_language | warning | code in a language pygments does not know: drawn plain   |
+| clamped   | warning  | less drawn than asked (ticks past ``MAX_TICKS``, bars past a range) |
+| glyph_limit | warning | as shapes, glyphs not drawn (past ``MAX_GLYPHS`` or ``MAX_COORD``) |
+| morph_missing | warning | a morph whose source is gone or has no outline: it draws itself |
+| morph_limit | warning | a morph with more subpaths than morph (``MAX_SUBPATHS``): the rest fade |
+
+``missing_extra`` also warns when a type draws without its extra, plainer (``Code`` without
+pygments is drawn in one color).
 
 Under a perspective camera ``overlap`` only compares labels with labels and points with
 points: a label in front of a surface is fine, and one behind it is ``occluded_label``.
@@ -29,11 +46,12 @@ from typing import Any
 
 import numpy as np
 
+from phasor.core import extras, record, ticks
 from phasor.core import text as text_metrics
 from phasor.core.color import contrast_ratio, over
 from phasor.core.constraints import LABEL_SUFFIX
 from phasor.core.ids import parent_of
-from phasor.core.issues import Issue
+from phasor.core.issues import DocumentError, Issue
 from phasor.core.state import SceneState
 from phasor.inspect.passes import PassRunner, inspect_size
 from phasor.layout.geometry import footprint, view_of
@@ -42,6 +60,7 @@ from phasor.time.compile import Compiled, CompiledExpr
 from phasor.time.tracks import ResolvedTrack
 
 DEFAULT_STEP = 0.5  # seconds between lint samples
+PROBE_SPAN = 2.0  # seconds: strict lint calls updaters at least this far into a scene
 FAINT = 0.05  # objects at or below this opacity are treated as not shown
 CONTAINED = 0.98  # a label this much inside a shape is "on" it, not overlapping it
 MAX_TIMES = 12
@@ -60,6 +79,85 @@ def sample_times(c: Compiled, step: float = DEFAULT_STEP) -> tuple[float, ...]:
 
 def _is_label(e: dict[str, Any]) -> bool:
     return e["semantic"].get("kind") == "label"
+
+
+def _part_of(entries: dict[str, dict[str, Any]], a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """Whether one of two entries is a part a composite built for the other (ADR 0005): a
+    composite covers its own parts by design."""
+    for x, y in ((a, b), (b, a)):
+        up = x.get("part_of")
+        while up is not None:
+            if up == y["id"]:
+                return True
+            up = entries[up].get("part_of") if up in entries else None
+    return False
+
+
+def _same_axis(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """Whether two entries are numbers along one axis of one composite (tagged
+    ``along_<axis>`` by ``geometry.number_parts``): lint judges those together, as
+    ``crowded_ticks``, not pair by pair."""
+    if a.get("part_of") is None or a.get("part_of") != b.get("part_of"):
+        return False
+    along = {x for x in a["tags"] if x.startswith("along_")}
+    return bool(along & set(b["tags"]))
+
+
+END_ON = 0.05  # text heights: numbers closer than this on screen sit on one spot
+
+
+def _crowding(boxes, gap: float) -> dict[str, float] | None:
+    """Whether numbers along one axis crowd each other **on screen**: some pair of their
+    pixel boxes, each grown by half of ``gap`` text heights, meet (every pair is judged, so
+    an axis seen end-on or turned by a perspective camera is caught). None when they do
+    not; else (in pixels) ``spacing``, the usual distance between neighbours along the
+    axis on screen, ``need``, the most two neighbours take of it, and ``height``, the text
+    height, for the hint (``ticks.clear_step``)."""
+    b = np.asarray(boxes, dtype=np.float64).reshape(-1, 4)
+    if len(b) < 2:
+        return None
+    h = max(float(np.median(b[:, 3] - b[:, 1])), 1e-9)
+    lo, hi = b[:, :2] - gap * h / 2, b[:, 2:] + gap * h / 2
+    ox = np.minimum(hi[:, None, 0], hi[None, :, 0]) - np.maximum(lo[:, None, 0], lo[None, :, 0])
+    oy = np.minimum(hi[:, None, 1], hi[None, :, 1]) - np.maximum(lo[:, None, 1], lo[None, :, 1])
+    meet = (ox > 0) & (oy > 0)
+    np.fill_diagonal(meet, False)
+    if not meet.any():
+        return None
+    centers = (b[:, :2] + b[:, 2:]) / 2
+    far = np.linalg.norm(centers[:, None] - centers[None, :], axis=2)
+    i, j = np.unravel_index(int(np.argmax(far)), far.shape)
+    if far[i, j] < END_ON * h:  # the axis points at the camera: one spot
+        return {"spacing": 0.0, "need": 0.0, "height": h}
+    u = (centers[j] - centers[i]) / far[i, j]
+    order = np.argsort(centers @ u)
+    along = (centers @ u)[order]
+    ext = (np.abs((b[:, 2] - b[:, 0]) * u[0]) + np.abs((b[:, 3] - b[:, 1]) * u[1]))[order]
+    return {"spacing": float(np.median(np.diff(along))),
+            "need": float(np.max((ext[1:] + ext[:-1]) / 2)), "height": h}  # fmt: skip
+
+
+CAPTION = "caption"  # a label part naming its composite (domains/geometry.end_caption)
+
+
+def _lines_cross(strokes, cam, width: int, height: int, box) -> bool:
+    """Whether any of a composite's own stroked lines (world center lines, as recorded)
+    runs through the pixel ``box`` (shrunk by a tenth of its height: a line touching a
+    caption's padding is fine)."""
+    pad = 0.1 * (box[3] - box[1])
+    x0, y0, x1, y1 = box[0] + pad, box[1] + pad, box[2] - pad, box[3] - pad
+    if x1 <= x0 or y1 <= y0:
+        return False
+    s = np.linspace(0.0, 1.0, 17)[:, None]
+    for line in strokes:
+        px = cam.to_screen(np.asarray(line, dtype=np.float64).reshape(-1, 3), width, height)
+        if len(px) < 2:
+            continue
+        pts = (px[:-1, None, :] * (1 - s) + px[1:, None, :] * s).reshape(-1, 2)
+        inside = (pts[:, 0] > x0) & (pts[:, 0] < x1) & (pts[:, 1] > y0) & (pts[:, 1] < y1)
+        if inside.any():
+            return True
+    return False
 
 
 def _shown(e: dict[str, Any]) -> bool:
@@ -179,9 +277,14 @@ class _Frame:
                 bg = (*np.clip(behind.mean(axis=0), 0, None), 1.0)
                 return contrast_ratio(over((*c[:3], alpha), bg), bg)
         bg = self.state.background
+        mine = self.entries[label_id]
         for obj in self.state.draw_order():
             if obj.id == label_id:
                 break
+            other = self.entries.get(obj.id)
+            if other is not None and (_part_of(self.entries, mine, other)
+                                      or _same_axis(mine, other)):  # fmt: skip
+                continue  # its composite is drawn around it; crowded numbers: crowded_ticks
             on_it = obj.params.opacity > FAINT and "color" in obj.style
             if on_it and self.covered(label_id, obj.id) > 0.5:
                 under = obj.style["color"]
@@ -230,10 +333,13 @@ def control_rules(c: Compiled) -> list[Issue]:
     from phasor.core.patch import param_value
 
     out = []
+    missing = {object_id for object_id, _ in c.missing}  # missing_type says why already
     for ctl in c.doc.controls:
         try:
-            value = param_value(c.doc, ctl.path)
+            value = param_value(c.doc, ctl.path, c.scope)
         except KeyError:
+            if ctl.path.rpartition(".")[0] in missing:
+                continue
             out.append(
                 Issue(
                     "orphan_control",
@@ -257,36 +363,165 @@ def control_rules(c: Compiled) -> list[Issue]:
     return out
 
 
+DRAWLESS = ("value", "sound")  # semantic kinds of types that draw nothing
+
+
 def file_rules(c: Compiled) -> list[Issue]:
     """``missing_file``: a parameter a type lists in ``Files`` (core/files.py) names a file
-    that is not in the scene's folder. The object draws nothing until the file is there."""
-    from phasor.core import files
-    from phasor.core.objects import get_type
-    from phasor.time.compile import Const
+    that is not in the scene's folder. The object draws nothing until the file is there.
+    ``missing_extra``: a type needs an optional package (its ``Requires``: module -> extra)
+    that is not installed; it draws nothing until the extra is installed."""
+    from phasor.core import extras, files
+    from phasor.time.compile import file_values
 
     out = []
     for o in c.objects:
-        for name in getattr(get_type(o.type), "Files", ()):
-            path = f"{o.id}.{name}"
-            node = c.nodes.get(path)
-            value = node.value if isinstance(node, Const) else None
-            if isinstance(value, str) and value and not files.exists(c.base_dir, value):
+        for module, extra in getattr(type(o.impl), "Requires", {}).items():
+            if not extras.available(module):
                 out.append(Issue(
-                    "missing_file", f"{path}: no file {value!r} in the scene's folder",
+                    "missing_extra", f"{o.id}: a {o.type!r} needs the {module!r} package, "
+                    "which is not installed; it draws nothing", severity="warning",
+                    ids=(o.id,), times=(0.0,),
+                    fix_hint=f"install it: uv sync --extra {extra} (or pip install "
+                    f"'phasor[{extra}]')",
+                ))  # fmt: skip
+        for name in getattr(type(o.impl), "Files", ()):
+            path = f"{o.id}.{name}"
+            for value in file_values(c, path):
+                why = files.problem(c.base_dir, value)
+                if not why:
+                    continue
+                out.append(Issue(
+                    "missing_file", f"{path}: {why}",
                     severity="warning", ids=(o.id,), path=path, times=(0.0,),
                     fix_hint=f"put {value!r} next to the scene, or set {path} to a file that is",
+                ))  # fmt: skip
+    return out + _sound_rules(c)
+
+
+def _sound_rules(c: Compiled) -> list[Issue]:
+    """``sound_limit``: sound clips the mix leaves out or does not follow: past
+    ``narration.MAX_SOUNDS`` clips, or a clip whose ``start`` or ``gain`` is animated (the
+    mix reads them once, at time 0)."""
+    from phasor.time.narration import MAX_SOUNDS
+
+    sounds = [o for o in c.objects if hasattr(o.impl, "audio_clip")]
+    out = [
+        Issue("sound_limit", f"{o.id}: a track mixes at most {MAX_SOUNDS} sound clips; this "
+              "one is left out", severity="warning", ids=(o.id,), times=(0.0,),
+              fix_hint="join clips into one WAV file, or remove some")
+        for o in sounds[MAX_SOUNDS:]
+    ]  # fmt: skip
+    tracks = c.doc.timeline.tracks
+    for o in sounds:
+        for name in ("start", "gain"):
+            path = f"{o.id}.{name}"
+            if tracks.get(path):
+                out.append(Issue(
+                    "sound_limit", f"{path} is animated, but a clip's start and gain are read "
+                    "once, at 0 s: the animation is not heard", severity="warning",
+                    ids=(o.id,), path=path, times=(0.0,),
+                    fix_hint=f"set {path} once (clear its track), or use one clip per start",
                 ))  # fmt: skip
     return out
 
 
+def type_rules(c: Compiled) -> list[Issue]:
+    """``missing_type``: the document names code (``meta.modules``, ADR 0005) for a type or an
+    updater that is not here: the module is missing, was refused (scripts may not run here)
+    or failed to load. The object draws as a placeholder box, or without its updater, and
+    keeps its parameters and overrides; nothing is lost."""
+    return [
+        Issue("missing_type", f"{object_id}: {why}", severity="error", ids=(object_id,),
+              times=(0.0,), fix_hint="put the module next to the scene, or open it where "
+              "scripts may run (allow_scripts=True; the MCP server with --allow-scripts; in "
+              "the desktop editor, the person trusts the scene's code: "
+              "Editor.trust_scene_code)")
+        for object_id, why in c.missing
+    ]  # fmt: skip
+
+
+def _differ(a: Any, b: Any, tol: float) -> bool:
+    if isinstance(a, dict) and isinstance(b, dict):
+        return a.keys() != b.keys() or any(_differ(a[k], b[k], tol) for k in a)
+    if isinstance(a, list | tuple) and isinstance(b, list | tuple):
+        return len(a) != len(b) or any(_differ(x, y, tol) for x, y in zip(a, b, strict=True))
+    if isinstance(a, int | float) and isinstance(b, int | float):
+        return not abs(float(a) - float(b)) <= tol  # NaN differs from everything
+    return a != b
+
+
+def updater_rules(c: Compiled, step: float = DEFAULT_STEP) -> list[Issue]:
+    """``impure_updater`` (ADR 0005): an updater must give the same result for the same t and
+    the same reads. Each one is called again at every sample time, twice, the second time in
+    the opposite order of times and of updaters, all with the same evaluated parameters; it
+    fires when two answers differ by more than the theme's ``[lint] impure``. Hidden state (a
+    counter, a global another updater writes, randomness) shows up this way."""
+    from phasor.time.compile import _env
+    from phasor.time.updaters import UpdaterOut
+
+    ups = list({id(n.updater): n.updater for n in c.nodes.values()
+                if isinstance(n, UpdaterOut)}.values())  # fmt: skip
+    if not ups:
+        return []
+    tol = c.theme.lint["impure"]
+    # Every sample time, and a spread over at least the first PROBE_SPAN seconds: a scene
+    # with no markers has only t = 0 as a sample, and an updater may first fail later.
+    span = max(c.duration, PROBE_SPAN)
+    times = tuple(sorted({*sample_times(c, step), *(round(span * k / 8, 6) for k in range(9))}))
+    failed: dict[int, list[tuple[float, str]]] = {}  # updater -> (t, why) where it fails
+    envs = {}
+    for t in times:
+        try:
+            envs[t] = _env(c.nodes, c.order, t)
+        except DocumentError as e:  # the graph cannot be evaluated at t: whose updater?
+            why = "; ".join(i.message for i in e.issues)
+            for i, up in enumerate(ups):
+                if f"updater {up.ref}" in why:
+                    failed.setdefault(i, []).append((t, why))
+
+    def call(i: int, t: float) -> Any:
+        try:
+            return ups[i].call(envs[t], t)
+        except ValueError as e:
+            failed.setdefault(i, []).append((t, str(e)))
+            return ("failed", str(e))
+
+    ok = [t for t in times if t in envs]
+    first = {(t, i): call(i, t) for t in ok for i in range(len(ups))}
+    again = {(t, i): call(i, t) for t in reversed(ok) for i in reversed(range(len(ups)))}
+    bad: dict[int, list[float]] = {}
+    for key, value in first.items():
+        if _differ(value, again[key], tol):
+            bad.setdefault(key[1], []).append(key[0])
+    broken = [
+        Issue("bad_updater", f"{ups[i].object_id}: updater {ups[i].ref} fails "
+              f"{_when(sorted({t for t, _ in found}))}: {min(found)[1]}", severity="error",
+              ids=(ups[i].object_id,), times=tuple(sorted({t for t, _ in found})),
+              fix_hint="read the same parameters and return the same ones at every t")
+        for i, found in sorted(failed.items())
+    ]  # fmt: skip
+    return broken + [
+        Issue("impure_updater", f"{ups[i].object_id}: updater {ups[i].ref} gives different "
+              f"answers for the same t {_when(sorted(ts))}: it keeps state, or reads something "
+              "other than t and look(...)", severity="error", ids=(ups[i].object_id,),
+              times=tuple(sorted(ts)), fix_hint="compute everything from t and look(...); "
+              "something that needs the previous frame is a Simulation (fixed dt, a seed)")
+        for i, ts in sorted(bad.items())
+    ]  # fmt: skip
+
+
 def strict_rules(c: Compiled) -> list[Issue]:
     """Rules for finished scenes only. ``raw_motion``: transitions written with raw ``to()``
-    instead of a choreography verb (their timing is not the theme's)."""
+    instead of a choreography verb (their timing is not the theme's). ``impure_updater``:
+    see ``updater_rules``."""
     raw: dict[str, list[float]] = {}
     for path, segs in c.doc.timeline.tracks.items():
+        styled = c.doc.style_track(path)  # ``dot.style.color`` moves ``dot``
+        owner = styled[0] if styled is not None else path.rpartition(".")[0]
         for seg in segs:
             if seg.verb is None:
-                raw.setdefault(path.rpartition(".")[0], []).append(c.time_map.resolve(seg.t0))
+                raw.setdefault(owner, []).append(c.time_map.resolve(seg.t0))
     return [
         Issue(
             "raw_motion",
@@ -298,7 +533,7 @@ def strict_rules(c: Compiled) -> list[Issue]:
             "theme sets timing and easing",
         )
         for object_id, ts in sorted(raw.items())
-    ]
+    ] + updater_rules(c)
 
 
 def clutter(c: Compiled) -> list[Issue]:
@@ -346,12 +581,24 @@ def run(
     ever_shown: set[str] = set()
     solved_on_screen = {g.ids[0] for _, g in plan.guards("on_screen")} & plan.solved
 
+    broken: dict[tuple, tuple[str, list[float]]] = {}  # the scene fails to evaluate at t
     for t in sample_times(c, step):
-        state = state_at(t)
-        fr = _Frame(state, snapshot_at(t), runner, c)
+        try:
+            state, snap = state_at(t), snapshot_at(t)
+        except DocumentError as e:  # an updater that fails later (ADR 0005): an issue, no crash
+            for i in e.issues:
+                ids = i.ids or ((i.path.rsplit(".", 1)[0],) if i.path else ())
+                broken.setdefault((i.code, ids, i.path), (i.message, []))[1].append(t)
+            continue
+        fr = _Frame(state, snap, runner, c)
         height = state.height
         shown = [e for e in fr.entries.values() if _shown(e)]
         ever_shown.update(e["id"] for e in shown)
+        # A Value (a number, ADR 0005) and a Sound (heard, M20) have nothing to draw: never
+        # "missing" from the frame.
+        ever_shown.update(
+            e["id"] for e in fr.entries.values() if e["semantic"].get("kind") in DRAWLESS
+        )
         labels = [e for e in shown if _is_label(e)]
         persp = state.camera.perspective
 
@@ -364,8 +611,10 @@ def run(
                 continue
             for b in shown:
                 pair = tuple(sorted((a["id"], b["id"])))
-                if a is b or pair in seen_pairs:
+                if a is b or pair in seen_pairs or _part_of(fr.entries, a, b):
                     continue
+                if _same_axis(a, b):
+                    continue  # numbers along one axis are judged together: crowded_ticks
                 if persp and not (both(a, b, "label") or both(a, b, "point")):
                     continue  # depth decides in 3D: see occluded_label
                 if a["semantic"].get("backdrop") or b["semantic"].get("backdrop"):
@@ -391,8 +640,70 @@ def run(
             if _is_label(e):
                 if (y1 - y0) < th["text_min"] * height:
                     f.add("tiny", (e["id"],), t, px=y1 - y0, what="text")
-            elif max(x1 - x0, y1 - y0) < th["tiny"] * height:
+            elif (
+                max(x1 - x0, y1 - y0) < th["tiny"] * height
+                and e["semantic"].get("drawn", 1.0) >= 1.0
+                and "glyph" not in e["tags"]  # a glyph of a text: the text is judged
+            ):  # a curve being traced starts small; it is judged once drawn
                 f.add("tiny", (e["id"],), t, px=max(x1 - x0, y1 - y0), what="object")
+            if e["semantic"].get("fill_crossing"):
+                f.add("fill_crossing", (e["id"],), t)
+        # Numbers along one axis (parts tagged ``along_<axis>``), judged together on screen.
+        along: dict[tuple[str, str], list[Any]] = {}
+        for e in shown:
+            if e.get("part_of") is not None:
+                for tag in e["tags"]:
+                    if tag.startswith("along_"):
+                        along.setdefault((e["part_of"], tag[6:]), []).append(e["bbox"]["px"])
+        for (owner, axis), boxes in sorted(along.items()):
+            n = _crowding(boxes, th["tick_gap"])
+            if n is None:
+                continue
+            sem = fr.entries[owner]["semantic"] if owner in fr.entries else {}
+            step = ((sem.get("numbers") or {}).get(axis) or {}).get("step")
+            clear = None
+            if step and n["spacing"] > 0:
+                clear = ticks.clear_step(step, n["spacing"], n["need"], n["height"],
+                                         th["tick_gap"])  # fmt: skip
+            f.add("crowded_ticks", (owner,), t, path=f"{owner}.{axis}", axis=axis, step=step,
+                  clear=clear, end_on=n["spacing"] == 0)  # fmt: skip
+        # A caption a composite builds is judged against the composite's own lines (its
+        # parts are otherwise never judged against it): a label written back over its line.
+        for e in labels:
+            owner = e.get("part_of")
+            if CAPTION in e["tags"] and owner in fr.entries:
+                o = state[owner]
+                rec = record.record(o.impl, state)
+                if _lines_cross(rec.strokes, state.camera_for(o), state.width, state.height,
+                                e["bbox"]["px"]):  # fmt: skip
+                    f.add("overlap", tuple(sorted((e["id"], owner))), t)
+        for e in fr.entries.values():  # also what is off screen or draws nothing
+            sem = e["semantic"]
+            if sem.get("fill_unchecked"):
+                f.add("fill_unchecked", (e["id"],), t)
+            if sem.get("dash_limit"):
+                f.add("dash_limit", (e["id"],), t, n=sem["dash_limit"])
+            if sem.get("glyph_limit") or sem.get("glyphs_far"):
+                f.add("glyph_limit", (e["id"],), t, n=sem.get("glyph_limit", 0),
+                      drawn=sem.get("glyphs"), far=sem.get("glyphs_far", 0))  # fmt: skip
+            if sem.get("morph_missing"):
+                f.add("morph_missing", (e["id"],), t, src=sem.get("morphing_from"))
+            if sem.get("morph_limit"):
+                f.add("morph_limit", (e["id"],), t, n=sem["morph_limit"])
+            if sem.get("unreadable") or sem.get("skipped"):
+                f.add("bad_file", (e["id"],), t, why=sem.get("unreadable"),
+                      skipped=sem.get("skipped", 0), file=sem.get("file"))  # fmt: skip
+            if sem.get("too_complex"):
+                f.add("svg_too_complex", (e["id"],), t, why=sem["too_complex"],
+                      file=sem.get("file"))  # fmt: skip
+            if sem.get("truncated"):
+                f.add("truncated", (e["id"],), t, why=sem["truncated"], file=sem.get("file"))
+            if sem.get("clamped"):
+                f.add("clamped", (e["id"],), t, why=sem["clamped"])
+            if sem.get("unknown_language"):
+                f.add("unknown_language", (e["id"],), t, language=sem["unknown_language"])
+            if sem.get("plain_without"):  # a type that draws without its extra, plainer
+                f.add("missing_extra", (e["id"],), t, module=sem["plain_without"])
         if persp:
             for e in labels:
                 v = e["visible_fraction"]
@@ -484,6 +795,106 @@ def run(
                          fix_hint="give it a 'near' constraint so the placer moves it, add the "
                          f"camera goal 'camera avoid_occlusion({ids[0]})', or make the "
                          "occluder glass")  # fmt: skip
+        if code == "fill_crossing":
+            return Issue(code, f"{ids[0]!r} is filled but its edges cross {when}: the fill "
+                         "is cut into triangles as if they did not, so parts of it may be "
+                         "missing or doubled", "warning", ids, times=ts,
+                         fix_hint="split it into subpaths that do not cross (a boolean "
+                         "union does that), or turn its fill off")  # fmt: skip
+        if code == "fill_unchecked":
+            return Issue(code, f"{ids[0]!r} is filled and has too many edges to check "
+                         f"whether they cross (path_math.CROSSING_LIMIT) {when}; if they do, "
+                         "its fill may be wrong", "warning", ids,
+                         times=ts, fix_hint="simplify the outline, or split it into several "
+                         "paths")  # fmt: skip
+        if code == "bad_file":
+            what = (f"cannot be read: {info['why']}" if info["why"] else
+                    f"has {info['skipped']} shape(s) skipped: points not finite or absurdly "
+                    "far out")  # fmt: skip
+            ext = str(info["file"]).lower().rsplit(".", 1)[-1]
+            again = {"svg": "export the file again (plain SVG)",
+                     "wav": "save the file again as PCM WAV (16-bit, 48 kHz)",
+                     "wave": "save the file again as PCM WAV (16-bit, 48 kHz)"}.get(
+                ext, "save the file again as UTF-8 text")  # fmt: skip
+            return Issue(
+                code,
+                f"{ids[0]!r}: the file {info['file']!r} {what}",
+                "warning",
+                ids,
+                times=ts,
+                fix_hint=f"{again}, or point the object at another file",
+            )
+        if code == "truncated":
+            return Issue(code, f"{ids[0]!r}: the file {info['file']!r} is past a limit "
+                         f"({info['why']}); only the first part is shown", "warning", ids,
+                         times=ts, fix_hint="shorten the file, or split it into several "
+                         "objects")  # fmt: skip
+        if code == "clamped":
+            return Issue(code, f"{ids[0]!r} is not drawn as asked {when}: {info['why']}",
+                         "warning", ids, times=ts, fix_hint="ask for what can be drawn: "
+                         "a larger step, labels that typeset, a range that holds the "
+                         "values")  # fmt: skip
+        if code == "unknown_language":
+            return Issue(code, f"{ids[0]!r}: pygments does not know the language "
+                         f"{info['language']!r}; the code is drawn plain {when}", "warning", ids,
+                         times=ts, fix_hint="use a pygments lexer name, such as 'python', "
+                         "'c', 'cpp', 'rust', 'javascript' or 'text'")  # fmt: skip
+        if code == "missing_extra":  # drawn without the package, plainer (file_rules: none)
+            extra, what = extras.EXTRAS[info["module"]]
+            return Issue(code, f"{ids[0]!r}: {what} needs the {info['module']!r} package, "
+                         "which is not installed; it is drawn plain", "warning", ids, times=ts,
+                         fix_hint=f"install it: uv sync --extra {extra} (or pip install "
+                         f"'phasor[{extra}]')")  # fmt: skip
+        if code == "crowded_ticks" and info["axis"] == "names":
+            return Issue(code, f"{ids[0]!r}: the bars' names crowd each other {when}", "warning",
+                         ids, path=info["path"], times=ts, fix_hint="make the chart wider, the "
+                         "names shorter, or the 'numbers' text role smaller")  # fmt: skip
+        if code == "crowded_ticks" and info["end_on"]:
+            return Issue(code, f"{ids[0]!r}: the axis {info['axis']!r} points at the camera, "
+                         f"so its numbers land on one spot {when}", "warning", ids,
+                         path=info["path"], times=ts, fix_hint="turn the camera, use fewer "
+                         "dimensions (dims=2 in a flat scene), or leave the numbers "
+                         "off")  # fmt: skip
+        if code == "crowded_ticks":
+            step = f" at a step of {info['step']:g}" if info["step"] else ""
+            hint = (f"use a step of at least {info['clear']:g} (the range's third number), "
+                    if info["clear"] else "use a larger step, ")  # fmt: skip
+            return Issue(code, f"{ids[0]!r}: the numbers along {info['axis']!r} crowd each "
+                         f"other{step} on screen {when}", "warning", ids, path=info["path"],
+                         times=ts, fix_hint=f"{hint}a larger scale, a smaller 'numbers' text "
+                         "role, or turn the camera")  # fmt: skip
+        if code == "svg_too_complex":
+            return Issue(code, f"{ids[0]!r}: the file {info['file']!r} is past a reading "
+                         f"limit ({info['why']}); its drawing is empty or cut short",
+                         "warning", ids, times=ts, fix_hint="simplify the drawing (fewer "
+                         "shapes or <use> copies), or split it into several files")  # fmt: skip
+        if code == "dash_limit":
+            return Issue(code, f"{ids[0]!r} would need {info['n']} dashes or dots {when}; "
+                         "only the first ones are drawn", "warning", ids, times=ts,
+                         fix_hint="use a solid stroke, or make the path smaller")  # fmt: skip
+        if code == "glyph_limit" and info.get("far") and not info.get("n"):
+            return Issue(code, f"{ids[0]!r} has {info['far']} glyphs past +-1e+09 world "
+                         f"units {when} (path.MAX_COORD); drawn as shapes, they are not "
+                         "drawn", "warning", ids, times=ts, fix_hint="keep it nearer the "
+                         "origin, or draw it as a picture (as_shapes off)")  # fmt: skip
+        if code == "glyph_limit":
+            far = f", and {info['far']} of those lie past +-1e+09 world units" \
+                if info.get("far") else ""  # fmt: skip
+            return Issue(code, f"{ids[0]!r} has {info['n']} glyphs {when}; drawn as shapes, "
+                         f"only the first {info['drawn']} are drawn (glyph_math.MAX_GLYPHS)"
+                         f"{far}", "warning", ids,
+                         times=ts, fix_hint="split the text into several, or draw it as a "
+                         "picture (as_shapes off)")  # fmt: skip
+        if code == "morph_missing":
+            return Issue(code, f"{ids[0]!r} is becoming itself from {info['src']!r} {when}, "
+                         "which is not in the scene or has no outline: it draws itself "
+                         "instead", "warning", ids, times=ts, fix_hint="morph from an object "
+                         "that is there (a path, a shape, text)")  # fmt: skip
+        if code == "morph_limit":
+            return Issue(code, f"{ids[0]!r} morphs between outlines with {info['n']} more "
+                         f"subpaths than morph (morph_math.MAX_SUBPATHS) {when}; those fade "
+                         "instead", "warning", ids, times=ts, fix_hint="morph simpler "
+                         "outlines, or split the drawing into several objects")  # fmt: skip
         if code == "tiny":
             return Issue(code, f"{info['what']} {ids[0]!r} is only {info['px']:.0f} px "
                          f"{when}", "warning", ids,
@@ -500,4 +911,8 @@ def run(
                 "sampled time", "warning", (o.id,),
                 fix_hint="animate its opacity or position into view, or remove it",
             ))  # fmt: skip
+    issues += [Issue(code, f"the scene cannot be evaluated {_when(ts)}: {msg}", "error", ids,
+                     path=path, times=tuple(ts),
+                     fix_hint="read and return the same parameters at every t")
+               for (code, ids, path), (msg, ts) in broken.items()]  # fmt: skip
     return issues + clutter(c)

@@ -60,13 +60,13 @@ These seven decisions are hard to change later. Build them exactly as written in
 
 - Schema: pydantic v2 models in `core/schema.py`. JSON Schema is exported from them for MCP validation and docs. The document carries `schema_version`; migrations live in `core/migrate.py`.
 - Canonical file: `name.phasor.json`, written with sorted keys and stable ordering so git diffs stay clean.
-- A Python script is a builder: running `scene.py` emits the base document. GUI and AI tweaks to a scripted scene are saved in `name.overrides.json`, keyed by object id + parameter path (plus layout constraints added on top of the script's own, ADR 0002), and applied on top at load. Re-running the script never destroys tweaks. An override whose target id vanished is a lint error (`orphan_override`).
+- A Python script is a builder: running `scene.py` emits the base document. GUI and AI tweaks to a scripted scene are saved in `name.overrides.json`, keyed by object id + parameter path (plus layout constraints added on top of the script's own, ADR 0002), and applied on top at load. Re-running the script never destroys tweaks. An override whose target id vanished is a lint error (`orphan_override`). An object whose type comes from a module that is missing or not allowed to load is lint `missing_type`; it draws as a placeholder box and keeps its parameters and overrides (ADR 0005).
 - IDs match `[a-z][a-z0-9_]*`, use dots for children (`res.pole_i`), and are never reused or renumbered: removing an object retires its id in the document (`retired_ids`), and adding it again is an error. Auto IDs come from type + meaning (`pole_i`), not counters.
 
 **3. Time is a pure function**
 
-- `Engine.state_at(t) -> SceneState` depends only on (document, t), given the machine's occlusion oracle: the layout bake reads the real id pass where OpenGL exists and geometry where it does not, so a near-tie can place a label differently on two machines (ADR 0002). It may also depend on files the document names: an object type lists its file-path params in `Files` (e.g. `Room3D.path`, a Wavefront `.obj`); paths are relative and stay inside the scene's folder (`core/files.py`), a changed file is re-read (cached on its mtime and size), and a missing one draws nothing and is lint `missing_file` (owner approved, 2026-11-22). `SceneState` is immutable (frozen dataclasses) and holds every object's resolved parameters.
-- Parameters form a DAG of constants, tracks (piecewise segments with easing) and expressions over other parameters. Evaluate in topological order; a cycle is a validation error.
+- `Engine.state_at(t) -> SceneState` depends only on (document, t), given the machine's occlusion oracle: the layout bake reads the real id pass where OpenGL exists and geometry where it does not, so a near-tie can place a label differently on two machines (ADR 0002). It may also depend on files the document names: an object type lists its file-path params in `Files` (e.g. `Room3D.path`, a Wavefront `.obj`); paths are relative and stay inside the scene's folder (`core/files.py`), a changed file is re-read (cached on its mtime and size), and a missing one draws nothing and is lint `missing_file` (owner approved, 2026-11-22). A document may also name code modules in its folder (`meta.modules`, ADR 0005): read only from inside the scene's folder and loaded only where scripts are allowed, like the importers. `SceneState` is immutable (frozen dataclasses) and holds every object's resolved parameters.
+- Parameters form a DAG of constants, tracks (piecewise segments with easing), expressions over other parameters, and updaters (`obj.always(fn)`; ADR 0005: `fn(t, look)` is pure, and each `look(id)` read is an edge). Evaluate in topological order; a cycle is a validation error. An updater that gives different results on repeat evaluation is lint `impure_updater`; one that needs the previous frame is a `Simulation`.
 - Narration lives in a separate `TimeMap` (marker name to seconds). Tracks store marker-relative anchors. Re-recording audio rebuilds only the `TimeMap`.
 - Simulations (PDE, FDTD, particles) are `Simulation` objects with `step(state, dt)`, a fixed dt, a seed, and checkpoints every N steps cached in `.phasor_cache/` under a hash of their parameters. `state_at(t)` = nearest earlier checkpoint + remaining steps.
 - Randomness only through `rng(object_id, seed)`. Same inputs must give the same frames on the same machine.
@@ -80,14 +80,14 @@ These seven decisions are hard to change later. Build them exactly as written in
 
 **5. The object contract**
 
-Every object type implements the `SceneObject` protocol. A type missing any member fails registration.
+Every object type implements `Params` and `draw`; a type missing either fails registration (ADR 0005, owner 2026-11-23). `world_bounds`, `features` and `semantics` are optional: when a type does not write them, they are derived from what `draw` records (`core/record.py`), and a type that knows more writes its own. `draw`'s `pass_` argument is optional. A type may instead define `build(state)`, returning other objects (a composite; children get dotted ids). Types shipped in phasor's packages still carry the full set, an `docs/ai/API.md` entry and an example; scene-local types do not need them.
 
 | Member | Returns | Used by |
 | --- | --- | --- |
 | `Params` | pydantic model of its parameters | validation, GUI panels, MCP patches |
-| `world_bounds(state)` | AABB + bounding sphere | camera solver, culling |
-| `features(state)` | named points/curves in world space (`pole_i`, `tip`, `front`) | inspector, labels, resolver |
-| `semantics(state)` | JSON-serializable math facts | inspector, resolver |
+| `world_bounds(state)` (optional) | AABB + bounding sphere | camera solver, culling |
+| `features(state)` (optional) | named points/curves in world space (`pole_i`, `tip`, `front`) | inspector, labels, resolver |
+| `semantics(state)` (optional) | JSON-serializable math facts | inspector, resolver |
 | `draw(ctx, state, pass_)` | draw calls for pass `color`, `id` or `solo` | both renderers |
 
 **6. Layer rules**
@@ -324,6 +324,7 @@ CUDA does the math, OpenGL draws the picture, and one narrow bridge connects the
 - CuPy compiles through NVRTC at first use and caches the result, so users need no C++ compiler. NVRTC itself comes from pip via the `cupy-cuda12x[ctk]` extra (phasor's `gpu` extra), so no CUDA Toolkit install is needed either. `phasor doctor` must prove this on a clean Windows machine.
 - SymPy expressions become kernel code through a small emitter (`render/gpu/codegen.py`; `sympy.ccode` has no complex type) plus a complex-math header (`render/gpu/complex.cuh`). One expression feeds the kernel, the NumPy reference and the LaTeX label. Formula text is read by a whitelist parser and never evaluated as Python.
 - Kernel sources stay plain C++ plus the CUDA keywords, so the same string can be compiled for the CPU in tests (`tests/cuda_emu.py`) on machines without a GPU.
+- As built (Milestone 14): that same string is also the tier B backend. `render/cpu/backend.py` compiles each kernel's CUDA source, unchanged, with a g++ or clang++ found at run time (`-O3`, OpenMP where available, no fused multiply-add), runs its blocks on every core and caches the library in the user cache, keyed by a hash of the code, compiler and flags. Integer atomics are real atomics and float atomics are refused, so results are the same bits at any thread count. `registry.run(backend="auto")` tries `cuda`, then `cpu`, then `reference`; no compiler means the NumPy reference. No prebuilt binaries. MSVC `cl` is not supported. Windows is untested.
 
 **CUDA to OpenGL bridge (`render/gpu/bridge.py`)**
 
@@ -360,7 +361,7 @@ CUDA does the math, OpenGL draws the picture, and one narrow bridge connects the
 | Tier | Hardware | Behavior |
 | --- | --- | --- |
 | A | NVIDIA with CUDA 12 | Everything |
-| B | Any GPU with OpenGL 4.3, no CUDA | Kernels run on NumPy references at preview resolution; final renders allowed but warned as slow |
+| B | Any GPU with OpenGL 4.3, no CUDA | Kernels run on every CPU core through the CPU backend when g++ or clang++ is found (as built, Milestone 14), else on the NumPy references; final renders allowed, warned as slower than tier A |
 | C | No usable GPU | Timeline and lint work; the inspector runs in analytic mode (exact geometry, no occlusion, marked `"occlusion": "analytic"`); no rendering |
 
 **Testing and benchmarks**
@@ -376,7 +377,7 @@ The AI handles structure, math and timing; the engine and your gallery hold the 
 **Themes (`style/themes/*.toml`)**
 
 - A theme defines everything visual: palette, background, type scale, stroke weights, glow levels, spacing unit, easing defaults, lighting rig, post-processing.
-- Scenes and AI patches may only use style roles. Raw hex codes, pixel widths and font sizes in a scene are a lint error (`raw_style`), unless marked `style_override=True`.
+- Scenes and AI patches name style roles by default. Explicit values are allowed beside them (owner, 2026-11-23, Milestone 18; amends an earlier "roles only, `raw_style` lint error" rule that was never built): a color key may hold `"#rrggbb"` (sRGB, decoded to linear once) or linear RGBA, a text size or stroke width a size in world units (positive, at most 1e6), and `meta.background` a scene's own opaque background. Glow, surface and colormap keys take roles only. The document stores a role or a value at each key (schema 9); taste stays checked by the aesthetic rules `off_palette` and `off_scale`, and `polish(snap=True)` snaps a value to the nearest role, only when asked.
 
 | Role group | Roles |
 | --- | --- |
@@ -385,6 +386,8 @@ The AI handles structure, math and timing; the engine and your gallery hold the 
 | Glow | `none`, `soft`, `strong` |
 | Text | `title`, `label`, `annotation`, `math` |
 | Surface | `solid`, `glass`, `wire`, `emissive` |
+| Fill | `none`, `soft`, `solid` (a closed path's fill opacity; Milestone 16) |
+| Dash | `solid`, `dashed`, `dotted` (a path's stroke cut by arc length; Milestone 16) |
 
 - Ship three themes tuned by hand: `midnight_glow`, `aurora`, `paper`. Add more only after these look great.
 - **The dark theme is the default, always** (owner, 2026-11-18; replaces an earlier note asking for light defaults). `midnight_glow` stays the house theme. **The `prism` look is the default style** (owner, 2026-11-22): a scene that names neither a look nor a theme gets it; `look="none"` gives plain `midnight_glow`. Light and mid-tone themes are opt-in choices, and glow and bloom must still read on them (soft colored halos, not white blow-outs).
@@ -430,6 +433,8 @@ Making something should start from a preset, not from a blank set of parameters.
 
 **As built (motion verbs, after the roadmap).** Eight more verbs, timed by the theme like the rest: `transform` (an equation becomes the next; parts matched by longest common subsequence glide over, the rest fade), `become` (a curve takes another's shape; closed curves aligned so points travel little; the source's points are resampled in place, so it needs them unanimated before), `write` (text and equations written in left to right), `travel` (a `Tracer` along any curve offering `path_points`), `flash` (every object has a `flash` parameter the renderer turns into light and glow), `circumscribe` (adds or reuses the child `<id>.ring`, a `Callout`), `wiggle` and `sweep` (adds the child `<id>.readout`, a `Counter` bound by an expression). New objects: `Tracer`, `Callout`, `Counter`, `cx.ComplexMap` (a grid through f, `amount` along the straight path from the identity) and `geo.FlowParticles` (random starts from `rng(id, seed)`, a pure function of t); `geo.ParametricCurve`/`ParametricSurface` blend into other formulas (`to_f*`, `blend`). `write` crops text with a hard edge (the bitmap has no stroke order), not true handwriting.
 
+**As built (Milestone 17).** `transform` now morphs any two outlines (paths, shapes, text, equations, an SVG as source): the target draws the in-between from the source at t (`domains/morph.py`, `domains/morph_math.py`: counts matched by splitting, arc-length resampling, least-travel alignment, all bounded); two equations drawn as pictures keep the parts transform above. `transform_matching` moves equal pieces (equations: keys, then equal TeX; anything else: glyph or path by shape) and fades the rest. `Text` and `Equation` take `as_shapes` (glyph outlines from matplotlib's font code, one `Path` part per glyph; `write` draws each outline, then fills it). A track on `<id>.style.<key>` animates a color, fill, stroke or text size between roles or explicit values in linear RGBA; the document keeps a role or value at each key. See `MILESTONE_17.md`.
+
 **Aesthetic lint rules (added to the linter)**
 
 | Rule | Fails when |
@@ -441,6 +446,8 @@ Making something should start from a preset, not from a blank set of parameters.
 | `motion_rhythm` | Unrelated objects move in the same 0.3 s window |
 | `margin` | Content enters the outer 5% safe margin |
 | `stroke_mix` | More than 3 stroke weights in one frame |
+| `off_palette` | An explicit color is far (OKLab distance) from every palette role, or a scene background from the theme's |
+| `off_scale` | An explicit text size or stroke width is off the theme's type or stroke scale by more than a ratio |
 
 Thresholds live in the theme, so your taste can move them.
 
@@ -454,6 +461,7 @@ Thresholds live in the theme, so your taste can move them.
 
 - A second agent that did not build the scene critiques the storyboard against `STYLE.md` and the gallery. It returns issues tied to object ids and markers.
 - The builder fixes them, at most 3 rounds, then reports what is still open.
+- Its operations are `fix` (certain), `suggested` (judgement; `polish` applies both) and `snap` (an explicit color or size back to its nearest role: offered, applied only by `polish(snap=True)`, never silently).
 
 **Variants and your taste as data**
 
@@ -506,6 +514,8 @@ One scene exports to several outputs without rewriting it.
 **As built (Milestone 12).** Sliders are document **controls** (schema v6: `Control(path, component, label, min, max, step)`; ops `add_control`/`remove_control`; `Scene.control`; lint `orphan_control`; diff entries), declared by the scene instead of an `interactive=True` flag on each parameter. `phasor.interactive.Player` moves them on a private `Engine.fork()` (the scene never changes); the editor's Sliders tab previews them (Apply is one undo step), `notebook(engine)` returns ipywidgets (extra `notebook`), and `export_web` / `phasor web` bake one picture per combination of slider positions (and optional time steps) into a single offline HTML file with the same sliders, refusing more than 600 pictures. Not built, by decision: WebGPU/WGSL kernels (baked pictures work everywhere with no server, at the cost of a coarse grid), drag handles that edit through sliders, hover readouts beyond f(z)/|f|/arg f and the escape count (no winding number or pressure yet).
 
 **As built (Milestone 13, Manim import).** `phasor/importers/manim.py` runs a Manim Community script unchanged with a stand-in `manim` module on the import path and records the phasor scene it builds at Manim's own times (see `docs/ai/API.md` "Manim import" for the table). It runs the script: only import scripts you trust. Colors become style roles, fills outlines, updaters and `always_redraw` are baked, `Transform` between different shapes crossfades; each is a warning. `phasor manim`, and `scene_open` / `phasor gui` on a script that imports `manim`; the result is a plain (not script-locked) scene.
+
+**As built (Milestone 20, Manim parity).** What Milestones 15-19 added carries over and its warning is gone: shapes with fills (`shapes`), lines and curves as `shapes.Path`, `SVGMobject` (`shapes.SVG`), the diagram kit (`dg`, `geo.Axes` labels and numbers), text morphs (`transform`, `transform_matching`, played in Manim's run time), color animations (style tracks), explicit colors and sizes, `ValueTracker` (`Value`), `MovingCameraScene`'s frame (camera tracks) and `add_sound` (`media.Sound`, mixed at render next to the narration). Updaters and `always_redraw` are run by the stand-in at Manim's frames (30 a second) and become tracks: a baked record, so the document never runs the script again and the import never widens `allow_scripts` (a deviation from the plan's "updaters become `always`", `MILESTONE_20.md`). The stand-in is checked against real Manim CE 0.22.1 scene by scene (`tests/manim_real`).
 
 **As built (space and math, 2026-11-19).** `phasor.geo`: `Axes`, `ParametricCurve`, `ParametricSurface` (colored by an output; `with_map` carries a flat input square onto the output shape), `VectorField3D`, `FlowLines`; `calc.VectorField(color_by_size)`. The vertical light shafts (`Haze`) of the first prism look were removed at the owner's request (the Fourier picture's own artifact, not a style element). The editor gained a code tab (the scene as Python: the script, or one generated from the document; Run rebuilds the scene), 3D orbit/pan/zoom by dragging, a narration lane with waveform, draggable markers and spans, a who-changed-what dock and hover readouts; `phasor-gui` starts it as a program. LICENSE: MIT.
 

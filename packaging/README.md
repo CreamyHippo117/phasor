@@ -8,7 +8,7 @@ inside it too (`phasor --cli render scene.phasor.json`).
 Build on each system for that system (PyInstaller does not cross-compile):
 
 ```bash
-uv sync --extra gl --extra encode --extra gui --extra mcp --group package
+uv sync --extra gl --extra encode --extra gui --extra mcp --extra boolean --extra svg --extra code --group package
 uv run python packaging/make_icon.py          # only if you changed the icon drawing
 uv run pyinstaller packaging/phasor.spec --noconfirm
 ```

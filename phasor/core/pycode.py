@@ -2,16 +2,18 @@
 
 ``document_to_python(doc)`` writes a script that, run, builds the same scene: objects with
 their parameters, style roles and tags, the camera, markers, animations (as ``at(...).to``),
-constraints and controls. Narration blocks are not reproduced (their audio belongs to the
-voice module): a comment says so. Running the result and diffing it with the document gives
-no differences except narration (``tests/test_pycode.py``).
+constraints and controls. An object of a type defined in the scene's folder, or with
+updaters, is written as the document's own ``add_object`` op (ADR 0005). Narration blocks
+are not reproduced (their audio belongs to the voice module): a comment says so. Running the
+result and diffing it with the document gives no differences except narration
+(``tests/test_pycode.py``).
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from phasor.core.objects import registered_types
+from phasor.core.objects import is_builtin, registered_types
 from phasor.core.schema import Document, ExprSpec, MarkerRef
 
 # class module -> how the generated script reaches it
@@ -28,6 +30,10 @@ _ALIAS = {
     "phasor.domains.cloud": "cloud",
     "phasor.domains.network": "nw",
     "phasor.domains.dynamics": "dyn",
+    "phasor.domains.shapes": "shapes",
+    "phasor.domains.path": "shapes",  # shapes.Path
+    "phasor.domains.svg": "shapes",  # shapes.SVG
+    "phasor.domains.diagrams": "dg",
 }
 
 
@@ -58,6 +64,11 @@ def _class_ref(type_name: str, uses: set[str]) -> str:
     return f"{alias}.{cls.__name__}"
 
 
+def _op(name: str, **fields: Any) -> str:
+    """A patch op as a Python literal (from its JSON form: lists, True, None)."""
+    return repr({"op": name, **fields})
+
+
 def _time(t: float | MarkerRef) -> tuple[str, float]:
     """(when, offset) arguments for ``s.at``."""
     if isinstance(t, MarkerRef):
@@ -81,6 +92,8 @@ def document_to_python(doc: Document) -> str:
         args.append(f"look={m.look!r}")
     if m.palette:
         args.append(f"palette={m.palette!r}")
+    if m.background is not None:
+        args.append(f"background={_lit(m.background)}")
     lines.append(f"s = Scene({', '.join(args)})")
     cam = doc.cameras[0] if doc.cameras else None
     if cam is not None and cam.kind == "orbit":
@@ -90,7 +103,16 @@ def document_to_python(doc: Document) -> str:
         for k, v in cam.params.items():
             lines.append(f"s.set('{cam.id}.{k}', {_lit(v)})")
     lines.append("")
+    if m.modules:  # code in the scene's folder (ADR 0005): its types and updaters
+        modules = _op("set_meta", field="modules", value=list(m.modules))
+        lines.append(f"s.engine.apply({modules}, origin='script')")
     for o in doc.objects:
+        cls = registered_types().get(o.type)
+        if o.always or cls is None or not is_builtin(cls):
+            # A scene-local type or an updater has no import: the document's own op says it.
+            obj = o.model_dump(mode="json")
+            lines.append(f"s.engine.apply({_op('add_object', object=obj)}, origin='script')")
+            continue
         ref = _class_ref(o.type, uses)
         parts = [f"id={o.id!r}"] + [f"{k}={_lit(v)}" for k, v in o.params.items()]
         if o.style:
@@ -114,10 +136,12 @@ def document_to_python(doc: Document) -> str:
                 isinstance(seg.t0, MarkerRef) == isinstance(seg.t1, MarkerRef)
                 and (not isinstance(seg.t0, MarkerRef) or seg.t0.marker == seg.t1.marker)
             )  # fmt: skip
-            if same_anchor:
+            end = seg.t1.offset if isinstance(seg.t1, MarkerRef) else seg.t1
+            start = seg.t0.offset if isinstance(seg.t0, MarkerRef) else seg.t0
+            # ``at(...).to(duration=)`` only when start + duration gives the stored end back
+            # exactly (0.36 + (1.76 - 0.36) is not 1.76); else both ends, as stored.
+            if same_anchor and float(start) + float(end - start) == float(end):
                 when, off = _time(seg.t0)
-                end = seg.t1.offset if isinstance(seg.t1, MarkerRef) else seg.t1
-                start = seg.t0.offset if isinstance(seg.t0, MarkerRef) else seg.t0
                 at = f"s.at({when}" + (f", {off!r}" if off else "") + ")"
                 lines.append(f"{at}.to({path!r}, {_lit(seg.to)}, duration={float(end - start)!r}, "
                              f"ease={seg.ease!r})")  # fmt: skip

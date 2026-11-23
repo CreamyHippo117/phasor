@@ -36,7 +36,9 @@ def test_apply_returns_result_and_bumps_version():
         ({"op": "set_param", "path": "dot.wobble", "value": 1}, "unknown_param"),
         ({"op": "set_param", "path": "dot.r", "value": -1}, "bad_param"),
         ({"op": "set_param", "path": "dot.r", "value": {"expr": "dot.r"}}, "cycle"),
-        ({"op": "set_style", "id": "dot", "key": "color", "role": "#ff0000"}, "bad_role"),
+        # an explicit color is allowed (M18), but glow takes roles only
+        ({"op": "set_style", "id": "dot", "key": "glow", "role": "#ff0000"}, "bad_role"),
+        ({"op": "set_style", "id": "dot", "key": "color", "role": "#ff00"}, "patch_schema"),
         ({"op": "remove_object", "id": "ghost"}, "unknown_id"),
         ({"op": "add_object", "object": {"id": "dot", "type": "dot"}}, "schema"),
         ({"op": "add_object", "object": {"id": "x", "type": "hologram"}}, "unknown_type"),

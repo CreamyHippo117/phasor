@@ -87,6 +87,16 @@ kind = "basics"
 tier = "reference"
 teaches = "The smallest scene: a labeled dot crosses the frame and passes behind a disc"
 
+[examples.open_contract]
+kind = "basics"
+tier = "technique"
+teaches = "A scene's own types: a new shape from Params and draw, a composite, a Value, and updaters that keep a label on a moving dot"
+
+[examples.own_colors]
+kind = "basics"
+tier = "technique"
+teaches = "Explicit colors, a stroke width and a background beside roles, and the taste lint that checks them (off_palette, off_scale; polish snaps only when asked)"
+
 [examples.prism_domain]
 kind = "complex"
 tier = "technique"
@@ -156,3 +166,37 @@ why = "kernel-level demo, not a scene"
 kind = "physics"
 tier = "technique"
 teaches = "Sound in a 3D room: rays and fronts bouncing off the walls, an orbiting camera, an impulse response filling in"
+
+[examples.shapes]
+kind = "basics"
+tier = "reference"
+teaches = "Every outline shape on Path (circle, ellipse, arc with a tip, sector, annulus, polygon, regular polygon, rounded rectangle, brace), traced in row by row with fills and dashes"
+
+[examples.vector_toolkit]
+kind = "basics"
+tier = "technique"
+teaches = "Fills with holes (even-odd), dashed and dotted strokes, boolean operations on shapes, and an SVG file read as Path parts"
+
+[examples.diagram_kit]
+kind = "basics"
+tier = "reference"
+teaches = "The diagram kit: a number line, a number plane with a grid, axes with unequal scales, numbers and labels, a bar chart, a table, a matrix and highlighted code, each number, bar, cell, entry and code line a part"
+
+[examples.data_viz]
+kind = "motion"
+tier = "technique"
+teaches = "Data that moves: bars growing from their baseline (grow), a table filled row by row (reveal), a grouped counter counting up with them"
+
+[examples.text_shapes]
+kind = "basics"
+tier = "reference"
+teaches = "Text drawn as glyph outlines and written outline-first, a word morphing into a circle (transform), a formula rearranging by TeX (transform_matching), and a fill color moving between two roles"
+
+[examples.manim_camera_tour]
+tier = "hidden"
+why = "a Manim script, the Milestone 20 exit demo of the importer"
+
+[examples.sound_cue]
+kind = "basics"
+tier = "technique"
+teaches = "A sound on cue: a Sound clip (a WAV file in the scene folder) mixed in at render when a ball lands"

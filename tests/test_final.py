@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import runpy
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -14,7 +15,7 @@ import pytest
 import phasor
 from phasor import Scene
 from phasor.core.diff import diff_documents
-from phasor.core.objects import registered_types
+from phasor.core.objects import is_builtin, registered_types
 from phasor.core.texconv import split_math, to_latex, to_mathtext
 from tests.conftest import gl_available
 
@@ -23,7 +24,9 @@ gl = [pytest.mark.gl, pytest.mark.skipif(not gl_available(), reason="needs OpenG
 
 for _m in phasor._MODULES:  # register every domain's types
     getattr(phasor, _m)
-TYPES = sorted(registered_types())
+TYPES = sorted(n for n, c in registered_types().items() if is_builtin(c))  # not test types
+# Types with nothing to draw and so no style roles (ADR 0005): a named number.
+DRAWLESS = {"value", "sound"}
 # The fewest parameters each type needs (the rest have defaults).
 REQUIRED = {
     "domain_coloring": {"function": "1/(z**2+1)"},
@@ -39,6 +42,12 @@ REQUIRED = {
     "callout": {"target": "guide"},  # rings an object
     "sound_rays": {"time": 0.5},  # in a room; 0: the sound has not left
     "wavefront3d": {"time": 0.5},
+    "path": {"subpaths": [[[0, 0, 0], [0.5, 1, 0], [1.5, 1, 0], [2, 0, 0]]]},
+    "svg": {"path": "examples/assets/emblem.svg"},  # relative: tests run from the repo root
+    "sound": {"path": "examples/assets/chime.wav"},
+    "table": {"cells": [["x", "$x^2$"], ["2", "4"]]},
+    "code": {"code": "def f(x):\n    return x * x"},
+    "code_line": {"text": "return x * x", "classes": "kkkkkkpppppp"},
 }
 # Types that point at another object: the scene gets a curve called "guide" for them.
 PARTNERED = {"tracer", "callout"}
@@ -47,13 +56,21 @@ IN_ROOM = {"sound_rays", "wavefront3d"}
 # Examples that build a Scene called ``s``: not domain_coloring (a script that renders the
 # kernel directly) or manim_reverb (a Manim script, run through the importer in its own test).
 EXAMPLES = sorted(p.stem for p in (ROOT / "examples").glob("*.py")
-                  if p.stem not in {"domain_coloring", "manim_reverb"})  # fmt: skip
+                  if p.stem not in {"domain_coloring"} and not p.stem.startswith("manim_"))  # fmt: skip
+# Types and examples that need an optional package (an extra): skipped without it.
+NEEDS = {"svg": ("svgelements",), "vector_toolkit": ("shapely", "svgelements")}
 # Slow to build (minutes for riemann_sqrt's labels through an orbit): checked by their own
 # tests, and here only for lint.
 SLOW = {"deep_zoom", "residue_theorem", "riemann_sqrt"}
 
 
+def _needs(name: str) -> None:
+    for module in NEEDS.get(name, ()):
+        pytest.importorskip(module, reason=f"{name} needs the optional {module!r} package")
+
+
 def _one(name: str, camera: str, passes="auto"):
+    _needs(name)
     s = Scene(f"one {name}", passes=passes, base_dir=ROOT)  # files (a picture) from the repo
     if camera == "orbit":
         s.use_camera("orbit")
@@ -74,6 +91,7 @@ _example_cache: dict[str, object] = {}
 
 
 def _example(name: str):
+    _needs(name)
     if name not in _example_cache:
         _example_cache[name] = runpy.run_path(str(ROOT / "examples" / f"{name}.py"),
                                               run_name="x")["s"].engine  # fmt: skip
@@ -94,13 +112,13 @@ def _examples(include_slow: bool = False):
 
 
 def test_every_type_keeps_the_object_contract_and_has_docs():
-    from phasor.core.objects import REQUIRED_MEMBERS
+    from phasor.core.objects import CONTRACT_MEMBERS
 
     api = (ROOT / "docs" / "ai" / "API.md").read_text(encoding="utf-8")
     for name in TYPES:
         cls = registered_types()[name]
-        assert all(hasattr(cls, m) for m in REQUIRED_MEMBERS), name
-        assert cls.Style, f"{name}: no style roles"
+        assert all(hasattr(cls, m) for m in CONTRACT_MEMBERS), name
+        assert cls.Style or name in DRAWLESS, f"{name}: no style roles"
         assert cls.__name__ in api, f"{name} ({cls.__name__}) is not in docs/ai/API.md"
 
 
@@ -127,6 +145,8 @@ def test_every_type_draws_something_in_2d_and_3d(name, camera, request):
         request.node.add_marker(m)
     if not gl_available():
         pytest.skip("needs OpenGL")
+    if name in DRAWLESS:
+        pytest.skip(f"{name} has nothing to draw")
     e = _one(name, camera)
     # Hairlines are a fraction of a pixel in a tiny frame and vanish (see MILESTONE_11.md),
     # so judge at a size where a "hairline" is a line.
@@ -156,7 +176,11 @@ def test_every_example_survives_save_and_load(name, tmp_path):
     e = _example(name)
     path = tmp_path / f"{name}.phasor.json"
     e.save(path)
-    again = phasor.load(path)  # measured the same way as the original (OpenGL when there)
+    # A scene with its own code (ADR 0005) names its modules: they go with it, and it opens
+    # where scripts may run (the process's copy of the script's code is not lent to it).
+    for module in e.document.meta.modules:
+        shutil.copy(ROOT / "examples" / module, tmp_path / module)
+    again = phasor.load(path, allow_scripts=bool(e.document.meta.modules))  # OpenGL when there
     d = diff_documents(e.document, again.document)
     assert d["same"], d["changes"][:3]
     top = list(json.loads(path.read_text(encoding="utf-8")))

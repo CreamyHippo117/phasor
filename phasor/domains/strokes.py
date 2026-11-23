@@ -82,6 +82,10 @@ def polylines(ctx: DrawContext, cam: Camera, pts, width, *, color, glow: float =
     count, n = pts.shape[0], pts.shape[1]
     if count == 0 or n < 2:
         return
+    note = getattr(ctx, "note_path", None)  # the recorder (core/record.py) keeps center lines
+    if note is not None:
+        for p in pts:
+            note(p)
     theme_hue = getattr(ctx, "stroke_hue", None)
     if colors is None and theme_hue is not None and glow > 1.0:
         lut, cycles, shift = theme_hue
@@ -155,11 +159,19 @@ def arrow(ctx: DrawContext, cam: Camera, a, b, width, color, glow: float = 1.0,
         return
     head = length * head if head is not None else min(length * 0.3, width * 7)
     unit = d / length
+    polyline(ctx, cam, [a, b - unit * head], width, color=color, glow=glow)
+    arrow_head(ctx, cam, b, unit, head, color=color, glow=glow)
+
+
+def arrow_head(ctx: DrawContext, cam: Camera, tip, unit, head: float, *, color,
+               glow: float = 1.0) -> None:  # fmt: skip
+    """A filled arrow head ``head`` long, its point at ``tip``, pointing along ``unit`` (a
+    unit vector), facing the camera: the end of an ``arrow`` and the tips of a path."""
+    tip, unit = np.asarray(tip, dtype=np.float64), np.asarray(unit, dtype=np.float64)
     side = np.cross(cam.forward, unit)
     side /= max(np.linalg.norm(side), 1e-9)
-    base = b - unit * head
-    polyline(ctx, cam, [a, base], width, color=color, glow=glow)
-    tri = np.array([b, base + side * head * 0.45, base - side * head * 0.45])
+    base = tip - unit * head
+    tri = np.array([tip, base + side * head * 0.45, base - side * head * 0.45])
     ctx.triangles(tri, np.array([[0, 1, 2]]), color=color, glow=glow)
 
 

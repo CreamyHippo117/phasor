@@ -11,6 +11,7 @@ import re
 _SEGMENT = r"[a-z][a-z0-9_]*"
 ID_RE = re.compile(rf"{_SEGMENT}(\.{_SEGMENT})*")
 NAME_RE = re.compile(_SEGMENT)
+MAX_REF = 200  # characters of an id a parameter may name (``morph_from``); ids have no limit
 
 
 def is_valid_id(s: str) -> bool:
@@ -33,6 +34,53 @@ def split_path(path: str) -> tuple[str, str]:
     if not object_id or not is_valid_id(object_id) or not is_valid_name(param):
         raise ValueError(f"not a parameter path: {path!r} (expected <id>.<param>)")
     return object_id, param
+
+
+def name_from(text: str, fallback: str, max_len: int = 40) -> str:
+    """A valid name made from free text (a file's shape id, a bar's category): lower case,
+    other characters as ``_``, at most ``max_len`` characters; ``fallback`` when nothing is
+    left, and in front when it would start with a digit (``rect_1st``)."""
+    base = re.sub(r"[^a-z0-9_]+", "_", text.lower()).strip("_")
+    if not base:
+        base = fallback
+    elif not base[0].isalpha():
+        base = f"{fallback}_{base}"
+    return base[:max_len].rstrip("_")
+
+
+def unique_names(wanted, reserved=()) -> list[str]:
+    """``wanted`` names, in order, each made unique and kept out of ``reserved`` by the next
+    free suffix (``label``, ``label_2``)."""
+    used: set[str] = set(reserved)
+    out = []
+    for base in wanted:
+        name, n = base, 2
+        while name in used:
+            name, n = f"{base}_{n}", n + 1
+        used.add(name)
+        out.append(name)
+    return out
+
+
+def children(ids, parent: str) -> frozenset[str]:
+    """The first names under ``parent`` among ``ids`` (``plot.label.x`` -> ``label``): what
+    a composite's parts must keep clear of."""
+    prefix = f"{parent}."
+    return frozenset(i[len(prefix) :].split(".")[0] for i in ids if i.startswith(prefix))
+
+
+STYLE = "style"  # ``<id>.style.<key>``: a track on a style key (a style transition)
+
+
+def split_style_path(path: str) -> tuple[str, str] | None:
+    """``dot.style.color`` -> (``dot``, ``color``); None for any other path. Whether it
+    names a style key or a parameter of a child object called ``dot.style`` is decided by
+    the document: a real object ``<id>.style`` keeps its own parameter paths."""
+    head, _, key = path.rpartition(".")
+    object_id, _, word = head.rpartition(".")
+    if word != STYLE or not object_id or not is_valid_id(object_id) or not is_valid_name(key):
+        return None
+    return object_id, key
 
 
 _UNSAFE = re.compile(r"[^A-Za-z0-9_.-]+")

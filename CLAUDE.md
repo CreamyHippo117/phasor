@@ -21,6 +21,9 @@ compounding. If this file and SPEC.md disagree, stop and ask.
 - Desktop app (owner, 2026-11-22): code-first, one shared script that the person, the AI and
   the app all edit. Plan: `APP_PLAN.md` (answered); ADR 0004 (tweaks inside the script,
   touches contract 2) accepted by the owner; phase 1 not started.
+- Manim parity, the whole CPU, and an open object contract: `MANIM_PARITY.md` (Milestones 14-20,
+  owner 2026-11-23, answers recorded there); ADR 0005 accepted, plan approved, interleaved with
+  `BEAUTY.md`. **14 (CPU kernels) and 15 (open contract) are DONE** (gate 2026-11-23, after independent audits; `MILESTONE_14.md`, `MILESTONE_15.md`) on `claude/eloquent-mayer-jiqxs9`. **16 (paths, fills, shapes), 17 (text shapes, morphing), 18 (explicit styles) and 19 (diagram kit) are DONE** (audited; `MILESTONE_16.md` to `MILESTONE_19.md`); **20 (importer parity, real Manim compared) is DONE** (audited; `MILESTONE_20.md`): the whole plan 14-20 is built. What is left is the owner's PC checks (`pc_tasks/09`, `10_manim_real.md`, `11_platforms_after_20.md`) and decisions (`MANIM_PARITY.md`). Windows, CUDA and macOS untested: **`pc_tasks/09_pc_checks_after_14_15.md`** lists what the owner's PC must run; owner decisions are in `MANIM_PARITY.md`.
 - Render speed: `GPU_SPEED.md` (steps 1-4 done, workers included); resume at its "Next
   session"; measure with wall clock before and after each step.
 - One milestone per branch. No work on milestone N+1 until N's exit demo and tests pass.
@@ -38,6 +41,8 @@ compounding. If this file and SPEC.md disagree, stop and ask.
    IDs: `[a-z][a-z0-9_]*`, dots for children, never reused (removed ids go to
    `retired_ids`), named by meaning not counters.
 3. **Time is pure.** `Engine.state_at(t)` depends only on (document, t) and the occlusion oracle (ADR 0002), returns frozen data.
+   Updaters (`obj.always`) are pure DAG nodes; `meta.modules` names code modules inside the scene's
+   folder (ADR 0005, owner 2026-11-23).
    It may also depend on files the document names (an object's `Files` params, e.g. a
    `Room3D` `.obj`), read only from inside the scene's folder, re-read when they change;
    a missing one is lint `missing_file` (owner, 2026-11-22).
@@ -47,9 +52,10 @@ compounding. If this file and SPEC.md disagree, stop and ask.
 4. **One spatial pipeline.** Everything is 3D; 2D = orthographic camera looking down −z at z=0.
    World: right-handed, z up, x=Re, y=Im. Screen: pixels top-left origin + normalized 0–1.
    Linear RGBA16F until the end; tone map and sRGB encode exactly once.
-5. **Object contract.** Every type implements `Params`, `world_bounds`, `features`,
-   `semantics`, `draw(ctx, state, pass_)` for passes `color`/`id`/`solo`. Missing any member
-   fails registration.
+5. **Object contract.** Every type implements `Params` and `draw(ctx, state)`; missing either
+   fails registration. `world_bounds`, `features` and `semantics` are derived from what `draw`
+   records unless the type writes them; `pass_` is optional; `build(state)` makes a composite
+   (ADR 0005, owner 2026-11-23).
 6. **Layers.** `core ← style ← time ← layout ← inspect ← render ← domains ← engine ← interactive ← voice ← scene ← importers ← workspace ← (cli|gui|mcp|sketch)`
    (`interactive`, `importers`, `workspace` approved by the owner 2026-11-19).
    `core`, `style`, `time`, `layout` import no GPU/GL/video library. Lower layers that need
@@ -63,7 +69,7 @@ compounding. If this file and SPEC.md disagree, stop and ask.
 ## Conventions
 
 - Tests first for timeline, patches, inspector and solvers.
-- Every object type: semantics, bounds, inspector output, a lint rule if relevant, a
+- Every object type shipped in phasor (scene-local types are exempt): semantics, bounds, inspector output, a lint rule if relevant, a
   `docs/ai/API.md` entry and an example in `examples/`.
 - Every feature ships with a storyboard snapshot test (from Milestone 2).
 - One way to do each thing. Extend, never duplicate. Grep before adding a helper.
@@ -128,8 +134,9 @@ compounding. If this file and SPEC.md disagree, stop and ask.
   is the dark `midnight_glow` theme); dark always, light themes are opt-in. Tests run with
   `PHASOR_DEFAULT_LOOK=none` (set in `tests/conftest.py`). Fewer
   rainbows is not no rainbows: hue that carries meaning (domain-coloring phase) keeps the
-  wheel. Taste knobs are theme `[lint]`/`[life]` values, roles, looks and presets, never
-  numbers typed into a scene. Life is a pure function of (id, seed, t); `exact` objects never
+  wheel. Taste knobs are theme `[lint]`/`[life]` values, roles, looks and presets. Explicit colors and
+  sizes typed into a scene are allowed (owner, 2026-11-23, Milestone 18); the aesthetic rules
+  `off_palette` and `off_scale` warn about them and `polish()` offers the nearest role. Life is a pure function of (id, seed, t); `exact` objects never
   move; a type moves only in the ways its `Life` class variable names. Aesthetic rules live in `inspect/aesthetic.py` and run only with `aesthetic=True`.
 
 - Domains: numerics live in `domains/<name>_math.py` (pure NumPy, no drawing) and objects in
@@ -140,7 +147,7 @@ compounding. If this file and SPEC.md disagree, stop and ask.
 ## Commands
 
 ```bash
-uv sync --extra gl --extra encode         # add --extra gpu on an NVIDIA machine
+uv sync --extra gl --extra encode --extra mcp --extra boolean --extra svg --extra code  # add --extra gpu on an NVIDIA machine
 uv run ruff check . && uv run ruff format --check .
 uv run lint-imports
 uv run pytest                             # gl/gpu tests skip themselves without hardware

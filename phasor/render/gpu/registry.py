@@ -2,8 +2,9 @@
 
 GPU math is written as CUDA C strings, compiled by CuPy ``RawKernel`` through NVRTC, and
 registered with ``@kernel(name, signature, reference=numpy_fn)``. A kernel without a NumPy
-reference cannot be registered. The reference is the specification: tests compare the two,
-and machines without CUDA (tier B) run the reference instead.
+reference cannot be registered. The reference is the specification: tests compare the two.
+Machines without CUDA (tier B) compile the same source for the CPU (``render/cpu``) when a
+g++ or clang++ is found, and run the reference otherwise.
 
 A kernel is two functions with the same parameters:
 
@@ -128,18 +129,57 @@ def default_gpu() -> Gpu | None:
         return None
 
 
-def run(name: str, tile: Tile, *, backend: str = "auto", **params: Any) -> Any:
-    """Run a kernel on one tile. ``backend``: ``auto`` (CUDA when present, else the NumPy
-    reference), ``cuda`` or ``reference``. Returns a CuPy or NumPy array accordingly."""
+BACKENDS = ("auto", "cuda", "cpu", "reference")
+_WARNED: set[str] = set()
+
+
+def active_backend() -> str:
+    """What ``backend="auto"`` runs on here: ``cuda``, ``cpu`` or ``reference``."""
+    if default_gpu() is not None:
+        return "cuda"
+    from phasor.render.cpu import backend as cpu
+
+    return "cpu" if cpu.default_cpu() is not None else "reference"
+
+
+def run(name: str, tile: Tile, *, backend: str = "auto", threads: int | None = None,
+        **params: Any) -> Any:  # fmt: skip
+    """Run a kernel on one tile. ``backend``: ``auto`` (CUDA when present, else the CPU
+    backend when a C++ compiler is found, else the NumPy reference), ``cuda``, ``cpu`` or
+    ``reference``. ``threads`` sets the CPU backend's threads for this call (default
+    ``render.cpu.threads()``). Returns a CuPy or NumPy array accordingly."""
     k = get(name)
-    if backend not in ("auto", "cuda", "reference"):
-        raise ValueError(f"backend must be auto, cuda or reference, got {backend!r}")
-    gpu = None if backend == "reference" else default_gpu()
-    if gpu is None:
+    if backend not in BACKENDS:
+        raise ValueError(f"backend must be one of {', '.join(BACKENDS)}, got {backend!r}")
+    if backend == "reference":
+        return k.reference(tile, **params)
+    if backend in ("auto", "cuda"):
+        gpu = default_gpu()
+        if gpu is not None:
+            return k.launch(gpu, tile, **params)
         if backend == "cuda":
             raise KernelError("no CUDA device (run `phasor doctor`)")
+    from phasor.render.cpu import backend as cpu  # here: it imports this module
+
+    host = cpu.default_cpu()
+    if host is None:
+        if backend == "cpu":
+            raise KernelError("no C++ compiler (g++ or clang++) for CPU kernels "
+                              "(run `phasor doctor`)")  # fmt: skip
         return k.reference(tile, **params)
-    return k.launch(gpu, tile, **params)
+    if threads is not None:
+        host = cpu.CpuBackend(host.compiler, threads)
+    if backend == "cpu":
+        return k.launch(host, tile, **params)
+    try:
+        return k.launch(host, tile, **params)
+    except cpu.CompileError as e:  # auto: the reference still gives the right picture
+        if name not in _WARNED:
+            _WARNED.add(name)
+            import warnings
+
+            warnings.warn(f"kernel {name!r} runs on NumPy: {e}", RuntimeWarning, stacklevel=2)
+        return k.reference(tile, **params)
 
 
 def view_args(tile: Tile, center: tuple[float, float], height: float) -> tuple:

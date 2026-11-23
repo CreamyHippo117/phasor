@@ -140,6 +140,35 @@ def check_rawkernel() -> Check:
     return Check("rawkernel", ok, "compiled and ran via NVRTC" if ok else "wrong result")
 
 
+def check_cpu_kernels() -> Check:
+    """The CPU kernel backend (Milestone 14): finds g++ or clang++, then builds and runs a
+    kernel through it (cached on disk after the first time, so every render's doctor is
+    quick). Without a compiler kernels run on the NumPy reference, on one core."""
+    import numpy as np
+
+    from phasor.render.cpu import backend as cpu
+
+    c = cpu.find_compiler()
+    if c is None:
+        other = cpu.unsupported_compilers()
+        note = f" ({', '.join(other)} found, not supported)" if other else ""
+        return Check("cpu_kernels", None,
+                     f"no g++ or clang++{note}: kernels run on NumPy, on one core")  # fmt: skip
+    host = cpu.default_cpu()
+    assert host is not None
+    n = 4096
+    x = np.arange(n, dtype=np.float32)
+    y = np.empty_like(x)
+    fn = host.compile(_ADD_KERNEL, "phasor_doctor_axpb")
+    host.launch(fn, n, (x, y, np.float32(2.0), np.float32(1.0), np.int32(n)))
+    ok = bool(np.array_equal(y, 2.0 * x + 1.0))
+    how = "OpenMP" if c.openmp else "std::thread"
+    data = {"compiler": c.name, "version": c.version, "path": c.path, "openmp": c.openmp,
+            "threads": host.threads, "cores": cpu.cores()}  # fmt: skip
+    detail = f"{c.version}; {how}, {host.threads} threads of {cpu.cores()} cores"
+    return Check("cpu_kernels", ok, detail if ok else f"{detail}: wrong result", data)
+
+
 def check_nvidia_smi() -> Check:
     """Fallback GPU identification when CuPy is missing or broken."""
     exe = shutil.which("nvidia-smi")
@@ -341,6 +370,23 @@ def compute_tier(checks: list[Check]) -> str:
     return "B"
 
 
+# Optional packages some objects need: (module, extra, what needs it).
+def check_extras() -> Check:
+    """Which optional object packages are installed. Missing ones are not a failure: the
+    objects that need them say so (lint ``missing_extra``) and draw nothing."""
+    from phasor.core import extras
+
+    missing = []
+    for module, (extra, what) in extras.EXTRAS.items():
+        if not extras.available(module):
+            missing.append(f"{what} (--extra {extra})")
+    if not missing:
+        return Check("extras", True, "all optional object packages installed",
+                     {"missing": []})  # fmt: skip
+    return Check("extras", None, "not installed: " + ", ".join(missing) + "; uv sync adds them",
+                 {"missing": missing})  # fmt: skip
+
+
 def run_doctor() -> DoctorReport:
     checks: list[Check] = [_guard("python", check_python)]
     cuda = _guard("cuda", check_cuda)
@@ -352,10 +398,11 @@ def run_doctor() -> DoctorReport:
         checks.append(Check("nvrtc", None, "skipped: no CUDA"))
         checks.append(Check("rawkernel", None, "skipped: no CUDA"))
         checks.append(_guard("nvidia_smi", check_nvidia_smi))
+        checks.append(_guard("cpu_kernels", check_cpu_kernels))
     checks.append(_guard("opengl", check_opengl))
     pyav = _guard("pyav", check_pyav)
     ffmpeg = _guard("ffmpeg", check_ffmpeg)
-    checks += [pyav, ffmpeg]
+    checks += [pyav, ffmpeg, _guard("extras", check_extras)]
     return DoctorReport(checks, compute_tier(checks), pick_encoder(pyav, ffmpeg))
 
 
@@ -364,6 +411,16 @@ TIER_TEXT = {
     "B": "OpenGL only: kernels fall back to NumPy, final renders are slow",
     "C": "no rendering: inspector (analytic), lint and timeline only",
 }
+TIER_B_CPU = "OpenGL, no CUDA: kernels run on the CPU ({threads} threads, {compiler})"
+
+
+def tier_text(report: DoctorReport) -> str:
+    """What the tier means here. Tier B says whether its kernels run on the CPU backend
+    (a C++ compiler was found and works) or on the NumPy reference."""
+    cpu = report.get("cpu_kernels")
+    if report.tier == "B" and cpu is not None and cpu.ok:
+        return TIER_B_CPU.format(threads=cpu.data["threads"], compiler=cpu.data["compiler"])
+    return TIER_TEXT[report.tier]
 
 
 def format_report(report: DoctorReport) -> str:
@@ -374,6 +431,6 @@ def format_report(report: DoctorReport) -> str:
     lines += [
         "",
         f"  encoder: {report.encoder or 'none found'}",
-        f"  tier:    {report.tier} - {TIER_TEXT[report.tier]}",
+        f"  tier:    {report.tier} - {tier_text(report)}",
     ]
     return "\n".join(lines)

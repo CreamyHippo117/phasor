@@ -33,6 +33,24 @@ def parse_value(text: str) -> Any:
         return text
 
 
+def open_workspace(path: str | None, root: str | None = None) -> Workspace:
+    """A workspace with ``path`` open, or a new scene. Every way the desktop app opens a file
+    (the Open dialog, recent scenes, examples, a path on the command line) comes here.
+
+    Code runs only on the person's request: a ``.py`` the person opens is their own script
+    and runs (with the modules it names); a ``.phasor.json`` opens without running the
+    modules it names (``meta.modules``): its own types draw as placeholders and lint
+    ``missing_type`` says why, until the person calls ``Editor.trust_scene_code``. The
+    workspace itself never allows scripts, so an attached AI cannot open or run code."""
+    ws = Workspace(root or (Path(path).parent if path else Path.cwd()))
+    if path:
+        p = Path(path).resolve()
+        ws._open(str(p), allow_scripts=p.suffix == ".py")
+    else:
+        ws.scene_new("untitled")
+    return ws
+
+
 class Editor:
     def __init__(self, workspace: Workspace, lock: threading.RLock | None = None) -> None:
         self.ws = workspace
@@ -163,16 +181,18 @@ class Editor:
     def waveform(self, audio: str, bins: int = 200) -> list[float]:
         """Loudness of a narration audio file in ``bins`` steps (0 to 1, of full scale); an
         empty list when the file is missing or not 16-bit WAV."""
-        import wave
+        from phasor.time.narration import parse_wav
 
         path = Path(self.engine.base_dir) / audio
-        try:
-            with wave.open(str(path), "rb") as f:
-                if f.getsampwidth() != 2:
-                    return []
-                ch = f.getnchannels()
-                data = np.frombuffer(f.readframes(f.getnframes()), dtype="<i2")
-        except (OSError, wave.Error, EOFError):
+        try:  # the one WAV header walk: a hostile file is an empty list, never a crash
+            info = parse_wav(path)
+            if info.width != 2:
+                return []
+            ch = info.channels
+            with open(path, "rb") as f:
+                f.seek(info.offset)
+                data = np.frombuffer(f.read(info.frames * ch * 2), dtype="<i2")
+        except (OSError, ValueError):
             return []
         if ch > 1:
             data = data[::ch]
@@ -223,9 +243,14 @@ class Editor:
         from phasor.core.patch import param_value
 
         out = []
-        for c in self.engine.document.controls:
-            cur = param_value(self.engine.document, c.path)
-            value = float(cur if c.component is None else cur[c.component])
+        e = self.engine
+        for c in e.document.controls:
+            try:
+                cur = param_value(e.document, c.path, e.code_scope)
+                value = float(cur if c.component is None else cur[c.component])
+            except (KeyError, IndexError, TypeError, ValueError):
+                continue  # its object's type is missing here: lint says why
+
             out.append({"key": c.key, "label": c.label or c.key, "min": c.min, "max": c.max,
                         "step": c.step, "value": self.preview.get(c.key, value)})  # fmt: skip
         return out
@@ -236,7 +261,7 @@ class Editor:
         from phasor.interactive import snap
 
         ctl = next((c for c in self.engine.document.controls if c.key == key), None)
-        if ctl is None:
+        if ctl is None or all(c["key"] != key for c in self.controls()):
             raise ToolError(f"no slider {key!r}")
         self.preview[key] = snap(ctl, value)
         return self.preview[key]
@@ -250,11 +275,11 @@ class Editor:
             return {"ok": True, "version": self.version, "errors": []}
         from phasor.core.patch import param_value
 
-        doc = self.engine.document
+        doc, scope = self.engine.document, self.engine.code_scope
         by_path: dict[str, Any] = {}
         for key, v in self.preview.items():
             ctl = next(c for c in doc.controls if c.key == key)
-            cur = by_path.get(ctl.path, param_value(doc, ctl.path))
+            cur = by_path[ctl.path] if ctl.path in by_path else param_value(doc, ctl.path, scope)
             if ctl.component is None:
                 by_path[ctl.path] = v
             else:
@@ -460,10 +485,9 @@ class Editor:
         path = Path(self.code()["path"])
         old = path.read_text(encoding="utf-8") if path.exists() else None
         path.write_text(text, encoding="utf-8")
-        allowed, self.ws.allow_scripts = self.ws.allow_scripts, True
         try:
-            with self.lock:
-                self.ws.scene_open(str(path))
+            with self.lock:  # the person's own code: it runs (the workspace's permission
+                self.ws._open(str(path), allow_scripts=True)  # is never raised for it)
         except Exception as e:
             tb = getattr(e, "__traceback__", None)
             line = None
@@ -477,13 +501,24 @@ class Editor:
                 path.write_text(old, encoding="utf-8")
             where = f"line {line}: " if line else ""
             return {"ok": False, "error": f"{where}{type(e).__name__}: {e}"}
-        finally:
-            self.ws.allow_scripts = allowed
         self._frame = None
         self.preview = {}
         self.selected = None
         self.t = 0.0
         return {"ok": True, "version": self.version}
+
+    def trust_scene_code(self) -> dict[str, Any]:
+        """Let the modules the open document names (``meta.modules``: its own object types
+        and updaters) run. A document opens without running them, whoever wrote it; lint
+        ``missing_type`` names what is waiting for this. Only the person at the editor can:
+        it is not a tool, so an attached AI cannot. Unsaved edits stay; undo starts again."""
+        with self.lock:
+            dirty = self.dirty
+            r = self.ws._trust_code()
+            self.saved_version = -2 if dirty else self.version
+            self._seen = -2  # the window redraws (``changed``)
+            self._frame = self._lint = self._player = None
+        return r
 
     # ------------------------------------------------------------ the inspector
 
@@ -556,7 +591,8 @@ class Editor:
 
     def apply_look(self, name: str) -> dict[str, Any]:
         """Switch the scene to a look: its theme and life, and its defaults for the objects
-        already there. One undo step."""
+        already there, except where the scene typed a value (a color, a size: it stays, and
+        a typed color gets no hue along it). One undo step."""
         from phasor.style.looks import load_look
 
         look = load_look(name)
@@ -566,10 +602,10 @@ class Editor:
             {"op": "set_meta", "field": "look", "value": name},
         ]
         for spec in self.engine.document.objects:
-            d = look.defaults.get(spec.type, {})
-            for k, v in d.get("params", {}).items():
+            params, style = look.defaults_for(spec.type, dict(spec.style))
+            for k, v in params.items():
                 ops.append({"op": "set_param", "path": f"{spec.id}.{k}", "value": v})
-            for k, role in d.get("style", {}).items():
+            for k, role in style.items():
                 ops.append({"op": "set_style", "id": spec.id, "key": k, "role": role})
         return self._edit(ops, f"look: {name}")
 

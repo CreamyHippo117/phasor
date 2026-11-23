@@ -26,6 +26,10 @@ class ObjectState:
     tags: tuple[str, ...]
     layer: str
     impl: SceneObject = field(repr=False, compare=False)  # stateless behavior for this object
+    # The composite that built this object (ADR 0005), or None for an object of the document.
+    parent: str | None = None
+    # Style transitions in progress at t: key -> {"from", "to" (as typed), "progress" 0..1}.
+    restyling: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
 
 
 @dataclass(frozen=True)
@@ -45,6 +49,9 @@ class SceneState:
     # The scene's folder: the files objects read (``Files``, core/files.py) are relative to it.
     # Empty: the current folder.
     base_dir: str = field(default="", compare=False)
+    # Ids a composite's parts may not take (ADR 0005): the document's objects and cameras
+    # and its retired ids. A composite whose part names come from a file (``SVG``) avoids them.
+    reserved: frozenset[str] = field(default=frozenset(), compare=False)
     _by_id: Mapping[str, ObjectState] = field(default=None, repr=False, compare=False)  # type: ignore[assignment]
 
     def __post_init__(self) -> None:

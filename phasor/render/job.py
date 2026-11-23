@@ -43,6 +43,14 @@ def render_frame(engine: Any, t: float, fps: float, size: tuple[int, int], shutt
     return engine.frame(t, size, output="srgb8")
 
 
+def _tier_b_warning(report: Any) -> str:
+    cpu = report.get("cpu_kernels")
+    if cpu is not None and cpu.ok:
+        return (f"no CUDA device (tier B): kernels run on the CPU "
+                f"({cpu.data['threads']} threads), slower than on a card")  # fmt: skip
+    return "no CUDA device (tier B) and no C++ compiler: kernels run on NumPy, so this is slow"
+
+
 def render_file(
     engine: Any,
     out: str | Path,
@@ -66,12 +74,11 @@ def render_file(
     size = (w or meta.width, h or meta.height)
     fps = fps or preset_fps or meta.fps
     with stage("setup"):  # once per render, not per frame
-        tier = run_doctor().tier
+        report = run_doctor()
+        tier = report.tier
     if tier == "C":
         raise RuntimeError("no OpenGL here (tier C); nothing can be rendered")
-    warnings = (
-        ["no CUDA device (tier B): kernels run on NumPy, so this is slow"] if tier == "B" else []
-    )
+    warnings = [_tier_b_warning(report)] if tier == "B" else []
     out = Path(out)
     p_shutter, p_samples = BLUR[preset]
     shutter = p_shutter if shutter is None else shutter
@@ -82,9 +89,15 @@ def render_file(
     start = start or 0.0
     end = engine.duration if end is None else end
     count = max(1, round((end - start) * fps))
+    times = [start + k / fps for k in range(count)]
+    # The sound first: a clip that cannot be mixed is said before any frame is rendered,
+    # never after the last one.
+    problems: list[str] = []
+    sound = out.suffix in (".mp4", ".mov")
+    track = engine.audio_track(problems, start, start + count / fps) if sound else None
+    warnings.extend(problems)
     # The encoder runs on its own thread: frame k is encoded while frame k+1 renders.
     # "encode" then times only the hand-over (and any wait for a slow encoder).
-    times = [start + k / fps for k in range(count)]
     if frame_source is None:
         frames = (render_frame(engine, t, fps, size, shutter, blur_samples) for t in times)
     else:
@@ -103,12 +116,10 @@ def render_file(
         frames.close()  # a frame source stops its workers
     with stage("encode"):  # the frames still queued
         writer.close()
-    track = engine.audio_track()
-    sound = track is not None and out.suffix in (".mp4", ".mov")
+    sound = track is not None
     if sound:
         samples, rate = track
-        first = round(start * rate)
-        mux_audio(out, samples[first : first + round(count / fps * rate)], rate)
+        mux_audio(out, samples[: round(count / fps * rate)], rate)
     return {
         "path": str(out), "size": size, "fps": fps, "frames": count, "encoder": writer.encoder,
         "narration": bool(sound), "warnings": warnings,

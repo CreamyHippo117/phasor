@@ -18,6 +18,20 @@ EXIT_NOT_IMPLEMENTED = 2
 EXIT_TIER_TOO_LOW = 1
 EXIT_LINT_FAILED = 1
 
+ALLOW_SCRIPTS_HELP = (
+    "run the Python code a saved .phasor.json names (meta.modules: its own types and "
+    "updaters); it runs only on your request, so only your own code"
+)
+
+
+def _open(args: argparse.Namespace, path: str | None = None):
+    """Open the scene for a command: the one place the CLI loads a scene. A ``.py`` scene
+    is code the person ran; a saved document's modules run only with ``--allow-scripts``."""
+    from phasor.scene import load
+
+    kwargs = {"allow_scripts": True} if getattr(args, "allow_scripts", False) else {}
+    return load(path or args.scene, **kwargs)
+
 
 def _cmd_doctor(args: argparse.Namespace) -> int:
     from phasor.render.doctor import format_report, run_doctor
@@ -38,10 +52,9 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
 
 def _cmd_inspect(args: argparse.Namespace) -> int:
     from phasor.core.issues import DocumentError
-    from phasor.scene import load
 
     try:
-        engine = load(args.scene)
+        engine = _open(args)
         out = engine.inspect(args.t, id=args.id, detail=args.detail)
     except (DocumentError, KeyError, OSError, ValueError) as e:
         print(f"phasor inspect: {e}", file=sys.stderr)
@@ -55,10 +68,9 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
 
 def _cmd_lint(args: argparse.Namespace) -> int:
     from phasor.core.issues import DocumentError
-    from phasor.scene import load
 
     try:
-        engine = load(args.scene)
+        engine = _open(args)
         fixed = engine.autofix(aesthetic=args.aesthetic)["applied"] if args.fix else []
         issues = engine.lint(step=args.step, strict=args.strict, aesthetic=args.aesthetic)
         if fixed:
@@ -96,10 +108,9 @@ def _cmd_storyboard(args: argparse.Namespace) -> int:
     from pathlib import Path
 
     from phasor.core.issues import DocumentError
-    from phasor.scene import load
 
     try:
-        engine = load(args.scene)
+        engine = _open(args)
         board = engine.storyboard(args.t or None, marks=args.marks, columns=args.columns)
         from phasor.render.output import save_png
 
@@ -123,10 +134,9 @@ def _cmd_web(args: argparse.Namespace) -> int:
 
     from phasor.core.issues import DocumentError
     from phasor.interactive import export_web
-    from phasor.scene import load
 
     try:
-        engine = load(args.scene)
+        engine = _open(args)
         if not engine.document.controls:
             print("phasor web: the scene has no sliders (add some with scene.control(...)); "
                   "writing a page with only the picture", file=sys.stderr)  # fmt: skip
@@ -145,9 +155,10 @@ def _cmd_render(args: argparse.Namespace) -> int:
     from pathlib import Path
 
     from phasor.core.issues import DocumentError
+    from phasor.render.cpu import set_threads
     from phasor.render.encode import EncodeError
     from phasor.render.job import render_file
-    from phasor.scene import default_workers, load, parallel_frames
+    from phasor.scene import default_threads, default_workers, parallel_frames
 
     def progress(k: int, n: int) -> None:
         if not args.quiet:
@@ -155,10 +166,12 @@ def _cmd_render(args: argparse.Namespace) -> int:
 
     stem = Path(args.scene).name.split(".")[0]
     try:
-        engine = load(args.scene)
+        engine = _open(args)
         default = stem + (".png" if args.frame is not None else ".mp4")
         workers = default_workers() if args.workers is None else args.workers
-        source = parallel_frames(engine, workers) if workers > 1 else None
+        threads = default_threads(workers) if args.threads is None else args.threads
+        set_threads(threads)  # this process's kernels (all of them with --workers 1)
+        source = parallel_frames(engine, workers, threads=threads) if workers > 1 else None
         r = render_file(
             engine, args.out or default, preset=args.preset, fps=args.fps, start=args.start,
             end=args.end, frame=args.frame, progress=progress, shutter=args.shutter,
@@ -173,7 +186,7 @@ def _cmd_render(args: argparse.Namespace) -> int:
     if args.frame is not None:
         print(f"wrote {r['path']} ({w}x{h}, t = {args.frame:g} s)")
     else:
-        sound = ", with narration" if r["narration"] else ""
+        sound = ", with sound" if r["narration"] else ""  # narration and Sound clips
         print(f"\nwrote {r['path']}: {r['frames']} frames, {w}x{h} at {r['fps']:g} fps, "
               f"{r['encoder']}{sound}")  # fmt: skip
     return 0
@@ -247,13 +260,12 @@ def _cmd_bench_frames(args: argparse.Namespace) -> int:
 
     from phasor.core.issues import DocumentError
     from phasor.render.bench import run_frame_bench, save_frames
-    from phasor.scene import load
 
     scene = Path(args.frames)
     if not scene.exists() and (Path("examples") / f"{args.frames}.py").exists():
         scene = Path("examples") / f"{args.frames}.py"  # an example by name
     try:
-        engine = load(str(scene))
+        engine = _open(args, str(scene))
         r = run_frame_bench(engine, scene.name.split(".")[0], args.count, args.preset)
     except (DocumentError, OSError, ValueError, RuntimeError) as e:
         print(f"phasor bench: {e}", file=sys.stderr)
@@ -297,6 +309,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     i = sub.add_parser("inspect", help="what is on screen at time t, as JSON")
     i.add_argument("scene", help="a .phasor.json document or a .py script that builds a Scene")
+    i.add_argument("--allow-scripts", action="store_true", help=ALLOW_SCRIPTS_HELP)
     i.add_argument("--t", type=float, default=0.0, help="time in seconds (default 0)")
     i.add_argument("--id", help="only this object")
     i.add_argument("--detail", choices=["brief", "standard", "full"], default="standard")
@@ -304,6 +317,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     li = sub.add_parser("lint", help="find visual problems at every marker and sampled times")
     li.add_argument("scene", help="a .phasor.json document or a .py script that builds a Scene")
+    li.add_argument("--allow-scripts", action="store_true", help=ALLOW_SCRIPTS_HELP)
     li.add_argument("--fix", action="store_true", help="apply the fixes the linter suggests")
     li.add_argument("--aesthetic", action="store_true", help="also check taste (focal point, ...)")
     li.add_argument("--strict", action="store_true", help="exit 1 on warnings too")
@@ -313,6 +327,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sb = sub.add_parser("storyboard", help="keyframe stills on one contact sheet + inspector")
     sb.add_argument("scene", help="a .phasor.json document or a .py script that builds a Scene")
+    sb.add_argument("--allow-scripts", action="store_true", help=ALLOW_SCRIPTS_HELP)
     sb.add_argument("-o", "--out", help="output PNG (default: <scene>.storyboard.png)")
     sb.add_argument("--t", type=float, action="append", help="a time to show (repeatable)")
     sb.add_argument("--marks", action="store_true", help="draw each object's box and id")
@@ -322,6 +337,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     r = sub.add_parser("render", help="render a video (or one frame) with the final look")
     r.add_argument("scene", help="a .phasor.json document or a .py script that builds a Scene")
+    r.add_argument("--allow-scripts", action="store_true", help=ALLOW_SCRIPTS_HELP)
     r.add_argument("-o", "--out", help="output: .mp4, .mov (ProRes), a folder or a %%05d.png")
     r.add_argument("--preset", choices=sorted(PRESETS), default="preview")
     r.add_argument("--fps", type=float, help="override the preset's frame rate")
@@ -335,6 +351,9 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--workers", type=int,
                    help="render processes (default: a quarter of the CPU threads, 1 to 4; "
                    "1 renders in this process)")  # fmt: skip
+    r.add_argument("--threads", type=int,
+                   help="CPU kernel threads per render process, without CUDA (default: the "
+                   "cores shared out, workers x threads <= cores; env PHASOR_THREADS)")  # fmt: skip
     r.add_argument("--quiet", action="store_true")
     r.set_defaults(func=_cmd_render)
 
@@ -352,6 +371,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     w = sub.add_parser("web", help="bake an interactive web page (sliders) from a scene")
     w.add_argument("scene", help="a .phasor.json or .py scene with controls")
+    w.add_argument("--allow-scripts", action="store_true", help=ALLOW_SCRIPTS_HELP)
     w.add_argument("-o", "--out", help="the HTML file (default: <scene>.html)")
     w.add_argument("--steps", type=int, default=5, help="positions per slider (default 5)")
     w.add_argument("--time-steps", type=int, default=1, help="also bake this many moments of time")
@@ -369,6 +389,7 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--count", type=int, default=60, help="frames to time (with --frames)")
     b.add_argument("--preset", default="final", choices=["preview", "final", "4k"],
                    help="render preset (with --frames)")  # fmt: skip
+    b.add_argument("--allow-scripts", action="store_true", help=ALLOW_SCRIPTS_HELP)
     b.set_defaults(func=_cmd_bench)
 
     # Client commands (mcp, gui) register themselves through the "phasor.commands"

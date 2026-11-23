@@ -705,7 +705,7 @@ class Room3D(ObjectBase):
         if not p.path:
             return _geometry(("box", tuple(p.size), tuple(p.origin), p.edge_angle))
         try:
-            path = files.resolve(state.base_dir, p.path)
+            path = files.regular_file(state.base_dir, p.path)
             st = path.stat()
             return _geometry(("mesh", str(path), st.st_mtime_ns, st.st_size, p.scale,
                               tuple(p.origin), p.edge_angle))  # fmt: skip

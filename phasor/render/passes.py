@@ -567,8 +567,11 @@ class GLRenderer:
         rl, ul = float(np.linalg.norm(r)), float(np.linalg.norm(u))
         center = ((s0 + s1) / 2 * rl, (t0 + t1) / 2 * ul)
         height = (t1 - t0) * ul
+        # The background is in the key: fields fill their empty parts with it (Fractal,
+        # cloud, image), and a scene may choose its own (M18).
         key = (obj.type, obj.params, tuple(sorted(obj.roles.items())), pw, ph,
-               round(center[0], 12), round(center[1], 12), round(height, 15))  # fmt: skip
+               round(center[0], 12), round(center[1], 12), round(height, 15),
+               tuple(state.background))  # fmt: skip
         if key not in self._fields:
             pixels = np.asarray(c["pixels"](pw, ph, center, height), dtype=np.float32)
             if pixels.shape != (ph, pw, 4):

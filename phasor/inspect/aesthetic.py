@@ -13,9 +13,15 @@ ordinary linter stays about problems, these are about taste. Every threshold is 
 | motion_rhythm   | unrelated objects start different motions within the same short window  |
 | margin          | content crowds the outer safe margin of the frame                       |
 | stroke_mix      | more stroke weights on screen than the theme allows                     |
+| off_palette     | an explicit color (or the scene's background) is far, in OKLab, from    |
+|                 | every role of the theme's palette (from the theme's background)         |
+| off_scale       | an explicit text size or stroke width is off the theme's type or stroke |
+|                 | scale by more than the theme's ratio                                    |
 
 A "beat" is a marker (or, with no markers, an evenly spaced sample). A fix is offered only
 where it is certain to help: a margin rule, one stroke weight, one glow notch down.
+``off_palette`` and ``off_scale`` have no fix (the value may be meant): ``snaps`` offers the
+nearest role instead, which ``polish(snap=True)`` applies, and only then.
 """
 
 from __future__ import annotations
@@ -32,6 +38,7 @@ from phasor.inspect.lint import _movable, _shown, _when, sample_times
 from phasor.inspect.passes import PassRunner, inspect_size
 from phasor.layout.geometry import footprint, is_backdrop, view_of
 from phasor.layout.plan import Plan
+from phasor.style import explicit
 from phasor.time.compile import Compiled
 from phasor.time.tracks import ResolvedTrack
 
@@ -136,7 +143,10 @@ def rules(
         shown = {i for i, e in entries.items() if _shown(e)}
         content = _content(state, shown)
         non_label = [
-            o for o in content if o.impl.semantics(state).get("kind") != "label"
+            o
+            for o in content
+            if o.impl.semantics(state).get("kind") != "label"
+            and "glyph" not in o.tags  # a glyph of a text as shapes is part of a label
         ]  # labels annotate; the picture is the rest
         if not content:
             continue  # nothing yet: a blank beat is not "empty", it is not there yet
@@ -180,10 +190,37 @@ def rules(
             if x0 * a < m_ or y0 < m_ or (1 - x1) * a < m_ or 1 - y1 < m_:
                 add("margin", (o.id,), t, unit=view_of(state, o).units_per_height)
 
-        # stroke_mix
-        weights = {o.id: o.roles["stroke"] for o in content if "stroke" in o.roles}
+        # stroke_mix, of roles (an explicit width is off_scale's)
+        weights = {o.id: o.roles["stroke"] for o in content
+                   if "stroke" in o.roles and explicit.is_role(o.roles["stroke"])}  # fmt: skip
         if len(set(weights.values())) > th["stroke_mix"]:
             add("stroke_mix", tuple(sorted(weights)), t, weights=weights)
+
+        # off_palette, off_scale: explicit values far from the theme
+        for o in state.objects:
+            # A glyph's values come from its text (its outline is a share of the text's
+            # height): the text is judged. Every other part is judged as itself.
+            if o.id in shown and "glyph" not in o.tags:
+                for key in o.roles:
+                    judged = judge(c, o, key)
+                    if judged is not None:
+                        code, role, measure = judged
+                        add(code, (o.id,), t, key, role=role, measure=measure)
+        if c.doc.meta.background is not None:
+            far = explicit.oklab_distance(state.background, c.theme.background)
+            if far > th["off_palette"]:
+                add("off_palette", (), t, "background", role="background", measure=far)
+
+    # A style transition's explicit target is judged where it is reached, beat or not.
+    for o in c.objects:
+        for key, track in o.style_tracks.items():
+            for seg in track.segments:
+                if explicit.is_role(seg.to.typed) or not 0 <= seg.t1 <= c.duration:
+                    continue
+                judged = judge(c, state_at(seg.t1)[o.id], key)
+                if judged is not None and seg.t1 not in found.get((judged[0], (o.id,), key),
+                                                                  {}).get("times", ()):  # fmt: skip
+                    add(judged[0], (o.id,), seg.t1, key, role=judged[1], measure=judged[2])
 
     issues = [
         _make(c, plan, th, code, ids, variant, info)
@@ -194,9 +231,82 @@ def rules(
     return issues + motion_rhythm(c)
 
 
+def judge(c: Compiled, o: ObjectState, key: str) -> tuple[str, str, float] | None:
+    """``(code, nearest role, measure)`` when the explicit value at ``o``'s style ``key`` is
+    far from the theme: ``off_palette`` with the OKLab distance to the nearest palette role,
+    ``off_scale`` with how many times off the nearest size role it is. None for a role, or
+    for an explicit value near enough."""
+    value = o.roles.get(key)
+    if value is None or explicit.is_role(value):
+        return None
+    group = type(o.impl).Style.get(key, (None,))[0]
+    kind = explicit.EXPLICIT.get(group)
+    th = c.theme.lint
+    if kind == "color":
+        role, far = explicit.nearest_color_role(c.theme, o.style[key])
+        return ("off_palette", role, far) if far > th["off_palette"] else None
+    if kind == "size" and isinstance(o.style.get(key), float):
+        role, ratio = explicit.nearest_size_role(c.theme, group, o.style[key])
+        return ("off_scale", role, ratio) if ratio > th["off_scale"] else None
+    return None
+
+
+def snaps(
+    c: Compiled, issue: Issue, state_at: Callable[[float], SceneState]
+) -> tuple[dict[str, Any], ...]:
+    """The ops that snap an ``off_palette`` / ``off_scale`` value to the nearest role (a
+    scene background back to the theme's). Not certain to be right (the value may be meant),
+    so never a ``fix``: ``polish(snap=True)`` applies them, and only then."""
+    if issue.code not in ("off_palette", "off_scale") or not issue.times or not issue.path:
+        return ()
+    if issue.path == "meta.background":
+        if c.doc.meta.source != "document":  # a script owns its meta: change it there
+            return ()
+        return ({"op": "set_meta", "field": "background", "value": None},)
+    oid, _, key = issue.path.rpartition(".")
+    if c.doc.object(oid) is None:  # a composite's part: its composite's build sets it
+        return ()
+    if f"{oid}.style.{key}" in c.doc.timeline.tracks:  # a transition's target: change it there
+        return ()
+    judged = judge(c, state_at(issue.times[0])[oid], key)
+    if judged is None:
+        return ()
+    return ({"op": "set_style", "id": oid, "key": key, "role": judged[1]},)
+
+
 def _make(c: Compiled, plan: Plan, th, code: str, ids: tuple[str, ...], variant: str, info):
-    ts = tuple(info["times"])
+    ts = tuple(sorted(info["times"]))
     when = _when(list(ts))
+    if code in ("off_palette", "off_scale") and variant == "background":
+        return Issue(
+            code,
+            f"the background {c.doc.meta.background!r} is far from the theme's {when} "
+            f"(distance {info['measure']:.2f}, limit {th['off_palette']:g})",
+            "warning",
+            ids,
+            path="meta.background",
+            times=ts,
+            fix_hint="keep it if you mean it; polish(snap=True) goes back to the theme's",
+        )
+    if code in ("off_palette", "off_scale"):
+        (i,) = ids
+        spec = c.doc.object(i)
+        value = spec.style.get(variant) if spec is not None else None
+        if code == "off_palette":
+            what = (f"is far from every palette role {when} (distance {info['measure']:.2f} "
+                    f"to {info['role']!r}, limit {th['off_palette']:g})")  # fmt: skip
+        else:
+            what = (f"is {info['measure']:.2f} times off the theme's scale {when} (nearest "
+                    f"{info['role']!r}, limit {th['off_scale']:g})")  # fmt: skip
+        return Issue(
+            code,
+            f"{i}.{variant} = {value!r} {what}",
+            "warning",
+            ids,
+            path=f"{i}.{variant}",
+            times=ts,
+            fix_hint=f"keep it if you mean it; polish(snap=True) snaps it to {info['role']!r}",
+        )
     if code == "focal_point":
         if variant == "none":
             return Issue(

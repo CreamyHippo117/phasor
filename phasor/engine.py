@@ -10,14 +10,16 @@ none can be created the inspector runs in analytic mode (tier C).
 
 from __future__ import annotations
 
+import threading
 from collections import OrderedDict
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import phasor.domains  # noqa: F401  (registers the built-in object types)
-from phasor.core import io
+from phasor.core import files, io
 from phasor.core.issues import DocumentError, Issue
+from phasor.core.objects import SCENE_MODULE_PREFIX, CodeScope, get_type
 from phasor.core.patch import TWEAK_OPS, apply_ops, apply_overrides, parse_patch, record_tweaks
 from phasor.core.schema import Document, Meta, Overrides
 from phasor.core.state import SceneState
@@ -31,7 +33,7 @@ from phasor.inspect.oracle import PassOracle
 from phasor.inspect.passes import PassRunner
 from phasor.layout.bake import Bake, bake, baked_state
 from phasor.layout.plan import Plan, compile_plan
-from phasor.time.compile import Compiled, compile_document
+from phasor.time.compile import Compiled, compile_document, file_values
 from phasor.time.expr import CompiledExpr
 from phasor.time.tracks import ResolvedTrack
 
@@ -92,10 +94,15 @@ class _Snapshot:
     """One point in history: the document, plus what is derived from it. The layout bake
     and the lint result are filled in on first use and kept, so undo gets them back free."""
 
-    def __init__(self, base: Document, overrides: Overrides, base_dir: str = "") -> None:
+    def __init__(self, base: Document, overrides: Overrides, base_dir: str = "",
+                 allow_scripts: bool = False) -> None:  # fmt: skip
         self.base, self.overrides = base, overrides
         effective, orphans = apply_overrides(base, overrides)
-        self.compiled: Compiled = compile_document(effective, base_dir)
+        scope = CodeScope.of(effective.meta.modules, base_dir, allow_scripts)
+        with _CODE_LOCK:  # the registries and loaded modules are the process's
+            need = needs_code(effective, scope) or changed_modules(effective, base_dir)
+            modules = load_modules(effective, base_dir, allow_scripts) if need else {}
+            self.compiled: Compiled = compile_document(effective, base_dir, modules, scope)
         self.plan: Plan = compile_plan(self.compiled)
         self.orphans: tuple[Issue, ...] = tuple(orphans)
         self.bake: Bake | None = None
@@ -103,9 +110,168 @@ class _Snapshot:
         self.aesthetic: tuple[Issue, ...] | None = None
         self.states: OrderedDict[float, SceneState] = OrderedDict()
         self.snapshots: OrderedDict[float, dict[str, Any]] = OrderedDict()
+        self.file_stamps = file_stamps(self.compiled)
+        # A render worker's snapshot (ADR 0003): it holds its parent's bake, made from the
+        # files as they were; it never forgets it and never bakes.
+        self.frozen = False
+
+    def refresh(self) -> None:
+        """Forget what was derived from the files the document names when one of them
+        changed (contract 3: a changed file is read again). A composite builds its parts from
+        a file (an ``SVG``), so a state made before the change is stale too. In a render
+        worker a changed file is an error: its frames would mix the old file and the new."""
+        now = file_stamps(self.compiled)
+        if now != self.file_stamps:
+            if self.frozen:
+                changed = sorted({a[0] for a, b in zip(now, self.file_stamps, strict=False)
+                                  if a != b} or {"a file"})  # fmt: skip
+                raise RuntimeError(f"{', '.join(changed)} changed while the scene was being "
+                                   "rendered; render it again")  # fmt: skip
+            self.file_stamps = now
+            self.bake, self.aesthetic = None, None
+            self.lint = {}
+            self.states.clear()
+            self.snapshots.clear()
+
+
+def file_stamps(c: Compiled) -> tuple:
+    """Each file the document's objects name (``Files``) as it is now (``files.stamp``)."""
+    out = []
+    for o in c.objects:
+        for name in getattr(type(o.impl), "Files", ()):
+            out.extend(files.stamp(c.base_dir, v) for v in file_values(c, f"{o.id}.{name}"))
+    return tuple(out)
 
 
 _build = _Snapshot
+
+
+# ---------------------------------------------------------------- scene-local code (ADR 0005)
+
+# resolved path -> (modification time, status, the loaded module or None)
+_LOADED: dict[str, tuple[int, str, Any]] = {}
+_LOADING: set[str] = set()  # modules being run now (a scene script that builds its own Scene)
+# Held while a document's code is looked up, loaded and compiled: two threads (the GUI and
+# an attached MCP client) never see a half-loaded module. Re-entrant: a module the engine
+# runs may build its own Scene.
+_CODE_LOCK = threading.RLock()
+REFUSED = ("refused: scripts may not run here (open the scene with allow_scripts=True, "
+           "start the MCP server with --allow-scripts, or in the desktop editor trust the "
+           "scene's code: Editor.trust_scene_code)")  # fmt: skip
+
+
+def needs_code(doc: Document, scope: CodeScope) -> bool:
+    """Whether the document names code this document cannot reach yet: a type or an updater
+    that none of its own modules defined (with ``scope``: only where scripts may run)."""
+    from phasor.core.objects import get_type, get_updater
+
+    if not doc.meta.modules:
+        return False
+    return any(get_type(o.type, scope) is None
+               or any(get_updater(r, scope) is None for r in o.always)
+               for o in doc.objects)  # fmt: skip
+
+
+def changed_modules(doc: Document, base_dir: str | Path) -> bool:
+    """Whether a module this process loaded for the document has changed on disk since
+    (contract 3: files the document names are read again when they change). Modules that
+    registered their types some other way (a scene script run by ``load``) are not watched."""
+    from phasor.core import files
+
+    for rel in doc.meta.modules:
+        try:
+            path = files.resolve(base_dir, rel)
+            hit = _LOADED.get(str(path))
+            if hit is not None and path.is_file() and path.stat().st_mtime_ns != hit[0]:
+                return True
+        except (ValueError, OSError):
+            continue
+    return False
+
+
+def load_modules(doc: Document, base_dir: str | Path, allow: bool) -> dict[str, str]:
+    """Load the modules the document lists (``meta.modules``), each once per change of the
+    file, and report what became of each: ``"loaded"``, ``"missing"``, a refusal (scripts
+    may run only on the person's request, the importers' rule) or ``"failed: ..."``. A
+    module is read only from inside the scene's folder (``core/files.py``). One that fails
+    leaves nothing behind: not its types, not its updaters, not itself in ``sys.modules``."""
+    from phasor.core import files
+
+    out: dict[str, str] = {}
+    for rel in doc.meta.modules:
+        try:
+            path = files.resolve(base_dir, rel)
+        except ValueError as e:
+            out[rel] = f"refused: {e}"
+            continue
+        if not path.is_file():
+            out[rel] = "missing"
+            continue
+        if not allow:
+            out[rel] = REFUSED
+            continue
+        key, mtime = str(path), path.stat().st_mtime_ns
+        hit = _LOADED.get(key)
+        if key in _LOADING or (hit is not None and hit[0] == mtime):
+            out[rel] = hit[1] if hit is not None else "loaded"
+        else:
+            out[rel] = _run_module(path, Path(base_dir or ".").resolve(), mtime)
+        if out[rel] == "loaded":
+            _adopt_updaters(doc, rel, key, _LOADED.get(key, (0, "", None))[2])
+    return out
+
+
+def _run_module(path: Path, folder: Path, mtime: int) -> str:
+    import hashlib
+    import importlib.util
+    import sys
+
+    from phasor.core.objects import registry_snapshot, restore_registry
+
+    key = str(path)
+    name = SCENE_MODULE_PREFIX + hashlib.sha1(key.encode("utf-8")).hexdigest()[:12]
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        _LOADED[key] = (mtime, "failed: not a Python module", None)
+        return _LOADED[key][1]
+    module = importlib.util.module_from_spec(spec)
+    before, snapshot = set(sys.modules), registry_snapshot()
+    sys.modules[name] = module  # pydantic resolves a model's annotations through it
+    _LOADING.add(key)
+    try:
+        spec.loader.exec_module(module)
+    except BaseException as e:  # a scene's code may raise anything, exit too
+        if isinstance(e, KeyboardInterrupt):
+            raise
+        restore_registry(snapshot)
+        for k in set(sys.modules) - before:
+            f = getattr(sys.modules[k], "__file__", None) or ""
+            if k == name or (f and folder in Path(f).resolve().parents):
+                del sys.modules[k]
+        _LOADED[key] = (mtime, f"failed: {type(e).__name__}: {e}", None)
+        return _LOADED[key][1]
+    finally:
+        _LOADING.discard(key)
+    _LOADED[key] = (mtime, "loaded", module)
+    return "loaded"
+
+
+def _adopt_updaters(doc: Document, rel: str, file: str, module: Any) -> None:
+    """Updaters the document names in a module it loaded (a plain function in a
+    ``*.types.py``): found by their plain name at the module's top level (never a dotted path
+    into something else) and remembered as that file's scene code."""
+    from phasor.core.objects import add_updater
+
+    if module is None:
+        return
+    for o in doc.objects:
+        for ref in o.always:
+            mod, _, name = ref.rpartition(":")
+            if mod != rel or not name.isidentifier():
+                continue
+            target = vars(module).get(name)
+            if callable(target):
+                add_updater(file, name, target, True)
 
 
 class Engine:
@@ -117,11 +283,17 @@ class Engine:
         title: str = "untitled",
         passes: PassRunner | str | None = "auto",
         base_dir: str | Path | None = None,
+        allow_scripts: bool = False,
     ) -> None:
+        """``allow_scripts``: the modules the document names (``meta.modules``, types and
+        updaters defined in the scene's folder) may run. Off by default: like the importers,
+        code runs only on the person's request (``phasor.load("scene.py")`` runs the script
+        anyway, so it turns this on)."""
         base = document or Document(meta=Meta(title=title))
         # The folder that files the document refers to (narration audio, meshes) are relative to.
         self.base_dir = Path(base_dir) if base_dir is not None else Path.cwd()
-        self._snap = _build(base, overrides or Overrides(), str(self.base_dir))
+        self.allow_scripts = allow_scripts
+        self._snap = _build(base, overrides or Overrides(), str(self.base_dir), allow_scripts)
         self._undo: list[_Snapshot] = []
         self._redo: list[_Snapshot] = []
         self._checkpoints: dict[str, _Snapshot] = {}  # named points to go back to
@@ -140,13 +312,30 @@ class Engine:
         """What a render worker needs to draw this scene without baking it again (ADR 0003):
         the document and overrides as canonical JSON, this engine's bake (baked here first
         if need be) and the fingerprint it was made for. Plain data: it pickles."""
+        self._snap.refresh()
         return {
+            # the files the bake was made from: a worker refuses to start if they changed
+            "file_stamps": self._snap.file_stamps,
             "document": io.dumps(self._snap.base),
             "overrides": io.dumps(self._snap.overrides),
             "bake": self._bake(self._snap),
             "fingerprint": self.fingerprint(),
             "base_dir": str(self.base_dir),
+            # The scene's own code (ADR 0005) runs in a worker exactly when it may run here:
+            # this engine's own permission, never raised by what the document or the
+            # process's registries hold.
+            "allow_scripts": self.allow_scripts,
         }
+
+    @property
+    def code_scope(self) -> CodeScope:
+        """The scene code this document may use (its own modules, where scripts may run)."""
+        return self._snap.compiled.scope
+
+    def type_of(self, name: str) -> type | None:
+        """The class of object type ``name`` as this document sees it: shipped in phasor,
+        imported, or (where scripts may run) defined in one of its own modules."""
+        return get_type(name, self.code_scope)
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any], **kwargs: Any) -> Engine:
@@ -158,17 +347,25 @@ class Engine:
         doc = io.parse_document(json.loads(payload["document"]))
         overrides = Overrides.model_validate_json(payload["overrides"])
         kwargs.setdefault("base_dir", payload["base_dir"])
+        kwargs.setdefault("allow_scripts", payload.get("allow_scripts", False))
         engine = cls(doc, overrides=overrides, **kwargs)
         if engine.fingerprint() != payload["fingerprint"]:
             raise ValueError("this bake was made for another document; bake it here instead")
+        if tuple(payload.get("file_stamps", engine._snap.file_stamps)) != engine._snap.file_stamps:
+            raise ValueError("a file the scene reads changed since this bake was made; "
+                             "render it again")  # fmt: skip
         engine._snap.bake = payload["bake"]
+        engine._snap.frozen = True
         return engine
 
-    def fork(self) -> Engine:
+    def fork(self, *, allow_scripts: bool | None = None) -> Engine:
         """A private copy of this engine's current scene (document and overrides) with its own
-        history: edit it freely (a player moving sliders) and this one never changes."""
+        history: edit it freely (a player moving sliders) and this one never changes. It has
+        this engine's permission to run the scene's code unless ``allow_scripts`` says
+        otherwise (the editor's ``trust_scene_code``: only on the person's request)."""
+        allow = self.allow_scripts if allow_scripts is None else allow_scripts
         return Engine(self._snap.base, overrides=self._snap.overrides, passes=self._passes,
-                      base_dir=self.base_dir)  # fmt: skip
+                      base_dir=self.base_dir, allow_scripts=allow)  # fmt: skip
 
     # ------------------------------------------------------------ files
 
@@ -197,20 +394,30 @@ class Engine:
         import shutil
 
         from phasor.core import files
-        from phasor.core.objects import get_type
 
+        kinds = {o.id: type(o.impl) for o in self._snap.compiled.objects}
         for spec in self.document.objects:
-            for name in getattr(get_type(spec.type), "Files", ()):
+            for name in getattr(kinds.get(spec.id), "Files", ()):
                 raw = spec.params.get(name)
                 if not isinstance(raw, str) or not raw:
                     continue
                 try:
-                    src, dst = files.resolve(self.base_dir, raw), folder / files.relative_path(raw)
+                    src, dst = (
+                        files.regular_file(self.base_dir, raw),
+                        folder / files.relative_path(raw),
+                    )
                 except ValueError:
                     continue
-                if src.is_file() and src.resolve() != dst.resolve():
-                    dst.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(src, dst)
+                if not src.is_file() or src.resolve() == dst.resolve():
+                    continue
+                # never write through a link: a symlink at the destination (or a linked
+                # folder on the way) could point anywhere; the file is left behind (lint
+                # missing_file says so where the scene is opened)
+                inside, parent = folder.resolve(), dst.parent.resolve()
+                if dst.is_symlink() or (parent != inside and inside not in parent.parents):
+                    continue
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
 
     # ------------------------------------------------------------ read
 
@@ -260,22 +467,26 @@ class Engine:
 
     def critique(self) -> dict[str, Any]:
         """The art-director's report: the taste score (0 = nothing to criticise) and every
-        aesthetic issue with the markers it happens at, certain ``fix`` ops and judgement
-        ``suggested`` ops. See ``inspect/critic.py``."""
+        aesthetic issue with the markers it happens at, certain ``fix`` ops, judgement
+        ``suggested`` ops and offered ``snap`` ops (an explicit value to its nearest role).
+        See ``inspect/critic.py``."""
         issues = [i for i in self._aesthetic(self._snap)]
-        return critic.critique(self._snap.compiled, issues, lambda t: self._snapshot(t))
+        return critic.critique(self._snap.compiled, issues, lambda t: self._snapshot(t),
+                               lambda t: self.state_at(t))  # fmt: skip
 
-    def polish(self, rounds: int = 3) -> dict[str, Any]:
+    def polish(self, rounds: int = 3, *, snap: bool = False) -> dict[str, Any]:
         """Critique, apply the fixes (certain ones, then judgement suggestions), and repeat,
         at most ``rounds`` times (SPEC: three). Every round is undoable. Returns the score
-        before and after and what each round did; stops early when nothing is left to do."""
+        before and after and what each round did; stops early when nothing is left to do.
+        Explicit colors and sizes the scene typed are its own choice: their ``snap`` to the
+        nearest role is applied only with ``snap=True`` (else it stays in ``remaining``)."""
         history = []
         before = self.critique()
         report = before
         for k in range(1, rounds + 1):
             ops: list[dict[str, Any]] = []
             for i in report["issues"]:
-                for op in i["fix"] or i["suggested"]:
+                for op in [*(i["fix"] or i["suggested"]), *(i["snap"] if snap else ())]:
                     if op not in ops:
                         ops.append(op)
             if not ops or not self.apply(ops).ok:
@@ -286,6 +497,7 @@ class Engine:
                 "remaining": report["issues"]}  # fmt: skip
 
     def _aesthetic(self, snap: _Snapshot) -> tuple[Issue, ...]:
+        snap.refresh()
         if snap.aesthetic is None:
             snap.aesthetic = tuple(aesthetic_rules.rules(
                 snap.compiled,
@@ -296,15 +508,28 @@ class Engine:
             ))  # fmt: skip
         return snap.aesthetic
 
-    def audio_track(self):
-        """The narration as one mono int16 track covering the scene, and its sample rate;
-        None when there is no recorded or synthesized audio."""
+    def audio_track(self, problems: list[str] | None = None, start: float = 0.0,
+                    end: float | None = None):  # fmt: skip
+        """The narration and the scene's sound clips (``media.Sound``: any object whose
+        type has ``audio_clip``) as one mono int16 track covering the scene, and its sample
+        rate; None when nothing has audio. A clip that cannot be read is left out and said
+        in ``problems``. ``start``/``end``: only that window of the scene (a render of part of
+        it reads and mixes only that part)."""
         from phasor.time.narration import mix_track
 
+        state = self.state_at(0.0)
+        clips = [
+            c
+            for o in state.objects
+            if (c := getattr(o.impl, "audio_clip", lambda s: None)(state)) is not None
+        ]
         n = self.document.narration
-        return None if n is None else mix_track(n, self.base_dir, self.duration)
+        if n is None and not clips:
+            return None
+        return mix_track(n, self.base_dir, self.duration, clips, problems, start, end)
 
     def _lint(self, snap: _Snapshot, step: float) -> tuple[Issue, ...]:
+        snap.refresh()
         if step not in snap.lint:
             visual = lint_rules.run(
                 snap.compiled,
@@ -316,7 +541,8 @@ class Engine:
             )
             snap.lint[step] = (*snap.orphans, *self._bake(snap).issues,
                                *lint_rules.control_rules(snap.compiled),
-                               *lint_rules.file_rules(snap.compiled), *visual)  # fmt: skip
+                               *lint_rules.file_rules(snap.compiled),
+                               *lint_rules.type_rules(snap.compiled), *visual)  # fmt: skip
         return snap.lint[step]
 
     def _oracle(self) -> PassOracle | None:
@@ -331,6 +557,7 @@ class Engine:
     @property
     def layout(self) -> Bake:
         """The layout bake for the current document: key times, tracks, chosen label slots."""
+        self._snap.refresh()
         return self._bake(self._snap)
 
     def state_at(self, t: float) -> SceneState:
@@ -340,6 +567,7 @@ class Engine:
 
     def _state(self, snap: _Snapshot, t: float) -> SceneState:
         t = float(t)
+        snap.refresh()
         if t in snap.states:
             snap.states.move_to_end(t)
             return snap.states[t]
@@ -367,15 +595,15 @@ class Engine:
             if origin == "tweak" and self.scripted:
                 overrides = record_tweaks(old.overrides, parsed)
                 # Validate the ops against the effective document for precise errors.
-                apply_ops(old.compiled.doc, parsed)
-                new = _build(old.base, overrides, str(self.base_dir))
+                apply_ops(old.compiled.doc, parsed, old.compiled.scope)
+                new = _build(old.base, overrides, str(self.base_dir), self.allow_scripts)
             else:
-                base = apply_ops(old.base, parsed)
+                base = apply_ops(old.base, parsed, old.compiled.scope)
                 overrides = old.overrides
                 if origin == "tweak":
                     # A direct edit supersedes an older override on the same target.
                     overrides = _drop_superseded(overrides, parsed)
-                new = _build(base, overrides, str(self.base_dir))
+                new = _build(base, overrides, str(self.base_dir), self.allow_scripts)
         except DocumentError as e:
             return PatchResult(False, self._version, errors=tuple(e.issues))
         if self._undo:  # keep evaluated caches only for the current and previous step
@@ -470,6 +698,7 @@ class Engine:
 
     def _snapshot_of(self, snap: _Snapshot, t: float) -> dict[str, Any]:
         t = float(t)
+        snap.refresh()
         if t not in snap.snapshots:
             snap.snapshots[t] = inspector.snapshot(self._state(snap, t), self.pass_runner())
             if len(snap.snapshots) > STATE_CACHE_SIZE:
@@ -554,7 +783,7 @@ class Engine:
         cells, out = [], []
         for name, ops in variant_ops.make(self.document, n):
             twin = Engine(self.base, overrides=self.overrides, base_dir=self.base_dir,
-                          passes=self.pass_runner())  # fmt: skip
+                          passes=self.pass_runner(), allow_scripts=self.allow_scripts)  # fmt: skip
             if ops and not twin.apply(ops).ok:
                 continue
             s = twin.critique()["score"] if score else None

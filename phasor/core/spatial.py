@@ -49,6 +49,11 @@ def _frozen(a) -> np.ndarray:
     return a
 
 
+def _homogeneous(p: np.ndarray) -> np.ndarray:
+    """(N, 3) points with a fourth coordinate 1 (what ``np.c_[p, ones]`` makes, cheaper)."""
+    return np.concatenate([p, np.ones((len(p), 1))], axis=1)
+
+
 @dataclass(frozen=True, eq=False)
 class Camera:
     """A resolved camera: matrices plus the basis vectors objects need to face the viewer."""
@@ -82,18 +87,18 @@ class Camera:
     def clip_w(self, points) -> np.ndarray:
         """The homogeneous w of each point: positive in front of the camera."""
         p = np.atleast_2d(np.asarray(points, dtype=np.float64))
-        return np.c_[p, np.ones(len(p))] @ self.view_proj[3]
+        return _homogeneous(p) @ self.view_proj[3]
 
     def project(self, points) -> np.ndarray:
         """World points (N, 3) -> NDC (N, 3); x, y in [-1, 1] inside the frame, y up."""
         p = np.atleast_2d(np.asarray(points, dtype=np.float64))
-        clip = np.c_[p, np.ones(len(p))] @ self.view_proj.T
+        clip = _homogeneous(p) @ self.view_proj.T
         return clip[:, :3] / clip[:, 3:4]
 
     def to_screen(self, points, width: int, height: int) -> np.ndarray:
         """World points (N, 3) -> pixels (N, 2), origin top-left."""
         ndc = self.project(points)
-        return np.c_[(ndc[:, 0] + 1) * 0.5 * width, (1 - ndc[:, 1]) * 0.5 * height]
+        return np.stack([(ndc[:, 0] + 1) * 0.5 * width, (1 - ndc[:, 1]) * 0.5 * height], axis=1)
 
     def from_screen(self, pixels, width: int, height: int, z: float = 0.0) -> np.ndarray:
         """Pixels (N, 2), origin top-left -> the world points (N, 3) under them on the plane

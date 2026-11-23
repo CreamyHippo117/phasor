@@ -97,6 +97,12 @@ def snapshot(state: SceneState, runner: PassRunner | None = None) -> dict[str, A
     by_index = {o.index: o.id for o in state.objects}
     boxes = {o.id: _box(state, o) for o in state.objects}
     idbuf = runner.id_buffer(state, size) if runner else None
+    parts: dict[str, list[ObjectState]] = {}  # composite id -> every part under it
+    for o in state.objects:
+        up = o.parent
+        while up is not None:
+            parts.setdefault(up, []).append(o)
+            up = state[up].parent
 
     entries: list[dict[str, Any]] = []
     for obj in state.objects:
@@ -110,18 +116,24 @@ def snapshot(state: SceneState, runner: PassRunner | None = None) -> dict[str, A
         if obj.params.opacity <= 0:
             visible, hidden_by = 0.0, []
         elif runner is not None and on_screen > 0:
+            # A composite (ADR 0005) draws nothing itself: it is seen where its parts are.
+            members = [obj, *parts.get(obj.id, ())]
             mask = runner.solo_mask(state, size, obj.id)
+            for m in members[1:]:
+                mask = mask | runner.solo_mask(state, size, m.id)
             solo = int(mask.sum())
             if solo > 0:
-                buf = idbuf if occludes(obj) else runner.id_buffer(state, size, frozenset({obj.id}))
+                force = frozenset(m.id for m in members if not occludes(m))
+                buf = runner.id_buffer(state, size, force) if force else idbuf
                 under = buf[mask]
-                visible = min(1.0, float((under == obj.index).sum() / solo))
+                own = {m.index for m in members}
+                visible = min(1.0, float(np.isin(under, list(own)).sum() / solo))
                 counts = np.bincount(under, minlength=len(state.objects) + 1)
                 hidden_by = sorted(
                     (
                         {"id": by_index[i], "share": _r(c / solo)}
                         for i, c in enumerate(counts)
-                        if i not in (0, obj.index) and c / solo >= OCCLUDER_MIN_SHARE
+                        if i != 0 and i not in own and c / solo >= OCCLUDER_MIN_SHARE
                     ),
                     key=lambda d: (-d["share"], d["id"]),
                 )
@@ -131,8 +143,12 @@ def snapshot(state: SceneState, runner: PassRunner | None = None) -> dict[str, A
             visible, hidden_by = 0.0, []
         feats = obj.impl.features(state)
         cam = state.camera_for(obj)
+        extra: dict[str, Any] = {"part_of": obj.parent} if obj.parent is not None else {}
+        if obj.restyling:  # style transitions in progress (``<id>.style.<key>`` tracks)
+            extra["restyling"] = {k: dict(v) for k, v in sorted(obj.restyling.items())}
         entries.append(
             {
+                **extra,
                 "id": obj.id,
                 "type": obj.type,
                 "layer": obj.layer,

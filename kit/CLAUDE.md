@@ -49,8 +49,10 @@ A scene is not finished until lint is clean and you have looked at its storyboar
 
 ## Rules
 
-- Style takes roles (`highlight`, `primary`, `secondary`, `muted`, ...), never raw colors.
-  Sizes come from the theme; never type pixel sizes.
+- Style takes roles (`highlight`, `primary`, `secondary`, `muted`, ...). A typed color or size
+  (`"#58C4DD"`, world units) is allowed when the person asks; `--aesthetic` lint flags it
+  when it is off the theme (`off_palette`, `off_scale`).
+  Sizes come from the theme unless the person asks for one; never type pixel sizes.
 - Name objects by meaning (`pole_top`, `loop`, `loop.label`), never `obj1`.
 - A label is the child object `x.label` plus the rule `label(x) near x`; never type its
   position.

@@ -1,8 +1,9 @@
 # phasor over MCP (for AI agents)
 
 You are connected to `phasor mcp`. You build a scene by sending **patches**, and you check it
-with **review**. You never write coordinates for labels, raw colors or pixel sizes: name
-objects by meaning, use theme roles, add constraints.
+with **review**. You never write coordinates for labels: name objects by meaning, use theme
+roles, add constraints. Type an explicit color or size only when the person asks for one;
+review says when it is off the theme.
 
 Every ```json patch block (a patch) and ```json calls block (one tool call per line) in
 this file runs in order, against one scene, in `tests/test_docs.py`.
@@ -29,7 +30,7 @@ a variant and compare.
 | `scene_new`, `scene_open`, `scene_save` | start, load or save `name.phasor.json` (inside the workspace folder only) |
 | `scene_palette` | the colors run along strokes: `spectrum` (the prism rainbow), `moonlight`, `gold`, `glacier`, `borealis`, `rose`, or none; in the prism looks every glowing curve takes them |
 | `scene_edit` | apply a patch (below); returns `ok`, `errors`, and the lint issues it added or fixed |
-| `animate` | a choreography verb at a marker or time: `reveal`, `exit`, `trace`, `bloom_in`, `dim_others`, `undim`, `focus_pull`, `morph`, `settle`, `write`, `travel`, `flash`, `wiggle`, `circumscribe` (`value` "circle" or "box"), `transform` and `become` (`targets` [from, to]), `sweep` (`path`, `value`), and in 3D `orbit` (`value` degrees, `until` a marker) and `orbit_reveal` |
+| `animate` | a choreography verb at a marker or time: `reveal`, `exit`, `trace`, `bloom_in`, `dim_others`, `undim`, `focus_pull`, `morph`, `settle`, `write`, `travel`, `flash`, `wiggle`, `circumscribe` (`value` "circle" or "box"), `transform`, `transform_matching` and `become` (`targets` [from, to]), `sweep` (`path`, `value`), and in 3D `orbit` (`value` degrees, `until` a marker) and `orbit_reveal` |
 | `narrate` | set the script and voice; markers appear in `markers` |
 | `inspect` | what is on screen at `t`: `brief` (a line each), `standard`, `full` |
 | `lint` | visual problems; `fix: true` applies the certain fixes |
@@ -37,7 +38,7 @@ a variant and compare.
 | `storyboard` | keyframe picture with each object's box and id drawn on it |
 | `hit_test`, `resolve` | what is at a pixel; which object ids "the label of the pole" means |
 | `events`, `when_hidden`, `free_space_near` | 3D: when things get hidden or leave the frame (with fixes), spans an object is hidden, empty places next to an object |
-| `critique`, `polish` | the art director: a taste score, aesthetic issues with fixes and the rubric; apply the fixes (3 rounds at most) |
+| `critique`, `polish` | the art director: a taste score, aesthetic issues with fixes and the rubric; apply the fixes (3 rounds at most; `snap: true` also snaps explicit values to roles) |
 | `variants`, `choose` | alternative looks of one beat side by side (as is, calmer, bolder); pick one, it is recorded in `style/choices.jsonl` and applied |
 | `diff`, `checkpoint`, `restore`, `undo`, `redo` | compare and branch |
 | `render` | a video (`preview`, `final`, `4k`) or one PNG with `frame` |
@@ -63,7 +64,11 @@ all. Type names are lower case: `dot`, `line`, `text`, `domain_coloring`, `fract
 
 - A child id is `<owner>.<name>` and the owner must exist (`pole_i.label`).
 - `pos` is world space: x = Re, y = Im, z up; `[x, y]` means z = 0.
-- `style` takes role names from `object_types().roles`; a raw color is rejected.
+- `style` takes role names from `object_types().roles`. A color key (group `emphasis`), a
+  text size (`text`) or a stroke width (`stroke`) may instead hold an explicit value:
+  `"#58C4DD"` (sRGB), linear `[r, g, b, a]` (0..1), or a size in world units (positive, at
+  most 1e6; frame heights on an overlay). Glow, surface and colormap keys take roles only.
+  Prefer roles; `set_meta` `background` sets the scene's own background color (opaque).
 - Never reuse the id of a removed object (`id_retired`); pick a new meaningful name.
 
 Constraints say where things go; the layout solver does the arithmetic:
@@ -194,15 +199,19 @@ lint: lint cannot tell you a layout is ugly.
 `review` and `lint` take `aesthetic: true` for the taste rules on top of the correctness
 ones: `focal_point` (exactly one `highlight` per beat), `color_restraint` (at most three
 saturated hues; a phase-coloring plane is exempt, hue is its meaning), `glow_clip`,
-`density`, `motion_rhythm`, `margin`, `stroke_mix`. Then:
+`density`, `motion_rhythm`, `margin`, `stroke_mix`, and for explicit values `off_palette`
+(a color far from every palette role, or a background far from the theme's) and `off_scale`
+(a size off the theme's type or stroke scale). Then:
 
 1. `critique` returns `score` (0 = nothing to criticise), issues tied to ids and markers,
-   `fix` ops (certain) and `suggested` ops (judgement), and the rubric text (`STYLE.md`).
+   `fix` ops (certain), `suggested` ops (judgement), `snap` ops (an explicit value back
+   to its nearest role: offered, never applied by itself), and the rubric (`STYLE.md`).
 2. Look at the storyboard (`storyboard` with `compare: true` puts each frame beside the three
    nearest frames in the project's `gallery/`) and judge by the rubric. Rules cannot see
    everything.
-3. `polish` applies what the critic is sure of, three rounds at most; whatever is left is
-   yours to judge (an empty frame, two motions that collide).
+3. `polish` applies the fixes and suggestions, three rounds at most; whatever is left is
+   yours to judge (an empty frame, two motions that collide). It snaps explicit colors and
+   sizes only with `snap: true`: ask the person first, the value may be meant.
 4. Unsure which look? `variants` on a marker, then `choose` one.
 
 Start scenes from a look: `scene_new` with `look: "calm"` (soft edges, gentle life), `"glow"`
@@ -219,7 +228,11 @@ the document sets them, and `diff` compares with the saved file. Undo is one sha
 `undo` takes back the most recent edit, whoever made it: check `diff` before undoing. You
 cannot open a `.py` scene through the editor (only the person can); a Manim script
 (`from manim import ...`) opens as a plain scene, with `notes` on what could not be carried
-over, on a server started with `--allow-scripts`.
+over, on a server started with `--allow-scripts`. You never make code run in the editor: a
+document you open there runs none of the modules it names (lint `missing_type`), and an
+edit that changes `meta.modules` or adds an updater (`always`) is refused (`scene_code`),
+even on a scene whose code the person trusted. Draw with phasor's own types, or ask the
+person: only they can trust a scene's code (in the editor).
 
 ## Traps this loop has already hit
 
@@ -235,3 +248,9 @@ over, on a server started with `--allow-scripts`.
 - **A second `reveal` of the same object is refused** (`bad_segment`): its fade already
   exists. Change the first one's marker instead, or `undo`.
 - **`.py` scenes are code.** The server refuses them unless started with `--allow-scripts`.
+- **A scene may bring its own types** (ADR 0005: `meta.modules`, a scene script or
+  `*.types.py` next to it). `object_types` marks those `"scene_local": true`. On a server
+  without `--allow-scripts` their code does not run: lint `missing_type`, the object draws as
+  a placeholder box, and its parameters and overrides stay as they are. Edit its parameters
+  as usual; do not remove it to make the issue go away. A `value` object is a number with
+  nothing to draw: animate its `value` and read it with `{"expr": "speed.value"}`.

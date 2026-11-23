@@ -5,10 +5,17 @@ A type lists the parameters that hold such paths in its ``Files`` class variable
 path or a ``..`` part is a validation error, so a scene (or the AI writing one) can never
 read a file from anywhere else. A path naming a file that is not there is the lint issue
 ``missing_file``; the object then draws nothing instead of failing.
+
+Only a regular file counts as there: a folder, a FIFO, a device (``/dev/zero``, Windows'
+``CON``) or a link that loops is treated as missing, so reading one can never hang or raise
+(Milestone 16 audit). ``read_bytes`` reads one with a size cap, refusing anything that turned
+into something else between the check and the read.
 """
 
 from __future__ import annotations
 
+import os
+import stat as _stat
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 
@@ -28,16 +35,80 @@ def relative_path(value: str) -> str:
 def resolve(base_dir: str | Path, value: str) -> Path:
     """The file ``value`` names, inside ``base_dir`` (the current folder when empty).
     ``ValueError`` if it resolves outside the folder (a link pointing out, say)."""
-    root = Path(base_dir or ".").resolve()
-    path = (root / relative_path(value)).resolve()
+    try:
+        root = Path(base_dir or ".").resolve()
+        path = (root / relative_path(value)).resolve()
+    except (RuntimeError, OSError) as e:  # a link that loops (RuntimeError before 3.13)
+        raise ValueError(f"{value!r} cannot be followed: {e}") from None
     if root != path and root not in path.parents:
         raise ValueError(f"{value!r} is outside the scene's folder")
     return path
 
 
-def exists(base_dir: str | Path, value: str) -> bool:
-    """Whether ``value`` names a file inside ``base_dir``."""
+def regular_file(base_dir: str | Path, value: str) -> Path:
+    """The regular file ``value`` names inside ``base_dir``, or ``ValueError`` (outside the
+    folder, missing, a folder, a FIFO or device, a link that loops). Every type that reads a
+    file goes through this (or ``stamp``/``read_bytes``)."""
+    path = resolve(base_dir, value)
     try:
-        return resolve(base_dir, value).is_file()
-    except ValueError:
-        return False
+        st = path.stat()
+    except (OSError, ValueError) as e:
+        raise ValueError(f"{value!r} is not there ({e})") from None
+    if not _stat.S_ISREG(st.st_mode):
+        raise ValueError(f"{value!r} is not a regular file")
+    return path
+
+
+def stamp(base_dir: str | Path, value: str) -> tuple:
+    """What the file ``value`` names is now, to tell when it changed (contract 3: a changed
+    file is read again): its path, modification time and size; ``None`` for the last two
+    when it is not there (or is not a regular file)."""
+    try:
+        path = resolve(base_dir, value)
+        st = path.stat()
+    except (ValueError, OSError):
+        return (value, None, None)
+    if not _stat.S_ISREG(st.st_mode):
+        return (str(path), None, None)
+    return (str(path), st.st_mtime_ns, st.st_size)
+
+
+def exists(base_dir: str | Path, value: str) -> bool:
+    """Whether ``value`` names a regular file inside ``base_dir``."""
+    return stamp(base_dir, value)[1] is not None
+
+
+def problem(base_dir: str | Path, value: str) -> str | None:
+    """Why ``value`` cannot be read as a file of the scene (for lint ``missing_file``), or
+    None when it is a regular file inside the folder."""
+    try:
+        regular_file(base_dir, value)
+    except ValueError as e:
+        msg = str(e)
+        if "is not there" in msg:
+            return f"no file {value!r} in the scene's folder"
+        return msg
+    return None
+
+
+class TooLarge(ValueError):
+    """A file is larger than a reader takes."""
+
+
+def read_bytes(path: str | Path, limit: int) -> bytes:
+    """The bytes of the regular file at ``path`` (a path ``stamp`` or ``regular_file``
+    returned), at most ``limit`` of them: ``TooLarge`` (a ``ValueError``) when it is
+    larger, ``ValueError`` when it is not a regular file when opened (it never blocks on a
+    FIFO: opened non-blocking, then checked)."""
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as e:
+        raise ValueError(f"{path}: cannot be opened ({e})") from None
+    with os.fdopen(fd, "rb") as f:
+        if not _stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ValueError(f"{path}: not a regular file")
+        data = f.read(limit + 1)
+    if len(data) > limit:
+        raise TooLarge(f"{path}: larger than {limit} bytes")
+    return data
