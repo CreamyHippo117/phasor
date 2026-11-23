@@ -27,6 +27,7 @@ render only those: `uv run python showcase/render_all.py prism_primes deep_zoom`
 | `residues` | domain coloring of 1/(z^2 + 1) with a glowing contour |
 | `fourier_linalg` | Fourier series and linear algebra |
 | `heat_dihedral` | the heat equation and the dihedral group |
+| `directivity` | beam steering, a narrowing piston pattern, and a cardioid |
 | `room_acoustics` | a room, its echoes and the pressure wave |
 
 Narrated scenes have sound only where a speech engine is installed (espeak-ng); without one

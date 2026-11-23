@@ -19,7 +19,7 @@ Walls are glass by default: translucent, so they never hide the source or the li
 from __future__ import annotations
 
 import functools
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
 import numpy as np
 from pydantic import Field, field_validator
@@ -587,3 +587,80 @@ class PressureSlice(ObjectBase):
             background=state.background,
         )  # fmt: skip
         ctx.field(corner, right, up, pixels=pixels, opacity=p.opacity, glow=glow)
+
+
+# ---------------------------------------------------------------- Directivity
+
+
+@register
+class Directivity(ObjectBase):
+    """Polar pressure magnitude for a linear array, baffled piston, or cardioid."""
+
+    type: ClassVar[str] = "directivity"
+    Style: ClassVar = {
+        "color": ("emphasis", "highlight"),
+        "guide": ("emphasis", "muted"),
+        "stroke": ("stroke", "regular"),
+        "guide_stroke": ("stroke", "hairline"),
+        "glow": ("glow", "none"),
+    }
+
+    class Params(ParamsBase):
+        kind: Literal["array", "piston", "cardioid"] = "array"
+        elements: int = Field(8, ge=1)
+        spacing: float = Field(0.1715, gt=0, allow_inf_nan=False)  # meters
+        radius: float = Field(0.343, gt=0, allow_inf_nan=False)  # piston radius in meters
+        frequency: float = Field(1000.0, gt=0, allow_inf_nan=False)  # Hz
+        steer: float = Field(0.0, allow_inf_nan=False)  # degrees from +x
+        pos: Vec3 = (0.0, 0.0, 0.0)
+        size: float = Field(2.0, gt=0, allow_inf_nan=False)  # unity-gain radius in world units
+
+    def world_bounds(self, state: SceneState) -> Bounds:
+        p = self.me(state).params
+        x, y, z = p.pos
+        return Bounds((x - p.size, y - p.size, z), (x + p.size, y + p.size, z))
+
+    def features(self, state: SceneState) -> dict[str, np.ndarray]:
+        p = self.me(state).params
+        center = np.asarray(p.pos, dtype=np.float64)
+        angle = np.deg2rad(p.steer % 360)
+        peak = center + p.size * np.array([np.cos(angle), np.sin(angle), 0])
+        return {"center": center, "peak": peak}
+
+    def semantics(self, state: SceneState) -> dict[str, Any]:
+        p = self.me(state).params
+        data: dict[str, Any] = {"kind": p.kind, "steer": p.steer, "peak_gain": 1.0}
+        if p.kind == "array":
+            data.update(elements=p.elements, spacing=p.spacing, frequency=p.frequency)
+        elif p.kind == "piston":
+            data.update(radius=p.radius, frequency=p.frequency)
+        return data
+
+    def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
+        me = self.me(state)
+        p = me.params
+        cam = state.camera_for(me)
+        center = np.asarray(p.pos, dtype=np.float64)
+        angle = np.linspace(0, 2 * np.pi, 1025)
+        steer = np.deg2rad(p.steer % 360)
+        if p.kind == "array":
+            gain = ac_math.array_directivity(angle, p.elements, p.spacing, p.frequency, steer)
+        elif p.kind == "piston":
+            gain = ac_math.piston_directivity(angle - steer, p.radius, p.frequency)
+        else:
+            gain = ac_math.cardioid_directivity(angle - steer)
+
+        unit = np.stack([np.cos(angle), np.sin(angle), np.zeros_like(angle)], axis=-1)
+        rim = center + p.size * unit
+        width = float(cam.units_per_height(center))
+        guide = with_alpha(me.style["guide"], p.opacity)
+        polyline(ctx, cam, rim, width * me.style["guide_stroke"], color=guide)
+
+        points = center + (p.size * gain)[:, None] * unit
+        color = with_alpha(me.style["color"], p.opacity)
+        colors = np.broadcast_to(color, (len(angle), 4)).copy()
+        colors[:, 3] *= np.sqrt(gain)
+        polyline(
+            ctx, cam, points, width * me.style["stroke"],
+            color=color, glow=me.style["glow"], colors=colors,
+        )  # fmt: skip

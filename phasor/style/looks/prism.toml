@@ -151,4 +151,6 @@ glow = "soft"
 hue_along = 1.0
 
 [defaults.winding.style]
+
+[defaults.directivity.style]
 glow = "strong"
