@@ -24,6 +24,7 @@ from phasor.core.objects import (
     registered_types,
 )
 from phasor.core.values import Vec3
+from tests.conftest import gl_available
 
 
 def _never(*_):
@@ -403,6 +404,7 @@ import numpy as np
 
 from phasor.core.objects import ObjectBase, ParamsBase, register
 from phasor.core.values import Vec3
+from tests.conftest import gl_available
 
 
 @register
@@ -743,3 +745,82 @@ def test_an_updater_that_is_not_here_is_missing_type_and_the_object_keeps_its_va
         assert e.state_at(1.0)["dot.label"].params.pos == (0.0, 0.0, 0.0)  # its own value
     finally:
         objects._UPDATERS["test_open_contract.py:follow_dot"] = saved
+
+
+def test_an_updater_from_outside_the_folder_works_in_its_session_only(tmp_path):
+    from phasor.core import objects
+    from phasor.engine import Engine
+
+    ns: dict = {}
+    exec(compile("def lift(t, look):\n    return {'pos': (0.0, t, 0.0)}\n", "notebook.ipynb",
+                 "exec"), ns)  # fmt: skip
+    s = _scene(Dot(id="d").always(ns["lift"]))
+    (ref,) = s.engine.document.object("d").always
+    assert ref == "<notebook.ipynb>:lift"
+    assert "notebook.ipynb" not in str(s.engine.document.meta.modules)
+    assert s.engine.state_at(2.0)["d"].params.pos == (0.0, 2.0, 0.0)
+    path = tmp_path / "lift.phasor.json"
+    s.engine.save(path)
+    saved = objects._UPDATERS.pop(ref)
+    try:
+        (issue,) = Engine.open(path, passes=None, allow_scripts=True).lint()
+        assert issue.code == "missing_type" and "another Python session" in issue.message
+    finally:
+        objects._UPDATERS[ref] = saved
+
+
+# ---------------------------------------------------------------- 6. the exit demo
+
+EXAMPLE = Path(__file__).parents[1] / "examples" / "open_contract.py"
+
+
+def _example(passes="auto"):
+    import runpy
+
+    s = runpy.run_path(str(EXAMPLE), run_name="x")["s"]
+    if passes is None:
+        from phasor.engine import Engine
+
+        e = s.engine
+        return Engine(e.base, overrides=e.overrides, base_dir=e.base_dir, passes=None)
+    return s.engine
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_exit_demo_a_scene_with_its_own_types_through_inspector_layout_and_lint(passes):
+    e = _example(passes)
+    assert e.document.meta.modules == ("open_contract.py",)
+    assert e.document.object("planet").always == ("open_contract.py:orbit",)
+    # Inspector: the ten-line type, the composite and its parts, each as itself.
+    snap = {o["id"]: o for o in e.inspect(3.0, detail="full")["objects"]}
+    assert snap["sun"]["semantic"] == {
+        "type": "diamond",
+        "params": snap["sun"]["semantic"]["params"],
+    }
+    assert {"center", "top", "bottom_left"} <= set(snap["sun"]["features"])
+    assert snap["flag"]["semantic"]["parts"] == ["pole", "tip"]
+    assert snap["flag.tip"]["type"] == "diamond" and snap["flag.tip"]["part_of"] == "flag"
+    if passes is not None:
+        assert snap["sun"]["visible_fraction"] == 1.0 and snap["flag"]["visible_fraction"] == 1.0
+    # The updaters: the planet goes round with ``turn``, its label stays above it.
+    for t in (1.0, 3.0, 5.5):
+        st = e.state_at(t)
+        x, y, z = st["planet"].params.pos
+        assert st["planet.label"].params.pos == pytest.approx((x, y + 0.5, z))
+    assert e.state_at(1.0)["planet"].params.pos != e.state_at(3.0)["planet"].params.pos
+    # Layout: the composite's label was placed beside it, by its box.
+    bake = e.layout
+    assert "flag.label" in bake.slots and not bake.issues
+    # Lint, strict included (purity of both updaters): nothing to say.
+    assert e.lint(strict=True) == []
+
+
+@pytest.mark.gl
+@pytest.mark.slow
+@pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
+def test_exit_demo_golden_storyboard():
+    from tests.test_beauty import _golden
+
+    e = _example()
+    sheet = e.storyboard([0.8, 2.5, 4.0, 5.8], size=(320, 180))["image"]
+    _golden("open_contract", sheet, e.pass_runner().renderer_class())

@@ -258,9 +258,10 @@ def source_file(cls_or_fn: Any) -> str | None:
     if code is not None:
         return str(Path(code.co_filename).resolve())
     try:
-        return str(Path(inspect.getsourcefile(cls_or_fn) or "").resolve()) or None
+        src = inspect.getsourcefile(cls_or_fn)
     except (TypeError, OSError):
         return None
+    return str(Path(src).resolve()) if src else None
 
 
 def is_builtin(cls: type) -> bool:
@@ -287,6 +288,11 @@ def register(cls: type) -> type:
         raise RegistrationError(f"{cls.__name__} breaks the object contract: missing {missing}")
     if not (isinstance(cls.Params, type) and issubclass(cls.Params, ParamsBase)):
         raise RegistrationError(f"{cls.__name__}.Params must subclass ParamsBase")
+    if not cls.Params.__pydantic_complete__:
+        # Annotations as text (``from __future__ import annotations``) in code that is not an
+        # importable module (a notebook cell, exec'd text): resolve them where ``register`` ran.
+        caller = inspect.currentframe().f_back  # type: ignore[union-attr]
+        cls.Params.model_rebuild(_types_namespace=dict(caller.f_globals) if caller else None)
     for m in ("draw", *DERIVED_MEMBERS):
         if hasattr(cls, m) and not callable(getattr(cls, m)):
             raise RegistrationError(f"{cls.__name__}.{m} must be a method")
@@ -373,18 +379,18 @@ def updater_name(fn: Callable) -> str:
 
 
 def register_updater(fn: Callable, base_dir: str | Path) -> str:
-    """Remember ``fn`` and return the reference a document stores for it."""
+    """Remember ``fn`` and return the reference a document stores for it:
+    ``"<module>:<name>"`` for a function in a file in the scene's folder (the document then
+    lists the module), or ``"<file name>:<name>"`` in angle brackets for one defined
+    anywhere else (a notebook, a prompt): that one works only in this Python session."""
     if not callable(fn):
         raise TypeError(
             f"an updater must be a function fn(t, look) -> {{param: value}}, got {fn!r}"
         )
     module = scene_module(fn, base_dir)
     if module is None:
-        raise ValueError(
-            f"updater {updater_name(fn)!r} is not defined in a file in the scene's folder "
-            f"({base_dir}); define it in the scene script or a *.types.py next to it, so the "
-            "document can name it"
-        )
+        where = source_file(fn)
+        module = f"<{Path(where).name if where else 'session'}>"
     ref = f"{module}:{updater_name(fn)}"
     _UPDATERS[ref] = fn
     return ref

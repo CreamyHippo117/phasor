@@ -21,7 +21,7 @@ from phasor.core import life
 from phasor.core.ids import is_valid_id
 from phasor.core.issues import DocumentError, Issue
 from phasor.core.objects import Placeholder, SceneObject, get_type, get_updater, registered_types
-from phasor.core.schema import Document, ExprSpec
+from phasor.core.schema import Document, ExprSpec, is_session_module
 from phasor.core.spatial import (
     OrbitCameraParams,
     OrthoCameraParams,
@@ -330,8 +330,12 @@ def _attach_updaters(doc, nodes, objects, placeholders, modules, missing, add) -
         for ref in spec.always:
             fn = get_updater(ref)
             if fn is None:
-                missing.append((spec.id, f"updater {ref!r} is not available "
-                                f"({_why(doc, modules)})"))  # fmt: skip
+                why = (
+                    "it was defined outside the scene's folder, in another Python session"
+                    if is_session_module(ref.rpartition(":")[0])
+                    else _why(doc, modules)
+                )
+                missing.append((spec.id, f"updater {ref!r} is not available ({why})"))
                 continue
             probe = Updater(ref, spec.id, fn, frozenset(model.model_fields))
             reads: set[str] = set()

@@ -34,7 +34,16 @@ from phasor.core.patch import (
     SetNarration,
     SetParam,
 )
-from phasor.core.schema import Control, Document, ExprSpec, MarkerRef, Meta, ObjectSpec, Segment
+from phasor.core.schema import (
+    Control,
+    Document,
+    ExprSpec,
+    MarkerRef,
+    Meta,
+    ObjectSpec,
+    Segment,
+    is_session_module,
+)
 from phasor.engine import Engine
 from phasor.style.looks import DEFAULT_THEME, default_look, load_look
 from phasor.time import verbs as _verbs
@@ -238,7 +247,8 @@ class Scene:
         # module, so the scene opens with it later (where scripts may run).
         have = self.engine.base.meta.modules
         need = [m for m in (scene_module(type(obj), base_dir),
-                            *(r.rpartition(":")[0] for r in spec.always)) if m]  # fmt: skip
+                            *(r.rpartition(":")[0] for r in spec.always))
+                if m and not is_session_module(m)]  # fmt: skip
         new = tuple(dict.fromkeys([*have, *need]))
         ops: list[Any] = [SetMeta(field="modules", value=new)] if new != have else []
         self._apply([*ops, AddObject(object=spec)])
