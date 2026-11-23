@@ -105,6 +105,37 @@ def test_looks_can_be_switched_and_undone(ed):
     assert ed.engine.document.meta.theme == "midnight_glow"
 
 
+def test_a_look_never_replaces_a_typed_value(tmp_path):
+    """Milestone 18 audit: applying a look sets its defaults on roles only. A typed color,
+    size or width stays, and a line whose color was typed gets no hue along it (as
+    ``Look.fill`` does for new objects); a role still takes the look's default. Undoable."""
+    ws = Workspace(tmp_path)
+    ws.scene_new(title="x", look="none")
+    ws.scene_edit([
+        {"op": "add_object", "object": {"id": "red", "type": "line",
+         "params": {"points": [[-3, 0], [3, 0]]}, "style": {"color": "#FF0000", "stroke": 0.2}}},
+        {"op": "add_object", "object": {"id": "lbl", "type": "text",
+         "params": {"text": "hi", "pos": [0, 1]}, "style": {"color": "#00FF00", "size": 0.5}}},
+        {"op": "add_object", "object": {"id": "pt", "type": "dot", "params": {"pos": [1, 1]},
+         "style": {"color": "#0000FF"}}},
+        {"op": "add_object", "object": {"id": "plain", "type": "line",
+         "params": {"points": [[-3, -1], [3, -1]]}}},
+    ])  # fmt: skip
+    ed = Editor(ws)
+    before = ed.engine.document
+    assert ed.apply_look("prism")["ok"]
+    doc = ed.engine.document
+    assert doc.object("red").style["color"] == "#FF0000"
+    assert doc.object("red").style["stroke"] == 0.2
+    assert "hue_along" not in doc.object("red").params
+    assert doc.object("lbl").style["color"] == "#00FF00"
+    assert doc.object("lbl").style["size"] == 0.5
+    assert doc.object("pt").style["color"] == "#0000FF"
+    assert doc.object("plain").params["hue_along"] > 0  # a role: the look's default
+    ed.undo()
+    assert ed.engine.document == before
+
+
 @pytest.mark.gl
 @pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
 def test_viewport_frames_and_click_to_select(ed):

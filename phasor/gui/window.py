@@ -52,6 +52,7 @@ from PySide6.QtWidgets import (
 )
 
 from phasor.gui.controller import Editor
+from phasor.style import explicit
 from phasor.style.theme import ROLE_GROUPS
 from phasor.workspace import ToolError
 
@@ -387,7 +388,7 @@ class Inspector(QWidget):
             box = QComboBox()
             # A value the scene typed (a color, a size) is shown as it is, first; picking a
             # role replaces it, and nothing replaces it unasked.
-            typed = None if isinstance(role, str) and not role.startswith("#") else role
+            typed = None if explicit.is_role(role) else role
             label = json.dumps(typed) if typed is not None else None
             if label is not None:
                 box.addItem(label)
