@@ -6,6 +6,9 @@ its NumPy reference (as strictly as the serial emulator), and must give the same
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -274,3 +277,36 @@ def test_a_library_that_builds_but_will_not_load_falls_back_and_is_not_retried(
     with pytest.raises(cpu.CompileError, match="does not load"):
         gpu.run("vignette", tile, backend="cpu", **params)
     assert len(tries) == 1  # the failure is remembered: no rebuild, no reload per call
+
+
+@needs_cpu
+def test_a_corrupt_cached_library_is_rebuilt_once(tmp_path):
+    """A truncated cache entry (power cut, disk error) must heal, not leave every later run on
+    NumPy until the person deletes the cache by hand (found by the Milestone 14 audit).
+    Each run is a new process: dlopen hands back an already-loaded path without reading it."""
+    import subprocess
+    import sys
+
+    from phasor.core.proc import NO_WINDOW
+
+    code = (
+        "import sys; from tests.test_kernels import CASES; from phasor.render import gpu\n"
+        "t, p = CASES['vignette'][0]\n"
+        "import numpy as np; sys.stdout.write(gpu.run('vignette', t, backend='cpu', **p).tobytes().hex())"
+    )
+    env = {**os.environ, "PHASOR_CPU_CACHE": str(tmp_path)}
+
+    def run() -> str:
+        done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+                              env=env, cwd=Path(__file__).parent.parent, timeout=300,
+                              creationflags=NO_WINDOW)  # fmt: skip
+        assert done.returncode == 0, done.stderr[-800:]
+        return done.stdout
+
+    want = run()
+    libs = list(tmp_path.glob(f"*{cpu.LIB_SUFFIX}"))
+    assert libs, "the build should have been cached"
+    for lib in libs:
+        lib.write_bytes(lib.read_bytes()[:40])  # truncated: will not load
+    assert run() == want  # no CompileError: it rebuilt
+    assert any(lib.stat().st_size > 1000 for lib in libs)  # rebuilt, not left truncated

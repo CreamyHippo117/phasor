@@ -361,34 +361,45 @@ class CpuBackend:
         c = self.compiler
         d = cache_dir()
         lib = d / f"{key}{LIB_SUFFIX}"
-        if not lib.exists():
-            d.mkdir(parents=True, exist_ok=True)
-            fd, tmp_name = tempfile.mkstemp(prefix=f"{key}-", suffix=LIB_SUFFIX, dir=d)
-            os.close(fd)
-            tmp = Path(tmp_name)
-            src = tmp.with_suffix(".cpp")
-            src.write_text(code, encoding="utf-8")
+        for attempt in (0, 1):
+            cached = lib.exists()
+            if not cached:
+                self._compile(key, code, flags, d, lib)
             try:
-                try:
-                    done = subprocess.run([c.path, *flags, str(src), "-o", str(tmp)],
-                                          capture_output=True, text=True, timeout=600,
-                                          creationflags=NO_WINDOW)  # fmt: skip
-                except (OSError, subprocess.TimeoutExpired) as e:
-                    raise CompileError(f"{c.name} did not run: {e}") from e
-                if done.returncode != 0:
-                    raise CompileError(f"kernel does not compile with {c.name}:\n{done.stderr}")
-                try:
-                    os.replace(tmp, lib)  # atomic: a render worker never loads half a file
-                except OSError:  # another process won (Windows: and has it loaded)
-                    if not lib.exists():
-                        raise
-            finally:
-                src.unlink(missing_ok=True)
-                tmp.unlink(missing_ok=True)
+                return _load(c.path, lib)
+            except OSError as e:
+                if cached and attempt == 0:  # a truncated or corrupt cache entry: rebuild it once
+                    lib.unlink(missing_ok=True)
+                    continue
+                # built but cannot load (a missing runtime DLL): use the reference
+                raise CompileError(f"built kernel library does not load: {e}") from e
+        raise AssertionError("unreachable")  # pragma: no cover
+
+    def _compile(self, key: str, code: str, flags: tuple[str, ...], d: Path, lib: Path) -> None:
+        c = self.compiler
+        d.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(prefix=f"{key}-", suffix=LIB_SUFFIX, dir=d)
+        os.close(fd)
+        tmp = Path(tmp_name)
+        src = tmp.with_suffix(".cpp")
+        src.write_text(code, encoding="utf-8")
         try:
-            return _load(c.path, lib)
-        except OSError as e:  # built but cannot load (a missing runtime DLL): use the reference
-            raise CompileError(f"built kernel library does not load: {e}") from e
+            try:
+                done = subprocess.run([c.path, *flags, str(src), "-o", str(tmp)],
+                                      capture_output=True, text=True, timeout=600,
+                                      creationflags=NO_WINDOW)  # fmt: skip
+            except (OSError, subprocess.TimeoutExpired) as e:
+                raise CompileError(f"{c.name} did not run: {e}") from e
+            if done.returncode != 0:
+                raise CompileError(f"kernel does not compile with {c.name}:\n{done.stderr}")
+            try:
+                os.replace(tmp, lib)  # atomic: a render worker never loads half a file
+            except OSError:  # another process won (Windows: and has it loaded)
+                if not lib.exists():
+                    raise
+        finally:
+            src.unlink(missing_ok=True)
+            tmp.unlink(missing_ok=True)
 
     def launch(self, compiled: Any, n: int, args: tuple) -> None:
         """Run thread indices 0..n-1 (whole blocks, like the card) on ``threads`` cores."""

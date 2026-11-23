@@ -5,10 +5,13 @@ run time, the NumPy reference as the fallback, no prebuilt binaries). Exit demo:
 with CUDA hidden, `phasor render` of `prism_primes` uses every core, is N times faster than the
 reference path, and matches the software golden.
 
-Status: **built on Linux (4 cores, no CUDA, llvmpipe). Gate: NOT DONE**, because two
-software goldens fail (`test_prism_domain_golden_storyboard`, `test_prism_heat_golden_storyboard`).
-They fail the same way with the kernels forced onto NumPy (`PHASOR_CXX=none`), so they
-predate this milestone. They were not regenerated: someone has to look at them first. CUDA was not available, so nothing
+Status: **built on Linux (4 cores, no CUDA, llvmpipe).** Gate re-run 2026-11-23 after the two
+stale prism software goldens were regenerated (`test_prism_domain_golden_storyboard`,
+`test_prism_heat_golden_storyboard`: stale since the prism looks, not a regression of this
+milestone; they failed the same way with `PHASOR_CXX=none`). An independent audit (a fresh
+agent that did not write the code) found no blocker and three should-fix items, all done: a
+corrupt cached library now rebuilds once (test `test_a_corrupt_cached_library_is_rebuilt_once`),
+the benchmark provenance below is corrected, and this status. CUDA was not available, so nothing
 here says anything about tier A. Untested on Windows and macOS.
 
 ## Built
@@ -33,7 +36,12 @@ llvmpipe, g++ 13.3 with OpenMP. **CUDA was not available, so nothing here is a t
 **Frame bench**, `phasor bench --frames SCENE --count 6 --preset preview` (960x540):
 - Setup: the reference and CPU runs were done back to back on a quiet box (load average
   2-3, nothing else running). The reference was forced with `PHASOR_CXX=none`.
-- The reference reruns match the 14.0 baseline (530 / 987 ms).
+- The reference reruns match the 14.0 baseline (530 / 987 ms). **Provenance:** the committed
+  `benchmarks/*_reference_960x540.json` files are that 14.0 baseline (made before the CPU backend
+  existed, 530 / 987 ms). The reference column of the table below (542 / 985 ms) was measured
+  back to back with the CPU runs and is not in a committed JSON; the CPU column is.
+  An auditor re-ran it on a busier box (load 2.4-3.0): reference about 600-670 ms, CPU 163-256 ms,
+  a ratio of 2.6-3.7x. The 4.5x is the quiet-box best case.
 - JSON: `benchmarks/2026-11-23_frames_*_cpu_960x540.json`.
 
 | ms/frame | prism_primes ref | prism_primes cpu | prism_domain ref | prism_domain cpu |
@@ -140,6 +148,23 @@ loaded by another agent's tests, 2x2 was 7% faster (25.9 against 28.0 s). Not ad
 5. `-fvisibility=hidden` was added, beyond the plan's `-O3 -fopenmp`. Without it each kernel
    was a PLT call per thread index, and `accumulate` ran 4x slower than NumPy. With it, the
    kernel inlines into the wrapper's loop.
+
+### Not listed before (found by the audit)
+
+- `OMP_WAIT_POLICY=PASSIVE` is set with `os.environ.setdefault` when `render.cpu` is imported, so
+  child processes inherit it.
+- `default_workers()` counts `os.cpu_count()`, while `cores()` uses the affinity mask: in a
+  CPU-limited container the two can disagree, and workers x threads <= cores can be missed.
+- FLAGS also has `-std=c++17` and `-Werror=return-type`, not only `-fvisibility=hidden`.
+- `bench.py` runs `splat` with 4000 points on the reference and 1M on the CPU backend, so the two
+  splat numbers are not comparable.
+- The "same bits at any thread count" holds per machine (checked on glibc, g++ and clang++);
+  libm differences (Windows MinGW) are not covered.
+- A SIGKILL during a compile leaves temporary `.so`/`.cpp` files in the cache (from reading the
+  code; not reproduced). The cache is trusted: whoever can write it runs code as the person.
+- `active_backend()` says "cpu" whenever a compiler exists, even if every kernel then fell back
+  after a failed build. Only `CompileError` falls back on `auto`; a `KernelError` (a programming
+  error) propagates. The fallback warning is once per kernel, not once overall.
 
 ## Bugs caught while building
 
