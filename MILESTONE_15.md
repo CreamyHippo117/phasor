@@ -25,16 +25,17 @@ Status: **built; gates green on Linux (see Verification).** Untested on Windows 
 
 ## Verification
 
-- `uv run pytest` (full run, 75 min on a shared 4-core box): **1512 passed, 125 skipped, 5
-  failed**. Three were this milestone's and are fixed (a `model_copy` that the contract-1
-  grep in `tests/test_contracts.py` rightly flagged, the example's docstring naming a
-  milestone, the example missing from `kit/examples.toml`); those files re-run green. Two
-  fail the same way on the branch's starting commit and are not from this milestone:
-  `test_prism_domain_golden_storyboard` (SSIM 0.958) and `test_prism_heat_golden_storyboard`
-  (0.798) against the software goldens on this llvmpipe box. Skips: CUDA (no GPU here),
-  opt-in packaging builds, empty parametrizations. ruff, ruff format and lint-imports clean;
-  `phasor doctor` tier B (llvmpipe OpenGL 4.5, no CUDA).
-- `tests/test_open_contract.py` (37 tests): the recorder (every command, pixels never
+- `uv run pytest`, final full run at the last commit (75 min on a shared 4-core box):
+  **1518 passed, 125 skipped, 2 failed**. The two failures are not from this milestone: they
+  fail with the same scores on the branch's starting commit 417a7af on this machine
+  (`test_prism_domain_golden_storyboard`, SSIM 0.958; `test_prism_heat_golden_storyboard`,
+  0.798; software goldens against llvmpipe). Skips: CUDA (no GPU here), opt-in packaging
+  builds, empty parametrizations. An earlier full run also caught three failures of this
+  milestone, now fixed: a `model_copy` that the contract-1 grep in `tests/test_contracts.py`
+  rightly flagged, the example's docstring naming a milestone, the example missing from
+  `kit/examples.toml`. ruff, ruff format and lint-imports clean; `phasor doctor` tier B
+  (llvmpipe OpenGL 4.5, no CUDA).
+- `tests/test_open_contract.py` (38 tests): the recorder (every command, pixels never
   computed, cache and re-recording when a read object changes); registration (two members,
   `pass_` kept for a draw that takes it, re-registration by the same file only); the four
   ported types' inspector output byte-identical; composites in both lint MODES (ids, indices,
