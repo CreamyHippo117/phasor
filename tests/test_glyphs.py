@@ -6,15 +6,19 @@ it always did."""
 from __future__ import annotations
 
 import math
+from typing import ClassVar
 
 import numpy as np
 import pytest
 
 from phasor import Dot, Equation, Scene, Text
 from phasor.core import text as text_metrics
+from phasor.core.objects import ObjectBase, ParamsBase, register
 from phasor.core.record import record
+from phasor.core.values import Vec3
 from phasor.domains import glyph_math as gm
 from phasor.domains import path_math as pm
+from phasor.domains import shapes
 
 MODES = [None, pytest.param("auto", marks=pytest.mark.gl)]
 
@@ -322,3 +326,36 @@ def test_morph_params_at_their_bounds_never_break_state_inspect_or_lint(morph, k
     s.engine.lint()
     r = s.engine.apply({"op": "set_param", "path": "eq.arc", "value": 1e300}, origin="script")
     assert not r.ok
+
+
+# ---------------------------------------------------------------- independent audit
+
+
+@register
+class AuditBadge(ObjectBase):
+    """A composite whose part has an explicit color and stroke (scene-local type)."""
+
+    type: ClassVar[str] = "audit17_badge"
+
+    class Params(ParamsBase):
+        pos: Vec3 = (0.0, 0.0, 0.0)
+
+    def build(self, state):
+        return [shapes.Circle("ring", r=1.0, style={"color": "#00FF00", "stroke": 0.9})]
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_a_composite_part_with_explicit_values_is_judged_but_a_glyph_is_not(passes):
+    """Audit 17 #3: ``off_palette``/``off_scale`` skipped every composite part, so a part
+    a ``build`` gives an explicit off-palette color and an off-scale stroke was silent.
+    Only glyph parts (whose values come from their text, judged there) are skipped."""
+    s = _scene(passes)
+    s.marker("end", 2.0)
+    s.add(AuditBadge(id="b"))
+    s.add(Text(id="word", text="green", pos=(0, -2), as_shapes=True,
+               style={"color": "#00FF00"}))  # fmt: skip
+    found = {(i.code, i.ids) for i in s.engine.lint(aesthetic=True)
+             if i.code in ("off_palette", "off_scale")}  # fmt: skip
+    assert ("off_palette", ("b.ring",)) in found and ("off_scale", ("b.ring",)) in found
+    assert ("off_palette", ("word",)) in found  # the text, once
+    assert not [ids for _, ids in found if ids and ids[0].startswith("word.")]

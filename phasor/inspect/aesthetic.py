@@ -198,8 +198,9 @@ def rules(
 
         # off_palette, off_scale: explicit values far from the theme
         for o in state.objects:
-            # A part's values come from its composite (a glyph from its text), judged there.
-            if o.id in shown and o.parent is None:
+            # A glyph's values come from its text (its outline is a share of the text's
+            # height): the text is judged. Every other part is judged as itself.
+            if o.id in shown and "glyph" not in o.tags:
                 for key in o.roles:
                     judged = judge(c, o, key)
                     if judged is not None:
