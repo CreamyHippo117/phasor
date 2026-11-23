@@ -105,8 +105,11 @@ with Milestone 17 (98d83db), fixed test first, and is guarded by a test in
     ±1e9, more than 3 Axes labels or one over 80 characters failed to load at all; the
     Manim importer failed the whole import for `Axes(x_range=[-10, 10, 0.1])`. **Fix, no
     schema change**: `geo.Axes` and `Counter` predate the caps, so their validators now
-    refuse only what an old document already had to be (finite, `min < max`, step >= 0;
-    new: world coordinates finite). Past the caps they load and draw bounded:
+    refuse only what an old document already had to be (finite, `min < max`, step >= 0),
+    plus one new refusal: world coordinates (range times scale, plus `pos`) must be finite.
+    At bc99a79 such an Axes (`x_range` up to 1e300, `scale` 1e300) loaded but its first
+    `inspect` raised (NaN), so no document that worked is lost; it is the one documented
+    exception to "every old document loads". Past the caps they load and draw bounded:
     `ticks.step_of` widens a step that would make more than `MAX_TICKS` to the next nice
     step, `ticks.values` draws no ticks for a span lost in rounding, labels past one per
     axis or that cannot be typeset (old documents could hold one; it failed at draw) are
@@ -204,7 +207,7 @@ Nothing in `core/text.py`, `time/verbs.py`, glyphs or morphing.
 | exit demo | pass (Linux) | `examples/diagram_kit.py`: every type renders (golden looked at), strict lint empty; `examples/data_viz.py` likewise |
 | contract audit | done, **not independent** | by the authoring model (no subagent available). Writes only through `Engine.apply` (builds return parts; nothing writes the document); `state_at` depends on the document, t and files named by `Files` params (read only inside the folder, cached by stamp, the engine's caches dropped when they change); caches keyed by everything they read (file stamp; source, language and whether pygments is there); `core/ticks.py` is pure and in `core` (no GPU/GL); every new type has the five members after registration; one way to do each thing (Axes extended; Counter extended; `MatrixDisplay` beside `linalg.Matrix` is Deviation 3). No contract text changed |
 | docs and artifacts | pass | API.md section with two running blocks, lint table, llms.txt; examples and catalog entries; goldens; this file |
-| independent audit | done 2026-11-23, findings fixed | B1-B3, S1-S5 and the notes (Deviations 12-19; two notes deferred). After the fixes (Linux, llvmpipe): ruff check and format clean, lint-imports 2 kept; test_diagrams, test_geometry, test_shapes, test_lint, test_docs, test_layers, test_open_contract, test_kit, test_mcp, test_final, test_beauty, test_engine, test_manim_import, test_glyphs, test_transform, test_aesthetic, test_pycode, test_style_freedom `-k "not slow"`: 1043 passed, 3 skipped; goldens diagram_kit and manim_reverb regenerated and looked at |
+| independent audit | done 2026-11-23, findings fixed | B1-B3, S1-S5 and the notes (Deviations 12-19; two notes deferred). After the fixes (Linux, llvmpipe): ruff check and format clean, lint-imports 2 kept; test_diagrams, test_geometry, test_shapes, test_lint, test_docs, test_layers, test_open_contract, test_kit, test_mcp, test_final, test_beauty, test_engine, test_manim_import, test_glyphs, test_transform, test_aesthetic, test_pycode, test_style_freedom `-k "not slow" -p no:warnings` (pyproject has no `filterwarnings`, so the flag only hides warnings): 1043 passed, 3 skipped; goldens diagram_kit and manim_reverb regenerated and looked at |
 
 **MILESTONE 19: NOT DONE until the full suite passes (CI).** The independent audit is done
 and its findings fixed; on Linux, the exit conditions are met.

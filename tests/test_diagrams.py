@@ -1093,13 +1093,14 @@ def test_a_number_lines_label_is_written_past_its_end_whatever_its_angle(passes,
     assert e.lint() == []
 
 
-def test_a_caption_over_its_own_line_is_overlap(monkeypatch):
+@pytest.mark.parametrize("passes", MODES)
+def test_a_caption_over_its_own_line_is_overlap(monkeypatch, passes):
     """The part_of skip must not hide a composite's caption written over its own lines."""
     from phasor import dg
     from phasor.domains import geometry
 
     monkeypatch.setattr(geometry, "CAPTION_GAP", -4.0)  # write the label back over the line
-    s = _scene()
+    s = _scene(passes)
     s.set("camera.height", 8)
     s.add(dg.NumberLine(id="l", x_range=(-3, 3, 1), label="time", numbers=False))
     assert ("l", "l.label") in {i.ids for i in s.engine.lint() if i.code == "overlap"}
