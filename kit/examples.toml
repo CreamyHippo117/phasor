@@ -196,3 +196,8 @@ teaches = "Doppler: wavefronts bunching ahead of a moving source, then the Mach 
 kind = "physics"
 tier = "technique"
 teaches = "The Lorenz attractor traced in 3D with hue along time as the camera circles"
+
+[examples.bifurcation]
+kind = "physics"
+tier = "technique"
+teaches = "The logistic map's bifurcation diagram as a glowing point cloud: a sweep in from the left, a focus zoom into the period doublings, then into the window of period three"

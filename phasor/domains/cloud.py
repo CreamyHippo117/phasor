@@ -16,11 +16,19 @@ Three things keep a cloud from sitting still: ``twist`` (animatable) turns one c
 of a root cloud round the origin, so every root glides and the fractal edge morphs;
 ``twinkle`` flickers each point's light a little (life, a pure function of (id, seed, t));
 ``white`` lets the densest parts run white-hot.
+
+A bifurcation diagram (``source="bifurcation"``) is computed for the view: its columns of
+r sit on a lattice fixed in r that doubles as the view narrows, so zooming keeps the
+columns about a pixel apart and the columns already there never change (new ones fade in
+between them). Zoomed in on x, a column shows more of its orbit.
 """
 
 from __future__ import annotations
 
 import functools
+import math
+import threading
+from collections import OrderedDict
 from typing import Any, ClassVar, Literal
 
 import numpy as np
@@ -31,6 +39,7 @@ from phasor.core.rng import rng
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
 from phasor.domains import cloud_math as clm
+from phasor.render.gpu.codegen import FunctionError
 
 # Brightness is set against the cloud's mean density (points per pixel over the rectangle,
 # at the current zoom): ``exposure`` 1 lights a uniform cloud to 1 - 1/e. The mean is held at
@@ -39,6 +48,18 @@ MIN_DENSITY = 0.02
 ZOOM_LIGHT = 0.7  # 1: brightness held as the camera zooms in; 0: each point's light fixed
 CACHE = 8  # point sets kept in memory (the latest ones)
 TWINKLE_PERIOD = 2.5  # seconds, typical; each point (each polynomial's roots) has its own
+
+# Bifurcation diagrams: level L of the lattice has columns at r = j * LATTICE / 2^L. A view
+# draws the level whose columns are COLUMN_PX pixels apart or less, and fades in the columns
+# of the next level by how far the zoom has gone toward it.
+LATTICE = 2.0**-6
+COLUMN_PX = 1.0  # spacing of the columns on screen, pixels (at most)
+CHUNK = 256  # columns per cached block of orbits
+ORBIT_BYTES = 1 << 28  # orbit blocks kept in memory (the latest ones), bytes
+ROWS_MAX = 4.0  # zoomed in on x, a column shows up to ROWS_MAX times n_keep iterates
+X_REFERENCE = 1.0  # the x span (map units) on screen at which a column shows n_keep iterates
+SWEEP_EDGE = 0.03  # share of the window over which the sweep's front fades in
+TWINKLE_GROUPS = 4096  # columns flicker in this many groups (by their place in r)
 
 
 @functools.lru_cache(maxsize=CACHE)
@@ -97,7 +118,17 @@ class PointCloud(ObjectBase):
     (b -> b e^(2 pi i twist)); tween it with ``.to`` and every root glides continuously
     while the fractal edge morphs. ``twinkle`` (0-1, life) flickers each point's light by
     up to that share (the roots of one polynomial together), slowly and differently for
-    each; ``white`` (0-1) turns the densest parts white-hot."""
+    each; ``white`` (0-1) turns the densest parts white-hot.
+
+    ``source="bifurcation"``: the bifurcation diagram of x -> ``map``(r, x) (``logistic``,
+    ``sine`` or a formula in r and x). The window ``r_range`` runs across the rectangle and
+    ``x_range`` up it; each column of r draws the last ``n_keep`` of ``n_iter`` iterates of
+    ``x0``, coloured by its Lyapunov exponent (cycles one hue, chaos another). The columns
+    are computed for the view (about a pixel apart at any zoom; ``count`` is not used), so a
+    camera zoom stays sharp. ``focus`` (animatable, 0-1) zooms the window geometrically to
+    ``r_focus`` x ``x_focus`` (r and x by different factors, unlike the camera); ``sweep``
+    (0-1) draws the diagram from the left up to that share of the window. The preset
+    ``prism_bifurcation`` lights it in the prism look."""
 
     type: ClassVar[str] = "point_cloud"
     Life: ClassVar = frozenset({"hue", "glow", "twinkle"})
@@ -109,10 +140,15 @@ class PointCloud(ObjectBase):
                   "style": {"colormap": "spectrum", "glow": "strong"}},
         "plain": {"params": {"exposure": 0.3, "point_size": 1.0},
                   "style": {"colormap": "sequential", "glow": "none"}},
+        # a bifurcation diagram in the prism look: its cycles pile every iterate on one
+        # pixel, so it takes more light per point than a cloud and less white
+        "prism_bifurcation": {"params": {"source": "bifurcation", "exposure": 0.3,
+                                         "point_size": 0.8, "white": 0.2, "twinkle": 0.3},
+                              "style": {"colormap": "spectrum", "glow": "strong"}},
     }  # fmt: skip
 
     class Params(ParamsBase):
-        source: Literal["roots", "attractor", "buddhabrot", "points"] = "roots"
+        source: Literal["roots", "attractor", "buddhabrot", "points", "bifurcation"] = "roots"
         degree: int = Field(10, ge=1, le=24)  # roots: the polynomials' degree
         coefficients: tuple[float, ...] = (-1.0, 1.0)  # roots: the coefficient set
         kind: Literal["clifford", "dejong", "lorenz"] = "clifford"  # attractor
@@ -132,6 +168,33 @@ class PointCloud(ObjectBase):
         twist: float = 0.0  # roots: turns the last coefficient by this share of a turn
         twinkle: float = Field(0.0, ge=0, le=1)  # flicker of each point's light (life)
         white: float = Field(0.0, ge=0, le=1)  # how white the densest parts run
+        # bifurcation: x -> map(r, x), r across the rectangle, x up it
+        map: str = "logistic"  # "logistic", "sine" or a formula in r and x
+        r_range: tuple[float, float] = (2.8, 4.0)  # the window: r across the rectangle
+        x_range: tuple[float, float] = (0.0, 1.0)  # and x up it
+        r_focus: tuple[float, ...] = ()  # the window ``focus`` zooms to (() = the window)
+        x_focus: tuple[float, ...] = ()
+        focus: float = Field(0.0, ge=0, le=1)  # 0: the window, 1: the focus, between: a zoom
+        x0: float = 0.5  # where every orbit starts
+        n_iter: int = Field(600, ge=1, le=20_000)  # steps each orbit runs
+        n_keep: int = Field(200, ge=1, le=5000)  # of which the last ones are drawn
+        sweep: float = Field(1.0, ge=0, le=1)  # share of the window drawn, from the left
+
+        @field_validator("map")
+        @classmethod
+        def _map(cls, v):
+            try:
+                clm.map_function(v)
+            except FunctionError as e:
+                raise ValueError(str(e)) from e
+            return v
+
+        @field_validator("r_range", "x_range", "r_focus", "x_focus")
+        @classmethod
+        def _range(cls, v):
+            if v and (len(v) != 2 or not v[0] < v[1]):
+                raise ValueError("a window is (low, high) with low < high")
+            return v
 
         @field_validator("size")
         @classmethod
@@ -154,11 +217,20 @@ class PointCloud(ObjectBase):
             if self.constants and len(self.constants) != len(clm.ATTRACTORS[self.kind]):
                 n = len(clm.ATTRACTORS[self.kind])
                 raise ValueError(f"a {self.kind} attractor takes {n} constants")
+            if self.n_keep > self.n_iter:
+                raise ValueError(f"n_keep ({self.n_keep}) is more than n_iter ({self.n_iter})")
             return self
 
     def cloud(self, state: SceneState) -> tuple[np.ndarray, np.ndarray]:
         """(points (n, 2) in world x, y; value (n,) 0-1) at this state, from the cache."""
         p = self.me(state).params
+        if p.source == "bifurcation":  # the whole rectangle at 1080 pixels up it
+            w, h = p.size
+            ph = 1080
+            pw = max(1, math.ceil(ph * w / h))
+            d = _diagram(self.id, p, state.t, (w / 2, h / 2), h, pw, ph)
+            corner = np.asarray(p.pos[:2]) - np.array([w / 2, h / 2])
+            return d.points + corner, d.values
         pts, v = _points(self.id, p.seed, p.source, _key(p))
         return pts * p.scale + np.asarray(p.pos[:2]), v
 
@@ -187,6 +259,12 @@ class PointCloud(ObjectBase):
             out.update(attractor=p.kind)
         elif p.source == "buddhabrot":
             out.update(max_iter=p.max_iter)
+        elif p.source == "bifurcation":
+            (r0, r1), (x0, x1) = _window(p)
+            out.update(map=p.map, window={"r": [round(r0, 9), round(r1, 9)],
+                                          "x": [round(x0, 9), round(x1, 9)]},
+                       n_iter=p.n_iter, n_keep=p.n_keep, sweep=round(p.sweep, 6),
+                       focus=round(p.focus, 6))  # fmt: skip
         if len(pts):
             out["extent"] = [[round(float(x), 6) for x in pts.min(0)],
                              [round(float(x), 6) for x in pts.max(0)]]  # fmt: skip
@@ -203,6 +281,15 @@ class PointCloud(ObjectBase):
         def pixels(pw: int, ph: int, center: tuple[float, float], height: float) -> np.ndarray:
             from phasor.render import gpu
 
+            if p.source == "bifurcation":
+                d = _diagram(self.id, p, state.t, center, height, pw, ph)
+                gain = p.exposure / max(d.light, MIN_DENSITY)
+                colors = _colors(d.values, p.hue, lut)
+                out = gpu.render("splat", pw, ph, points=d.points, colors=colors, center=center,
+                                 height=height, sigma=p.point_size, gain=gain,
+                                 weights=d.weights, white=p.white)  # fmt: skip
+                out[..., :3] += bg * (1.0 - out[..., 3:4])
+                return out
             pts, v = self.cloud(state)
             inside = _inside(pts, corner, r, u)
             weights = None
@@ -216,10 +303,7 @@ class PointCloud(ObjectBase):
             if p.color_by == "phase":
                 d = pts - (np.asarray(p.pos[:2]) - corner[:2])
                 v = np.arctan2(d[:, 1], d[:, 0]) / (2 * np.pi)
-            x = ((v + p.hue) % 1.0) * len(lut)
-            k0 = np.minimum(x.astype(np.int64), len(lut) - 1)
-            t = (x - k0)[:, None].astype(np.float32)
-            colors = lut[k0] * (1 - t) + lut[(k0 + 1) % len(lut)] * t
+            colors = _colors(v, p.hue, lut)
             per_px = len(pts) * (height / ph) ** 2 / (p.size[0] * p.size[1])
             # zooming in spreads the points over more pixels; light per point grows only as
             # the square root of that, so a dense region seen close up does not wash out
@@ -249,3 +333,155 @@ def _inside(pts: np.ndarray, corner, r, u) -> np.ndarray:
     x0, y0 = corner[0], corner[1]
     return ((pts[:, 0] >= x0) & (pts[:, 0] <= x0 + r[0])
             & (pts[:, 1] >= y0) & (pts[:, 1] <= y0 + u[1]))  # fmt: skip
+
+
+def _colors(v: np.ndarray, hue: float, lut: np.ndarray) -> np.ndarray:
+    """(n, 3) colours: the palette ``lut`` at each value, turned by ``hue``, interpolated."""
+    x = ((v + hue) % 1.0) * len(lut)
+    k0 = np.minimum(x.astype(np.int64), len(lut) - 1)
+    t = (x - k0)[:, None].astype(np.float32)
+    return lut[k0] * (1 - t) + lut[(k0 + 1) % len(lut)] * t
+
+
+# ---------------------------------------------------------------- bifurcation diagrams
+
+
+def _window(p) -> tuple[tuple[float, float], tuple[float, float]]:
+    """The (r, x) window the rectangle shows: ``r_range`` x ``x_range``, zoomed ``focus`` of
+    the way to ``r_focus`` x ``x_focus``."""
+    return (clm.zoom_window(p.r_range, p.r_focus or p.r_range, p.focus),
+            clm.zoom_window(p.x_range, p.x_focus or p.x_range, p.focus))  # fmt: skip
+
+
+_orbit_lock = threading.Lock()
+_orbit_cache: OrderedDict[tuple, tuple[np.ndarray, np.ndarray]] = OrderedDict()
+_orbit_bytes = [0]
+
+
+def _orbit_block(map: str, x0: float, n_iter: int, n_keep: int, level: int, blocks):
+    """For each block b of lattice ``level`` (columns j = b * CHUNK ... + CHUNK - 1, at
+    r = j * LATTICE / 2^level): (iterates (ROWS_MAX * n_keep, CHUNK) from x_(n_iter - n_keep
+    + 1) on, the columns' colour values (CHUNK,)). Cached; the missing blocks run together.
+    A column's orbit is the same bits in any block at any level (``clm.orbits``)."""
+    rows = int(ROWS_MAX * n_keep)
+    out, missing = {}, []
+    with _orbit_lock:
+        for b in blocks:
+            key = (map, x0, n_iter, n_keep, level, b)
+            if key in _orbit_cache:
+                _orbit_cache.move_to_end(key)
+                out[b] = _orbit_cache[key]
+            else:
+                missing.append(b)
+    if missing:
+        step = LATTICE / 2.0**level
+        j = (np.asarray(missing, dtype=np.int64)[:, None] * CHUNK + np.arange(CHUNK)).reshape(-1)
+        r = j * step
+        xs = clm.orbits(map, r, n_iter + rows - n_keep, x0)[n_iter - n_keep + 1 :]
+        value = clm.lyapunov_value(clm.lyapunov(map, r, xs[:n_keep]))
+        with _orbit_lock:
+            for i, b in enumerate(missing):
+                cols = slice(i * CHUNK, (i + 1) * CHUNK)
+                block = (np.ascontiguousarray(xs[:, cols]), value[cols])
+                for a in block:
+                    a.flags.writeable = False
+                key = (map, x0, n_iter, n_keep, level, b)
+                if key not in _orbit_cache:
+                    _orbit_cache[key] = block
+                    _orbit_bytes[0] += block[0].nbytes
+                out[b] = _orbit_cache[key]
+            while _orbit_bytes[0] > ORBIT_BYTES and len(_orbit_cache) > len(blocks):
+                _, (old, _v) = _orbit_cache.popitem(last=False)
+                _orbit_bytes[0] -= old.nbytes
+    return [out[b] for b in blocks]
+
+
+class _Diagram:
+    """What one view of a bifurcation diagram splats: points (n, 2) in rectangle
+    coordinates, their colour values (n,) and weights (n,), and ``light``, the mean density
+    (points per pixel) the brightness is set against."""
+
+    __slots__ = ("light", "points", "values", "weights")
+
+    def __init__(self, points, values, weights, light):
+        self.points, self.values, self.weights, self.light = points, values, weights, light
+
+
+def _diagram(oid: str, p, t: float, center, height: float, pw: int, ph: int) -> _Diagram:
+    """The part of the diagram a view sees (the view as ``DrawContext.field`` gives it, in
+    rectangle coordinates: the rectangle runs from (0, 0) to ``size``)."""
+    from phasor.render.gpu.kernels.splat import splat_reach
+
+    empty = _Diagram(np.zeros((0, 2)), np.zeros(0), np.zeros(0, dtype=np.float32), 1.0)
+    (r0, r1), (xa, xb) = _window(p)
+    w, h = p.size
+    s = height / ph  # rectangle units per pixel
+    pad = (splat_reach(p.point_size) + 1) * s
+    q_lo = max(0.0, center[0] - s * pw / 2 - pad)
+    q_hi = min(w, center[0] + s * pw / 2 + pad)
+    y_lo = max(0.0, center[1] - height / 2 - pad)
+    y_hi = min(h, center[1] + height / 2 + pad)
+    if q_hi <= q_lo or y_hi <= y_lo:
+        return empty
+    # the columns: the lattice level whose spacing is COLUMN_PX pixels or less, and the odd
+    # columns of the next level faded in by the fraction of the way to it
+    px_per_r = w / (r1 - r0) / s
+    level_f = max(0.0, math.log2(LATTICE * px_per_r / COLUMN_PX))
+    level = int(level_f)
+    fade = level_f - level
+    fine = level + 1
+    step = LATTICE / 2.0**fine
+    rl, rh = r0 + q_lo / w * (r1 - r0), r0 + q_hi / w * (r1 - r0)
+    j_lo, j_hi = math.ceil(rl / step), math.floor(rh / step)
+    if j_hi < j_lo:
+        return empty
+    blocks = list(range(j_lo // CHUNK, j_hi // CHUNK + 1))
+    got = _orbit_block(p.map, float(p.x0), p.n_iter, p.n_keep, fine, blocks)
+    first = blocks[0] * CHUNK
+    cols = slice(j_lo - first, j_hi - first + 1)
+    xs = np.concatenate([g[0] for g in got], axis=1)[:, cols]
+    value = np.concatenate([g[1] for g in got])[cols]
+    j = np.arange(j_lo, j_hi + 1, dtype=np.int64)
+    r = j * step
+    col_w = np.where(j % 2 == 0, 1.0, fade)
+    # light: columns per pixel times the iterates a column spreads over a pixel of x
+    width_px = max((rh - rl) * px_per_r, 1.0)
+    x_span = (y_hi - y_lo) / h * (xb - xa)  # x seen on screen
+    more = min(max(X_REFERENCE / max(x_span, 1e-300), 1.0), ROWS_MAX)
+    shown = p.n_keep * more  # iterates per column, a fraction for the last one
+    light = col_w.sum() / width_px * shown * x_span / max(X_REFERENCE * (y_hi - y_lo) / s, 1.0)
+    # the sweep draws the window from the left, its front a soft edge
+    if p.sweep < 1.0:
+        front = r0 + p.sweep * (1.0 + SWEEP_EDGE) * (r1 - r0)
+        col_w = col_w * np.clip((front - r) / (SWEEP_EDGE * (r1 - r0)), 0.0, 1.0)
+    if p.twinkle > 0:
+        freq, phase = _flicker(oid, p.seed, TWINKLE_GROUPS)
+        g = _column_group(j, fine)
+        col_w = col_w * (1.0 + p.twinkle * np.sin(2 * np.pi * (freq[g] * t + phase[g])))
+    n_full = int(shown)
+    row_w = np.ones(min(n_full + 1, len(xs)))
+    if n_full < len(xs):
+        row_w[-1] = shown - n_full
+    xs = xs[: len(row_w)]
+    weight = row_w[:, None] * col_w[None, :]
+    x_lo, x_hi = xa + y_lo / h * (xb - xa), xa + y_hi / h * (xb - xa)
+    with np.errstate(invalid="ignore"):
+        keep = (xs >= x_lo) & (xs <= x_hi) & (weight > 0)
+    rr = np.broadcast_to(r[None, :], xs.shape)[keep]
+    pts = np.c_[(rr - r0) / (r1 - r0) * w, (xs[keep] - xa) / (xb - xa) * h]
+    vals = np.broadcast_to(value[None, :], xs.shape)[keep]
+    return _Diagram(pts, vals, weight[keep].astype(np.float32), light)
+
+
+def _column_group(j: np.ndarray, level: int) -> np.ndarray:
+    """The twinkle group of each column j of a lattice level, from its place in r alone (the
+    same r is j at one level and 2 j at the next, and keeps its group)."""
+    j = j.copy()
+    lv = np.full(len(j), level, dtype=np.int64)
+    for _ in range(level):  # strip the factors of two: (odd j, the level it first appears)
+        even = (j % 2 == 0) & (lv > 0)
+        if not even.any():
+            break
+        j[even] //= 2
+        lv[even] -= 1
+    return ((j * 2654435761 + lv * 40503) % TWINKLE_GROUPS).astype(np.int64)
