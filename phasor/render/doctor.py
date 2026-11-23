@@ -371,22 +371,14 @@ def compute_tier(checks: list[Check]) -> str:
 
 
 # Optional packages some objects need: (module, extra, what needs it).
-EXTRAS = (("shapely", "boolean", "boolean operations on shapes"),
-          ("svgelements", "svg", "SVG drawings"))  # fmt: skip
-
-
 def check_extras() -> Check:
     """Which optional object packages are installed. Missing ones are not a failure: the
     objects that need them say so (lint ``missing_extra``) and draw nothing."""
-    import importlib.util
+    from phasor.core import extras
 
     missing = []
-    for module, extra, what in EXTRAS:
-        try:
-            found = importlib.util.find_spec(module) is not None
-        except (ImportError, ValueError):
-            found = False
-        if not found:
+    for module, (extra, what) in extras.EXTRAS.items():
+        if not extras.available(module):
             missing.append(f"{what} (--extra {extra})")
     if not missing:
         return Check("extras", True, "all optional object packages installed",

@@ -16,6 +16,7 @@ returns one issue per problem with the times it was seen. Rules in this mileston
 | missing_file | warning | a file an object reads (a mesh) is not in the scene's folder    |
 | missing_extra | warning | an object needs an optional package that is not installed (SVG) |
 | fill_crossing | warning | a filled path whose edges cross: its fill may not follow the rule |
+| fill_unchecked | warning | a filled path with too many edges to check for crossings |
 | bad_file  | warning  | a file an object reads is not valid (or some of its shapes are skipped) |
 | svg_too_complex | warning | an SVG past a reading limit: its drawing is empty or cut short |
 | dash_limit | warning | a dashed or dotted path with more dashes than are drawn per path |
@@ -283,24 +284,13 @@ def file_rules(c: Compiled) -> list[Issue]:
     that is not in the scene's folder. The object draws nothing until the file is there.
     ``missing_extra``: a type needs an optional package (its ``Requires``: module -> extra)
     that is not installed; it draws nothing until the extra is installed."""
-    import importlib.util
-    import sys
-
-    from phasor.core import files
+    from phasor.core import extras, files
     from phasor.time.compile import file_values
-
-    def importable(module: str) -> bool:
-        if module in sys.modules:
-            return sys.modules[module] is not None
-        try:
-            return importlib.util.find_spec(module) is not None
-        except (ImportError, ValueError):
-            return False
 
     out = []
     for o in c.objects:
         for module, extra in getattr(type(o.impl), "Requires", {}).items():
-            if not importable(module):
+            if not extras.available(module):
                 out.append(Issue(
                     "missing_extra", f"{o.id}: a {o.type!r} needs the {module!r} package, "
                     "which is not installed; it draws nothing", severity="warning",
@@ -540,6 +530,8 @@ def run(
                 f.add("fill_crossing", (e["id"],), t)
         for e in fr.entries.values():  # also what is off screen or draws nothing
             sem = e["semantic"]
+            if sem.get("fill_unchecked"):
+                f.add("fill_unchecked", (e["id"],), t)
             if sem.get("dash_limit"):
                 f.add("dash_limit", (e["id"],), t, n=sem["dash_limit"])
             if sem.get("unreadable") or sem.get("skipped"):
@@ -645,6 +637,12 @@ def run(
                          "missing or doubled", "warning", ids, times=ts,
                          fix_hint="split it into subpaths that do not cross (a boolean "
                          "union does that), or turn its fill off")  # fmt: skip
+        if code == "fill_unchecked":
+            return Issue(code, f"{ids[0]!r} is filled and has too many edges to check "
+                         f"whether they cross (path_math.CROSSING_LIMIT) {when}; if they do, "
+                         "its fill may be wrong", "warning", ids,
+                         times=ts, fix_hint="simplify the outline, or split it into several "
+                         "paths")  # fmt: skip
         if code == "bad_file":
             what = (f"cannot be read: {info['why']}" if info["why"] else
                     f"has {info['skipped']} shape(s) skipped: points not finite or absurdly "

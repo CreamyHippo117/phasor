@@ -1026,3 +1026,65 @@ def test_a_boolean_on_degenerate_input_never_raises_a_raw_geos_error():
             assert op in str(e)
         else:
             assert all(np.isfinite(r).all() for r in out)
+
+
+# ---------------------------------------------------------------- 10. many parts (audit)
+
+
+def test_a_drawing_of_many_parts_is_not_flattened_again_at_a_new_frame(tmp_path, monkeypatch):
+    """Geometry is cached by size in bytes, not by a count smaller than the parts an SVG
+    has, so drawing a new frame of an unchanged drawing flattens nothing again."""
+    many = "".join(f'<path id="p{i}" d="M{i % 40} {i // 40} c 1 2 3 4 5 6 s 1 1 2 0 z"/>'
+                   for i in range(1500))  # fmt: skip
+    s = _svg_scene(tmp_path, H + many + "</svg>")
+    e = s.engine
+    calls = []
+    real = pm.flatten
+
+    def counted(*a, **k):
+        calls.append(1)
+        return real(*a, **k)
+
+    monkeypatch.setattr(pm, "flatten", counted)
+
+    def draw_all(t):
+        st = e.state_at(t)
+        for o in st.objects:
+            if o.parent == "logo":
+                o.impl.draw(_Any(), st, "color")
+        return st
+
+    assert len(_parts(draw_all(0.0))) == 1500
+    first = len(calls)
+    assert first >= 1500
+    draw_all(0.04)
+    draw_all(0.08)
+    assert len(calls) == first
+
+
+def test_a_fill_too_detailed_to_check_for_crossings_says_so():
+    k = np.linspace(0, 2 * np.pi, pm.CROSSING_LIMIT + 10, endpoint=False)
+    ring = np.c_[np.cos(k), np.sin(k), np.zeros_like(k)]
+    assert pm.crossings([ring]) is None  # not checked: neither True nor False
+    s = Scene("detail", passes=None)
+    s.add(shapes.Path.through("ring", ring, closed=True, style={"fill": "solid"}))
+    assert _sem(s.engine, "ring")["fill_unchecked"] is True
+    (issue,) = [i for i in s.engine.lint() if i.code == "fill_unchecked"]
+    assert issue.ids == ("ring",) and issue.severity == "warning"
+
+
+def test_a_staggered_trace_round_trips_through_the_code_view_exactly(tmp_path):
+    """Deviation 12: a script regenerated from a document wrote ``at(go, 0.36).to(...,
+    duration=1.4)``, which ends at 0.36 + 1.4 = 1.7599999999999998, not the stored 1.76.
+    A segment whose end does not come back exactly is written with both ends."""
+    from phasor.core.diff import diff_documents
+    from tests.test_pycode import plain, rebuild
+
+    s = Scene("rt", passes=None, look="none")
+    for k in range(4):
+        s.add(shapes.Circle(id=f"c{k}", pos=(k, 0), r=0.3))
+    s.marker("go", 0.36)
+    s.at("go").trace("c0", "c1", "c2", "c3")
+    doc = s.engine.document
+    again = rebuild(doc, tmp_path)
+    assert diff_documents(plain(doc), plain(again))["same"]

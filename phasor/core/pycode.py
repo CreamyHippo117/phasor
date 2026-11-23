@@ -135,10 +135,12 @@ def document_to_python(doc: Document) -> str:
                 isinstance(seg.t0, MarkerRef) == isinstance(seg.t1, MarkerRef)
                 and (not isinstance(seg.t0, MarkerRef) or seg.t0.marker == seg.t1.marker)
             )  # fmt: skip
-            if same_anchor:
+            end = seg.t1.offset if isinstance(seg.t1, MarkerRef) else seg.t1
+            start = seg.t0.offset if isinstance(seg.t0, MarkerRef) else seg.t0
+            # ``at(...).to(duration=)`` only when start + duration gives the stored end back
+            # exactly (0.36 + (1.76 - 0.36) is not 1.76); else both ends, as stored.
+            if same_anchor and float(start) + float(end - start) == float(end):
                 when, off = _time(seg.t0)
-                end = seg.t1.offset if isinstance(seg.t1, MarkerRef) else seg.t1
-                start = seg.t0.offset if isinstance(seg.t0, MarkerRef) else seg.t0
                 at = f"s.at({when}" + (f", {off!r}" if off else "") + ")"
                 lines.append(f"{at}.to({path!r}, {_lit(seg.to)}, duration={float(end - start)!r}, "
                              f"ease={seg.ease!r})")  # fmt: skip

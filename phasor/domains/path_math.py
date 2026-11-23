@@ -26,6 +26,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from phasor.core import extras
+
 KAPPA = 4.0 / 3.0 * (math.sqrt(2.0) - 1.0)  # cubic handle length of a quarter circle
 MAX_PIECES = 256  # most segments one cubic flattens to
 RULES = ("nonzero", "evenodd")
@@ -44,19 +46,6 @@ class MissingExtra(ImportError):
             f"`uv sync --extra {extra}` (or `pip install phasor[{extra}]`)"
         )
         self.module, self.extra = module, extra
-
-
-def extra_available(module: str) -> bool:
-    """Whether an optional package can be imported (without importing it twice)."""
-    import importlib.util
-    import sys
-
-    if module in sys.modules:
-        return sys.modules[module] is not None
-    try:
-        return importlib.util.find_spec(module) is not None
-    except (ImportError, ValueError):
-        return False
 
 
 # ---------------------------------------------------------------- building subpaths
@@ -496,9 +485,10 @@ def fill(polys: Sequence[np.ndarray], rule: str = "nonzero"):
     return np.vstack(pos), np.vstack(tris)
 
 
-def crossings(polys: Sequence[np.ndarray]) -> bool:
+def crossings(polys: Sequence[np.ndarray]) -> bool | None:
     """Whether any edges of the closed polylines cross (a ring crossing itself or another):
-    then earcut's fill may be wrong. False when there are too many edges to check."""
+    then earcut's fill may be wrong. None (not checked) above ``CROSSING_LIMIT`` edges
+    (lint ``fill_unchecked``)."""
     flat = [np.asarray(p, dtype=np.float64) for p in polys if len(p) >= 3]
     if not flat:
         return False
@@ -512,7 +502,9 @@ def crossings(polys: Sequence[np.ndarray]) -> bool:
         ring_id.append(np.full(len(r), k))
         idx.append(np.arange(len(r)))
     s = np.vstack(segs)
-    if len(s) > CROSSING_LIMIT or len(s) < 2:
+    if len(s) > CROSSING_LIMIT:
+        return None
+    if len(s) < 2:
         return False
     rid, ix = np.concatenate(ring_id), np.concatenate(idx)
     sizes = np.array([len(x) for x in idx])
@@ -556,7 +548,7 @@ def boolean(op: str, a: Sequence[np.ndarray], b: Sequence[np.ndarray], rule_a: s
     Needs shapely (the ``boolean`` extra)."""
     if op not in OPS:
         raise ValueError(f"boolean op must be one of {OPS}, got {op!r}")
-    if not extra_available("shapely"):
+    if not extras.available("shapely"):
         raise MissingExtra("shapely", "boolean", f"shapes.{op}")
     import shapely
     from shapely.geometry import MultiPolygon, Polygon
@@ -671,7 +663,7 @@ def read_svg(path: str, stamp: tuple) -> SvgDrawing:
 
 @functools.lru_cache(maxsize=32)
 def _read_svg(path: str, stamp: tuple) -> SvgDrawing:
-    if not extra_available("svgelements"):
+    if not extras.available("svgelements"):
         raise MissingExtra("svgelements", "svg", "SVG")
     from phasor.core import files
 

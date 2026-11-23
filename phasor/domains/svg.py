@@ -26,21 +26,19 @@ external references in the file are ignored.
 
 from __future__ import annotations
 
+import functools
 import re
 from typing import Any, ClassVar
 
 import numpy as np
 from pydantic import Field, field_validator
 
-from phasor.core import files
+from phasor.core import extras, files
 from phasor.core.objects import ObjectBase, ParamsBase, register
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
 from phasor.domains import path_math as pm
 from phasor.domains.path import STYLE, Path
-
-EXTRA = {"svgelements": "svg"}  # module -> the extra that installs it
-
 
 MAX_NAME = 40  # characters of a part's name taken from the file (before any suffix)
 MAX_WORLD = 1e6  # a part with a point this far from ``pos`` (in heights) is skipped
@@ -66,13 +64,40 @@ def part_names(shapes, reserved=()) -> list[str]:
     return out
 
 
+@functools.lru_cache(maxsize=16)
+def _placed(stamp: tuple, pos: tuple, height: float, reserved: frozenset[str]):
+    """The parts of the file ``stamp`` names, placed with its view box centred on ``pos``,
+    ``height`` tall, named clear of ``reserved``: ((name, subpaths, shape), ...), skipped."""
+    d = pm.read_svg(stamp[0], stamp)
+    if not d.shapes:
+        return (), 0
+    x0, y0, w, h = d.box
+    s = height / h
+    mid = np.array([x0 + w / 2, y0 + h / 2, 0.0])
+    flip = np.array([s, -s, 1.0])
+    origin = np.asarray(pos, dtype=np.float64)
+    far = MAX_WORLD * max(height, 1.0)
+    keep, skipped = [], 0
+    with np.errstate(over="ignore", invalid="ignore"):
+        for sh in d.shapes:
+            subs = [np.round((sub - mid) * flip + origin, 9) for sub in sh.subpaths]
+            if all(np.isfinite(a).all() and np.abs(a - origin).max() <= far for a in subs):
+                keep.append((sh, subs))
+            else:
+                skipped += 1
+    names = part_names([sh for sh, _ in keep], reserved)
+    parts = tuple((n, tuple(tuple(map(tuple, a.tolist())) for a in subs), sh)
+                  for n, (sh, subs) in zip(names, keep, strict=True))  # fmt: skip
+    return parts, skipped
+
+
 @register
 class SVG(ObjectBase):
     """The shapes of an SVG file, as ``Path`` parts."""
 
     type: ClassVar[str] = "svg"
     Files: ClassVar = ("path",)
-    Requires: ClassVar = EXTRA  # optional packages it needs (lint missing_extra)
+    Requires: ClassVar = extras.requires("svgelements")  # (lint missing_extra)
     Style: ClassVar = {**STYLE, "fill": ("fill", "solid")}
     Presets: ClassVar = {
         "solid": {},
@@ -94,7 +119,7 @@ class SVG(ObjectBase):
         """The file's shapes (empty, with ``problem`` or ``limited``, when the file is bad or
         too complex), or None while it is missing or svgelements is not installed."""
         p = self.me(state).params
-        if not p.path or not pm.extra_available("svgelements"):
+        if not p.path or not extras.available("svgelements"):
             return None
         stamp = files.stamp(state.base_dir, p.path)
         if stamp[1] is None:
@@ -104,36 +129,18 @@ class SVG(ObjectBase):
         except pm.MissingExtra:
             return None
 
-    def _parts(self, state: SceneState) -> tuple[list[tuple[str, list, Any]], int]:
+    def _parts(self, state: SceneState) -> tuple[tuple[tuple[str, tuple, Any], ...], int]:
         """(name, world subpaths, shape) per shape drawn, and how many were skipped because
-        a point is not finite or absurdly far out once placed."""
+        a point is not finite or absurdly far out once placed. Cached by the file's stamp
+        and the placement, so a new frame of an unchanged drawing does not place it again."""
         p = self.me(state).params
-        d = self.drawing(state)
-        if d is None or not d.shapes:
-            return [], 0
-        x0, y0, w, h = d.box
-        s = p.height / h
-        mid = np.array([x0 + w / 2, y0 + h / 2, 0.0])
-        flip = np.array([s, -s, 1.0])
-        origin = np.asarray(p.pos, dtype=np.float64)
+        if self.drawing(state) is None:
+            return (), 0
         prefix = f"{self.id}."
-        reserved = {i[len(prefix) :].split(".")[0] for i in state.reserved if i.startswith(prefix)}
-        out, skipped = [], 0
-        far = MAX_WORLD * max(p.height, 1.0)
-        with np.errstate(over="ignore", invalid="ignore"):
-            placed = [[np.round((sub - mid) * flip + origin, 9) for sub in sh.subpaths]
-                      for sh in d.shapes]  # fmt: skip
-        keep = []
-        for sh, subs in zip(d.shapes, placed, strict=True):
-            if all(np.isfinite(a).all() and np.abs(a - origin).max() <= far for a in subs):
-                keep.append((sh, subs))
-            else:
-                skipped += 1
-        names = part_names([sh for sh, _ in keep], reserved)
-        out = [
-            (n, [a.tolist() for a in subs], sh) for n, (sh, subs) in zip(names, keep, strict=True)
-        ]
-        return out, skipped
+        reserved = frozenset(i[len(prefix) :].split(".")[0] for i in state.reserved
+                             if i.startswith(prefix))  # fmt: skip
+        stamp = files.stamp(state.base_dir, p.path)
+        return _placed(stamp, tuple(p.pos), p.height, reserved)
 
     def build(self, state: SceneState) -> list[ObjectBase]:
         me = self.me(state)
@@ -150,7 +157,7 @@ class SVG(ObjectBase):
         p = me.params
         names = [o.id[len(self.id) + 1 :] for o in parts(state, self.id)]
         out: dict[str, Any] = {"kind": "svg", "file": p.path, "parts": names}
-        if not pm.extra_available("svgelements"):
+        if not extras.available("svgelements"):
             out["missing_extra"] = "svg"
             return out
         d = self.drawing(state)

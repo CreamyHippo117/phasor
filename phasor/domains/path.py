@@ -44,7 +44,7 @@ TIP_MAX = 0.3  # ... and at most this share of its subpath's length
 # them out, so a fade does not flatten and triangulate again every frame).
 NOT_GEOMETRY = frozenset({"opacity", "dim", "z_index", "flash", "progress", "fill_opacity",
                           "stroke_opacity"})  # fmt: skip
-CACHE_SIZE = 1024
+CACHE_BYTES = 256 * 2**20  # geometry kept between frames (flattened curves, fills, measures)
 MAX_DASHES = 2000  # dashes (or dots) per path: past it they are drawn longer (lint dash_limit)
 MAX_COORD = 1e9  # world units: no parameter of a path may be larger (it could not be drawn)
 
@@ -66,20 +66,41 @@ PRESETS: dict[str, dict[str, dict[str, Any]]] = {
     "dashed": {"style": {"dash": "dashed"}},
 }
 
-_CACHE: OrderedDict[tuple, Any] = OrderedDict()
+_CACHE: OrderedDict[tuple, tuple[Any, int]] = OrderedDict()  # key -> (value, bytes)
+_CACHE_USED = [0]
 _LOCK = threading.Lock()
 
 
+def _nbytes(value: Any) -> int:
+    """About how much memory a cached value holds (its arrays, plus a little per entry)."""
+    if isinstance(value, np.ndarray):
+        return int(value.nbytes)
+    if isinstance(value, tuple | list):
+        return 64 + sum(_nbytes(v) for v in value)
+    if isinstance(value, dict):
+        return 64 + sum(_nbytes(v) for v in value.values())
+    return 64
+
+
 def _cached(key: tuple, make: Callable[[], Any]) -> Any:
+    """A path's geometry, kept while it fits in ``CACHE_BYTES`` (least recently used out):
+    a drawing of thousands of parts (an SVG) keeps all of them, so a new frame does not
+    flatten and measure them all again, and memory stays bounded."""
     with _LOCK:
-        if key in _CACHE:
+        hit = _CACHE.get(key)
+        if hit is not None:
             _CACHE.move_to_end(key)
-            return _CACHE[key]
+            return hit[0]
     value = make()
+    size = 256 + _nbytes(value)
     with _LOCK:
-        _CACHE[key] = value
-        if len(_CACHE) > CACHE_SIZE:
-            _CACHE.popitem(last=False)
+        old = _CACHE.pop(key, None)
+        if old is not None:
+            _CACHE_USED[0] -= old[1]
+        _CACHE[key] = (value, size)
+        _CACHE_USED[0] += size
+        while _CACHE_USED[0] > CACHE_BYTES and len(_CACHE) > 1:
+            _CACHE_USED[0] -= _CACHE.popitem(last=False)[1][1]
     return value
 
 
@@ -103,8 +124,11 @@ class PathParams(ParamsBase):
         def big(v) -> bool:
             if isinstance(v, int | float) and not isinstance(v, bool):
                 return abs(v) > MAX_COORD
-            if isinstance(v, tuple | list):
-                return any(big(x) for x in v)
+            if isinstance(v, tuple | list) and v:
+                try:  # points: one array check
+                    return bool(np.abs(np.asarray(v, dtype=np.float64)).max() > MAX_COORD)
+                except (TypeError, ValueError):  # ragged (subpaths of different lengths)
+                    return any(big(x) for x in v)
             return False
 
         for name in type(self).model_fields:
@@ -334,6 +358,8 @@ class PathBase(ObjectBase):
             out["dash_limit"] = int(m["length"] / period)  # lint dash_limit
         if m["crossing"] and self._fill_alpha(me) > 0:
             out["fill_crossing"] = True  # lint fill_crossing
+        if m["crossing"] is None and self._fill_alpha(me) > 0:
+            out["fill_unchecked"] = True  # lint fill_unchecked: too many edges to check
         out.update(self.facts(p))
         return out
 
