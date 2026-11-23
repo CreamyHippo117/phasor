@@ -246,3 +246,31 @@ def test_exit_demo_prism_primes_on_the_cpu_is_the_reference_picture(monkeypatch)
     on_numpy = e.frame(12.0, (320, 180), output="srgb8")
     diff = np.abs(on_cpu.astype(np.int16) - on_numpy)
     assert diff.max() <= 1 and (diff > 0).mean() < 1e-3, (int(diff.max()), (diff > 0).mean())
+
+
+@needs_cpu
+def test_a_library_that_builds_but_will_not_load_falls_back_and_is_not_retried(
+    tmp_path, monkeypatch
+):
+    """Windows: a DLL whose runtime (libstdc++, libgomp) is not found raises OSError on load.
+    ``auto`` must still give the picture (the reference); ``cpu`` must say why."""
+    monkeypatch.setenv("PHASOR_CPU_CACHE", str(tmp_path))
+    monkeypatch.setattr(cpu, "_LIBS", {})
+    monkeypatch.setattr(cpu, "_FAILED", {})
+    tries = []
+
+    def broken(path, *a, **k):
+        tries.append(path)
+        raise OSError("libgomp-1.dll not found")
+
+    monkeypatch.setattr(cpu.ctypes, "CDLL", broken)
+    tile, params = CASES["vignette"][0]
+    from phasor.render.gpu import registry
+
+    monkeypatch.setattr(registry, "_WARNED", set())
+    with pytest.warns(RuntimeWarning, match="runs on NumPy"):
+        got = gpu.run("vignette", tile, **params)
+    np.testing.assert_array_equal(got, get("vignette").reference(tile, **params))
+    with pytest.raises(cpu.CompileError, match="does not load"):
+        gpu.run("vignette", tile, backend="cpu", **params)
+    assert len(tries) == 1  # the failure is remembered: no rebuild, no reload per call

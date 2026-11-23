@@ -93,8 +93,10 @@ loaded by another agent's tests, 2x2 was 7% faster (25.9 against 28.0 s). Not ad
     - The two runs had different competing load from the other agent's suite. A
       `_view_depth`-sized NumPy matmul timed before and after loading the OpenMP library was
       equal within noise.
-    - So no kernel cost was found. Rerun this on a quiet machine to confirm.
-- `tests/test_cpu_backend.py`: 57 tests. Every `CASES` kernel case (37) is compared with its
+    - Rerun later on the quiet box, 4 alternating runs each: 1.6-2.5 ms both with and
+      without a kernel library loaded. So no kernel cost was found. The Riemann tests
+      themselves were not rerun quietly.
+- `tests/test_cpu_backend.py`: 57 tests. Every `CASES` kernel case (43) is compared with its
   reference as strictly as the emulator, and must be bit-identical at 1, 2 and 4 threads.
   The rest cover:
   - splat with 60,000 points on few pixels: the same bits at every thread count;
@@ -135,6 +137,32 @@ loaded by another agent's tests, 2x2 was 7% faster (25.9 against 28.0 s). Not ad
 1. The wrapper's own loop variables (`b`, `t`) shadowed kernel parameters of the same name. The
    doctor's probe kernel `phasor_doctor_axpb(..., float b, ...)` read the block index as `b`.
    The wrapper now uses `phasor_*` names, and a kernel parameter with one of them is refused.
+
+## Contract audit
+
+This was done by the authoring model, not by an independent reviewer (as for 7-9).
+- Contracts 1, 2, 5 and 7: untouched.
+- 3: each backend is a pure function of its inputs and gives the same bits at any thread
+  count. CPU and NumPy differ by at most one byte step, as CUDA and NumPy already do.
+- 4: unchanged (one tone map, one sRGB encode).
+- 6: `render/cpu` lives inside `render`, and lint-imports is clean.
+- CLAUDE.md:
+  - one source per kernel (the CPU backend compiles the strings in `render/gpu/kernels/`);
+  - launchers use only calls NumPy and CuPy share;
+  - every `subprocess` call passes `NO_WINDOW` (`tests/test_proc.py`);
+  - text files use UTF-8.
+- The serial emulator (`tests/cuda_emu.py`) stays separate from the backend, as the plan
+  says. It overlaps in about 40 lines (the prelude and argument passing).
+
+## Windows (written for, not run)
+
+- On Windows a DLL's own dependencies are not searched for on PATH, so the compiler's folder
+  is added with `os.add_dll_directory` before loading.
+- A library that builds but will not load (a missing `libgomp-1.dll`) is a `CompileError`.
+  `auto` then uses the reference, and the failure is remembered, so it is not rebuilt on
+  every call (tested by mocking the load).
+- The OpenMP probe's temporary folder is left behind if Windows will not delete a loaded
+  DLL.
 
 ## Deferred
 

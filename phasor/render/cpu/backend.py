@@ -48,6 +48,11 @@ import numpy as np
 from phasor.core.proc import NO_WINDOW
 from phasor.render.gpu.registry import BLOCK, HEADER, PRECISIONS, KernelError
 
+# libgomp's idle threads otherwise spin after each kernel, taking cores from llvmpipe and the
+# Python draw step (measured: post 2x slower). libgomp reads this once, when it loads, so it
+# is set here, before the OpenMP probe or any kernel library can load it.
+os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
+
 SUPPORTED = ("g++", "clang++")
 # -O3, no fused multiply-add (the reference rounds every + and *), no fast math. Hidden
 # symbols, so the kernel inlines into its wrapper's loop (only the wrappers are exported).
@@ -186,7 +191,8 @@ def _has_openmp(path: str, version: str) -> bool:
         pass
     probe = '#include <omp.h>\nextern "C" int phasor_omp(void) { return omp_get_max_threads(); }\n'
     ok = False
-    with tempfile.TemporaryDirectory(prefix="phasor_omp_") as tmp:
+    # (a loaded DLL cannot be deleted on Windows: leave it to the temp folder's cleanup)
+    with tempfile.TemporaryDirectory(prefix="phasor_omp_", ignore_cleanup_errors=True) as tmp:
         src, lib = Path(tmp) / "probe.cpp", Path(tmp) / f"probe{LIB_SUFFIX}"
         src.write_text(probe, encoding="utf-8")
         try:
@@ -194,7 +200,7 @@ def _has_openmp(path: str, version: str) -> bool:
                                   capture_output=True, text=True, timeout=120,
                                   creationflags=NO_WINDOW)  # fmt: skip
             if done.returncode == 0:
-                ok = ctypes.CDLL(str(lib)).phasor_omp() >= 1
+                ok = _load(path, lib).phasor_omp() >= 1
         except (OSError, subprocess.TimeoutExpired):
             ok = False
     try:
@@ -203,6 +209,18 @@ def _has_openmp(path: str, version: str) -> bool:
     except OSError:
         pass
     return ok
+
+
+_DLL_DIRS: dict[str, Any] = {}  # Windows: the compiler's runtime DLLs, kept on the search path
+
+
+def _load(compiler_path: str, lib: Path) -> ctypes.CDLL:
+    """Load a built library. On Windows, Python does not search PATH for a DLL's own
+    dependencies (libstdc++, libgomp, libwinpthread): the compiler's folder is added."""
+    if sys.platform == "win32" and compiler_path not in _DLL_DIRS:
+        folder = str(Path(compiler_path).parent)
+        _DLL_DIRS[compiler_path] = os.add_dll_directory(folder)  # type: ignore[attr-defined]
+    return ctypes.CDLL(str(lib))
 
 
 def _pic() -> tuple[str, ...]:
@@ -271,6 +289,7 @@ class _HostArrays:
 
 
 _LIBS: dict[str, ctypes.CDLL] = {}  # loaded libraries, by key: shared by every CpuBackend
+_FAILED: dict[str, str] = {}  # keys that did not build or load in this process: not retried
 _SCALARS = {np.int32: ctypes.c_int, np.float32: ctypes.c_float, np.float64: ctypes.c_double}
 _ARRAYS = (np.float32, np.float64, np.uint8, np.uint64, np.int32)
 
@@ -329,6 +348,17 @@ class CpuBackend:
         key = hashlib.sha256("\n".join([code, c.path, c.version, *flags]).encode()).hexdigest()[:24]
         if key in _LIBS:
             return _LIBS[key]
+        if key in _FAILED:
+            raise CompileError(_FAILED[key])
+        try:
+            _LIBS[key] = self._build_and_load(key, code, flags)
+        except CompileError as e:
+            _FAILED[key] = str(e)
+            raise
+        return _LIBS[key]
+
+    def _build_and_load(self, key: str, code: str, flags: tuple[str, ...]) -> ctypes.CDLL:
+        c = self.compiler
         d = cache_dir()
         lib = d / f"{key}{LIB_SUFFIX}"
         if not lib.exists():
@@ -339,9 +369,12 @@ class CpuBackend:
             src = tmp.with_suffix(".cpp")
             src.write_text(code, encoding="utf-8")
             try:
-                done = subprocess.run([c.path, *flags, str(src), "-o", str(tmp)],
-                                      capture_output=True, text=True, timeout=600,
-                                      creationflags=NO_WINDOW)  # fmt: skip
+                try:
+                    done = subprocess.run([c.path, *flags, str(src), "-o", str(tmp)],
+                                          capture_output=True, text=True, timeout=600,
+                                          creationflags=NO_WINDOW)  # fmt: skip
+                except (OSError, subprocess.TimeoutExpired) as e:
+                    raise CompileError(f"{c.name} did not run: {e}") from e
                 if done.returncode != 0:
                     raise CompileError(f"kernel does not compile with {c.name}:\n{done.stderr}")
                 try:
@@ -352,8 +385,10 @@ class CpuBackend:
             finally:
                 src.unlink(missing_ok=True)
                 tmp.unlink(missing_ok=True)
-        _LIBS[key] = ctypes.CDLL(str(lib))
-        return _LIBS[key]
+        try:
+            return _load(c.path, lib)
+        except OSError as e:  # built but cannot load (a missing runtime DLL): use the reference
+            raise CompileError(f"built kernel library does not load: {e}") from e
 
     def launch(self, compiled: Any, n: int, args: tuple) -> None:
         """Run thread indices 0..n-1 (whole blocks, like the card) on ``threads`` cores."""
@@ -379,7 +414,4 @@ def _default(compiler: Compiler | None) -> CpuBackend | None:
 
 def default_cpu() -> CpuBackend | None:
     """The CPU backend, or None when no supported C++ compiler is found."""
-    # libgomp's threads otherwise spin after each kernel, taking cores from llvmpipe and the
-    # Python draw step between launches (must be set before the first OpenMP library loads).
-    os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
     return _default(find_compiler())
