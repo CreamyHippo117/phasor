@@ -581,8 +581,26 @@ assert field.shape == (90, 160) and (field == -1).any()  # -1 marks points in th
 - `gpu.render(name, width, height_px, supersample=1, backend="auto", **params)` runs tile by
   tile within the VRAM budget and returns a NumPy array. `gpu.run(name, tile, **params)`
   runs one tile and returns a CuPy array on CUDA.
-- With no CUDA the NumPy reference runs instead: same result, slower. `backend="cuda"`
-  demands the GPU; `backend="reference"` forces NumPy.
+- With no CUDA (tier B) the same CUDA source is compiled for the CPU by g++ or clang++
+  (found at run time, cached in the user cache) and runs on every core; with no compiler
+  either, the NumPy reference runs: same picture, slower. `backend="cuda"` demands the GPU,
+  `backend="cpu"` the CPU backend, `backend="reference"` forces NumPy. `gpu.run(...,
+  threads=n)`, `phasor.render.cpu.set_threads(n)` or `PHASOR_THREADS` set the CPU threads
+  (default: every core); results are the same bits at any thread count.
+
+```python
+import numpy as np
+
+from phasor.render import cpu, gpu
+from phasor.render.gpu.registry import active_backend
+
+print(active_backend(), cpu.threads(), cpu.find_compiler())  # e.g. "cpu", 4, g++ 13.3
+if cpu.find_compiler() is not None:
+    lit = np.ones((4, 8, 4), dtype=np.float32)
+    one = gpu.run("vignette", gpu.Tile.full(8, 4), image=lit, backend="cpu", threads=1)
+    all_cores = gpu.run("vignette", gpu.Tile.full(8, 4), image=lit, backend="cpu")
+    assert np.array_equal(one, all_cores)  # the thread count never changes a result
+```
 - `escape` picks float64 by itself once `height` is under 1e-5.
 - Formulas may use `z`, `i`, `pi`, `e`, numbers, `+ - * / **` and
   `exp log sqrt sin cos tan sinh cosh tanh conj abs`. Anything else is a `FunctionError`.
@@ -1405,11 +1423,11 @@ field and nullclines kept faint.
 
 | Command | Status | Purpose |
 | --- | --- | --- |
-| `phasor doctor [--json] [--require A\|B\|C]` | M0 | Prove CUDA, NVRTC, OpenGL 4.3, encoders; print tier |
+| `phasor doctor [--json] [--require A\|B\|C]` | M0 | Prove CUDA, NVRTC, OpenGL 4.3, encoders and, without CUDA, the C++ compiler for CPU kernels (name, version, threads); print tier |
 | `phasor inspect SCENE [--t T] [--id ID] [--detail brief\|standard\|full]` | M1 | What is on screen at time t |
 | `phasor lint SCENE [--fix] [--strict] [--json] [--step S]` | M2 | Lint; exit 1 on errors (`--strict`: on warnings too). `--fix` applies suggested fixes and saves them |
 | `phasor storyboard SCENE [-o PNG] [--t T]... [--marks] [--json]` | M2 | Keyframe contact sheet plus what the inspector sees |
-| `phasor render SCENE [-o OUT] [--preset preview\|final\|4k] [--fps F] [--start S] [--end E] [--frame T] [--workers N]` | M3 | Video (`.mp4`; `.mov` is ProRes; a folder or `%05d.png` is a PNG sequence) or one PNG with `--frame`. `--workers`: render processes (default a quarter of the CPU threads, 1 to 4); the result is the same file as one process makes |
+| `phasor render SCENE [-o OUT] [--preset preview\|final\|4k] [--fps F] [--start S] [--end E] [--frame T] [--workers N] [--threads T]` | M3 | Video (`.mp4`; `.mov` is ProRes; a folder or `%05d.png` is a PNG sequence) or one PNG with `--frame`. `--workers`: render processes (default a quarter of the CPU threads, 1 to 4); the result is the same file as one process makes. `--threads`: CPU kernel threads per process without CUDA (default: the cores shared out, workers x threads <= cores) |
 | `phasor kit [FOLDER]` | kit | Set up or update a folder where an AI writes scenes (default `Documents/phasor`): `CLAUDE.md`, the AI docs, the examples sorted by kind, the `/scene` command, `TASTE.md`, and the phasor tools in `.mcp.json`. Your `TASTE.md`, `WISHLIST.md` and `scenes/` are never replaced |
 | `phasor bench [--width W] [--height H]` | M3 | ms per frame per kernel and peak VRAM; saved in `benchmarks/` |
 | `phasor bench --frames SCENE [--count N] [--preset P]` | GPU_SPEED.md | ms per final frame per stage (state, simulation, draw, gpu draw, readback, widen, blur sum, post, srgb, encode); saved in `benchmarks/` |

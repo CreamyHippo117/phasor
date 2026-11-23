@@ -145,9 +145,10 @@ def _cmd_render(args: argparse.Namespace) -> int:
     from pathlib import Path
 
     from phasor.core.issues import DocumentError
+    from phasor.render.cpu import set_threads
     from phasor.render.encode import EncodeError
     from phasor.render.job import render_file
-    from phasor.scene import default_workers, load, parallel_frames
+    from phasor.scene import default_threads, default_workers, load, parallel_frames
 
     def progress(k: int, n: int) -> None:
         if not args.quiet:
@@ -158,7 +159,9 @@ def _cmd_render(args: argparse.Namespace) -> int:
         engine = load(args.scene)
         default = stem + (".png" if args.frame is not None else ".mp4")
         workers = default_workers() if args.workers is None else args.workers
-        source = parallel_frames(engine, workers) if workers > 1 else None
+        threads = default_threads(workers) if args.threads is None else args.threads
+        set_threads(threads)  # this process's kernels (all of them with --workers 1)
+        source = parallel_frames(engine, workers, threads=threads) if workers > 1 else None
         r = render_file(
             engine, args.out or default, preset=args.preset, fps=args.fps, start=args.start,
             end=args.end, frame=args.frame, progress=progress, shutter=args.shutter,
@@ -335,6 +338,9 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--workers", type=int,
                    help="render processes (default: a quarter of the CPU threads, 1 to 4; "
                    "1 renders in this process)")  # fmt: skip
+    r.add_argument("--threads", type=int,
+                   help="CPU kernel threads per render process, without CUDA (default: the "
+                   "cores shared out, workers x threads <= cores; env PHASOR_THREADS)")  # fmt: skip
     r.add_argument("--quiet", action="store_true")
     r.set_defaults(func=_cmd_render)
 
