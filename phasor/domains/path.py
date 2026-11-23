@@ -27,7 +27,7 @@ from pydantic import Field, field_validator, model_validator
 
 from phasor.core import record
 from phasor.core.cache import ByteCache
-from phasor.core.ids import is_valid_id
+from phasor.core.ids import MAX_REF, is_valid_id
 from phasor.core.objects import DrawContext, ObjectBase, ParamsBase, register
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
@@ -82,7 +82,7 @@ def _frozen(*arrays: np.ndarray) -> None:
         a.setflags(write=False)
 
 
-MAX_ID = 200  # characters of an object id a parameter names (``morph_from``)
+MAX_ID = MAX_REF  # characters of an object id a parameter names (``morph_from``)
 
 
 class MorphParams(ParamsBase):

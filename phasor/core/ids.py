@@ -11,6 +11,7 @@ import re
 _SEGMENT = r"[a-z][a-z0-9_]*"
 ID_RE = re.compile(rf"{_SEGMENT}(\.{_SEGMENT})*")
 NAME_RE = re.compile(_SEGMENT)
+MAX_REF = 200  # characters of an id a parameter may name (``morph_from``); ids have no limit
 
 
 def is_valid_id(s: str) -> bool:

@@ -277,6 +277,26 @@ def test_the_verbs_refuse_what_cannot_morph():
         s.at("go").transform("c", "c")
 
 
+def test_a_source_whose_id_is_too_long_to_name_is_refused_by_the_verb():
+    """Audit 17 #6: ids have no length limit, but ``morph_from`` names at most
+    ``ids.MAX_REF`` characters; the verb accepted a longer source and the document then
+    failed to evaluate from the transform on (``bad_param``). The verb refuses it."""
+    from phasor.core.ids import MAX_REF
+
+    s = _scene()
+    long = "a" * (MAX_REF + 50)
+    s.add(shapes.Circle(id=long, r=1))
+    s.add(shapes.Circle(id="b", r=2))
+    for verb in (s.at("go").transform, s.at("go").transform_matching):
+        with pytest.raises(VerbError, match=f"at most {MAX_REF} characters"):
+            verb(long, "b")
+    assert not [i for i in s.engine.lint() if i.severity == "error"]
+    ok = "a" * MAX_REF
+    s.add(shapes.Circle(id=ok, r=1))
+    s.at("go").transform(ok, "b")
+    s.engine.state_at(1.5)
+
+
 def test_equations_drawn_as_pictures_keep_the_parts_transform():
     """The equation transform of before Milestone 17 writes the same ops."""
     s = _scene()
