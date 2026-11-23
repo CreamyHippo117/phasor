@@ -412,6 +412,7 @@ class Winding(ObjectBase):
         _, mean, _, _ = self._data(p)
         return {
             "kind": "winding",
+            "backdrop": True,
             "frequency_hz": p.freq,
             "centroid": (float(mean.real), float(mean.imag)),
             "magnitude": float(abs(mean)),
