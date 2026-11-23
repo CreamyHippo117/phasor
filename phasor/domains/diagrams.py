@@ -539,11 +539,27 @@ class BarChart(ObjectBase):
         )
 
     def _names(self, state: SceneState) -> list[str]:
+        return self._part_names(state)[0]
+
+    def _part_names(self, state: SceneState) -> tuple[list[str], list[str], list[str], set[str]]:
+        """(bar, name label, value label) part names per bar, and every name taken (the y
+        numbers keep clear of it). Worked out in one pass for every part the chart could
+        build, whatever ``grow`` and ``show_values`` are, so no two parts ever share a name
+        (bars ``a`` and ``a name``: the label of ``a`` is ``a_name_2``) and a name never
+        changes as the chart animates; names the document holds or retired under the chart
+        get the next suffix too."""
         p = self.me(state).params
         raw = [name_from(n, "bar", 30) for n in p.names] or [
             f"bar_{i + 1}" for i in range(len(p.values))
         ]
-        return unique_names(raw, children(state.reserved, self.id))
+        taken = set(children(state.reserved, self.id))
+        bars = unique_names(raw, taken)
+        taken |= set(bars)
+        labels = unique_names([f"{b}_name" for b in bars], taken)
+        taken |= set(labels)
+        values = unique_names([f"{b}_value" for b in bars], taken)
+        taken |= set(values)
+        return bars, labels, values, taken
 
     def _ynumbers(self, state: SceneState, b: _Bars):
         p = self.me(state).params
@@ -558,7 +574,7 @@ class BarChart(ObjectBase):
         b = self._layout(state)
         r = me.roles
         out: list = []
-        names = self._names(state)
+        names, label_names, value_names, taken = self._part_names(state)
         digits = ticks.decimals(b.step) if p.digits < 0 else p.digits
         text_style = {"color": r["color"], "size": r["numbers"]}
         for i, (v, name) in enumerate(zip(p.values, names, strict=True)):
@@ -572,18 +588,16 @@ class BarChart(ObjectBase):
                 out.append(Rectangle(id=name, pos=(x, (y0 + y1) / 2, b.z),
                                      width=b.slot * (1 - p.gap), height=abs(y1 - y0),
                                      style=style))  # fmt: skip
-            if p.names:
-                out.append(Text(id=f"{name}_name", text=p.names[i], style=text_style,
+            if p.names and p.names[i].strip():  # an empty name has no label
+                out.append(Text(id=label_names[i], text=p.names[i], style=text_style,
                                 pos=(x, b.bottom - NUMBER_GAP * b.h - b.h / 2, b.z),
                                 tags=["tick", "along_names"]))  # fmt: skip
             if p.show_values and p.grow > 0:
                 up = 1 if top >= b.base else -1
-                out.append(Text(id=f"{name}_value", text=ticks.as_math(ticks.text(v, digits)),
+                out.append(Text(id=value_names[i], text=ticks.as_math(ticks.text(v, digits)),
                                 pos=(x, y1 + up * (NUMBER_GAP * b.h + b.h / 2), b.z),
                                 style=text_style))  # fmt: skip
         if p.numbers:
-            taken = children(state.reserved, self.id) | {o.id for o in out}
-            taken |= {f"{n}_{k}" for n in names for k in ("name", "value")}
             out += number_parts("y", self._ynumbers(state, b), roles=r, reserved=taken)
         return out
 

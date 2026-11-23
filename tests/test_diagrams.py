@@ -857,3 +857,60 @@ def test_a_write_past_the_tick_limit_is_taken_and_its_lint_delta_says_so():
     assert r.ok
     assert [i.code for i in r.lint_added] == ["clamped"]
     assert "step of 10" in r.lint_added[0].message
+
+
+def _grown_chart(names, show_values=True, reserved=()):
+    """A chart whose bars grow in from 0 (no rectangles at t = 0) to full at t = 1."""
+    from phasor import Text, dg
+
+    s = _scene()
+    s.add(dg.BarChart(id="c", values=tuple(range(1, len(names) + 1)), names=names, grow=0.0,
+                      show_values=show_values))  # fmt: skip
+    for k, rid in enumerate(reserved):
+        s.add(Text(id=f"c.{rid}", text="mine", pos=(0, 4 + k, 0)))
+    s.at(0.0).to("c.grow", 1.0, duration=1.0)
+    s.marker("end", 2.0)
+    return s.engine
+
+
+def test_bar_names_never_collide_with_the_parts_derived_from_them():
+    """B2: bars 'a' and 'a name' gave the label of 'a' and the bar 'a name' one id, and the
+    chart raised once the bars grew (state_at, inspect, lint)."""
+    e = _grown_chart(("a", "a name", "a value"))
+    ids = {t: _ids(e, t) for t in (0.0, 1.0, 2.0)}
+    for t, found in ids.items():
+        assert len(found) == len(set(found)), t
+    assert {"c.a", "c.a_name", "c.a_value", "c.a_name_2", "c.a_value_2"} <= set(ids[2.0])
+    assert "c.a_name_2" in ids[0.0]  # the label's name is the same before the bars grow
+    e.inspect(1.0, detail="full")
+    assert "bad_part" not in {i.code for i in e.lint()}
+
+
+def test_bar_part_names_fuzzed_over_shared_prefixes_and_suffixes():
+    import random
+
+    tokens = ["a", "a name", "a value", "a_name", "a_name_name", "A", "y 1", "y", "bar 1",
+              "bar_1_name", "a_value_2", "a_name_2", "x"]  # fmt: skip
+    rng = random.Random(19)
+    for trial in range(24):
+        names = tuple(rng.sample(tokens, rng.randint(1, 6)))
+        reserved = tuple(rng.sample(["a_name", "y_1", "bar_1", "a_value"], rng.randint(0, 2)))
+        e = _grown_chart(names, show_values=trial % 2 == 0, reserved=reserved)
+        before: set[str] = set()
+        for t in (0.0, 0.5, 1.0):
+            found = _ids(e, t)
+            assert len(found) == len(set(found)), (names, reserved, t)
+            assert before <= set(found), (names, t)  # growing only adds parts: none renamed
+            before = set(found)
+        assert "bad_part" not in {i.code for i in e.lint()}, (names, reserved)
+
+
+def test_an_empty_bar_name_has_no_label_and_never_fails():
+    """S2: a name "" passed the validator but its label Text(text="") failed as bad_part."""
+    from phasor import dg
+
+    s = _scene()
+    s.add(dg.BarChart(id="c", values=(1, 2), names=("", "b")))
+    ids = _ids(s.engine)
+    assert "c.b_name" in ids and "c.bar_name" not in ids and "c.bar" in ids
+    assert "bad_part" not in {i.code for i in s.engine.lint()}
