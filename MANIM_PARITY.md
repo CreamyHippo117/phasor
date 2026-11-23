@@ -178,6 +178,22 @@ Branches: the session may push only `claude/eloquent-mayer-jiqxs9`, so Milestone
 are built in local worktrees and merged here, one milestone per commit series. Nothing starts
 on 16-19 until 15 passes `phasor-milestone-gate`.
 
+## Milestone 14 baseline (14.0, 2026-11-23)
+
+4 cores, no CUDA, OpenGL on llvmpipe (tier B), `phasor bench --frames SCENE --count 6 --preset
+preview` (960x540), kernels on the NumPy reference, nothing else running. JSON in `benchmarks/`.
+
+| stage (ms/frame) | prism_primes | prism_domain |
+| --- | --- | --- |
+| draw | 27 | 518 |
+| post (bloom, tone map, lens) | 454 | 421 |
+| widen, srgb, encode, other | 48 | 47 |
+| **total** | **530** | **987** |
+
+Post is the biggest or second stage in both. Not measured, and
+not claimable from this machine: anything with CUDA, and 14.3's worker counts on the RTX 4070
+Ti (`pc_tasks/`).
+
 ## Status
 
 | Milestone | Status |
