@@ -442,9 +442,16 @@ def run(
     ever_shown: set[str] = set()
     solved_on_screen = {g.ids[0] for _, g in plan.guards("on_screen")} & plan.solved
 
+    broken: dict[tuple, tuple[str, list[float]]] = {}  # the scene fails to evaluate at t
     for t in sample_times(c, step):
-        state = state_at(t)
-        fr = _Frame(state, snapshot_at(t), runner, c)
+        try:
+            state, snap = state_at(t), snapshot_at(t)
+        except DocumentError as e:  # an updater that fails later (ADR 0005): an issue, no crash
+            for i in e.issues:
+                ids = i.ids or ((i.path.rsplit(".", 1)[0],) if i.path else ())
+                broken.setdefault((i.code, ids, i.path), (i.message, []))[1].append(t)
+            continue
+        fr = _Frame(state, snap, runner, c)
         height = state.height
         shown = [e for e in fr.entries.values() if _shown(e)]
         ever_shown.update(e["id"] for e in shown)
@@ -600,4 +607,8 @@ def run(
                 "sampled time", "warning", (o.id,),
                 fix_hint="animate its opacity or position into view, or remove it",
             ))  # fmt: skip
+    issues += [Issue(code, f"the scene cannot be evaluated {_when(ts)}: {msg}", "error", ids,
+                     path=path, times=tuple(ts),
+                     fix_hint="read and return the same parameters at every t")
+               for (code, ids, path), (msg, ts) in broken.items()]  # fmt: skip
     return issues + clutter(c)

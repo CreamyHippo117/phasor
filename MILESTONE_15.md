@@ -35,7 +35,7 @@ Status: **built; gates green on Linux (see Verification); independent audit done
   rightly flagged, the example's docstring naming a milestone, the example missing from
   `kit/examples.toml`. ruff, ruff format and lint-imports clean; `phasor doctor` tier B
   (llvmpipe OpenGL 4.5, no CUDA).
-- `tests/test_open_contract.py` (38 tests): the recorder (every command, pixels never
+- `tests/test_open_contract.py` (38 tests at the build; 53 test functions with the audit's, section 7): the recorder (every command, pixels never
   computed, cache and re-recording when a read object changes); registration (two members,
   `pass_` kept for a draw that takes it, re-registration by the same file only); the four
   ported types' inspector output byte-identical; composites in both lint MODES (ids, indices,
@@ -57,6 +57,11 @@ Status: **built; gates green on Linux (see Verification); independent audit done
   available in the building session). It found one contract problem, fixed before handing
   back: updaters defined outside the scene's folder had been allowed (contract 3); they are
   refused now (see the proposal below).
+- After the audit fixes (2026-11-23, Linux, llvmpipe): `tests/test_open_contract.py`,
+  `test_lint`, `test_contracts`, `test_layers`, `test_time`, `test_docs`, `test_workers`,
+  `test_sketch`, `test_mcp*`, `test_engine`, `test_pycode`, `test_interactive`,
+  `test_manim_import` and `test_final -k "not slow"` pass; ruff, ruff format and lint-imports
+  clean. The full suite was not re-run.
 - **Independent audit done 2026-11-23, blockers fixed.** It found two blockers and three
   should-fix problems (Deviations 11-15, each with the test that guards it in
   `tests/test_open_contract.py`, section 7) and five notes (Deviation 16, Deferred).
@@ -140,10 +145,15 @@ Found by the independent audit (2026-11-23; repro scripts x1-x11), and how they 
     strict lint returned nothing for a scene whose `state_at(2.0)` raised when the scene had
     no markers. A parameter the updater did not return at compile time is now an error naming
     it and the time; `lint(strict=True)` calls every updater at every sample time and over at
-    least the first `PROBE_SPAN` (2 s), and reports one that fails as `bad_updater` with its
-    times (it swallowed such failures before, or crashed). Tests:
+    least the first `PROBE_SPAN` (2 s; a module constant, not a theme `[lint]` value: it is how
+    far to look, not a threshold), and reports one that fails as `bad_updater` with its times
+    (it swallowed such failures before, or crashed). Plain lint no longer raises when the
+    scene cannot be evaluated at a sample time: that is an error issue with its times (it
+    raised before for an updater that read something new later, and would now for one that
+    returns something new). Tests, both lint MODES:
     `test_audit_x2_an_updater_must_set_the_same_parameters_at_every_t`,
-    `test_audit_x2_strict_lint_probes_updaters_beyond_t0`.
+    `test_audit_x2_strict_lint_probes_updaters_beyond_t0`,
+    `test_audit_x2_a_scene_that_fails_at_a_sample_is_linted_not_crashed`.
 15. **The recording cache ignored files and time** (x4). The key now holds each `Files`
     file's path, modification time and size (`files.stamp`, the (mtime, size) rule the mesh
     and network loaders use), so a changed file is drawn again. A `draw` that reads `state.t`,
@@ -169,6 +179,16 @@ Found by the independent audit (2026-11-23; repro scripts x1-x11), and how they 
   find the default (it has no engine, so no `CodeScope`).
 - The registries are still process-wide dictionaries; reads of them are not locked (only
   loading and compiling is).
+- A changed `Files` file is drawn again by the recorder, but the engine's per-version state,
+  snapshot and lint caches are not dropped: `inspect(t)` at a time already cached stays as it
+  was until the next edit.
+- An allowed document reuses the code a script registered in this process for the same file
+  even after the file changed on disk; only modules the engine loaded are watched for changes
+  (as before the audit).
+- `Scene()` takes its permission from its immediate caller only: a helper in the person's own
+  imported package that builds the Scene for a script gets `allow_scripts=False` (pass it).
+- The aesthetic rules and the layout bake still raise when the scene cannot be evaluated at a
+  time they sample (plain and strict lint do not).
 
 ## Bugs caught while building
 

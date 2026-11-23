@@ -1217,19 +1217,38 @@ def test_audit_x2_an_updater_must_set_the_same_parameters_at_every_t(tmp_path):
         e.state_at(2.0)
 
 
+@pytest.mark.parametrize("passes", MODES)
 @pytest.mark.parametrize("which", ["late", "branch"])
-def test_audit_x2_strict_lint_probes_updaters_beyond_t0(tmp_path, which):
+def test_audit_x2_strict_lint_probes_updaters_beyond_t0(tmp_path, which, passes):
     """The scene has no markers (only t = 0 is a sample); strict lint still tries later
     times and reports the updater that fails there. Plain lint does not crash."""
     from phasor import load
 
     script = tmp_path / f"{which}.py"
     script.write_text(AUDIT_LATE.replace("{which}", which), "utf-8")
-    e = load(script, passes=None)
+    e = load(script, passes=passes)
     assert [i.code for i in e.lint()] == []
     (issue,) = [i for i in e.lint(strict=True) if i.code == "bad_updater"]
     assert issue.ids == ("d",) and issue.severity == "error" and issue.times
     assert all(t >= 1.0 for t in issue.times) and which in issue.message
+
+
+@pytest.mark.parametrize("passes", MODES)
+@pytest.mark.parametrize("which", ["late", "branch"])
+def test_audit_x2_a_scene_that_fails_at_a_sample_is_linted_not_crashed(tmp_path, which, passes):
+    """With a marker at 3 s the samples reach the failing times: lint reports the failure
+    (an error with its times) instead of raising, and the times that work still evaluate."""
+    from phasor import load
+
+    script = tmp_path / f"{which}.py"
+    script.write_text(AUDIT_LATE.replace("{which}", which) + 's.marker("end", 3)\n', "utf-8")
+    e = load(script, passes=passes)
+    assert e.state_at(0.5)["d"].params.r in (0.1, 0.2)
+    (issue,) = [i for i in e.lint() if i.ids == ("d",)]
+    assert issue.severity == "error" and issue.times and min(issue.times) >= 1.0
+    assert which in issue.message
+    strict = {i.code for i in e.lint(strict=True) if i.ids == ("d",)}
+    assert "bad_updater" in strict
 
 
 AUDIT_FILES = """

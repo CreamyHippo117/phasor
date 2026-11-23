@@ -194,7 +194,8 @@ did not return then (read and return the same things at every t). It must be pur
 `lint(strict=True)` calls every updater again, in another order, and reports
 `impure_updater` when answers differ (threshold: the theme's `[lint] impure`), and
 `bad_updater` with the times when one fails (it tries every sample time and at least the
-first two seconds, so a scene with no markers is checked past t = 0).
+first two seconds, so a scene with no markers is checked past t = 0). Plain lint reports a
+time the scene cannot be evaluated at as an error with its times, instead of raising.
 Something that needs the previous frame is a `Simulation`. `look` sees parameters before
 living motion: tag an object `exact` when something must sit on it exactly.
 
