@@ -227,3 +227,22 @@ def test_render_takes_a_threads_option():
     args = build_parser().parse_args(["render", "x.py", "--workers", "2", "--threads", "3"])
     assert (args.workers, args.threads) == (2, 3)
     assert build_parser().parse_args(["render", "x.py"]).threads is None
+
+
+@pytest.mark.gl
+@needs_cpu
+def test_exit_demo_prism_primes_on_the_cpu_is_the_reference_picture(monkeypatch):
+    """Milestone 14's exit demo, in a test: a finished prism_primes frame (bloom, tone map,
+    lens, sRGB bytes) through the CPU kernels against the same frame on the NumPy
+    references. (Its software golden is checked in tests/test_prism.py, on ``auto``.)"""
+    from tests.test_prism import _demo
+
+    if gpu.default_gpu() is not None:
+        pytest.skip("CUDA present: auto would not use the CPU backend")
+    e = _demo()["s"].engine
+    on_cpu = e.frame(12.0, (320, 180), output="srgb8")
+    monkeypatch.setattr(cpu, "find_compiler", lambda: None)
+    assert active_backend() == "reference"
+    on_numpy = e.frame(12.0, (320, 180), output="srgb8")
+    diff = np.abs(on_cpu.astype(np.int16) - on_numpy)
+    assert diff.max() <= 1 and (diff > 0).mean() < 1e-3, (int(diff.max()), (diff > 0).mean())
