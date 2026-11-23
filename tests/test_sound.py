@@ -287,7 +287,8 @@ def _stdlib(path: Path) -> tuple[np.ndarray, int]:
 def test_narration_reads_wavs_exactly_as_the_stdlib_did(tmp_path):
     """The narration reader shares the header walk; its samples are the same as before."""
     rng = np.random.default_rng(1)
-    mono = wav(tmp_path / "mono.wav", rng.integers(-32768, 32767, 999), rate=22050)
+    samples = rng.integers(-32768, 32767, 999)
+    mono = wav(tmp_path / "mono.wav", samples, rate=22050)
     wav(tmp_path / "stereo.wav", rng.integers(-32768, 32767, (777, 2)), rate=4000, channels=2)
     # an odd-sized LIST chunk (padded) before the data
     raw = mono.read_bytes()
@@ -301,7 +302,11 @@ def test_narration_reads_wavs_exactly_as_the_stdlib_did(tmp_path):
     (tmp_path / "ext.wav").write_bytes(b"RIFF" + struct.pack("<I", len(body)) + body)
     for name in ("mono.wav", "stereo.wav", "list.wav", "ext.wav"):
         mine, rate = nar.read_wav(tmp_path / name)
-        theirs, their_rate = _stdlib(tmp_path / name)
+        try:
+            theirs, their_rate = _stdlib(tmp_path / name)
+        except wave.Error:  # Python before 3.12 cannot read WAVE_FORMAT_EXTENSIBLE at all
+            assert name == "ext.wav", name
+            theirs, their_rate = samples.astype(np.int16), 22050  # what the test wrote
         assert rate == their_rate and mine.dtype == np.int16
         assert np.array_equal(mine, theirs), name
 
