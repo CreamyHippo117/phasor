@@ -118,14 +118,20 @@ extern "C" __global__ void phasor_splat_tone(int n, float gain, float white, int
 )
 
 
-def _inputs(points, colors, weights):
-    pts = np.ascontiguousarray(points, dtype=np.float64).reshape(-1, 2)
+def _on_host(*arrays) -> bool:
+    return all(a is None or not hasattr(a, "__cuda_array_interface__") for a in arrays)
+
+
+def _inputs(points, colors, weights, xp=np):
+    """The kernel's arrays: NumPy, or on the card (``xp`` CuPy) when the caller keeps them
+    there (``cloud.card_points``), so they are not copied back and forth."""
+    pts = xp.ascontiguousarray(points, dtype=np.float64).reshape(-1, 2)
     n = len(pts)
-    rgb = np.ascontiguousarray(colors, dtype=np.float32).reshape(-1, 3)
+    rgb = xp.ascontiguousarray(colors, dtype=np.float32).reshape(-1, 3)
     if len(rgb) == 1 and n != 1:
-        rgb = np.ascontiguousarray(np.broadcast_to(rgb, (n, 3)))
-    wt = (np.ones(n, dtype=np.float32) if weights is None
-          else np.ascontiguousarray(weights, dtype=np.float32).reshape(-1))  # fmt: skip
+        rgb = xp.ascontiguousarray(xp.broadcast_to(rgb, (n, 3)))
+    wt = (xp.ones(n, dtype=np.float32) if weights is None
+          else xp.ascontiguousarray(weights, dtype=np.float32).reshape(-1))  # fmt: skip
     if len(rgb) != n or len(wt) != n:
         raise KernelError(f"splat: {n} points but {len(rgb)} colours and {len(wt)} weights")
     return pts, rgb, wt
@@ -216,7 +222,10 @@ def splat(
     ``white`` (0-1) turns the colour toward white where the light nears the curve's ceiling
     (by ``white * a^4``): a white-hot core in the densest parts, none in the sparse ones."""
     _check_sigma(sigma)
-    pts, rgb, wt = _inputs(points, colors, weights)
+    # host arrays as always (the emulator and CPU backend allow only a few array calls);
+    # arrays already on the card stay there (only real CuPy can hold them)
+    on_card = not _on_host(points, colors, weights)
+    pts, rgb, wt = _inputs(points, colors, weights, gpu.cp if on_card else np)
     acc = gpu.cp.zeros((tile.h, tile.w, 4), dtype=gpu.cp.uint64)
     if len(pts):
         compiled = gpu.compile(SOURCE, "phasor_splat")

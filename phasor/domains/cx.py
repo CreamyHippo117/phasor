@@ -350,14 +350,18 @@ class Fractal(_Plane):
     def features(self, state: SceneState) -> dict[str, np.ndarray]:
         return {"center": np.asarray(self.me(state).params.pos)}
 
-    def orbits(self, state: SceneState) -> tuple[np.ndarray, np.ndarray]:
+    def orbits(self, state: SceneState, card: bool = False) -> tuple[Any, Any]:
         """Buddhabrot: (orbit points (n, 2) in the rectangle's coordinates, lower-left corner
-        at 0, only those inside it; value (n,) 0-1, the colour), from the cache."""
+        at 0, only those inside it; value (n,) 0-1, the colour), from the cache. ``card``:
+        CuPy arrays placed and cut on the card when CUDA is here (the same bits)."""
         p = self.me(state).params
-        pts, v = cloud.source_points(self.id, p.seed, "buddhabrot", (p.max_iter, p.count))
+        key = (p.max_iter, p.count)
+        dev = cloud.card_points(self.id, p.seed, "buddhabrot", key) if card else None
+        pts, v = dev or cloud.source_points(self.id, p.seed, "buddhabrot", key)
+        xp = cloud.array_module(pts)
         c, k = self._view(p)
         w, h = p.size
-        q = (pts - np.array([float(c[0]), float(c[1])])) / k + np.array([w / 2, h / 2])
+        q = (pts - xp.asarray([float(c[0]), float(c[1])])) / k + xp.asarray([w / 2, h / 2])
         inside = (q[:, 0] >= 0) & (q[:, 0] <= w) & (q[:, 1] >= 0) & (q[:, 1] <= h)
         return q[inside], v[inside]
 
@@ -396,7 +400,7 @@ class Fractal(_Plane):
 
             def cloud_pixels(pw: int, ph: int, center: tuple[float, float],
                              height: float) -> np.ndarray:  # fmt: skip
-                pts, v = self.orbits(state)
+                pts, v = self.orbits(state, card=True)
                 return cloud.splat_pixels(pts, v, lut, bg, pw, ph, center, height, size=p.size,
                                           hue=p.hue, point_size=p.point_size,
                                           exposure=p.exposure, white=p.white)  # fmt: skip
@@ -422,12 +426,11 @@ class Fractal(_Plane):
                 out = gpu.run("palette", gpu.Tile.full(pw, ph), field=field, lut=lut,
                               density=p.density, offset=offset, inside=inside)  # fmt: skip
                 return to_host(out)
-            out = to_host(gpu.run("fractal_glow", gpu.Tile.full(pw * s, ph * s), field=field,
-                                  lut=lut, density=p.density, offset=offset, inside=inside,
-                                  radius=p.radius / height * ph * s,  # world units -> pixels
-                                  ambient=p.ambient))  # fmt: skip
-            return out.reshape(ph, s, pw, s, 4).mean(axis=(1, 3), dtype=np.float64).astype(
-                np.float32)  # fmt: skip
+            out = gpu.run("fractal_glow", gpu.Tile.full(pw * s, ph * s), field=field, lut=lut,
+                          density=p.density, offset=offset, inside=inside,
+                          radius=p.radius / height * ph * s,  # world units -> pixels
+                          ambient=p.ambient)  # fmt: skip
+            return to_host(gpu.box_mean(out, s))  # averaged on the card, then sent
 
         ctx.field(corner, r, u, pixels=pixels, opacity=p.opacity,
                   glow=float(me.style.get("glow", 1.0)) if p.radius > 0 else 1.0)  # fmt: skip

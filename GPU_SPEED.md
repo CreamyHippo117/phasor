@@ -315,7 +315,8 @@ Each figure is one run, so treat the exact ratio loosely.
 
 ## Step 9. Kernel-drawn objects: stop doing their pixels on the CPU (2026-11-23, plan)
 
-Plan written on the PC (RTX 4070 Ti) at `b579d7e`; **not yet approved**. No new dependency.
+Plan written on the PC (RTX 4070 Ti) at `b579d7e`; approved by the owner the same day. No new
+dependency. **9a and 9b are done** (results at the end of each); 9c and 9d are next.
 
 ### Where a frame goes now
 
@@ -357,6 +358,12 @@ result within 1 ulp-scale tolerance of the float64 host mean); the `prism_domain
 `prism_fractal`, `deep_zoom` and fractal goldens unchanged; finals within 1 code value of
 the old path (`pc_tasks/pin_frames.py` on three frames each, compared with a tolerance).
 
+**Done 2026-11-23.** `gpu.box_mean` averages where the kernel left the picture, in the same
+float64 arithmetic as before, so the bits do not change; `gpu.render(supersample=)` and
+`cx.Fractal`'s glow path use it. prism_fractal 1371 -> 259 ms/frame (draw 1280 -> 219),
+prism_domain 330 -> 63 (draw 312 -> 45). What is left of the fractal's draw is the escape
+field going to the host and back (`_escape_field` returns a host array): a later trim.
+
 ### 9b. Point clouds stay on the card (expected: buddhabrot 3035 -> ~100 ms draw)
 
 - Cache a source's points and colour values as device arrays, keyed as today
@@ -374,6 +381,18 @@ Tests: the `splat` `CASES` gain the palette mode (three ways); the point_cloud, 
 and bifurcation goldens unchanged; finals bit-identical where the fixed-point splat allows
 (the sum is already fixed point), else within 1 code value; `semantics` (`points`,
 `in_rectangle`) unchanged, computed from the same cache.
+
+**Done 2026-11-23, in a simpler form than planned.** `cloud.card_points` keeps a source's
+points and values on the card (the latest two sets); placing, culling (`_inside`, the
+Buddhabrot's view) and colouring (`_colors`, now `y - floor(y)` in place of `y % 1.0`, the
+same bits) run there as CuPy operations, each one correctly rounded op as in NumPy, and the
+`splat` launcher takes arrays already on the card. The palette was not moved into the kernel:
+with the work on the card it costs a few milliseconds, and keeping NumPy's own operations
+keeps the bits. Twinkle's `sin` and `color_by="phase"`'s `arctan2` stay on the host (libm and
+CUDA differ in the last bit). buddhabrot 3077 -> 592 ms/frame (draw 3035 -> 552); what is
+left is the splat of 8 M points itself. Bifurcation keeps its host path (its points are
+made per view). Tests: `tests/test_fields_on_card.py` (card and host pictures equal bit for
+bit; `box_mean` and `_colors` equal the old code); finals of six examples hash-identical.
 
 ### 9c. One heat-shading kernel (expected: interference 1755 -> ~80, prism_heat 1125 -> ~60, room_acoustics 320 -> ~60)
 
@@ -496,7 +515,7 @@ Open items:
 | 4 | parallel workers | x3 wall time | full final render of motion_gallery 61.5 -> 33.8 s (4 workers, CLI), packaged app 50.6 -> 24.0 s; prism_primes 34.8 -> 23.7 s; steady 70.6 -> 23.2 ms/frame | done 2026-11-22 (ADR 0003 option A; default 4 workers: 6 and 8 were no faster) |
 | 5 | GL-CUDA interop, GPU encoder | small | | measure first; new dependency needs approval |
 | 6 | simulations on the card | those scenes only | room_acoustics: simulation 0.1 ms, draw 320 ms (2026-11-23) | not needed for room_acoustics; its cost is the heat map (step 9c) |
-| 9 | kernel-drawn objects on the card | draw 300-3000 -> 30-150 ms | baseline 2026-11-23 in step 9 | plan, not yet approved |
+| 9 | kernel-drawn objects on the card | draw 300-3000 -> 30-150 ms | 9a: prism_fractal 1371 -> 241, prism_domain 330 -> 60 ms/frame; 9b: buddhabrot 3077 -> 525 ms/frame; finals bit-identical (pin_frames on six examples) | approved 2026-11-23; 9a, 9b done; 9c, 9d next |
 
 Target after steps 0-4: motion_gallery from 571 ms to roughly 120 ms per frame, then about
 3x more from workers; the showcase from 71 minutes to roughly 5-8.

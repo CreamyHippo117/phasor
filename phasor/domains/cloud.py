@@ -47,6 +47,7 @@ from phasor.render.gpu.codegen import FunctionError
 MIN_DENSITY = 0.02
 ZOOM_LIGHT = 0.7  # 1: brightness held as the camera zooms in; 0: each point's light fixed
 CACHE = 8  # point sets kept in memory (the latest ones)
+CARD_CACHE = 2  # point sets kept on the CUDA card too (the latest ones)
 TWINKLE_PERIOD = 2.5  # seconds, typical; each point (each polynomial's roots) has its own
 
 # Bifurcation diagrams: level L of the lattice has columns at r = j * LATTICE / 2^L. A view
@@ -88,6 +89,32 @@ def source_points(oid: str, seed: int, source: str, key: tuple) -> tuple[np.ndar
     v = np.asarray(v, dtype=np.float64) % 1.0
     v.flags.writeable = False
     return out, v
+
+
+@functools.lru_cache(maxsize=CARD_CACHE)
+def card_points(oid: str, seed: int, source: str, key: tuple) -> tuple[Any, Any] | None:
+    """``source_points`` as CuPy arrays, uploaded once and kept on the card, or None
+    without CUDA. Drawing from these keeps the per-point work (colour, placing, culling) on
+    the card, in the same arithmetic as the host path (``_colors``, ``_inside``), so the
+    picture is the same bits; only the finished pixels come back."""
+    from phasor.render.gpu.registry import default_gpu
+
+    gpu = default_gpu()
+    if gpu is None:
+        return None
+    pts, v = source_points(oid, seed, source, key)
+    return gpu.cp.asarray(pts), gpu.cp.asarray(v)
+
+
+def array_module(a: Any) -> Any:
+    """NumPy for a NumPy array, else CuPy (an array from ``card_points``)."""
+    if isinstance(a, np.ndarray):
+        return np
+    from phasor.render.gpu.registry import default_gpu
+
+    gpu = default_gpu()
+    assert gpu is not None, "a device array without CUDA"
+    return gpu.cp
 
 
 @functools.lru_cache(maxsize=CACHE)
@@ -290,15 +317,23 @@ class PointCloud(ObjectBase):
                                  weights=d.weights, white=p.white)  # fmt: skip
                 out[..., :3] += bg * (1.0 - out[..., 3:4])
                 return out
-            pts, v = self.cloud(state)
+            # on the card when CUDA is here (colouring by phase stays on the host: its
+            # arctan2 is not the same bits on both)
+            dev = None if p.color_by == "phase" else card_points(self.id, p.seed, p.source,
+                                                                 _key(p))  # fmt: skip
+            if dev is None:
+                pts, v = self.cloud(state)
+            else:  # as ``cloud`` does on the host
+                pts, v = dev[0] * p.scale + _xp_vec(dev[0], p.pos[:2]), dev[1]
+            xp = array_module(pts)
             inside = _inside(pts, corner, r, u)
             weights = None
             if p.twinkle > 0 and len(pts):
                 group = p.degree if p.source == "roots" else 1  # a polynomial's roots
                 freq, phase = _flicker(self.id, p.seed, -(-len(pts) // group))
-                w = 1.0 + p.twinkle * np.sin(2 * np.pi * (freq * state.t + phase))
-                weights = np.repeat(w, group)[: len(pts)][inside]
-            pts = pts[inside] - corner[:2]  # quad coordinates, like ``center``
+                w = 1.0 + p.twinkle * np.sin(2 * np.pi * (freq * state.t + phase))  # host sin
+                weights = xp.repeat(xp.asarray(w), group)[: len(pts)][inside]
+            pts = pts[inside] - _xp_vec(pts, corner[:2])  # quad coordinates, like ``center``
             v = v[inside]
             if p.color_by == "phase":
                 d = pts - (np.asarray(p.pos[:2]) - corner[:2])
@@ -333,7 +368,7 @@ def splat_pixels(
     (``PointCloud``, ``cx.Fractal``'s Buddhabrot)."""
     from phasor.render import gpu
 
-    colors = _colors(v, hue, lut)
+    colors = _colors(v, hue, lut)  # on the device that holds ``v``
     per_px = len(pts) * (height / ph) ** 2 / (size[0] * size[1])
     # zooming in spreads the points over more pixels; light per point grows only as
     # the square root of that, so a dense region seen close up does not wash out
@@ -363,11 +398,21 @@ def _inside(pts: np.ndarray, corner, r, u) -> np.ndarray:
             & (pts[:, 1] >= y0) & (pts[:, 1] <= y0 + u[1]))  # fmt: skip
 
 
-def _colors(v: np.ndarray, hue: float, lut: np.ndarray) -> np.ndarray:
-    """(n, 3) colours: the palette ``lut`` at each value, turned by ``hue``, interpolated."""
-    x = ((v + hue) % 1.0) * len(lut)
-    k0 = np.minimum(x.astype(np.int64), len(lut) - 1)
-    t = (x - k0)[:, None].astype(np.float32)
+def _xp_vec(like: Any, values) -> Any:
+    """``values`` as a float64 array on the device of ``like``."""
+    return array_module(like).asarray(np.asarray(values, dtype=np.float64))
+
+
+def _colors(v: Any, hue: float, lut: np.ndarray) -> Any:
+    """(n, 3) colours: the palette ``lut`` at each value, turned by ``hue``, interpolated;
+    on the device that holds ``v`` (NumPy or CuPy, the same bits: ``y - floor(y)`` is
+    ``y % 1.0`` exactly, and every other step is one correctly rounded operation)."""
+    xp = array_module(v)
+    lut = xp.asarray(lut)
+    y = v + hue
+    x = (y - xp.floor(y)) * len(lut)
+    k0 = xp.minimum(x.astype(xp.int64), len(lut) - 1)
+    t = (x - k0)[:, None].astype(xp.float32)
     return lut[k0] * (1 - t) + lut[(k0 + 1) % len(lut)] * t
 
 
