@@ -353,11 +353,17 @@ def test_a_window_is_the_same_samples_as_that_slice_of_the_whole_mix(tmp_path):
     wav(tmp_path / "tone.wav", (np.sin(np.arange(44100) * 0.03) * 9000).astype(int),
         rate=44100)  # fmt: skip
     clips = [nar.Clip("saw.wav", 0.1, -3.0), nar.Clip("tone.wav", 1.2345678)]
-    whole, rate = nar.mix_track(None, tmp_path, 4.0, clips)
-    for lo, hi in ((25 / 30, 2.0), (0.5 + 1 / 7, 3.3), (1.23456, 1.5), (3.9, 4.0)):
-        part, _ = nar.mix_track(None, tmp_path, 4.0, clips, start=lo, end=hi)
-        g0 = round(lo * rate)
-        assert np.array_equal(part, whole[g0 : g0 + len(part)]), lo
+    from phasor.core.schema import Narration, NarrationBlock
+
+    wav(tmp_path / "voice.wav", (np.arange(48000) % 300) * 50, rate=48000)
+    voice = Narration(script="x", voice="test", blocks=(
+        NarrationBlock(text="a", start=0.123457, duration=1.0, audio="voice.wav"),))  # fmt: skip
+    for n in (None, voice):
+        whole, rate = nar.mix_track(n, tmp_path, 4.0, clips)
+        for lo, hi in ((25 / 30, 2.0), (0.5 + 1 / 7, 3.3), (1.23456, 1.5), (3.9, 4.0)):
+            part, _ = nar.mix_track(n, tmp_path, 4.0, clips, start=lo, end=hi)
+            g0 = round(lo * rate)
+            assert np.array_equal(part, whole[g0 : g0 + len(part)]), (n is None, lo)
 
 
 def test_mixing_memory_does_not_grow_with_the_number_of_clips(tmp_path):
