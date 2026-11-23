@@ -219,8 +219,10 @@ class _Frame:
         for obj in self.state.draw_order():
             if obj.id == label_id:
                 break
-            if obj.id in self.entries and _part_of(self.entries, mine, self.entries[obj.id]):
-                continue  # the composite a number belongs to is drawn around it, not under it
+            other = self.entries.get(obj.id)
+            if other is not None and (_part_of(self.entries, mine, other)
+                                      or _same_axis(mine, other)):  # fmt: skip
+                continue  # its composite is drawn around it; crowded numbers: crowded_ticks
             on_it = obj.params.opacity > FAINT and "color" in obj.style
             if on_it and self.covered(label_id, obj.id) > 0.5:
                 under = obj.style["color"]

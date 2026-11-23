@@ -10,7 +10,9 @@ import math
 
 import pytest
 
+import phasor.domains.diagrams  # noqa: F401  (registers the types for raw patches)
 from phasor.core import ticks
+from phasor.domains import diagrams_math as dm
 
 # ---------------------------------------------------------------- 1. ticks
 
@@ -172,3 +174,551 @@ def test_axes_reject_ranges_and_scales_that_would_not_draw():
             P(**bad)
     P(x_range=(0, ticks.MAX_TICKS, 1), x_scale=0.01)  # at the bound: taken
     P(x_range=(-1e9, 1e9, 0), scale=0.5)  # enormous: a nice step
+
+
+# ---------------------------------------------------------------- 3. number line and plane
+
+
+def _scene(passes=None, **kw):
+    from phasor import Scene
+
+    return Scene("d", passes=passes, **kw)
+
+
+def _objs(e, t=0.0):
+    return {o["id"]: o for o in e.inspect(t)["objects"]}
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_a_number_line_writes_every_tick_as_a_part_and_lints_clean(passes):
+    from phasor import dg
+
+    s = _scene(passes)
+    s.add(dg.NumberLine(id="line", x_range=(-3, 3, 1), pos=(0, -1, 0), tips="both", label="x"))
+    e = s.engine
+    assert _ids(e) == ["line"] + [f"line.n_{n}" for n in ("m3", "m2", "m1", "0", "1", "2", "3")]
+    st = e.state_at(0)
+    f = st["line"].impl.features(st)
+    assert f["zero"] == pytest.approx([0, -1, 0]) and f["start"] == pytest.approx([-3, -1, 0])
+    two = st["line.n_2"].impl.features(st)["anchor"]
+    assert two[0] == pytest.approx(2.0) and two[1] < -1  # under the line
+    m = _sem(e, "line")
+    assert m["kind"] == "number_line" and m["ticks"] == 7 and m["numbers"]["n"]["step"] == 1
+    assert e.lint() == []
+
+
+def test_a_steep_number_line_writes_its_numbers_beside_it():
+    from phasor import dg
+
+    s = _scene()
+    s.add(dg.NumberLine(id="up", x_range=(0, 4, 1), angle=90, pos=(0, 0, 0)))
+    st = s.engine.state_at(0)
+    one = st["up.n_1"]
+    assert one.params.anchor == "right" and one.params.pos[0] < 0
+    assert one.params.pos[1] == pytest.approx(-1.0)  # 1 is one unit above the middle (2)
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_a_number_plane_is_a_backdrop_grid_with_axes_and_numbers(passes):
+    from phasor import Text, dg
+
+    s = _scene(passes)
+    s.add(dg.NumberPlane(id="plane", x_range=(-4, 4, 1), y_range=(-2, 2, 1), y_scale=1.5,
+                         faint=1))  # fmt: skip
+    s.add(Text(id="note", text="a point", pos=(1.5, 0.75, 0)))  # on the grid: fine
+    e = s.engine
+    ids = _ids(e)
+    assert "plane.axes" in ids and "plane.axes.x_m4" in ids and "plane.axes.y_2" in ids
+    m = _sem(e, "plane")
+    assert m["backdrop"] and m["y"]["scale"] == 1.5 and m["x"]["scale"] == 1.0
+    assert m["grid_lines"] == (9 + 8) + (5 + 4)  # lines at ticks and one between each
+    st = e.state_at(0)
+    assert st["plane.axes.y_2"].params.pos[1] == pytest.approx(3.0)  # unequal scales
+    assert _objs(e)["plane.axes.x_1"]["part_of"] == "plane.axes"
+    assert e.lint() == []
+
+
+# ---------------------------------------------------------------- 4. bar chart
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_a_bar_chart_names_its_bars_by_their_names_and_scales_them(passes):
+    from phasor import dg
+
+    s = _scene(passes)
+    s.add(dg.BarChart(id="c", values=(3, 5, 2), names=("Ants", "Bees", "Cats"), width=5,
+                      height=3, show_values=True))  # fmt: skip
+    e = s.engine
+    ids = _ids(e)
+    for part in ("c.ants", "c.ants_name", "c.ants_value", "c.bees", "c.cats", "c.y_0", "c.y_5"):
+        assert part in ids, part
+    st = e.state_at(0)
+    hb, ha = st["c.bees"].params.height, st["c.ants"].params.height
+    assert hb / ha == pytest.approx(5 / 3)
+    m = _sem(e, "c")
+    assert m["largest"] == "bees" and m["y_range"] == [0.0, 5.0]
+    assert [b["part"] for b in m["bars"]] == ["ants", "bees", "cats"]
+    assert _objs(e)["c.bees"]["type"] == "rectangle"
+    assert e.lint() == []
+
+
+def test_bars_grow_from_the_baseline_and_negative_bars_hang_below_it():
+    from phasor import dg
+
+    s = _scene()
+    s.add(dg.BarChart(id="c", values=(-2, 0, 4), grow=0.5, height=6, pos=(0, 0, 0)))
+    st = s.engine.state_at(0)
+    m = _sem(s.engine, "c")
+    lo, hi = m["y_range"]
+    assert lo < 0 < hi
+    zero_y = -3 + (0 - lo) / (hi - lo) * 6
+    neg, pos = st["c.bar_1"].params, st["c.bar_3"].params
+    assert neg.pos[1] < zero_y < pos.pos[1]
+    assert pos.height == pytest.approx(2 / (hi - lo) * 6)  # half of 4, grown halfway
+    assert "c.bar_2" not in _ids(s.engine)  # a zero bar has no rectangle
+    s2 = _scene()
+    s2.add(dg.BarChart(id="c", values=(1, 2), grow=0.0))
+    assert [i for i in _ids(s2.engine) if i.startswith("c.bar")] == []
+
+
+def test_a_flat_chart_and_names_that_clash_still_build():
+    from phasor import dg
+
+    s = _scene()
+    s.add(dg.BarChart(id="c", values=(1, 2), names=("y 1", "Y-1")))  # both "y_1"
+    ids = _ids(s.engine)
+    assert "c.y_1" in ids and "c.y_1_2" in ids and "c.y_1_2_name" in ids
+    assert len(ids) == len(set(ids))
+    flat = _scene()
+    flat.add(dg.BarChart(id="c", values=(0, 0)))  # nothing to draw a bar for, still a range
+    lo, hi = _sem(flat.engine, "c")["y_range"]
+    assert lo < 0 < hi and not [i for i in _ids(flat.engine) if i.startswith("c.bar")]
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_crowded_bar_names_are_one_issue_with_a_step_that_clears_them(passes):
+    from phasor import dg
+
+    s = _scene(passes)
+    names = tuple(f"category {k}" for k in range(8))
+    s.add(dg.BarChart(id="c", values=tuple(range(1, 9)), names=names, width=4))
+    issues = s.engine.lint()
+    codes = [i.code for i in issues]
+    assert "crowded_ticks" in codes and "overlap" not in codes
+    (issue,) = [i for i in issues if i.code == "crowded_ticks"]
+    assert issue.ids == ("c",) and issue.path == "c.names" and issue.times == (0.0,)
+    assert issue.fix == () and "step" in issue.fix_hint
+
+
+# ---------------------------------------------------------------- 5. table
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_a_table_names_its_cells_like_a_spreadsheet(passes):
+    from phasor import dg
+
+    s = _scene(passes)
+    s.add(dg.Table(id="t", cells=(("x", "$x^2$"), ("1", "1"), ("2", "4"), ("3",)),
+                   lines="grid"))  # fmt: skip
+    e = s.engine
+    ids = _ids(e)
+    assert ids == ["t", "t.a1", "t.b1", "t.a2", "t.b2", "t.a3", "t.b3", "t.a4"]  # b4 empty
+    m = _sem(e, "t")
+    assert (
+        m["rows"] == 4
+        and m["columns"] == 2
+        and m["header"]
+        == [
+            "x",
+            "$x^2$",
+        ][:2]
+    )
+    st = e.state_at(0)
+    assert st["t.a1"].roles["color"] == "secondary" and st["t.a2"].roles["color"] == "primary"
+    a2, b2, a3 = (st[i].params.pos for i in ("t.a2", "t.b2", "t.a3"))
+    assert a2[1] == pytest.approx(b2[1]) and a2[0] < b2[0] and a3[1] < a2[1]
+    assert e.lint() == []
+
+
+def test_a_table_reveals_its_rows_one_by_one():
+    from phasor import dg
+
+    s = _scene()
+    s.add(dg.Table(id="t", cells=(("a", "b"), ("1", "2"), ("3", "4"), ("5", "6")), reveal=0.5))
+    assert _ids(s.engine) == ["t", "t.a1", "t.b1", "t.a2", "t.b2"]
+
+
+def test_a_table_reads_a_csv_file_from_the_scenes_folder(tmp_path):
+    from phasor import dg
+
+    (tmp_path / "data.csv").write_text("n,square\n1,1\n2,4\n", encoding="utf-8")
+    s = _scene(base_dir=tmp_path)
+    s.add(dg.Table(id="t", path="data.csv"))
+    assert _ids(s.engine) == ["t", "t.a1", "t.b1", "t.a2", "t.b2", "t.a3", "t.b3"]
+    assert _sem(s.engine, "t")["file"] == "data.csv"
+    assert s.engine.lint() == []
+    # changed on disk: read again (contract 3)
+    (tmp_path / "data.csv").write_text("n\n1\n", encoding="utf-8")
+    import os
+
+    os.utime(tmp_path / "data.csv", ns=(1, 1))
+    assert _ids(s.engine) == ["t", "t.a1", "t.a2"]
+
+
+def test_a_bad_long_or_missing_csv_is_lint_and_never_raises(tmp_path):
+    from phasor import dg
+
+    (tmp_path / "long.csv").write_text("\n".join(f"{k},x" for k in range(100)), encoding="utf-8")
+    (tmp_path / "bad.csv").write_bytes(b"\xff\xfe\x00 not text")
+    (tmp_path / "huge.csv").write_bytes(b"1," * (300 * 1024))
+    s = _scene(base_dir=tmp_path)
+    s.add(dg.Table(id="long", path="long.csv", pos=(0, 2, 0)))
+    s.add(dg.Table(id="bad", path="bad.csv"))
+    s.add(dg.Table(id="huge", path="huge.csv"))
+    s.add(dg.Table(id="gone", path="gone.csv"))
+    e = s.engine
+    ids = _ids(e)
+    assert sum(1 for i in ids if i.startswith("long.a")) == dm.MAX_ROWS
+    assert not [i for i in ids if i.startswith(("bad.", "huge.", "gone."))]
+    by = {}
+    for i in e.lint():
+        by.setdefault(i.code, set()).update(i.ids)
+    assert by["truncated"] == {"long"} and by["bad_file"] == {"bad", "huge"}
+    assert "gone" in by["missing_file"]
+    with pytest.raises(ValueError):
+        dg.Table.Params(path="../outside.csv")
+    with pytest.raises(ValueError, match="not both"):
+        dg.Table.Params(path="a.csv", cells=(("x",),))
+
+
+@pytest.mark.skipif(not hasattr(__import__("os"), "mkfifo"), reason="no FIFOs here")
+def test_a_fifo_named_as_a_table_or_code_is_never_read(tmp_path):
+    import os
+
+    from phasor import dg
+
+    os.mkfifo(tmp_path / "pipe.csv")
+    os.mkfifo(tmp_path / "pipe.py")
+    s = _scene(base_dir=tmp_path)
+    s.add(dg.Table(id="t", path="pipe.csv"))
+    s.add(dg.Code(id="c", path="pipe.py"))
+    assert _ids(s.engine) == ["t", "c"]  # nothing read, nothing built, no hang
+    assert {"t", "c"} <= {x for i in s.engine.lint() if i.code == "missing_file" for x in i.ids}
+
+
+# ---------------------------------------------------------------- 6. matrix
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_a_matrix_display_typesets_each_entry_as_a_part(passes):
+    from phasor import dg
+
+    s = _scene(passes)
+    s.add(dg.MatrixDisplay(id="m", entries=(("a_{11}", "a_{12}", "0"), ("\\frac{1}{2}", "", "1")),
+                           bracket="round"))  # fmt: skip
+    e = s.engine
+    assert _ids(e) == ["m", "m.e1_1", "m.e1_2", "m.e1_3", "m.e2_1", "m.e2_3"]
+    objs = _objs(e)
+    assert objs["m.e2_1"]["semantic"]["text"] == "$\\frac{1}{2}$"
+    m = objs["m"]["semantic"]
+    assert m["rows"] == 2 and m["columns"] == 3 and m["bracket"] == "round"
+    st = e.state_at(0)
+    box = st["m"].impl.world_bounds(st)
+    inner = st["m.e1_1"].impl.world_bounds(st)
+    assert box.lo[0] < inner.lo[0]  # the bracket is outside the entries
+    assert e.lint() == []
+
+
+def test_a_matrix_refuses_entries_that_cannot_be_typeset_or_are_too_many():
+    from pydantic import ValidationError
+
+    from phasor import dg
+
+    for bad in ((("\\frac{1}",),), (), ((),), tuple(("1",) * 11 for _ in range(2)),
+                tuple(("1",) for _ in range(11)), (("x" * 100,),)):  # fmt: skip
+        with pytest.raises(ValidationError):
+            dg.MatrixDisplay.Params(entries=bad)
+
+
+# ---------------------------------------------------------------- 7. code
+
+SNIPPET = 'def area(r):\n    # a disc\n\n    return 3.14159 * r ** 2  # pi r^2\n\nprint("done")'
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_code_lines_are_parts_highlighted_by_pygments(passes):
+    pytest.importorskip("pygments")
+    from phasor import dg
+
+    s = _scene(passes)
+    s.add(dg.Code(id="code", code=SNIPPET, line_numbers=True))
+    e = s.engine
+    assert _ids(e) == ["code"] + [f"code.line_{k}" for k in range(1, 7)]  # numbered blanks
+    plain = _scene(passes)
+    plain.add(dg.Code(id="code", code=SNIPPET))  # without numbers a blank line has no part
+    assert _ids(plain.engine) == ["code", "code.line_1", "code.line_2", "code.line_4",
+                                  "code.line_6"]  # fmt: skip
+    st = e.state_at(0)
+    one = st["code.line_1"].params
+    assert one.text == "1  def area(r):"
+    assert one.classes[:3] == "gpp" and one.classes[3:6] == "kkk" and one.classes[7:11] == "ffff"
+    four = st["code.line_4"].params
+    assert "nnnnnnn" in four.classes and four.classes.endswith("c")
+    m = _sem(e, "code")
+    assert m["highlight"] == "pygments" and m["lines"] == 6
+    assert "missing_extra" not in m
+    assert e.lint() == []
+
+
+def test_code_is_monospace_by_placement():
+    from phasor import dg
+
+    s = _scene()
+    s.add(dg.CodeLine(id="a", text="iiii", pos=(0, 0, 0)))
+    s.add(dg.CodeLine(id="b", text="MMMM", pos=(0, -1, 0)))
+    st = s.engine.state_at(0)
+    wa = st["a"].impl.world_bounds(st)
+    wb = st["b"].impl.world_bounds(st)
+    # four narrow and four wide letters end within one cell of each other
+    h = st["a"].style["size"] * st.camera.units_per_height(None)
+    assert abs((wa.hi[0] - wa.lo[0]) - (wb.hi[0] - wb.lo[0])) < 0.6 * h
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_without_pygments_code_is_drawn_plain_and_lint_names_the_extra(monkeypatch, passes):
+    import sys
+
+    from phasor import dg
+
+    monkeypatch.setitem(sys.modules, "pygments", None)
+    s = _scene(passes)
+    s.add(dg.Code(id="code", code=SNIPPET))
+    e = s.engine
+    st = e.state_at(0)
+    assert set(st["code.line_1"].params.classes) == {"p"}
+    assert _sem(e, "code")["highlight"] == "plain"
+    (issue,) = [i for i in e.lint() if i.code == "missing_extra"]
+    assert issue.ids == ("code",) and "--extra code" in issue.fix_hint
+    assert "plain" in issue.message and issue.severity == "warning"
+
+
+def test_an_unknown_language_is_drawn_plain_with_a_lint_warning():
+    pytest.importorskip("pygments")
+    from phasor import dg
+
+    s = _scene()
+    s.add(dg.Code(id="code", code="x := 1", language="no-such-language"))
+    assert _sem(s.engine, "code")["highlight"] == "unknown"
+    assert [i.code for i in s.engine.lint()] == ["unknown_language"]
+
+
+def test_code_from_a_file_is_read_cut_and_rechecked(tmp_path):
+    from phasor import dg
+
+    (tmp_path / "f.py").write_text("x = 1\n\ty = 2\x07\n", encoding="utf-8")
+    (tmp_path / "long.py").write_text("pass\n" * 500, encoding="utf-8")
+    s = _scene(base_dir=tmp_path)
+    s.add(dg.Code(id="a", path="f.py"))
+    s.add(dg.Code(id="b", path="long.py", pos=(0, 5, 0)))
+    e = s.engine
+    st = e.state_at(0)
+    assert st["a.line_2"].params.text == "    y = 2?"  # tab as spaces, a bell as "?"
+    assert sum(1 for i in _ids(e) if i.startswith("b.")) == dm.MAX_LINES
+    assert {i.code for i in e.lint() if "b" in i.ids} >= {"truncated"}
+
+
+def test_code_refuses_what_it_could_not_draw():
+    from pydantic import ValidationError
+
+    from phasor import dg
+
+    for bad in ({"code": "x\x00"}, {"code": "x" * (dm.MAX_LINE + 1)},
+                {"code": "\n" * dm.MAX_LINES}, {"code": "y" * (dm.MAX_CODE + 1)},
+                {"language": "Python 3!"}, {"language": "x" * 40},
+                {"code": "a", "path": "a.py"}):  # fmt: skip
+        with pytest.raises(ValidationError):
+            dg.Code.Params(**bad)
+    dg.Code.Params(code="\n".join(["x" * dm.MAX_LINE] * dm.MAX_LINES)[: dm.MAX_CODE])
+
+
+# ---------------------------------------------------------------- 8. counter
+
+
+def test_a_counter_groups_signs_and_stays_short_whatever_it_is_fed():
+    from phasor import Counter
+
+    P = Counter.Params
+    assert Counter.text_of(P(value=1234567.891, digits=1, group=True)) == "$1{,}234{,}567.9$"
+    assert Counter.text_of(P(value=2, digits=0, sign=True, math=False)) == "+2"
+    assert Counter.text_of(P(value=-0.001, digits=2)) == "$0.00$"  # as before: no -0
+    assert Counter.text_of(P(value=3.14159, digits=3, prefix="\\pi = ")) == "$\\pi = 3.142$"
+    assert len(Counter.text_of(P(value=1e300, digits=10))) < 30
+    with pytest.raises(ValueError):
+        P(prefix="x" * 100)
+
+
+def test_a_counter_animates_with_the_value_it_follows():
+    from phasor import Counter, Value, expr
+
+    s = _scene()
+    s.add(Value(id="n", value=0.0))
+    s.add(Counter(id="shown", value=expr("n.value"), digits=0, group=True))
+    s.marker("go", 0.5)
+    s.marker("done", 1.5)
+    s.at("go").morph("n.value", 12000.0, until="done")
+    e = s.engine
+    texts = [_objs(e, t)["shown"]["semantic"]["text"] for t in (0.0, 1.0, 1.5)]
+    assert texts[0] == "$0$" and texts[-1] == "$12{,}000$" and texts[1] not in texts[::2]
+
+
+# ---------------------------------------------------------------- 9. lint
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_crowded_axis_numbers_are_one_issue_per_axis_with_no_pairwise_noise(passes):
+    from phasor import geo
+
+    s = _scene(passes)
+    s.add(geo.Axes(id="ax", dims=2, x_range=(0, 1000, 25), x_scale=0.006, numbers=True))
+    issues = s.engine.lint()
+    assert [(i.code, i.path) for i in issues] == [("crowded_ticks", "ax.x")]
+    (issue,) = issues
+    assert issue.ids == ("ax",) and issue.severity == "warning" and issue.times == (0.0,)
+    assert issue.fix == ()  # the step is the author's to choose; the hint names one
+    assert "step of at least 200" in issue.fix_hint or "step of at least 100" in issue.fix_hint
+    s.engine.apply({"op": "set_param", "path": "ax.x_range", "value": [0, 1000, 200]})
+    assert s.engine.lint() == []
+
+
+def test_the_tick_gap_comes_from_the_theme():
+    from phasor.style.theme import load_theme
+
+    assert load_theme("midnight_glow").lint["tick_gap"] == 0.25
+
+
+# ---------------------------------------------------------------- 10. bounds and hostile input
+
+BIGGEST = {
+    "axes": {"dims": 2, "x_range": (0, ticks.MAX_TICKS, 1), "y_range": (0, ticks.MAX_TICKS, 1),
+             "scale": 0.05, "numbers": True},
+    "number_line": {"x_range": (0, ticks.MAX_TICKS, 1), "scale": 0.1},
+    "number_plane": {"x_range": (0, ticks.MAX_TICKS, 1), "y_range": (0, ticks.MAX_TICKS, 1),
+                     "scale": 0.05, "faint": 4},
+    "bar_chart": {"values": tuple(range(dm.MAX_BARS)),
+                  "names": tuple(f"n{k}" for k in range(dm.MAX_BARS)), "show_values": True},
+    "table": {"cells": tuple(tuple("x" * dm.MAX_CELL for _ in range(10)) for _ in range(30))},
+    "matrix_display": {"entries": tuple(("1",) * dm.MAX_MATRIX for _ in range(dm.MAX_MATRIX))},
+    "code": {"code": "\n".join(["x = 1 + 2"] * dm.MAX_LINES), "line_numbers": True},
+}  # fmt: skip
+
+
+@pytest.mark.parametrize("name", sorted(BIGGEST))
+def test_every_diagram_at_its_bounds_builds_inspects_and_lints_in_bounded_time(name):
+    import time
+
+    e = _scene().engine
+    r = e.apply({"op": "add_object", "object": {"id": "big", "type": name,
+                                                "params": BIGGEST[name]}}, origin="script")  # fmt: skip
+    assert r.ok, [i.message for i in r.errors]
+    t0 = time.perf_counter()
+    st = e.state_at(0.0)
+    e.inspect(0.0)
+    e.lint()
+    assert time.perf_counter() - t0 < 60, name
+    assert len(st.objects) <= 1 + dm.MAX_CELLS + 2 * ticks.MAX_TICKS + 3 * dm.MAX_BARS + 2
+
+
+HOSTILE = [
+    ("axes", {"x_range": (0, 1e300, 0)}),
+    ("axes", {"x_range": (0, 10**400, 1)}),
+    ("number_line", {"x_range": (0, 1, 1e-9)}),
+    ("number_line", {"scale": float("inf")}),
+    ("number_line", {"pos": (1e300, 0, 0)}),
+    ("number_plane", {"x_range": (-1e9, 1e9, 1)}),
+    ("number_plane", {"y_scale": 1e300}),
+    ("bar_chart", {"values": ()}),
+    ("bar_chart", {"values": (1.0,) * (dm.MAX_BARS + 1)}),
+    ("bar_chart", {"values": (1e300,)}),
+    ("bar_chart", {"values": (10**400,)}),
+    ("bar_chart", {"values": (1, 2), "names": ("a",)}),
+    ("bar_chart", {"values": (1,), "colors": ("purple",)}),
+    ("bar_chart", {"y_range": (5, 5, 1)}),
+    ("table", {"cells": tuple(("x",) for _ in range(dm.MAX_ROWS + 1))}),
+    ("table", {"cells": (("x",) * (dm.MAX_COLS + 1),)}),
+    ("table", {"cells": (("$\\frac{$",),)}),
+    ("table", {"cells": (("a\nb",),)}),
+    ("matrix_display", {"entries": (("\\left(",),)}),
+    ("code", {"code": "a\x1b[31m"}),
+    ("code_line", {"text": "x", "classes": "zz"}),
+    ("counter", {"value": 10**400}),
+]
+
+
+@pytest.mark.parametrize("name, params", HOSTILE)
+def test_hostile_parameters_are_refused_as_errors_never_raised(name, params):
+    e = _scene().engine
+    r = e.apply({"op": "add_object", "object": {"id": "bad", "type": name, "params": params}},
+                origin="script")  # fmt: skip
+    assert not r.ok and r.errors
+    assert _ids(e) == []
+    assert e.lint() == []
+
+
+def test_values_fed_by_an_expression_never_break_a_frame():
+    """A counter or a chart fed a huge or non-finite number through an expression: the frame
+    still evaluates (the document stays valid at every t) and lint never raises."""
+    from phasor import Counter, Value, expr
+
+    s = _scene()
+    s.add(Value(id="v", value=1e300))
+    s.add(Counter(id="c", value=expr("v.value * 10")))
+    e = s.engine
+    e.state_at(0.0)
+    e.lint()  # whatever it reports, it reports
+
+
+# ---------------------------------------------------------------- 11. the examples
+
+NEW_TYPES = {"number_line", "number_plane", "bar_chart", "table", "matrix_display", "code",
+             "code_line", "axes", "counter"}  # fmt: skip
+_examples: dict[str, object] = {}
+
+
+def _example(name: str):
+    import runpy
+    from pathlib import Path
+
+    if name not in _examples:
+        path = Path(__file__).parents[1] / "examples" / f"{name}.py"
+        _examples[name] = runpy.run_path(str(path), run_name="x")["s"].engine
+    return _examples[name]
+
+
+def test_the_examples_show_every_diagram_type_and_lint_clean():
+    seen = set()
+    for name in ("diagram_kit", "data_viz"):
+        e = _example(name)
+        seen |= {o.type for o in e.state_at(e.duration).objects}
+        assert e.lint(strict=True) == [], name
+    assert seen >= NEW_TYPES
+    e = _example("diagram_kit")
+    sem = {o["id"]: o["semantic"] for o in e.inspect(e.duration)["objects"]}
+    assert sem["axes"]["axes"]["x"]["scale"] != sem["axes"]["axes"]["y"]["scale"]
+    assert sem["chart"]["largest"] == "bees" and sem["table.b2"]["text"] == "1"
+    assert sem["matrix"]["rows"] == 2 and sem["plane"]["backdrop"]
+
+
+@pytest.mark.gl
+@pytest.mark.slow
+@pytest.mark.parametrize("name, times", [("diagram_kit", [0.8, 2.2, 4.0, 6.0]),
+                                         ("data_viz", [0.8, 2.0, 3.5, 6.0])])  # fmt: skip
+def test_example_golden_storyboards(name, times):
+    from tests.conftest import gl_available
+    from tests.test_beauty import _golden
+
+    if not gl_available():
+        pytest.skip("needs OpenGL")
+    pytest.importorskip("pygments")  # the gallery's code is highlighted in its golden
+    e = _example(name)
+    sheet = e.storyboard(times, size=(320, 180))["image"]
+    _golden(name, sheet, e.pass_runner().renderer_class())

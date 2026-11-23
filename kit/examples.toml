@@ -176,3 +176,13 @@ teaches = "Every outline shape on Path (circle, ellipse, arc with a tip, sector,
 kind = "basics"
 tier = "technique"
 teaches = "Fills with holes (even-odd), dashed and dotted strokes, boolean operations on shapes, and an SVG file read as Path parts"
+
+[examples.diagram_kit]
+kind = "basics"
+tier = "reference"
+teaches = "The diagram kit: a number line, a number plane with a grid, axes with unequal scales, numbers and labels, a bar chart, a table, a matrix and highlighted code, each number, bar, cell, entry and code line a part"
+
+[examples.data_viz]
+kind = "motion"
+tier = "technique"
+teaches = "Data that moves: bars growing from their baseline (grow), a table filled row by row (reveal), a grouped counter counting up with them"

@@ -210,7 +210,10 @@ class Axes(ObjectBase):
         if p.numbers:
             cam = state.camera_for(self.me(state))
             out["numbers"] = {
-                name: {"step": step, **crowding([t for _, t, _, _ in nums], spacing, d, h, cam)}
+                name: {
+                    "step": step,
+                    **crowding([ticks.as_math(t) for _, t, _, _ in nums], spacing, d, h, cam),
+                }
                 for name, nums, step, spacing, d, h in self._numbers(state)
             }
         return out

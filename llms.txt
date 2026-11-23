@@ -40,15 +40,18 @@
 - `annulus`: flash, progress, fill_opacity, stroke_opacity, pos, outer, inner
 - `arc`: flash, progress, fill_opacity, stroke_opacity, pos, r, start, angle, tips
 - `arrow`: flash, start, end
-- `axes`: flash, dims, x_range, y_range, z_range, pos, scale, tick, labels
+- `axes`: flash, dims, x_range, y_range, z_range, pos, scale, x_scale, y_scale, z_scale, tick, labels, numbers, digits
+- `bar_chart`: flash, values, names, colors, pos, width, height, y_range, gap, grow, numbers, show_values, digits
 - `brace`: flash, progress, fill_opacity, stroke_opacity, start, end, depth
 - `callout`: flash, target, shape, pad, progress
 - `cayley_graph`: flash, group, generators, pos, r, draw
 - `cayley_table`: flash, group, pos, cell, reveal, subgroup, cosets
 - `circle`: flash, progress, fill_opacity, stroke_opacity, pos, r
 - `clock_diagram`: flash, n, step, pos, r, cosets
+- `code`: flash, code, path, language, pos, line_numbers, reveal
+- `code_line`: flash, text, classes, pos
 - `complex_map`: flash, function, pos, center, extent, lines, samples, amount, limit
-- `counter`: flash, value, digits, prefix, suffix, math, pos, anchor
+- `counter`: flash, value, digits, prefix, suffix, math, pos, anchor, group, sign
 - `domain_coloring`: flash, function, pos, size, contour, softness, hue, radius, ambient, lines, a, to, blend, line_glow, light
 - `dot`: flash, pos, r
 - `eigen_lines`: flash, matrix, pos, length
@@ -70,7 +73,10 @@
 - `listener`: flash, pos, r
 - `loop_integral`: flash, p, q, measure, center, radius, pos, progress, arrows
 - `matrix`: flash, matrix, pos, digits
+- `matrix_display`: flash, entries, bracket, pos
 - `network`: flash, path, edges, nodes, generator, branching, depth, rows, cols, n, p, k, cube_dim, symmetric, layout, dims, iterations, root, seed, pos, size, color_by, grow, node_size, hue, exposure, cross_edges
+- `number_line`: flash, x_range, pos, scale, angle, tick, numbers, digits, tips, label
+- `number_plane`: flash, x_range, y_range, pos, scale, x_scale, y_scale, faint, numbers, digits, labels
 - `parametric_curve`: flash, fx, fy, fz, t_range, samples, pos, scale, progress, color_by, hue, to_fx, to_fy, to_fz, blend
 - `parametric_surface`: flash, fx, fy, fz, u_range, v_range, res, pos, scale, color_by, color_expr, with_map, domain_pos, domain_size, morph, to_fx, to_fy, to_fz, blend
 - `partial_sum`: flash, kind, terms, pos, extent, reveal
@@ -99,6 +105,7 @@
 - `spectrum`: flash, frequencies, amplitudes, window, samples, fs, pos, extent, bins
 - `subgroup_lattice`: flash, group, pos, width, height
 - `svg`: flash, path, pos, height
+- `table`: flash, cells, path, pos, header, lines, align, reveal
 - `taylor`: flash, function, center, order, xmin, xmax, ymax, pos
 - `text`: flash, text, pos, anchor, leader, leader_on, write
 - `tracer`: flash, path, progress, trail, r

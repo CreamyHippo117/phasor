@@ -163,12 +163,14 @@ class NumberLine(ObjectBase):
         step = ticks.step_of(lo, hi, step)
         h = _height(me, cam, p.pos, "numbers")
         digits = ticks.decimals(step) if p.digits < 0 else p.digits
-        side = float(n @ cam.right)  # numbers go on the side of -n (below a level line)
+        # Numbers go under a level line and left of a steep one (as on x and y axes).
         off = p.tick / 2 + NUMBER_GAP * h
-        if abs(side) > abs(float(n @ cam.up)):  # a steep line: numbers beside it
-            shift, anchor = -n * off, ("right" if side > 0 else "left")
+        if abs(float(n @ cam.right)) > abs(float(n @ cam.up)):  # steep
+            away = n if float(n @ cam.right) < 0 else -n
+            shift, anchor = away * off, "right"
         else:
-            shift, anchor = -n * (off + h / 2), "center"
+            away = n if float(n @ cam.up) < 0 else -n
+            shift, anchor = away * (off + h / 2), "center"
         nums = [
             (v, ticks.text(v, digits), at(v) + shift, anchor) for v in ticks.values(lo, hi, step)
         ]
@@ -210,7 +212,9 @@ class NumberLine(ObjectBase):
             out["numbers"] = {
                 "n": {
                     "step": step,
-                    **crowding([t for _, t, _, _ in nums], step * p.scale, d, h, cam),
+                    **crowding(
+                        [ticks.as_math(t) for _, t, _, _ in nums], step * p.scale, d, h, cam
+                    ),
                 }
             }
         out["parts"] = [o.id[len(self.id) + 1 :] for o in record.parts(state, self.id)]
@@ -585,7 +589,7 @@ class BarChart(ObjectBase):
                                "grow": p.grow}  # fmt: skip
         nums: dict[str, Any] = {}
         if p.numbers:
-            texts = [t for _, t, _, _ in self._ynumbers(state, b)]
+            texts = [ticks.as_math(t) for _, t, _, _ in self._ynumbers(state, b)]
             spacing = b.step / (b.hi - b.lo) * p.height
             nums["y"] = {"step": b.step, **crowding(texts, spacing, _UP, b.h, b.cam)}
         if p.names:
