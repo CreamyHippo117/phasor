@@ -18,7 +18,6 @@ Numerics (formulas, flow lines, coloring) are in ``geometry_math``.
 from __future__ import annotations
 
 import functools
-import itertools
 import math
 from typing import Any, ClassVar, Literal
 
@@ -65,17 +64,44 @@ def number_parts(prefix: str, numbers, *, roles: dict[str, Any], reserved=frozen
             for n, (_, s, at, anchor) in zip(names, numbers, strict=True)]  # fmt: skip
 
 
-def crowding(texts, spacing: float, along, height: float, cam) -> dict[str, float]:
-    """How much room numbers ``spacing`` apart along the world direction ``along`` need:
-    ``need``, the most two neighbours take of it (half of each one's extent along the axis),
-    and ``height``, their text height; lint ``crowded_ticks`` compares the gap left with the
-    theme's ``tick_gap`` (in text heights)."""
-    along = np.asarray(along, dtype=np.float64)
-    ext = [abs(text_metrics.aspect(t) * height * float(cam.right @ along))
-           + abs(text_metrics.box(t) * height * float(cam.up @ along)) for t in texts]  # fmt: skip
-    need = max((a + b) / 2 for a, b in itertools.pairwise(ext)) if len(ext) > 1 else 0.0
-    return {"spacing": round(float(spacing), 9), "need": round(need, 9),
-            "height": round(float(height), 9)}  # fmt: skip
+CAPTION = "caption"  # tag of a label part that names its composite (lint checks its lines)
+CAPTION_GAP = 0.4  # text heights between a line's end and its caption
+
+
+def end_caption(name: str, text: str, cam, end, direction, h: float, *, roles, clear=None):
+    """A ``Text`` part ``name`` for a caption written just past a line's ``end`` (world
+    ``direction``, text ``h`` tall), on the side the line points to on screen, so it never
+    lies back over its own line: beside a level line (anchored away from it), above or
+    below a steep one. ``clear`` is (text, height) of the number written at that end, so
+    the caption keeps clear of it too. Tagged ``caption``: lint judges it against its
+    composite's own lines (a composite's parts are otherwise not judged against it)."""
+    from phasor.domains.basic import Text
+
+    d = np.asarray(direction, dtype=np.float64)
+    sx, sy = float(cam.right @ d), float(cam.up @ d)
+    gap = CAPTION_GAP * h
+    if clear:  # the end number's whole extent along the line on screen
+        t, hn = clear
+        u = np.array([sx, sy]) / max(float(np.hypot(sx, sy)), 1e-12)
+        gap += abs(text_metrics.aspect(t) * hn * u[0]) + abs(text_metrics.box(t) * hn * u[1])
+    if abs(sx) >= abs(sy):  # level: beside the end, reading away from the line
+        side = 1.0 if sx >= 0 else -1.0
+        at, anchor = _vec(end) + cam.right * side * gap, ("left" if side > 0 else "right")
+    else:  # steep: above (or below) the end, centered on it
+        at, anchor = _vec(end) + cam.up * np.sign(sy) * (gap + h / 2), "center"
+    return Text(id=name, text=text, pos=tuple(float(c) for c in at), anchor=anchor,
+                style={"color": roles["color"], "size": roles["size"]}, tags=[CAPTION])  # fmt: skip
+
+
+def flat_on_screen(cam, direction) -> bool:
+    """Whether a world ``direction`` points straight at a flat (orthographic) camera, so
+    everything along it lands on one spot: a 2D scene's z axis. Its numbers are not written
+    (they would be one unreadable blob); a perspective camera may turn, so there lint
+    ``crowded_ticks`` judges them on screen instead."""
+    if cam.perspective:
+        return False
+    d = np.asarray(direction, dtype=np.float64)
+    return abs(float(cam.right @ d)) < 1e-6 and abs(float(cam.up @ d)) < 1e-6
 
 
 def _finite_scale(v, name: str, zero: bool = True):
@@ -195,8 +221,8 @@ class Axes(ObjectBase):
         return out
 
     def _numbers(self, state: SceneState):
-        """Per axis: (name, [(value, text, position, anchor)], step, spacing, direction,
-        text height)."""
+        """Per axis written: (name, [(value, text, position, anchor)], step). An axis that
+        points straight at a flat camera (a 2D scene's z axis) is not written."""
         me = self.me(state)
         p = me.params
         cam = state.camera_for(me)
@@ -204,6 +230,8 @@ class Axes(ObjectBase):
         h = me.style["numbers"] * float(cam.units_per_height(o))
         out = []
         for name, (d, (lo, hi, step), td, s) in zip("xyz", self._axes(p), strict=False):
+            if flat_on_screen(cam, d):
+                continue
             step = ticks.step_of(lo, hi, step)
             digits = ticks.decimals(step) if p.digits < 0 else p.digits
             off = p.tick / 2 + NUMBER_GAP * h
@@ -213,7 +241,7 @@ class Axes(ObjectBase):
                 shift, anchor = -td * off, "right"
             nums = [(v, ticks.text(v, digits), o + d * v * s + shift, anchor)
                     for v in gm.tick_values(lo, hi, step)]  # fmt: skip
-            out.append((name, nums, step, step * s, d, h))
+            out.append((name, nums, step))
         return out
 
     def semantics(self, state: SceneState) -> dict[str, Any]:
@@ -227,26 +255,43 @@ class Axes(ObjectBase):
         clamped = self._clamped(p)
         if clamped:
             out["clamped"] = clamped  # lint clamped
-        if p.numbers:
-            cam = state.camera_for(self.me(state))
+        if p.numbers:  # lint crowded_ticks judges the parts on screen; the step is for its hint
             out["numbers"] = {
-                name: {
-                    "step": step,
-                    **crowding([ticks.as_math(t) for _, t, _, _ in nums], spacing, d, h, cam),
-                }
-                for name, nums, step, spacing, d, h in self._numbers(state)
+                name: {"step": step, "count": len(nums)}
+                for name, nums, step in self._numbers(state)
             }
         return out
 
     def build(self, state: SceneState) -> list:
-        """The numbers at the ticks, when ``numbers`` is on (the lines are drawn by ``draw``)."""
+        """When ``numbers`` is on: the numbers at the ticks, and the end labels as captions
+        (``x_label``), placed clear of the last number; the lines are drawn by ``draw``.
+        With ``numbers`` off the labels stay drawn, exactly as before Milestone 19."""
         me = self.me(state)
-        if not me.params.numbers:
+        p = me.params
+        if not p.numbers:
             return []
-        reserved = children(state.reserved, self.id)
+        reserved = set(children(state.reserved, self.id))
         roles = me.roles
-        return [part for name, nums, *_ in self._numbers(state)
-                for part in number_parts(name, nums, roles=roles, reserved=reserved)]  # fmt: skip
+        numbers = {name: nums for name, nums, _ in self._numbers(state)}
+        out = [part for name, nums in numbers.items()
+               for part in number_parts(name, nums, roles=roles, reserved=reserved)]  # fmt: skip
+        cam = state.camera_for(me)
+        o = _vec(p.pos)
+        size = me.style["size"] * float(cam.units_per_height(o))
+        hn = me.style["numbers"] * float(cam.units_per_height(o))
+        axes = self._axes(p)
+        drawn = [(i, t) for i, t in self._labels(p)[0]
+                 if t.strip() and not flat_on_screen(cam, axes[i][0])]  # fmt: skip
+        names = unique_names([f"{'xyz'[i]}_label" for i, _ in drawn],
+                             reserved | {q.id for q in out})  # fmt: skip
+        for name, (i, text) in zip(names, drawn, strict=True):
+            d, (_, hi, _), _, s = axes[i]
+            last = numbers.get("xyz"[i]) or []
+            at_end = last and math.isclose(last[-1][0], hi, rel_tol=1e-9, abs_tol=1e-12)
+            clear = (ticks.as_math(last[-1][1]), hn) if at_end else None
+            out.append(end_caption(name, text, cam, o + d * hi * s, d, size, roles=roles,
+                                   clear=clear))  # fmt: skip
+        return out
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
         me = self.me(state)
@@ -255,7 +300,7 @@ class Axes(ObjectBase):
         o = _vec(p.pos)
         col = with_alpha(me.style["color"], p.opacity)
         size = me.style["size"] * float(cam.units_per_height(o))
-        labels = dict(self._labels(p)[0])
+        labels = {} if p.numbers else dict(self._labels(p)[0])  # with numbers: parts
         for i, (d, (lo, hi, step), td, s) in enumerate(self._axes(p)):
             a, b = o + d * lo * s, o + d * hi * s
             w = me.style["stroke"] * float(cam.units_per_height((a + b) / 2))

@@ -41,7 +41,7 @@ from phasor.core.state import SceneState
 from phasor.core.values import Vec3
 from phasor.domains import diagrams_math as dm
 from phasor.domains.basic import Text
-from phasor.domains.geometry import NUMBER_GAP, Axes, _finite_scale, crowding, number_parts
+from phasor.domains.geometry import NUMBER_GAP, Axes, _finite_scale, end_caption, number_parts
 from phasor.domains.shapes import Rectangle
 from phasor.domains.strokes import arrow_head, polyline, segment_batch, with_alpha
 
@@ -186,12 +186,24 @@ class NumberLine(ObjectBase):
         return nums, step, h, d, cam
 
     def build(self, state: SceneState) -> list:
+        """The numbers (``n_2``) and the label, a caption past the end (``label``)."""
         me = self.me(state)
-        if not me.params.numbers:
-            return []
-        nums, *_ = self._numbers(state)
-        roles = {"color": me.roles["color"], "numbers": me.roles["numbers"]}
-        return number_parts("n", nums, roles=roles, reserved=children(state.reserved, self.id))
+        p = me.params
+        reserved = set(children(state.reserved, self.id))
+        out: list = []
+        nums, _, hn, d, cam = self._numbers(state)
+        if p.numbers:
+            roles = {"color": me.roles["color"], "numbers": me.roles["numbers"]}
+            out = number_parts("n", nums, roles=roles, reserved=reserved)
+        if p.label.strip():
+            _, _, at = self._frame(p)
+            end = at(p.x_range[1]) + (d * TIP if p.tips != "none" else 0.0)
+            at_end = p.numbers and nums and math.isclose(nums[-1][0], p.x_range[1], abs_tol=1e-12)
+            clear = (ticks.as_math(nums[-1][1]), hn) if at_end else None
+            (name,) = unique_names(["label"], reserved | {q.id for q in out})
+            out.append(end_caption(name, p.label, cam, end, d, _height(me, cam, end),
+                                   roles=me.roles, clear=clear))  # fmt: skip
+        return out
 
     def features(self, state: SceneState) -> dict[str, np.ndarray]:
         out = record.hybrid_features(self, state)
@@ -216,16 +228,9 @@ class NumberLine(ObjectBase):
         }
         if p.label:
             out["label"] = p.label
-        if p.numbers:
-            nums, step, h, d, cam = self._numbers(state)
-            out["numbers"] = {
-                "n": {
-                    "step": step,
-                    **crowding(
-                        [ticks.as_math(t) for _, t, _, _ in nums], step * p.scale, d, h, cam
-                    ),
-                }
-            }
+        if p.numbers:  # lint crowded_ticks judges the parts on screen; the step is for its hint
+            nums, step, *_ = self._numbers(state)
+            out["numbers"] = {"n": {"step": step, "count": len(nums)}}
         out["parts"] = [o.id[len(self.id) + 1 :] for o in record.parts(state, self.id)]
         return out
 
@@ -259,10 +264,7 @@ class NumberLine(ObjectBase):
             me.style["stroke"] * 0.8,
             colors=col,
             glow=glow,
-        )
-        if p.label:
-            h = _height(me, cam, b)
-            ctx.text(p.label, end + d * h * 0.4, h, color=col, anchor="left", glow=glow)
+        )  # the label is a part (``build``: a caption past the end)
 
 
 # ---------------------------------------------------------------- NumberPlane
@@ -416,8 +418,6 @@ class NumberPlane(ObjectBase):
 
 
 # ---------------------------------------------------------------- BarChart
-
-_UP, _RIGHT = np.array([0.0, 1.0, 0.0]), np.array([1.0, 0.0, 0.0])
 
 
 @dataclass(frozen=True)
@@ -610,13 +610,16 @@ class BarChart(ObjectBase):
         out: dict[str, Any] = {"kind": "bar_chart", "y_range": [b.lo, b.hi], "step": b.step,
                                "bars": bars, "largest": names[int(np.argmax(p.values))],
                                "grow": p.grow}  # fmt: skip
-        nums: dict[str, Any] = {}
+        clipped = [n for n, v in zip(names, p.values, strict=True) if not b.lo <= v <= b.hi]
+        if clipped:  # an explicit y_range that does not hold them: cut at it (or gone)
+            out["clipped"] = clipped
+            out["clamped"] = (f"bars {', '.join(clipped)} lie outside the y_range "
+                              f"({b.lo:g}, {b.hi:g}); they are drawn cut at it")  # fmt: skip
+        nums: dict[str, Any] = {}  # lint crowded_ticks judges the parts on screen
         if p.numbers:
-            texts = [ticks.as_math(t) for _, t, _, _ in self._ynumbers(state, b)]
-            spacing = b.step / (b.hi - b.lo) * p.height
-            nums["y"] = {"step": b.step, **crowding(texts, spacing, _UP, b.h, b.cam)}
+            nums["y"] = {"step": b.step, "count": len(self._ynumbers(state, b))}
         if p.names:
-            nums["names"] = {"step": 1, **crowding(list(p.names), b.slot, _RIGHT, b.h, b.cam)}
+            nums["names"] = {"step": 1, "count": len(p.names)}
         if nums:
             out["numbers"] = nums
         out["parts"] = [o.id[len(self.id) + 1 :] for o in record.parts(state, self.id)]

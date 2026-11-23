@@ -530,7 +530,7 @@ Each issue has `code`, `severity`, `message`, `ids`, `times`, `fix_hint`, and `f
 | `morph_limit` | warning | a morph between outlines with more than `morph_math.MAX_SUBPATHS` (512) subpaths a side: the rest fade |
 | `bad_file` | warning | a file an object reads is not valid (an SVG that is not SVG), or some of its shapes are skipped (points not finite or absurdly far out); what cannot be read draws nothing |
 | `svg_too_complex` | warning | an SVG past a reading limit (size, elements once `<use>` is expanded, nesting, shapes, segments): its drawing is empty or cut short |
-| `crowded_ticks` | warning | numbers along an axis (or a chart's bar names) closer than `[lint] tick_gap` text heights; `path` names the axis (`ax.x`), the hint the smallest nice step that clears them |
+| `crowded_ticks` | warning | numbers along an axis (or a chart's bar names) closer **on screen** than `[lint] tick_gap` text heights (every pair, so an axis a 3D camera sees end-on is caught); `path` names the axis (`ax.x`), the hint the smallest nice step that clears them, or to turn the camera when the axis points at it |
 | `truncated` | warning | a file a `Table` or `Code` reads is past a limit (rows, columns, lines); only its first part is shown |
 | `unknown_language` | warning | a `Code` language pygments does not know: drawn plain |
 | `clamped` | warning | less is drawn than asked: an axis range past 100 ticks (drawn at a wider nice step), a span lost in rounding (no ticks), axis labels past one per axis or that cannot be typeset (left out), bars outside a chart's `y_range` (cut at it) |
@@ -1541,7 +1541,8 @@ around them: the `orbit` verb, or drag in the editor. Formulas are text in `t` (
   (ranges are (min, max, tick step), step 0 a nice one; `scale` is world units per unit, and
   `x_scale`, `y_scale`, `z_scale` (0: `scale`) make them unequal). `numbers=True` writes the
   value at every tick but zero as parts (`axes.x_2`, `axes.y_m1`; the `numbers` text role,
-  `digits` -1 as the step needs). A range is drawn with at most 100 ticks: a step that would
+  `digits` -1 as the step needs). An axis that points straight at a flat camera (the z axis
+  of default `dims=3` axes in a 2D scene) gets no numbers. A range is drawn with at most 100 ticks: a step that would
   make more is drawn at the next nice step that makes fewer, and lint `clamped` says so.
   Axes predate these limits, so a saved document past them still loads: more labels than
   axes, or a label that cannot be typeset, is left out (`clamped`); labels and ranges have
@@ -1664,7 +1665,7 @@ render. It runs your code: only import scripts you trust.
 | `Scene`, `MovingCameraScene`, `ThreeDScene` (`set_camera_orientation`, ambient rotation) | `construct` runs; 3D uses the orbit camera |
 | `Dot`, `Circle`, `Square`, `Rectangle`, `Triangle`, `Polygon`, `RegularPolygon`, `Line`, `Arrow`, `Vector`, `ParametricFunction` | `dot`, `line` (closed outlines), `arrow` |
 | `Text`, `Tex`, `MathTex` | `text`; math is typeset (`$...$`); a `font_size` the script sets is an explicit size (48 is the `math` role's height), and `scale` scales it (a negative factor is a flip) |
-| `Axes`, `NumberPlane`, `axes.plot`, `c2p` | `axes` and a sampled `line` |
+| `Axes`, `NumberPlane`, `axes.plot`, `c2p` | `axes` (unequal `x_length`/`y_length` as `scale`/`y_scale`; a step that makes more than 100 ticks is widened to a nice one, with a warning) and a sampled `line` |
 | `VGroup` and `shift`, `move_to`, `next_to`, `to_edge`, `to_corner`, `scale`, `rotate`, `arrange`, `align_to` | positions are computed as Manim would |
 | `Create`, `Uncreate`, `Write`, `FadeIn`, `FadeOut`, `GrowFromCenter`, `Transform`, `ReplacementTransform`, `Rotate`, `Indicate`, `MoveToTarget`, `AnimationGroup`, `LaggedStart`, `Succession`, `.animate` | tracks on `progress`, `opacity`, `pos`, `r`, `points` |
 | Colors the script sets (`RED`, `"#58C4DD"`), `stroke_width` / `set_stroke(width=)`, `camera.background_color` | explicit style values (a hex color; a width in world units, 4 is the `regular` role's); a class's own default color is the nearest role. A width or font size of 0 or less (`stroke_width=0` on a filled shape), or one too large, keeps the role, with a warning; a background's alpha is dropped, with a warning (a background is opaque). `lint(aesthetic=True)` says which are off the theme (`off_palette`, `off_scale`) |

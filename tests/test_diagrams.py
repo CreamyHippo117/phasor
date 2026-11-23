@@ -200,7 +200,8 @@ def test_a_number_line_writes_every_tick_as_a_part_and_lints_clean(passes):
     s = _scene(passes)
     s.add(dg.NumberLine(id="line", x_range=(-3, 3, 1), pos=(0, -1, 0), tips="both", label="x"))
     e = s.engine
-    assert _ids(e) == ["line"] + [f"line.n_{n}" for n in ("m3", "m2", "m1", "0", "1", "2", "3")]
+    nums = [f"line.n_{n}" for n in ("m3", "m2", "m1", "0", "1", "2", "3")]
+    assert _ids(e) == ["line", *nums, "line.label"]  # the label: a caption part (audit S4)
     st = e.state_at(0)
     f = st["line"].impl.features(st)
     assert f["zero"] == pytest.approx([0, -1, 0]) and f["start"] == pytest.approx([-3, -1, 0])
@@ -690,6 +691,9 @@ HOSTILE = [
     ("table", {"cells": (("x",) * (dm.MAX_COLS + 1),)}),
     ("table", {"cells": (("$\\frac{$",),)}),
     ("table", {"cells": (("a\nb",),)}),
+    ("table", {"cells": (("a\x00b",),)}),  # controls, zero-width and direction marks (audit)
+    ("bar_chart", {"values": (1,), "names": ("a​b",)}),
+    ("number_line", {"label": "‮time"}),
     ("matrix_display", {"entries": (("\\left(",),)}),
     ("code", {"code": "a\x1b[31m"}),
     ("code_line", {"text": "x", "classes": "zz"}),
@@ -914,3 +918,188 @@ def test_an_empty_bar_name_has_no_label_and_never_fails():
     ids = _ids(s.engine)
     assert "c.b_name" in ids and "c.bar_name" not in ids and "c.bar" in ids
     assert "bad_part" not in {i.code for i in s.engine.lint()}
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_a_flat_scene_writes_no_numbers_on_the_axis_that_points_at_the_camera(passes):
+    """B3a: Axes keep dims=3 by default; in a 2D scene the z numbers all landed on the
+    origin's pixels (one unreadable blob) and lint said nothing."""
+    from phasor import geo
+
+    s = _scene(passes)
+    s.set("camera.height", 6)
+    s.add(geo.Axes(id="ax", x_range=(0, 4, 1), y_range=(0, 1, 0.5), y_scale=3,
+                   pos=(-2, -1.5, 0), numbers=True))  # fmt: skip
+    ids = _ids(s.engine)
+    assert not [i for i in ids if i.startswith("ax.z_")] and "ax.x_1" in ids
+    assert set(_sem(s.engine, "ax")["numbers"]) == {"x", "y"}
+    assert s.engine.lint() == []
+
+
+def _orbit_axes(passes, azimuth, elevation=10.0, step=1):
+    from phasor import geo
+
+    s = _scene(passes)
+    s.use_camera("orbit")
+    s.set("camera.target", (0.0, 0.0, 0.0))
+    s.set("camera.distance", 20.0)
+    s.set("camera.elevation", elevation)
+    s.set("camera.azimuth", azimuth)
+    s.add(geo.Axes(id="ax", dims=3, x_range=(-6, 6, step), y_range=(-6, 6, step),
+                   z_range=(-1, 5, 1), numbers=True))  # fmt: skip
+    return s.engine
+
+
+@pytest.mark.parametrize("passes", MODES)
+@pytest.mark.parametrize("azimuth, axis", [(85.0, "y"), (0.0, "x")])
+def test_numbers_piled_up_on_screen_by_a_3d_camera_are_crowded_ticks(passes, azimuth, axis):
+    """B3b: seen nearly end-on, an axis' numbers overlap on screen (13 pairs at azimuth 85)
+    though they are a whole unit apart in the world; crowded_ticks measured in world units
+    and pairwise overlap skips numbers along one axis, so lint was empty."""
+    e = _orbit_axes(passes, azimuth)
+    crowded = [i for i in e.lint() if i.code == "crowded_ticks"]
+    assert [i.path for i in crowded] == [f"ax.{axis}"]
+    (issue,) = crowded
+    assert issue.ids == ("ax",) and issue.times == (0.0,) and "camera" in issue.fix_hint
+
+
+def test_numbers_judged_on_screen_pass_when_they_are_clear_on_screen():
+    # At azimuth 45, elevation 10, step 1, the far half of each axis is foreshortened
+    # until its numbers overlap on screen (so that is crowded_ticks too); at step 2 and a
+    # higher camera every number stands clear.
+    assert {i.path for i in _orbit_axes(None, 45.0).lint() if i.code == "crowded_ticks"} == {
+        "ax.x",
+        "ax.y",
+    }
+    e = _orbit_axes(None, 45.0, elevation=30.0, step=2)
+    assert e.lint() == []
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_what_lint_caught_before_is_still_caught(passes):
+    """Numbers along one axis are skipped pair by pair only because crowded_ticks judges
+    them together on screen: a document label over them, or another chart's numbers, are
+    still overlap."""
+    from phasor import Text, dg, geo
+
+    s = _scene(passes)
+    s.set("camera.height", 8)
+    s.add(geo.Axes(id="ax", dims=2, x_range=(-4, 4, 1), y_range=(-3, 3, 1), numbers=True))
+    s.add(Text(id="note", text="over the numbers", pos=(2.0, -0.45)))
+    pairs = {i.ids for i in s.engine.lint() if i.code == "overlap"}
+    assert ("ax.x_2", "note") in pairs
+    s = _scene(passes)
+    s.set("camera.height", 8)
+    s.add(dg.NumberLine(id="l1", x_range=(-5, 5, 1)))
+    s.add(dg.NumberLine(id="l2", x_range=(-5, 5, 1), pos=(0.15, 0.0, 0)))
+    issues = s.engine.lint()
+    assert any(i.code == "overlap" and i.ids[0].startswith("l1.") and i.ids[1].startswith("l2.")
+               for i in issues)  # fmt: skip
+    assert [i for i in issues if i.code == "crowded_ticks"] == []
+
+
+def test_end_on_numbers_get_a_camera_hint_not_a_step():
+    """An axis that points straight at a perspective camera puts its numbers on one spot."""
+    from phasor.inspect.lint import _crowding
+
+    boxes = [(100.0, 100.0, 110.0, 112.0)] * 5
+    n = _crowding(boxes, 0.25)
+    assert n is not None and n["spacing"] == 0.0
+    apart = [(100.0 + 40 * k, 100.0, 110.0 + 40 * k, 112.0) for k in range(5)]
+    assert _crowding(apart, 0.25) is None
+    close = [(100.0 + 11 * k, 100.0, 110.0 + 11 * k, 112.0) for k in range(5)]
+    n = _crowding(close, 0.25)
+    assert n["spacing"] == pytest.approx(11) and n["need"] == pytest.approx(10)
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_bars_outside_an_explicit_range_are_named_and_linted(passes):
+    """S3: values (3, -5, 20) on a range 0..10: bar b vanished and c was cut, silently."""
+    from phasor import dg
+
+    s = _scene(passes)
+    s.set("camera.height", 8)
+    s.add(dg.BarChart(id="c", values=(3, -5, 20), names=("a", "b", "c"), y_range=(0, 10, 0)))
+    assert _sem(s.engine, "c")["clipped"] == ["b", "c"]
+    (issue,) = [i for i in s.engine.lint() if i.code == "clamped"]
+    assert issue.ids == ("c",) and "b, c" in issue.message and issue.times == (0.0,)
+    s.engine.apply({"op": "set_param", "path": "c.y_range", "value": [-5, 20, 0]})
+    assert "clipped" not in _sem(s.engine, "c")
+    assert [i for i in s.engine.lint() if i.code == "clamped"] == []
+
+
+def test_a_code_file_past_the_character_limit_is_cut_at_a_line_and_lint_says_so(tmp_path):
+    """S1: 120 lines of 119 characters is inside the line limits but past MAX_CODE; it was
+    cut mid-line at 12,000 characters with no ``truncated``."""
+    from phasor import dg
+
+    data = ("q" * 119 + "\n").encode() * 120
+    src, problem, cut = dm.read_code(data)
+    lines = src.split("\n")
+    assert problem is None and len(src) <= dm.MAX_CODE
+    assert len(lines) == 100 and all(len(x) == 119 for x in lines)  # whole lines only
+    assert str(dm.MAX_CODE) in cut
+    (tmp_path / "exact.py").write_bytes(data)
+    s = _scene(base_dir=tmp_path)
+    s.add(dg.Code(id="c", path="exact.py"))
+    assert _sem(s.engine, "c")["truncated"] == cut
+    assert "truncated" in {i.code for i in s.engine.lint()}
+
+
+def _meets(a, b) -> bool:
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_axis_labels_with_numbers_are_captions_clear_of_the_numbers(passes):
+    """S4a: the y label 'probability' was drawn over the top number '1.0', and lint could
+    not see it (drawn text of the composite, not a part)."""
+    from phasor import geo
+
+    s = _scene(passes)
+    s.set("camera.height", 6)
+    s.add(geo.Axes(id="ax", dims=2, x_range=(0, 4, 1), y_range=(0, 1, 0.5), y_scale=3,
+                   pos=(-2, -1.5, 0), numbers=True, labels=("time", "probability")))  # fmt: skip
+    objs = _objs(s.engine)
+    labels = {k: objs[k]["bbox"]["px"] for k in ("ax.x_label", "ax.y_label")}
+    numbers = [o["bbox"]["px"] for k, o in objs.items() if k.startswith(("ax.x_", "ax.y_"))
+               and not k.endswith("_label")]  # fmt: skip
+    assert objs["ax.y_label"]["semantic"]["text"] == "probability"
+    for box in labels.values():
+        assert not any(_meets(box, n) for n in numbers)
+    assert s.engine.lint() == []
+
+
+def test_axis_labels_without_numbers_are_drawn_as_before():
+    from phasor import geo
+
+    s = _scene()
+    s.add(geo.Axes(id="ax", dims=2, labels=("x", "y")))
+    assert _ids(s.engine) == ["ax"]
+
+
+@pytest.mark.parametrize("passes", MODES)
+@pytest.mark.parametrize("angle", [0, 90, 180, 270, 135])
+def test_a_number_lines_label_is_written_past_its_end_whatever_its_angle(passes, angle):
+    """S4b: at angle 180 the label was anchored left of its end, so it was written back
+    over the line and its ticks; lint could not see it."""
+    from phasor import dg
+
+    s = _scene(passes)
+    s.set("camera.height", 8)
+    s.add(dg.NumberLine(id="l", x_range=(-3, 3, 1), angle=angle, label="time"))
+    e = s.engine
+    assert _objs(e)["l.label"]["semantic"]["text"] == "time"
+    assert e.lint() == []
+
+
+def test_a_caption_over_its_own_line_is_overlap(monkeypatch):
+    """The part_of skip must not hide a composite's caption written over its own lines."""
+    from phasor import dg
+    from phasor.domains import geometry
+
+    monkeypatch.setattr(geometry, "CAPTION_GAP", -4.0)  # write the label back over the line
+    s = _scene()
+    s.set("camera.height", 8)
+    s.add(dg.NumberLine(id="l", x_range=(-3, 3, 1), label="time", numbers=False))
+    assert ("l", "l.label") in {i.ids for i in s.engine.lint() if i.code == "overlap"}

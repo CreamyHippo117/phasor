@@ -650,9 +650,7 @@ class Axes(Mobject):
                 r[2] = wider
         self.xr, self.yr = xr, yr
         self.sx = (x_length or 12.0) / (xr[1] - xr[0])
-        self.sy = (y_length or 6.0) / (yr[1] - yr[0])
-        if abs(self.sx - self.sy) > 1e-6:
-            self._warn("axes with different x and y scales are drawn with the x scale")
+        self.sy = (y_length or 6.0) / (yr[1] - yr[0])  # unequal scales: geo.Axes y_scale
         self.origin = np.array(
             [-(xr[0] + xr[1]) / 2 * self.sx, -(yr[0] + yr[1]) / 2 * self.sy, 0.0]
         )
@@ -682,9 +680,10 @@ class Axes(Mobject):
         from phasor import geo
 
         o = self.pts[0]
+        unequal = {"y_scale": self.sy} if abs(self.sx - self.sy) > 1e-9 * self.sx else {}
         return geo.Axes(id=ident, dims=2, x_range=tuple(self.xr), y_range=tuple(self.yr),
                         pos=tuple(float(v) for v in o), scale=self.sx, opacity=0.0,
-                        style=self._style())  # fmt: skip
+                        style=self._style(), **unequal)  # fmt: skip
 
 
 class NumberPlane(Axes):

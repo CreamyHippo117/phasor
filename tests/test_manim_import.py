@@ -57,7 +57,9 @@ def test_the_manim_reverb_scene_runs_unchanged_and_keeps_manims_clock():
         for t in (4.2, 5.0)
     ]
     assert ring[1] > ring[0]  # a growing circle
-    assert r.warnings == ["axes with different x and y scales are drawn with the x scale"]
+    assert r.warnings == []  # unequal x and y scales carry over (y_scale; M19 audit S5)
+    axes = r.scene.engine.state_at(1.0)["axes_1"].params
+    assert axes.y_scale > 0 and axes.y_scale != axes.scale
     errors = [i for i in r.scene.engine.lint() if i.severity == "error"]
     assert errors == []
 
@@ -92,7 +94,7 @@ def test_the_command_saves_a_scene_that_loads_and_lints(tmp_path, capsys):
         main(["manim", str(ROOT / "examples" / "manim_reverb.py"), "-o", str(out), "--code"]) == 0
     )
     text = capsys.readouterr().out
-    assert "RoomReverb: 12 objects, 14.5 s" in text and "note: axes with different" in text
+    assert "RoomReverb: 12 objects, 14.5 s" in text and "note:" not in text  # no losses left
     doc = io.load_document(out)
     assert len(doc.objects) == 12 and doc.meta.title == "RoomReverb"
     assert (
@@ -341,7 +343,7 @@ def test_a_manim_script_opens_as_a_plain_scene_you_can_edit(tmp_path):
     )
     ws = Workspace(tmp_path, allow_scripts=True)
     r = ws.scene_open("reverb.py")
-    assert r["imported_from"] == "manim" and "axes with different" in r["notes"][0]
+    assert r["imported_from"] == "manim" and r["notes"] == []  # unequal scales carry over
     assert ws.path == tmp_path / "reverb.phasor.json"
     assert not ws.engine.scripted  # not locked to a script: structure edits are allowed
     edit = ws.scene_edit({"op": "add_object", "object": {"id": "extra", "type": "dot"}})

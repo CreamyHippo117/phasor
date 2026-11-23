@@ -65,6 +65,9 @@ def check_text(s: str, what: str, limit: int = MAX_CELL) -> str:
         raise ValueError(f"{what} is longer than {limit} characters")
     if "\n" in s or "\r" in s:
         raise ValueError(f"{what} must be one line")
+    bad = [ch for ch in s if not ch.isprintable()]  # controls, zero-width and direction marks
+    if bad:
+        raise ValueError(f"{what} holds a character that cannot be drawn: {bad[0]!r}")
     text_metrics.check_math(s)
     return s
 
@@ -164,7 +167,14 @@ def read_code(data: bytes) -> tuple[str, str | None, str | None]:
         lines = [x[:MAX_LINE] for x in lines]
         cut.append(f"lines longer than {MAX_LINE} characters")
     clean = ["".join(ch if ch.isprintable() else "?" for ch in x) for x in lines]
-    return "\n".join(clean)[:MAX_CODE], None, "; ".join(cut) or None
+    if len("\n".join(clean)) > MAX_CODE:  # whole lines only, and lint says so
+        total, keep = -1, 0
+        while keep < len(clean) and total + 1 + len(clean[keep]) <= MAX_CODE:
+            total += 1 + len(clean[keep])
+            keep += 1
+        clean = clean[:keep]
+        cut.append(f"more than {MAX_CODE} characters")
+    return "\n".join(clean), None, "; ".join(cut) or None
 
 
 def _class_of(token) -> str:

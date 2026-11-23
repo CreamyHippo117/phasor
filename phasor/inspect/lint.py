@@ -45,7 +45,7 @@ from typing import Any
 
 import numpy as np
 
-from phasor.core import extras, ticks
+from phasor.core import extras, record, ticks
 from phasor.core import text as text_metrics
 from phasor.core.color import contrast_ratio, over
 from phasor.core.constraints import LABEL_SUFFIX
@@ -100,6 +100,63 @@ def _same_axis(a: dict[str, Any], b: dict[str, Any]) -> bool:
         return False
     along = {x for x in a["tags"] if x.startswith("along_")}
     return bool(along & set(b["tags"]))
+
+
+END_ON = 0.05  # text heights: numbers closer than this on screen sit on one spot
+
+
+def _crowding(boxes, gap: float) -> dict[str, float] | None:
+    """Whether numbers along one axis crowd each other **on screen**: some pair of their
+    pixel boxes, each grown by half of ``gap`` text heights, meet (every pair is judged, so
+    an axis seen end-on or turned by a perspective camera is caught). None when they do
+    not; else (in pixels) ``spacing``, the usual distance between neighbours along the
+    axis on screen, ``need``, the most two neighbours take of it, and ``height``, the text
+    height, for the hint (``ticks.clear_step``)."""
+    b = np.asarray(boxes, dtype=np.float64).reshape(-1, 4)
+    if len(b) < 2:
+        return None
+    h = max(float(np.median(b[:, 3] - b[:, 1])), 1e-9)
+    lo, hi = b[:, :2] - gap * h / 2, b[:, 2:] + gap * h / 2
+    ox = np.minimum(hi[:, None, 0], hi[None, :, 0]) - np.maximum(lo[:, None, 0], lo[None, :, 0])
+    oy = np.minimum(hi[:, None, 1], hi[None, :, 1]) - np.maximum(lo[:, None, 1], lo[None, :, 1])
+    meet = (ox > 0) & (oy > 0)
+    np.fill_diagonal(meet, False)
+    if not meet.any():
+        return None
+    centers = (b[:, :2] + b[:, 2:]) / 2
+    far = np.linalg.norm(centers[:, None] - centers[None, :], axis=2)
+    i, j = np.unravel_index(int(np.argmax(far)), far.shape)
+    if far[i, j] < END_ON * h:  # the axis points at the camera: one spot
+        return {"spacing": 0.0, "need": 0.0, "height": h}
+    u = (centers[j] - centers[i]) / far[i, j]
+    order = np.argsort(centers @ u)
+    along = (centers @ u)[order]
+    ext = (np.abs((b[:, 2] - b[:, 0]) * u[0]) + np.abs((b[:, 3] - b[:, 1]) * u[1]))[order]
+    return {"spacing": float(np.median(np.diff(along))),
+            "need": float(np.max((ext[1:] + ext[:-1]) / 2)), "height": h}  # fmt: skip
+
+
+CAPTION = "caption"  # a label part naming its composite (domains/geometry.end_caption)
+
+
+def _lines_cross(strokes, cam, width: int, height: int, box) -> bool:
+    """Whether any of a composite's own stroked lines (world center lines, as recorded)
+    runs through the pixel ``box`` (shrunk by a tenth of its height: a line touching a
+    caption's padding is fine)."""
+    pad = 0.1 * (box[3] - box[1])
+    x0, y0, x1, y1 = box[0] + pad, box[1] + pad, box[2] - pad, box[3] - pad
+    if x1 <= x0 or y1 <= y0:
+        return False
+    s = np.linspace(0.0, 1.0, 17)[:, None]
+    for line in strokes:
+        px = cam.to_screen(np.asarray(line, dtype=np.float64).reshape(-1, 3), width, height)
+        if len(px) < 2:
+            continue
+        pts = (px[:-1, None, :] * (1 - s) + px[1:, None, :] * s).reshape(-1, 2)
+        inside = (pts[:, 0] > x0) & (pts[:, 0] < x1) & (pts[:, 1] > y0) & (pts[:, 1] < y1)
+        if inside.any():
+            return True
+    return False
 
 
 def _shown(e: dict[str, Any]) -> bool:
@@ -559,13 +616,35 @@ def run(
                 f.add("tiny", (e["id"],), t, px=max(x1 - x0, y1 - y0), what="object")
             if e["semantic"].get("fill_crossing"):
                 f.add("fill_crossing", (e["id"],), t)
-            for axis, n in (e["semantic"].get("numbers") or {}).items():
-                gap = (n["spacing"] - n["need"]) / max(n["height"], 1e-12)
-                if gap < th["tick_gap"]:
-                    clear = ticks.clear_step(n["step"], n["spacing"], n["need"], n["height"],
-                                             th["tick_gap"])  # fmt: skip
-                    f.add("crowded_ticks", (e["id"],), t, path=f"{e['id']}.{axis}",
-                          axis=axis, step=n["step"], clear=clear)  # fmt: skip
+        # Numbers along one axis (parts tagged ``along_<axis>``), judged together on screen.
+        along: dict[tuple[str, str], list[Any]] = {}
+        for e in shown:
+            if e.get("part_of") is not None:
+                for tag in e["tags"]:
+                    if tag.startswith("along_"):
+                        along.setdefault((e["part_of"], tag[6:]), []).append(e["bbox"]["px"])
+        for (owner, axis), boxes in sorted(along.items()):
+            n = _crowding(boxes, th["tick_gap"])
+            if n is None:
+                continue
+            sem = fr.entries[owner]["semantic"] if owner in fr.entries else {}
+            step = ((sem.get("numbers") or {}).get(axis) or {}).get("step")
+            clear = None
+            if step and n["spacing"] > 0:
+                clear = ticks.clear_step(step, n["spacing"], n["need"], n["height"],
+                                         th["tick_gap"])  # fmt: skip
+            f.add("crowded_ticks", (owner,), t, path=f"{owner}.{axis}", axis=axis, step=step,
+                  clear=clear, end_on=n["spacing"] == 0)  # fmt: skip
+        # A caption a composite builds is judged against the composite's own lines (its
+        # parts are otherwise never judged against it): a label written back over its line.
+        for e in labels:
+            owner = e.get("part_of")
+            if CAPTION in e["tags"] and owner in fr.entries:
+                o = state[owner]
+                rec = record.record(o.impl, state)
+                if _lines_cross(rec.strokes, state.camera_for(o), state.width, state.height,
+                                e["bbox"]["px"]):  # fmt: skip
+                    f.add("overlap", tuple(sorted((e["id"], owner))), t)
         for e in fr.entries.values():  # also what is off screen or draws nothing
             sem = e["semantic"]
             if sem.get("fill_unchecked"):
@@ -729,12 +808,20 @@ def run(
             return Issue(code, f"{ids[0]!r}: the bars' names crowd each other {when}", "warning",
                          ids, path=info["path"], times=ts, fix_hint="make the chart wider, the "
                          "names shorter, or the 'numbers' text role smaller")  # fmt: skip
+        if code == "crowded_ticks" and info["end_on"]:
+            return Issue(code, f"{ids[0]!r}: the axis {info['axis']!r} points at the camera, "
+                         f"so its numbers land on one spot {when}", "warning", ids,
+                         path=info["path"], times=ts, fix_hint="turn the camera, use fewer "
+                         "dimensions (dims=2 in a flat scene), or leave the numbers "
+                         "off")  # fmt: skip
         if code == "crowded_ticks":
+            step = f" at a step of {info['step']:g}" if info["step"] else ""
+            hint = (f"use a step of at least {info['clear']:g} (the range's third number), "
+                    if info["clear"] else "use a larger step, ")  # fmt: skip
             return Issue(code, f"{ids[0]!r}: the numbers along {info['axis']!r} crowd each "
-                         f"other at a step of {info['step']:g} {when}", "warning", ids,
-                         path=info["path"], times=ts, fix_hint=f"use a step of at least "
-                         f"{info['clear']:g} (the range's third number), a larger scale, or "
-                         "a smaller 'numbers' text role")  # fmt: skip
+                         f"other{step} on screen {when}", "warning", ids, path=info["path"],
+                         times=ts, fix_hint=f"{hint}a larger scale, a smaller 'numbers' text "
+                         "role, or turn the camera")  # fmt: skip
         if code == "svg_too_complex":
             return Issue(code, f"{ids[0]!r}: the file {info['file']!r} is past a reading "
                          f"limit ({info['why']}); its drawing is empty or cut short",
