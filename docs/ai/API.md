@@ -22,7 +22,9 @@ s.set("camera.height", 6)  # world units visible top to bottom
 - IDs match `[a-z][a-z0-9_]*`, with dots for children (`res.pole_i` needs `res` to exist).
   Name them by meaning (`pole_i`), never by counter (`dot3`).
 - Points are world space: x = Re, y = Im, z up. `(x, y)` means z = 0.
-- `style` takes role names only. Raw colors and sizes are rejected.
+- `style` takes role names (the default, and what an AI should write). A color, text size
+  or stroke key may instead hold an explicit value (`"#58C4DD"`, a size in world units):
+  see "Explicit colors and sizes" below.
 - `tags=["key"]` marks an object other objects are located relative to (see `where`).
 - A wrong call raises `DocumentError` at that line and changes nothing.
 
@@ -814,7 +816,8 @@ assert p.engine.inspect(0, id="eq")["objects"][0]["semantic"]["colors"][1] == "s
 
 **Taste, the art director and variants.** `lint(aesthetic=True)` adds the taste rules:
 `focal_point` (one `highlight` per beat), `color_restraint` (three saturated hues at most;
-phase coloring exempt), `glow_clip`, `density`, `motion_rhythm`, `margin`, `stroke_mix`.
+phase coloring exempt), `glow_clip`, `density`, `motion_rhythm`, `margin`, `stroke_mix`,
+and for explicit values `off_palette` and `off_scale` (below).
 Thresholds are the theme's `[lint]`. `engine.critique()` scores them (0 is nothing to
 criticise) with the markers and the fixes; `engine.polish(rounds=3)` applies them, each round
 one undo step; `engine.variants(beat)` shows calmer and bolder looks of one beat side by side;
@@ -833,6 +836,47 @@ rough.marker("beat", 1.0)
 before = rough.engine.critique()["score"]
 report = rough.engine.polish(rounds=3)
 assert report["after"] < before and len(report["rounds"]) <= 3
+```
+
+**Explicit colors and sizes** (owner, 2026-11-23). Beside a role, a style key may hold an
+explicit value; roles stay the default and the AI-friendly path.
+
+| style key group | explicit value |
+| --- | --- |
+| `emphasis` (`color`, `accent`, ...) | `"#58C4DD"` (sRGB, decoded to linear once) or linear `(r, g, b, a)` in 0..1 |
+| `text` (`size`) | text height in world units |
+| `stroke` (`stroke`, `leader`) | stroke width in world units |
+| `glow`, `surface`, `colormap` | roles only (`bad_role` otherwise) |
+
+`Scene(..., background="#101820")` (or `set_meta` `background`) gives the scene its own
+background; None is the theme's. A world size is exact in 2D at any zoom; in 3D it is exact at
+the object's `pos`. Taste stays checked: `lint(aesthetic=True)` warns with `off_palette`
+when an explicit color is farther than the theme's `[lint] off_palette` (an OKLab distance)
+from every palette role, or a background from the theme's, and with `off_scale` when a size
+is more than `[lint] off_scale` times off the nearest text or stroke role. Neither has a
+`fix` (the value may be meant): `critique()` lists a `snap` op per issue (the nearest
+role), and `polish(snap=True)` applies it, only when asked. A scripted scene's background
+is changed in its script.
+
+```python
+from phasor import Dot, Line, Scene, Text
+
+own = Scene("own_colors", passes=None, look="none", background="#101820")
+own.set("camera.height", 8)
+own.add(Dot(id="sun", pos=(0, 0), r=0.5, style={"color": "#83C167"}, tags=["key"]))
+own.add(Text(id="name", text="sun", pos=(0, 1.2), style={"size": 0.34}))  # ~ label
+own.add(Line(id="orbit", points=[(-3, -2), (3, -2)], style={"stroke": 0.3}))  # very wide
+own.marker("beat", 1.0)
+st = own.engine.state_at(1.0)
+assert abs(st["name"].style["size"] * st.camera.units_per_height() - 0.34) < 1e-9
+codes = {i.code: i for i in own.engine.lint(aesthetic=True)}
+assert codes["off_palette"].ids == ("sun",) and codes["off_scale"].ids == ("orbit",)
+offered = [op for i in own.engine.critique()["issues"] for op in i["snap"]]
+assert {"op": "set_style", "id": "orbit", "key": "stroke", "role": "bold"} in offered
+own.engine.polish()  # fixes and suggestions only: typed values stay
+assert own.engine.document.object("sun").style["color"] == "#83C167"
+own.engine.polish(snap=True)  # asked: snapped to the nearest roles
+assert own.engine.document.object("orbit").style["stroke"] == "bold"
 ```
 
 Finals render with motion blur (`phasor render --preset final`; `--motion-blur 0` turns it
@@ -1274,14 +1318,14 @@ render. It runs your code: only import scripts you trust.
 | --- | --- |
 | `Scene`, `MovingCameraScene`, `ThreeDScene` (`set_camera_orientation`, ambient rotation) | `construct` runs; 3D uses the orbit camera |
 | `Dot`, `Circle`, `Square`, `Rectangle`, `Triangle`, `Polygon`, `RegularPolygon`, `Line`, `Arrow`, `Vector`, `ParametricFunction` | `dot`, `line` (closed outlines), `arrow` |
-| `Text`, `Tex`, `MathTex` | `text`; math is typeset (`$...$`); `font_size` picks the nearest text role |
+| `Text`, `Tex`, `MathTex` | `text`; math is typeset (`$...$`); a `font_size` the script sets is an explicit size (48 is the `math` role's height), and `scale` scales it |
 | `Axes`, `NumberPlane`, `axes.plot`, `c2p` | `axes` and a sampled `line` |
 | `VGroup` and `shift`, `move_to`, `next_to`, `to_edge`, `to_corner`, `scale`, `rotate`, `arrange`, `align_to` | positions are computed as Manim would |
 | `Create`, `Uncreate`, `Write`, `FadeIn`, `FadeOut`, `GrowFromCenter`, `Transform`, `ReplacementTransform`, `Rotate`, `Indicate`, `MoveToTarget`, `AnimationGroup`, `LaggedStart`, `Succession`, `.animate` | tracks on `progress`, `opacity`, `pos`, `r`, `points` |
-| Colors (`RED`, `"#58C4DD"`) | the nearest style role (`primary`, `secondary`, `muted`, `highlight`, `danger`) |
+| Colors the script sets (`RED`, `"#58C4DD"`), `stroke_width` / `set_stroke(width=)`, `camera.background_color` | explicit style values (a hex color; a width in world units, 4 is the `regular` role's); a class's own default color is the nearest role. `lint(aesthetic=True)` says which are off the theme (`off_palette`, `off_scale`) |
 
 What does not: fills (drawn as outlines), updaters and `always_redraw` (baked at their first
-look), `ValueTracker` animations, arbitrary colors (roles only), font sizes (roles), `Transform`
+look), `ValueTracker` animations, color changes during an animation (instant), `Transform`
 between different shapes (a crossfade). Each is listed in `ManimImport.warnings` (printed by
 the command); a Manim name phasor lacks raises an error that says so.
 

@@ -6,7 +6,8 @@ with hue along them, haze, vignette, fringe. **Keep that look exactly as it is**
 the things below. Palettes (`meta.palette`) apply to all of it.
 
 Rules that hold for every item: the dark theme stays the default; the look is a `look` or a
-`preset` (a taste knob), never numbers typed into a scene; glow comes only from emission
+`preset` (a taste knob); explicit colors and sizes a scene types are allowed (owner,
+2026-11-23, Milestone 18) and checked by `off_palette` / `off_scale`; glow comes only from emission
 (never thresholding the picture); a new GPU kernel has a NumPy reference and the three-way
 kernel tests; every new type gets docs, an example, a golden storyboard, and a GPU golden
 from the owner's PC.

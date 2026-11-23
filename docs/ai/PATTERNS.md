@@ -167,4 +167,6 @@ assert draft.engine.critique()["score"] == 0.0  # one hero, clear margin, filled
 - Start from a look (`calm`, `glow`) and presets, not from bare parameters.
 - Keep one `highlight` per beat; step everything else back with roles.
 - Rainbows where hue carries meaning (domain coloring); elsewhere vary the palette.
-- Never hand-tune glow or stroke numbers: roles and presets are the taste knobs.
+- Prefer roles and presets to hand-tuned colors and stroke or text sizes: they are the taste
+  knobs. A typed value is allowed when the person wants one (`off_palette` and `off_scale` say
+  when it is off the theme); glow takes roles only.

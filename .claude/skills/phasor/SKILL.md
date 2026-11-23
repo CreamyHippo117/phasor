@@ -15,7 +15,8 @@ person both edit. The `phasor` MCP tools (when connected) let you see what it re
    otherwise) and start from its structure. Look up names in the API docs (`docs_search`,
    or `kit/docs/API.md`); call `object_types` for exact parameters and style roles.
 2. Write or edit the script. Name objects by meaning (`pole_i`, `loop.label`). Labels are
-   `<owner>.label` with a `label(x) near x` constraint. Style takes roles, never raw colors.
+   `<owner>.label` with a `label(x) near x` constraint. Style takes roles; type a color or
+   size only when the person asks for one (review flags it if it is off the theme).
    Positions are world coordinates (x = Re, y = Im).
 3. For a narrated scene: narration with `[[markers]]`, and every motion anchored to a
    marker with a verb (`reveal`, `trace`, `dim_others`, `morph`, ...).
@@ -29,7 +30,8 @@ person both edit. The `phasor` MCP tools (when connected) let you see what it re
 
 ## Never
 
-- Type label positions, raw colors or pixel sizes. Use constraints and roles.
+- Type label positions. Use constraints. Prefer roles to typed colors and sizes, and never
+  snap a typed value to a role (`polish` with `snap`) without asking.
 - Animate by raw seconds in a narrated scene. Use markers and verbs.
 - Claim it looks good without having looked at the storyboard.
 - Reach for a rainbow everywhere: the full wheel is for where hue means phase (domain

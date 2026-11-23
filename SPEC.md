@@ -377,7 +377,7 @@ The AI handles structure, math and timing; the engine and your gallery hold the 
 **Themes (`style/themes/*.toml`)**
 
 - A theme defines everything visual: palette, background, type scale, stroke weights, glow levels, spacing unit, easing defaults, lighting rig, post-processing.
-- Scenes and AI patches may only use style roles. Raw hex codes, pixel widths and font sizes in a scene are a lint error (`raw_style`), unless marked `style_override=True`.
+- Scenes and AI patches name style roles by default. Explicit values are allowed beside them (owner, 2026-11-23, Milestone 18; amends an earlier "roles only, `raw_style` lint error" rule that was never built): a color key may hold `"#rrggbb"` (sRGB, decoded to linear once) or linear RGBA, a text size or stroke width a size in world units, and `meta.background` a scene's own background. Glow, surface and colormap keys take roles only. The document stores a role or a value at each key (schema 9); taste stays checked by the aesthetic rules `off_palette` and `off_scale`, and `polish(snap=True)` snaps a value to the nearest role, only when asked.
 
 | Role group | Roles |
 | --- | --- |
@@ -442,6 +442,8 @@ Making something should start from a preset, not from a blank set of parameters.
 | `motion_rhythm` | Unrelated objects move in the same 0.3 s window |
 | `margin` | Content enters the outer 5% safe margin |
 | `stroke_mix` | More than 3 stroke weights in one frame |
+| `off_palette` | An explicit color is far (OKLab distance) from every palette role, or a scene background from the theme's |
+| `off_scale` | An explicit text size or stroke width is off the theme's type or stroke scale by more than a ratio |
 
 Thresholds live in the theme, so your taste can move them.
 
@@ -455,6 +457,7 @@ Thresholds live in the theme, so your taste can move them.
 
 - A second agent that did not build the scene critiques the storyboard against `STYLE.md` and the gallery. It returns issues tied to object ids and markers.
 - The builder fixes them, at most 3 rounds, then reports what is still open.
+- Its operations are `fix` (certain), `suggested` (judgement; `polish` applies both) and `snap` (an explicit color or size back to its nearest role: offered, applied only by `polish(snap=True)`, never silently).
 
 **Variants and your taste as data**
 
