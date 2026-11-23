@@ -1,0 +1,44 @@
+{
+  "backend": "cuda",
+  "calls": {
+    "blur sum": 80,
+    "draw": 80,
+    "encode": 21,
+    "post": 20,
+    "readback": 80,
+    "setup": 1,
+    "srgb": 20,
+    "state": 80
+  },
+  "commit": "b579d7e",
+  "encoder": "pyav:h264_nvenc",
+  "frame": [
+    1920,
+    1080
+  ],
+  "frames": 20,
+  "gl_renderer": "NVIDIA GeForce RTX 4070 Ti/PCIe/SSE2",
+  "machine": "atlas-pc",
+  "motion_blur": true,
+  "ms_per_frame": 3138.44,
+  "platform": "Windows-11-10.0.26200-SP0",
+  "preset": "final",
+  "scene": "point_cloud",
+  "setup_s": 0.0,
+  "stages_ms_per_frame": {
+    "blur sum": 45.67,
+    "draw": 3042.53,
+    "encode": 0.89,
+    "gpu draw": 0.0,
+    "other": 6.91,
+    "post": 22.93,
+    "readback": 14.97,
+    "simulation": 0.0,
+    "srgb": 3.61,
+    "state": 0.93,
+    "widen": 0.0
+  },
+  "threads": null,
+  "wall_s": 62.769,
+  "when": "2026-11-23T21:04:10+00:00"
+}

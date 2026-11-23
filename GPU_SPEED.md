@@ -313,6 +313,119 @@ rest is the smaller frame, half-resolution fields and the faster x264 setting. T
 63 KB against 330 KB. (The in-test check, `prism_domain` 1 s: preview 30.2 s, draft 4.6 s.)
 Each figure is one run, so treat the exact ratio loosely.
 
+## Step 9. Kernel-drawn objects: stop doing their pixels on the CPU (2026-11-23, plan)
+
+Plan written on the PC (RTX 4070 Ti) at `b579d7e`; **not yet approved**. No new dependency.
+
+### Where a frame goes now
+
+Steps 1-4 brought the shared pipeline (readback, blur sum, post, sRGB, encode) to about 45-60
+ms a frame. In every scene with a kernel-drawn object, the `draw` stage is now 90-98% of the
+frame. That stage is CPU work inside the objects' pixel functions (`ctx.field`), and it runs
+**once per motion-blur sample** (4 a moving frame in `final`). `phasor bench --frames NAME
+--count 20 --preset final` (JSONs in `benchmarks/2026-11-23_frames_*_cuda_1920x1080.json`):
+
+| example | draw | total | per blur sample | where the draw goes (cProfile) |
+| --- | --- | --- | --- | --- |
+| buddhabrot | 3035 | 3077 | ~760 | `cloud._colors` on 8 M points (LUT lerp, ~440 ms a sample); `cx.Fractal.orbits` culling and transforming 8 M points on the host (~245); uploading them again each sample |
+| point_cloud | 3043 | 3138 | ~760 | `numpy.linalg.eigvals` re-solving ~1 M roots each sample while `twist` moves |
+| interference | 1755 | 1895 | ~440 | `heatmap.shade_values`, `lut_colour` (wrap), `isoline_weight` (`np.gradient`), all float64; the `wave_field` kernel itself is ~9 ms |
+| prism_fractal | 1280 | 1371 | ~320 | `cx.py` `fractal_glow`: the 4x supersampled field copied to the host and averaged in float64 (`.mean(axis=(1, 3))`) |
+| prism_heat | 1125 | 1232 | ~280 | `heatmap.sample` (bicubic), `shade_values`, `lut_colour`, `isoline_weight` |
+| bifurcation | 362 | 397 | ~90 | colours and cull on the host (cached orbits) |
+| room_acoustics | 320 | 361 | ~80 | the pressure heat map (`heatmap`); simulation is 0.1 ms, so **step 6 is not needed** for it |
+| prism_domain | 312 | 330 | ~78 | `gpu.render(supersample=)`: host float64 mean of the 4x tile |
+| room_3d | 105 | 146 | | strokes (step 3's territory) |
+| prism_primes | 17 | 66 | | reference: no kernel field |
+
+So the lever is the same everywhere: the card makes the field in milliseconds, then the CPU
+spends hundreds of milliseconds colouring, averaging, culling or re-solving it, four times a
+frame. The sub-steps below move that work to the card. Each new kernel is a registered kernel
+with a NumPy reference, so the Milestone 14 C++ CPU backend runs it too: machines without CUDA
+get faster as well (compiled loops instead of float64 NumPy temporaries).
+
+### 9a. Supersample on the card (expected: prism_fractal 1280 -> ~60 ms draw, prism_domain 312 -> ~30)
+
+`gpu.render(supersample=s)` and `cx.Fractal`'s `fractal_glow` path copy the s x s enlarged
+tile to the host and average it there in float64. Average before `to_host`, in float32, with
+code that takes the array's own module (`cupy` or `numpy`: the CPU backend returns NumPy) so
+both backends share it. A 2x2 box mean of four float32 values never needs float64 (the
+consumer card's FP64 is slow anyway).
+
+Tests: `test_device_supersample_matches_the_host_mean` (random tiles, s = 2, 3, 4; float32
+result within 1 ulp-scale tolerance of the float64 host mean); the `prism_domain`,
+`prism_fractal`, `deep_zoom` and fractal goldens unchanged; finals within 1 code value of
+the old path (`pc_tasks/pin_frames.py` on three frames each, compared with a tolerance).
+
+### 9b. Point clouds stay on the card (expected: buddhabrot 3035 -> ~100 ms draw)
+
+- Cache a source's points and colour values as device arrays, keyed as today
+  (`source_points` key; bifurcation's orbit blocks likewise), so an 8 M point cloud is
+  uploaded once, not once per sample.
+- The `splat` kernel takes the colour value and reads the palette itself (`lut`, `hue`,
+  wrap and lerp as `cloud._colors`): no (n, 3) colour array on the host.
+- No host culling: the kernel already skips points outside its tile; the view transform
+  (`center`, `zoom`, the rectangle's corner) becomes kernel parameters.
+- Twinkle weights computed on the card from the cached (frequency, phase).
+- Shared by `PointCloud` (all sources) and `cx.Fractal(kind="buddhabrot")` through
+  `cloud.splat_pixels`.
+
+Tests: the `splat` `CASES` gain the palette mode (three ways); the point_cloud, buddhabrot
+and bifurcation goldens unchanged; finals bit-identical where the fixed-point splat allows
+(the sum is already fixed point), else within 1 code value; `semantics` (`points`,
+`in_rectangle`) unchanged, computed from the same cache.
+
+### 9c. One heat-shading kernel (expected: interference 1755 -> ~80, prism_heat 1125 -> ~60, room_acoustics 320 -> ~60)
+
+`heatmap.py` is the shared path of `pde.Field`, `PressureSlice`, `Spectrogram`,
+`ac.Interference` and `ac.PhasedArray`. Two registered kernels:
+
+- `heat_sample`: the grid sampled at the pixels (`nearest`, `linear`, bicubic
+  Catmull-Rom as `heatmap.sample`), for grid-based types.
+- `heat_shade`: value -> colour (the `wrap` wheel with `hue_cycles` and `hue`, or the
+  `linear`/`nearest` LUT), isoline weight from central differences (as `np.gradient` does
+  inside, one-sided at the edges), weight, `contrast`, `ambient`, background and the edge
+  `fade`; out (h, w, 4) with the glow weight in alpha, exactly `shade_values`' contract.
+- `ac.Interference` chains `wave_field` -> `heat_shade` on the card; nothing returns to the
+  host until the finished pixels.
+- `colour_at` (a colour that depends on position, e.g. a spectrogram's hue up the frequency
+  axis) becomes a kernel parameter (a hue ramp along an axis), or keeps the host path if a
+  type needs something the kernel cannot express; list which types those are.
+
+The NumPy references are today's functions, so the three-way `CASES` tests compare the
+kernels against current behaviour. Tests: `test_heat_kernels_match_shade_values` over every
+option combination the presets use; all prism heat goldens (`prism_heat`, `prism_drum_3d`,
+`interference`, `room_acoustics`, spectrogram) unchanged; finals within 1 code value.
+
+### 9d. Polynomial roots on the card (expected: point_cloud 3043 -> ~150 ms draw while `twist` moves)
+
+A batched Aberth-Ehrlich kernel, one thread per polynomial (degree <= 24), in place of
+`eigvals` on companion matrices. **Every call starts from the same initial circle**, never
+from the previous frame's roots: workers render frames in any order and contract 3 makes a
+state a pure function of t. Fixed iteration cap plus convergence test, float64 inside (the
+roots of +-1 polynomials cluster near the unit circle; check float32 is not enough before
+choosing).
+
+This changes the algorithm, so the reference is new and the tests say what correct means:
+|p(z)| small for every root; the roots equal `eigvals`' as a multiset within 1e-9; a
+cloud's picture within 1 code value of the eigvals picture; the point_cloud golden
+unchanged; determinism (same t, same bits, any order). The `eigvals` path stays as the CPU
+fallback where the kernel cannot run.
+
+### 9e. Then measure again
+
+The same ten-example bench, before and after, in the status table; plus the wall clock of
+real `final` renders with `--workers 1` and `4`. Once the draw is on the card the four
+workers share it, so per-frame bench gains will not all turn into wall-clock gains; that
+measurement decides whether `scene.default_workers()` should change (`pc_tasks/cpu_workers.md`).
+
+### Not in this step
+
+- Step 5 (GL-CUDA interop, GPU encoder): the next lever after this one, still needs approval.
+- Drawing a kernel field once per frame instead of once per blur sample would cut the draw
+  another 4x, but it changes how a moving field blurs (a picture change): only with the
+  owner's say-so, and as an opt-in per type.
+
 ## Rules for the whole plan
 
 - One step per commit series; a step is done when its tests pass, the full suite passes
@@ -382,7 +495,8 @@ Open items:
 | 3+ | async readback, encoder thread | | readback 21 -> 15 ms, frame 99 -> 93 (bench); encoder thread: wall 82 -> 76 / 52 -> 44 ms | done (wall clock: the bench's waits hide overlap) |
 | 4 | parallel workers | x3 wall time | full final render of motion_gallery 61.5 -> 33.8 s (4 workers, CLI), packaged app 50.6 -> 24.0 s; prism_primes 34.8 -> 23.7 s; steady 70.6 -> 23.2 ms/frame | done 2026-11-22 (ADR 0003 option A; default 4 workers: 6 and 8 were no faster) |
 | 5 | GL-CUDA interop, GPU encoder | small | | measure first; new dependency needs approval |
-| 6 | simulations on the card | those scenes only | | candidate: measure in step 0 |
+| 6 | simulations on the card | those scenes only | room_acoustics: simulation 0.1 ms, draw 320 ms (2026-11-23) | not needed for room_acoustics; its cost is the heat map (step 9c) |
+| 9 | kernel-drawn objects on the card | draw 300-3000 -> 30-150 ms | baseline 2026-11-23 in step 9 | plan, not yet approved |
 
 Target after steps 0-4: motion_gallery from 571 ms to roughly 120 ms per frame, then about
 3x more from workers; the showcase from 71 minutes to roughly 5-8.
