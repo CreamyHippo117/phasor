@@ -64,6 +64,14 @@ def part_names(shapes, reserved=()) -> list[str]:
     return out
 
 
+def reserved_under(state: SceneState, object_id: str) -> frozenset[str]:
+    """The names the document holds (or has retired) directly under ``object_id``: a
+    composite's parts must not take them (``part_names``)."""
+    prefix = f"{object_id}."
+    return frozenset(i[len(prefix) :].split(".")[0] for i in state.reserved
+                     if i.startswith(prefix))  # fmt: skip
+
+
 @functools.lru_cache(maxsize=16)
 def _placed(stamp: tuple, pos: tuple, height: float, reserved: frozenset[str]):
     """The parts of the file ``stamp`` names, placed with its view box centred on ``pos``,
@@ -137,9 +145,7 @@ class SVG(ObjectBase):
         p = self.me(state).params
         if self.drawing(state) is None:
             return (), 0
-        prefix = f"{self.id}."
-        reserved = frozenset(i[len(prefix) :].split(".")[0] for i in state.reserved
-                             if i.startswith(prefix))  # fmt: skip
+        reserved = reserved_under(state, self.id)
         stamp = files.stamp(state.base_dir, p.path)
         return _placed(stamp, tuple(p.pos), p.height, reserved)
 

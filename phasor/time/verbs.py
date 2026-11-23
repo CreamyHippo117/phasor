@@ -328,13 +328,69 @@ class Verbs:
             raise VerbError(f"{verb} needs {' or '.join(names)}; {object_id!r} is a {obj.type}")
         return obj
 
+    def _has_outline(self, object_id: str) -> bool:
+        """Whether an object has an outline to morph (``morph_shape``, or parts that do)."""
+        if callable(getattr(self._object(object_id).impl, "morph_shape", None)):
+            return True
+        return any(o.parent == object_id and callable(getattr(o.impl, "morph_shape", None))
+                   for o in self.state.objects)  # fmt: skip
+
+    def _morph(self, source: str, target: str, verb: str, kind: str) -> Motion:
+        """``target`` becomes itself from ``source``'s outline (``domains/morph.py``): it
+        shows now, ``source`` hides, and ``morph`` runs 0 to 1 in the theme's ``transform``
+        time. ``morph_from`` and ``morph_kind`` switch at this instant (tracks), so one
+        object can become itself several times from different sources."""
+        if source == target:
+            raise VerbError(f"{verb} needs two objects; both are {source!r}")
+        if not self._has_outline(source):
+            raise VerbError(f"{verb}: {source!r} ({self.state[source].type}) has no outline to "
+                            "morph; paths, shapes, text, equations and SVGs do")  # fmt: skip
+        if not self._has(target, "morph_from"):
+            raise VerbError(f"{verb}: {target!r} ({self.state[target].type}) cannot be morphed "
+                            "into; paths, shapes, text and equations can")  # fmt: skip
+        ops: list[dict[str, Any]] = [
+            self._instant(f"{target}.morph_from", source, verb, 0.0),
+            self._instant(f"{target}.morph_kind", kind, verb, 0.0),
+        ]
+        if kind == "matching" and self._has(target, "arc"):
+            ops.append(self._instant(f"{target}.arc", float(self.motion["transform_arc"]),
+                                     verb, 0.0))  # fmt: skip
+        morph = f"{target}.morph"
+        if self._starts_hidden(morph):
+            ops.append({"op": "set_param", "path": morph, "value": 0.0})
+        else:
+            ops.append(self._instant(morph, 0.0, verb, 0.0))
+        ops += self._show_at(target, verb, 0.0)
+        ops.append(self._instant(f"{source}.opacity", 0.0, verb, 0.0))
+        seg, done = self._segment(morph, 1.0, verb, 0.0, timing="transform")
+        return Motion((*ops, seg), done)
+
+    def transform_matching(self, source: str, target: str) -> Motion:
+        """Pieces that match move to their new place, the rest fade: between two equations
+        their parts pair by TeX (keys first, as ``transform``), anything else (text, paths,
+        an SVG) pairs glyph by glyph or path by path by shape. Pieces carried past others
+        arc round them (the theme's ``transform_arc``). Drawn as outlines; ``target`` is
+        hidden until now, ``source`` disappears as it starts."""
+        self._object(source)
+        self._object(target)
+        return self._morph(source, target, "transform_matching", "matching")
+
     def transform(self, source: str, target: str) -> Motion:
-        """An equation becoming the next: parts that appear in both glide from their old
-        place (and color) to the new; parts with the same ``keys`` entry glide too, changing
-        their text on the way, and arc round the parts they are carried past (the theme's
-        ``transform_arc``); the old one's other parts fade out, the new one's fade in.
-        ``target`` is hidden until now; ``source`` disappears as it starts."""
-        a = self._of_type(source, "transform", "equation")
+        """One thing becoming another. Two equations (as pictures): parts that appear in both
+        glide from their old place (and color) to the new; parts with the same ``keys``
+        entry glide too, changing their text on the way, and arc round the parts they are
+        carried past (the theme's ``transform_arc``); the old one's other parts fade out,
+        the new one's fade in. An equation drawn ``as_shapes``: the same, its changed parts
+        morphing their outlines (``transform_matching``). Anything else with an outline
+        (paths, shapes, text, an SVG): the whole outline morphs into the target's
+        (subpaths matched, resampled, aligned; colors mixed in linear light). ``target`` is
+        hidden until now; ``source`` disappears as it starts."""
+        a = self._object(source)
+        b = self._object(target)
+        if a.type == "equation" and b.type == "equation" and b.params.as_shapes:
+            return self._morph(source, target, "transform", "matching")
+        if a.type != "equation" or b.type != "equation":
+            return self._morph(source, target, "transform", "whole")
         self._of_type(target, "transform", "equation")
         ops: list[dict[str, Any]] = [
             {"op": "set_param", "path": f"{target}.from_parts", "value": list(a.params.parts)},

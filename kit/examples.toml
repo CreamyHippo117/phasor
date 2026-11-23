@@ -176,3 +176,8 @@ teaches = "Every outline shape on Path (circle, ellipse, arc with a tip, sector,
 kind = "basics"
 tier = "technique"
 teaches = "Fills with holes (even-odd), dashed and dotted strokes, boolean operations on shapes, and an SVG file read as Path parts"
+
+[examples.text_shapes]
+kind = "basics"
+tier = "reference"
+teaches = "Text drawn as glyph outlines and written outline-first, a word morphing into a circle (transform), a formula rearranging by TeX (transform_matching), and a fill color moving between two roles"

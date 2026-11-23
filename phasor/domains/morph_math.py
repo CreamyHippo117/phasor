@@ -72,6 +72,9 @@ class Plan:
     gone: tuple[int, ...] = ()  # source subpaths that take no part (past MAX_SUBPATHS): fade
     new: tuple[int, ...] = ()  # target subpaths that take no part: fade in
     identical: bool = False
+    along: tuple[float, ...] = ()  # where each pair's target piece starts along its subpath
+    src_along: tuple[float, ...] = ()  # ... and its source piece along the source subpath
+    flipped: tuple[bool, ...] = ()  # the source piece runs backwards (to move least)
 
     @property
     def points(self) -> int:
@@ -263,21 +266,26 @@ def plan(a: Sequence[np.ndarray], b: Sequence[np.ndarray], a_closed: Sequence[bo
     partner = _pair(sa, pa, sb, pb)
     counts = _within_total([max(_count(sa, p), _count(sb, pb[partner[k]]))
                             for k, p in enumerate(pa)])  # fmt: skip
-    out_a, out_b, closed, src, dst = [], [], [], [], []
+    out_a, out_b, closed, src, dst, along, src_along, flipped = [], [], [], [], [], [], [], []
     for k, p in enumerate(pa):
         q = pb[partner[k]]
         both = p.closed and q.closed
         m = counts[k]
         ra = _resample(sa.polys[p.index], sa.along[p.index], p.s0, p.s1, m, endpoint=not both)
         rb = _resample(sb.polys[q.index], sb.along[q.index], q.s0, q.s1, m, endpoint=not both)
-        ra, rb = _align(ra, rb, p.closed and not both, q.closed and not both, both)
+        laid, rb = _align(ra, rb, p.closed and not both, q.closed and not both, both)
+        flipped.append(not (p.closed or q.closed) and laid is not ra)
+        ra = laid
         out_a.append(ra)
         out_b.append(rb)
         closed.append(both)
         src.append(p.index)
         dst.append(q.index)
+        along.append(q.s0)
+        src_along.append(p.s0)
     return Plan(tuple(out_a), tuple(out_b), tuple(closed), tuple(src), tuple(dst),
-                sa.left_out, sb.left_out)  # fmt: skip
+                sa.left_out, sb.left_out, False, tuple(along), tuple(src_along),
+                tuple(flipped))  # fmt: skip
 
 
 def _within_total(counts: list[int]) -> list[int]:
@@ -315,9 +323,95 @@ def at(p: Plan, m: float) -> list[tuple[np.ndarray, bool, int]]:
     return out
 
 
+def _clean(pts: np.ndarray) -> np.ndarray:
+    """Consecutive repeats dropped."""
+    if len(pts) < 2:
+        return pts
+    step = np.abs(np.diff(pts, axis=0)).max(axis=1)
+    scale = max(1.0, float(np.abs(pts).max()))
+    return pts[np.r_[True, step > 1e-12 * scale]]
+
+
+def rings(p: Plan, m: float, side: str = "target") -> list[tuple[np.ndarray, int]]:
+    """What is filled ``m`` of the way, as one side's subpaths: the pieces of each target
+    (or source) subpath joined in order along it, so a ring split into pieces fills as one
+    ring; each (polyline, that subpath). A piece growing from (or shrinking to) nothing is
+    a ring of its own."""
+    own, other = (p.dst, p.along) if side == "target" else (p.src, p.src_along)
+    by: dict[tuple[int, int], list[tuple[float, int, np.ndarray]]] = {}
+    for k, (a, b, d) in enumerate(zip(p.a, p.b, own, strict=True)):
+        key = (d, -1) if d >= 0 else (d, k)
+        pts = a + (b - a) * m
+        if side == "source" and p.flipped and p.flipped[k]:
+            pts = pts[::-1]  # back to the source's direction, to join its pieces
+        by.setdefault(key, []).append((other[k] if other else 0.0, k, pts))
+    out = []
+    for key in sorted(by):
+        ring = _clean(np.vstack([pts for _, _, pts in sorted(by[key], key=lambda x: x[:2])]))
+        if len(ring) >= 3 and np.ptp(ring, axis=0).max() > 1e-12 * max(1.0, np.abs(ring).max()):
+            out.append((ring, key[0]))
+    return out
+
+
 def subpath(poly: np.ndarray, closed: bool) -> np.ndarray:
     """A polyline as a subpath of straight cubics (closed: it ends where it began)."""
     return pm.polyline(poly, closed=closed)
+
+
+# ---------------------------------------------------------------- outlines of objects
+
+
+@dataclass(frozen=True)
+class Look:
+    """How an outline is painted, without its object's opacity."""
+
+    color: tuple[float, float, float, float]  # stroke, linear RGBA (alpha: its opacity)
+    fill: tuple[float, float, float, float]  # fill, linear RGBA (alpha: its opacity)
+    width: float  # stroke width, a share of the frame height
+    glow: float = 1.0
+
+    def mix(self, other: Look, m: float) -> Look:
+        """``m`` of the way to ``other``, in linear light (contract 4)."""
+
+        def lerp(a, b):
+            return tuple(float(x + (y - x) * m) for x, y in zip(a, b, strict=True))
+
+        return Look(lerp(self.color, other.color), lerp(self.fill, other.fill),
+                    float(self.width + (other.width - self.width) * m),
+                    float(self.glow + (other.glow - self.glow) * m))  # fmt: skip
+
+
+@dataclass(frozen=True)
+class Group:
+    """A piece of an outline that moves as one in ``transform_matching``: a glyph, a path."""
+
+    name: str  # what it is: a glyph (``cap_a``), a path
+    key: str  # its shape: groups with equal keys pair up
+    members: tuple[int, ...]  # its subpaths (indices into ``Shape.subpaths``)
+    look: Look
+    order: int = 0  # reading order
+    tex: str | None = None  # an equation part's text (equations pair by TeX)
+    tag: str = ""  # an equation part's key
+    part: int = -1  # an equation part's index
+
+
+@dataclass(frozen=True)
+class Shape:
+    """An object's outline in world space."""
+
+    subpaths: tuple[np.ndarray, ...]  # (1 + 3k, 3) each
+    closed: tuple[bool, ...]
+    groups: tuple[Group, ...]
+    rule: str = "nonzero"
+    line: float = 0.0  # a text's line height in world units (arcs scale with it)
+    right: tuple[float, float, float] = (1.0, 0.0, 0.0)  # the camera's, when it was made
+    up: tuple[float, float, float] = (0.0, 1.0, 0.0)
+
+    def look_of(self, sub: int) -> Look:
+        for g in self.groups:
+            if sub in g.members:
+                return g.look
+        return self.groups[0].look
 
 
 # ---------------------------------------------------------------- shapes by name

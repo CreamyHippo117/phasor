@@ -82,12 +82,18 @@ def test_an_equation_becomes_the_next():
     assert not [i for i in e.lint() if i.severity == "error"]
 
 
-def test_transform_refuses_what_is_not_an_equation():
+def test_transform_refuses_what_has_no_outline():
+    """Milestone 17: ``transform`` morphs any two outlines (an equation into text is fine);
+    a dot has none to become."""
     s = Scene("eq", passes=None)
     s.add(Equation(id="a", parts=("$x$",)))
     s.add(Text(id="b", text="x"))
-    with pytest.raises(VerbError, match="equation"):
-        s.at(0.0).transform("a", "b")
+    s.add(Dot(id="c"))
+    s.at(0.0).transform("a", "b")
+    with pytest.raises(VerbError, match="cannot be morphed into"):
+        s.at(1.0).transform("b", "c")
+    with pytest.raises(VerbError, match="no outline"):
+        s.at(1.0).transform("c", "b")
 
 
 # ---------------------------------------------------------------- shape morphs

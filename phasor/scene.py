@@ -146,8 +146,14 @@ class At:
         return self._verb("orbit_reveal", *ids)
 
     def transform(self, source: str, target: str) -> At:
-        """Equation ``source`` becomes ``target``: matching parts glide over, others fade."""
+        """``source`` becomes ``target``: two equations' matching parts glide over and the
+        others fade; any other two outlines (paths, shapes, text, an SVG) morph."""
         return self._verb("transform", source, target)
+
+    def transform_matching(self, source: str, target: str) -> At:
+        """``source`` becomes ``target`` piece by piece: equal parts (by TeX between
+        equations, by shape otherwise) move to their new place, the rest fade."""
+        return self._verb("transform_matching", source, target)
 
     def become(self, source: str, target: str) -> At:
         """Curve ``source`` turns into the shape of ``target``, which then takes its place."""

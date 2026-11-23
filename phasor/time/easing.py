@@ -34,3 +34,12 @@ EASINGS: dict[str, Callable[[float], float]] = {
     "back": _back,
     "spring": _spring,
 }
+
+
+def _within(f: Callable[[float], float]) -> Callable[[float], float]:
+    """An easing that never overshoots, kept inside 0..1 (``smoother`` just below u = 1
+    rounds to 1 + 2e-16, which a parameter bounded by 1 refuses)."""
+    return lambda u: min(max(f(u), 0.0), 1.0)
+
+
+EASINGS.update({k: _within(f) for k, f in EASINGS.items() if k not in OVERSHOOT})
