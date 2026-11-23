@@ -195,6 +195,7 @@ class Scene:
         theme: str | None = None,
         look: str | None = None,
         palette: str | None = None,
+        background: str | tuple[float, ...] | None = None,
         life: str | None = None,
         seed: int = 0,
         width: int = 1920,
@@ -209,13 +210,17 @@ class Scene:
         ``midnight_glow`` theme, plain objects).
         ``palette`` picks the colors run along strokes (``spectrum``, the prism rainbow,
         or ``moonlight``, ``gold``, ``glacier``, ``borealis``, ``rose``): in the prism looks
-        it recolors every glowing curve and line and keeps the rest of the look."""
+        it recolors every glowing curve and line and keeps the rest of the look.
+        ``background`` is a color of the scene's own (``"#101820"``, sRGB, or linear RGBA);
+        by default the theme's. Like any explicit value, ``lint(aesthetic=True)`` says when
+        it is far from the theme (``off_palette``)."""
         look = default_look(look, theme)
         self.look = load_look(look) if look else None
         theme = theme or (self.look.theme if self.look else DEFAULT_THEME)
         life = life or (self.look.life if self.look else "off")
         meta = Meta(title=title, theme=theme, width=width, height=height, fps=fps, life=life,
-                    seed=seed, look=look, palette=palette, source="script")  # fmt: skip
+                    seed=seed, look=look, palette=palette, background=background,
+                    source="script")  # fmt: skip
         engine_kwargs.setdefault("base_dir", _caller_dir())
         # A scene script the person ran (``python scene.py``, ``load``, the engine running a
         # module it may run) uses its own code; a Scene built by imported code (a test, a

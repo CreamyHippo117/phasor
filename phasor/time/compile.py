@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Annotated, Any
 
+import numpy as np
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from phasor.core import life
@@ -40,6 +41,7 @@ from phasor.core.spatial import (
 )
 from phasor.core.state import ObjectState, SceneState
 from phasor.core.values import normalize, same_shape
+from phasor.style import explicit
 from phasor.style.theme import PALETTES, Theme, ThemeError, load_theme
 from phasor.time.easing import EASINGS
 from phasor.time.expr import CompiledExpr, ExprError, compile_expr
@@ -68,6 +70,9 @@ class CompiledObject:
     roles: MappingProxyType
     tags: tuple[str, ...]
     layer: str
+    # style key -> an explicit size in world units (M18); ``style`` holds None there until
+    # ``evaluate`` turns it into a share of the frame height through the camera
+    world: MappingProxyType = dataclasses.field(default_factory=lambda: MappingProxyType({}))
 
 
 @dataclass(frozen=True)
@@ -219,15 +224,21 @@ def compile_document(
             if key not in cls.Style and spec.id not in placeholders:
                 add(Issue("unknown_style", f"{spec.type!r} has no style key {key!r}; "
                           f"it has {sorted(cls.Style)}", ids=(spec.id,)))  # fmt: skip
+        world: dict[str, float] = {}  # explicit sizes in world units (M18): see evaluate
         for key, (group, default) in cls.Style.items():
             role = spec.style.get(key, default)
             try:
-                style[key], roles[key] = theme.resolve(group, role), role
+                style[key], size = explicit.resolve(theme, group, role)
             except ThemeError as e:
                 add(Issue("bad_role", f"{spec.id}.{key}: {e}", ids=(spec.id,)))
+                continue
+            roles[key] = role
+            if size is not None:
+                world[key] = size
         objects.append(
             CompiledObject(spec.id, spec.type, index, cls(spec.id), cls.Params,
-                           MappingProxyType(style), MappingProxyType(roles), spec.tags, spec.layer)
+                           MappingProxyType(style), MappingProxyType(roles), spec.tags, spec.layer,
+                           MappingProxyType(world))
         )  # fmt: skip
     for cam in doc.cameras:
         add_params(cam.id, CAMERA_PARAMS[cam.kind], cam.params)
@@ -435,22 +446,34 @@ def evaluate(c: Compiled, t: float, replace: Mapping[str, Any] | None = None) ->
         camera = perspective_camera(cam_params, aspect, sway(c.theme, cam_params, t))
     else:
         camera = ortho_camera(cam_params, aspect)
+    overlay = overlay_camera(aspect)
+
+    def sized(o: CompiledObject) -> Mapping[str, Any]:
+        """Explicit world sizes as shares of the frame height, at the object's position."""
+        if not o.world:
+            return o.style
+        cam = overlay if o.layer == "overlay" else camera
+        return world_sizes(o.style, o.world, cam, env.get(f"{o.id}.pos"))
+
     objects = tuple(
-        ObjectState(o.id, o.type, o.index, build(o.id, o.params_model, o.tags, o.style,
+        ObjectState(o.id, o.type, o.index, build(o.id, o.params_model, o.tags, sized(o),
                                                  _life_of(o.impl)),
                     MappingProxyType(built[o.id]), o.roles, o.tags, o.layer, o.impl)
         for o in c.objects
     )  # fmt: skip
+    background = c.theme.background
+    if meta.background is not None:
+        background = explicit.to_linear(meta.background)
 
     def scene(objects: tuple[ObjectState, ...]) -> SceneState:
         return SceneState(
             t=t,
             width=meta.width,
             height=meta.height,
-            background=c.theme.background,
+            background=background,
             objects=objects,
             camera=camera,
-            overlay=overlay_camera(aspect),
+            overlay=overlay,
             values=MappingProxyType(env),
             light=MappingProxyType(c.theme.light),
             strokes=MappingProxyType(_strokes(c)),
@@ -460,6 +483,19 @@ def evaluate(c: Compiled, t: float, replace: Mapping[str, Any] | None = None) ->
     if any(callable(getattr(o.impl, "build", None)) for o in objects):
         objects = _expand(c, t, objects, scene)
     return scene(objects)
+
+
+def world_sizes(style: Mapping[str, Any], world: Mapping[str, float], cam: Any,
+                pos: Any) -> dict[str, Any]:  # fmt: skip
+    """``style`` with each explicit world size (M18) as the share of the frame height that
+    the drawing code multiplies back by ``units_per_height``: exact for the 2D camera, and
+    in 3D at ``pos`` (the object's position; the camera's target when it has none)."""
+    ref = None
+    with contextlib.suppress(TypeError, ValueError):
+        p = np.asarray(pos, dtype=np.float64)
+        ref = p if p.shape == (3,) and np.isfinite(p).all() else None
+    per = float(cam.units_per_height(ref))
+    return {**style, **{k: explicit.to_share(w, per) for k, w in world.items()}}
 
 
 def _life_of(impl: Any) -> frozenset[str]:
@@ -526,16 +562,23 @@ def _expand(c: Compiled, t: float, objects: tuple[ObjectState, ...], scene) -> t
             params = model.model_validate(
                 {**dict(params), "opacity": seen, "z_index": params.z_index + pp.z_index}
             )
-            style, roles = {}, {}
+            style, roles, world = {}, {}, {}
             for key in spec.style:
                 if key not in cls.Style:
                     raise fail(parent.id, f"part {part.id!r} has no style key {key!r}")
             for key, (group, default) in cls.Style.items():
                 role = spec.style.get(key, default)
                 try:
-                    style[key], roles[key] = c.theme.resolve(group, role), role
+                    style[key], size = explicit.resolve(c.theme, group, role)
                 except ThemeError as e:
                     raise fail(parent.id, f"part {part.id!r}.{key}: {e}") from e
+                roles[key] = role
+                if size is not None:
+                    world[key] = size
+            if world:
+                here = scene(())
+                cam = here.overlay if parent.layer == "overlay" else here.camera
+                style = world_sizes(style, world, cam, getattr(params, "pos", None))
             part.id = full
             state = ObjectState(full, cls.type, len(out) + 1, params, MappingProxyType(style),
                                 MappingProxyType(roles), spec.tags, parent.layer, part,

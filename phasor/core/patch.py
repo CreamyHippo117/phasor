@@ -28,6 +28,7 @@ from phasor.core.schema import (
     Overrides,
     ParamSpec,
     Segment,
+    StyleValue,
 )
 
 
@@ -55,7 +56,7 @@ class SetStyle(Model):
     op: Literal["set_style"] = "set_style"
     id: str
     key: str
-    role: str
+    role: StyleValue  # a role name, or an explicit value where the key's group takes one (M18)
 
 
 class SetTags(Model):

@@ -156,7 +156,8 @@ class ObjectBase:
     """Convenience base. It deliberately implements none of the contract members."""
 
     type: ClassVar[str]
-    # style key -> (role group, default role). Scenes may only use roles, never raw values.
+    # style key -> (role group, default role). A scene names a role, or (emphasis, text and
+    # stroke keys) an explicit value: a color, a size in world units (style/explicit.py).
     Style: ClassVar[dict[str, tuple[str, str]]] = {}
     # Named starting points: name -> {"params": {...}, "style": {...}}. ``preset="soft_phase"``
     # fills in what you did not set yourself; explicit values always win.
@@ -173,7 +174,7 @@ class ObjectBase:
         self,
         id: str,
         *,
-        style: dict[str, str] | None = None,
+        style: dict[str, Any] | None = None,
         tags: tuple[str, ...] | list[str] = (),
         layer: str = "world",
         preset: str | None = None,

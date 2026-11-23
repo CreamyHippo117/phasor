@@ -51,7 +51,7 @@ class Look:
     # object type -> {"params": {...}, "style": {...}}; filled in only where a scene says nothing
     defaults: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
 
-    def fill(self, type_name: str, params: dict[str, Any], style: dict[str, str],
+    def fill(self, type_name: str, params: dict[str, Any], style: dict[str, Any],
              palette: str | None = None):  # fmt: skip
         """``params`` and ``style`` with this look's defaults for ``type_name`` added where
         the object did not set them. With a ``palette``, what the look runs a hue along (its

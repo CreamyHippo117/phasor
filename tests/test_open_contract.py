@@ -672,7 +672,7 @@ def test_a_version_7_document_migrates_to_8():
     raw = {"schema_version": 7, "meta": {"title": "old", "palette": None},
            "objects": [{"id": "d", "type": "dot", "params": {"r": 0.2}}]}  # fmt: skip
     doc = Document.model_validate(migrate(raw))
-    assert SCHEMA_VERSION == 8 and doc.schema_version == 8
+    assert doc.schema_version == SCHEMA_VERSION >= 8
     assert doc.meta.modules == () and doc.objects[0].always == ()
 
 
