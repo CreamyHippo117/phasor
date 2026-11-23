@@ -352,20 +352,36 @@ WORKER_BUFFER_BYTES = 256 * 1024**2  # at most this much finished video waiting 
 
 def default_workers() -> int:
     """How many render workers to use by default: a quarter of the CPU threads, 1 to 4 (each
-    is a process with its own GL and CUDA context on the same card)."""
+    is a process with its own GL and CUDA context on the same card). Without CUDA the kernels
+    use the cores too, and ``default_threads`` gives each worker its share of them."""
     return max(1, min(4, (os.cpu_count() or 1) // 4))
 
 
+def default_threads(workers: int) -> int | None:
+    """Kernel threads per render process without CUDA: the cores shared out, so that
+    workers x threads <= cores (Milestone 14.3). None with CUDA (kernels run on the card) or
+    when the machine has no C++ compiler (kernels run on NumPy, one core); None too when
+    ``PHASOR_THREADS`` is set, which every process then reads for itself."""
+    from phasor.render.gpu.registry import active_backend
+
+    if active_backend() != "cpu" or os.environ.get("PHASOR_THREADS", "").strip():
+        return None
+    from phasor.render.cpu import backend as cpu
+
+    return max(1, cpu.cores() // max(1, workers))
+
+
 def parallel_frames(engine: Any, workers: int, *, chunk: int = WORKER_CHUNK,
-                    _fail_at: int | None = None, _on_start: Any = None,
-                    _slow: float = 0.0) -> Any:  # fmt: skip
+                    threads: int | None = None, _fail_at: int | None = None,
+                    _on_start: Any = None, _slow: float = 0.0) -> Any:  # fmt: skip
     """A frame source for ``render.job.render_file`` that renders in ``workers`` processes.
 
     The engine bakes here, once; each worker gets its document and that bake
     (``Engine.worker_payload``) and never bakes (ADR 0003). Worker w renders stretches w,
     w + N, ... of ``chunk`` frames; frames come back in order, so the video is the one a
     single process makes. A failed worker stops the render with its error; workers stop by
-    themselves if this process dies (the desktop app's Cancel kills it). ``_fail_at``,
+    themselves if this process dies (the desktop app's Cancel kills it). ``threads``: CPU
+    kernel threads in each worker (default ``default_threads(workers)``). ``_fail_at``,
     ``_on_start`` and ``_slow`` are for tests."""
     import multiprocessing
 
@@ -373,6 +389,7 @@ def parallel_frames(engine: Any, workers: int, *, chunk: int = WORKER_CHUNK,
         n = len(times)
         stretches = [(a, min(a + chunk, n)) for a in range(0, n, chunk)]
         count = max(1, min(workers, len(stretches)))
+        each = default_threads(count) if threads is None else threads
         payload = engine.worker_payload()
         ctx = multiprocessing.get_context("spawn")  # Windows has no fork; the same everywhere
         frame_bytes = size[0] * size[1] * 3
@@ -381,7 +398,7 @@ def parallel_frames(engine: Any, workers: int, *, chunk: int = WORKER_CHUNK,
         procs = [
             ctx.Process(target=_render_worker, name=f"phasor-render-{w}", daemon=True,
                         args=(payload, stretches[w::count], times, size, fps, shutter, samples,
-                              queues[w], 1.0 / count, _fail_at, _slow))
+                              queues[w], 1.0 / count, each, _fail_at, _slow))
             for w in range(count)
         ]  # fmt: skip
         with _workers_skip_main():
@@ -448,8 +465,8 @@ def _receive(q: Any, proc: Any) -> tuple:
                     ) from None
 
 
-def _render_worker(payload, stretches, times, size, fps, shutter, samples, q, share, fail_at,
-                   slow) -> None:  # fmt: skip
+def _render_worker(payload, stretches, times, size, fps, shutter, samples, q, share, threads,
+                   fail_at, slow) -> None:  # fmt: skip
     """A render worker's whole life: build the engine from the payload, render its
     stretches, send each frame. Stops when the parent is gone."""
     import multiprocessing
@@ -476,10 +493,12 @@ def _render_worker(payload, stretches, times, size, fps, shutter, samples, q, sh
 
     try:
         from phasor.engine import Engine
+        from phasor.render.cpu import set_threads
         from phasor.render.gpu.budget import set_share
         from phasor.render.job import render_frame
 
         set_share(share)
+        set_threads(threads)  # None: every core (one worker, or kernels on the card)
         engine = Engine.from_payload(payload)
         for a, b in stretches:
             for k in range(a, b):
