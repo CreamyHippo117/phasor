@@ -633,7 +633,8 @@ class Workspace:
         self, preset: str = "preview", out: str | None = None, start: float | None = None,
         end: float | None = None, frame: float | None = None,
     ) -> dict[str, Any]:  # fmt: skip
-        """Render a video (preset: preview 960x540@30, final, 4k) or one PNG (``frame``)."""
+        """Render a video (preset: preview 960x540@30, draft 640x360@15 (fastest,
+        roughest), final, 4k) or one PNG (``frame``)."""
         from phasor.render.encode import EncodeError
         from phasor.render.job import PRESETS, render_file
 

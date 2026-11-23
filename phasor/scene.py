@@ -369,7 +369,7 @@ def parallel_frames(engine: Any, workers: int, *, chunk: int = WORKER_CHUNK,
     ``_on_start`` and ``_slow`` are for tests."""
     import multiprocessing
 
-    def source(times, size, fps, shutter, samples):
+    def source(times, size, fps, shutter, samples, field_scale=1.0):
         n = len(times)
         stretches = [(a, min(a + chunk, n)) for a in range(0, n, chunk)]
         count = max(1, min(workers, len(stretches)))
@@ -381,7 +381,7 @@ def parallel_frames(engine: Any, workers: int, *, chunk: int = WORKER_CHUNK,
         procs = [
             ctx.Process(target=_render_worker, name=f"phasor-render-{w}", daemon=True,
                         args=(payload, stretches[w::count], times, size, fps, shutter, samples,
-                              queues[w], 1.0 / count, _fail_at, _slow))
+                              queues[w], 1.0 / count, _fail_at, _slow, field_scale))
             for w in range(count)
         ]  # fmt: skip
         with _workers_skip_main():
@@ -449,7 +449,7 @@ def _receive(q: Any, proc: Any) -> tuple:
 
 
 def _render_worker(payload, stretches, times, size, fps, shutter, samples, q, share, fail_at,
-                   slow) -> None:  # fmt: skip
+                   slow, field_scale=1.0) -> None:  # fmt: skip
     """A render worker's whole life: build the engine from the payload, render its
     stretches, send each frame. Stops when the parent is gone."""
     import multiprocessing
@@ -487,7 +487,7 @@ def _render_worker(payload, stretches, times, size, fps, shutter, samples, q, sh
                     return
                 if k == fail_at:
                     raise RuntimeError(f"failed on purpose at frame {k}")
-                frame = render_frame(engine, times[k], fps, size, shutter, samples)
+                frame = render_frame(engine, times[k], fps, size, shutter, samples, field_scale)
                 if slow:
                     time.sleep(slow)
                 if not send(("frame", k, frame)):

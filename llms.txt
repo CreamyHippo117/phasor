@@ -31,7 +31,7 @@
 - `free_space_near`: Empty label-sized places around `id` at `t`, nearest first (boxes are 0-1, top-left origin): where a label or note could go.
 - `hit_test`: Objects under an output-pixel point (origin top-left), topmost first.
 - `resolve`: Turn words like 'the pole on the left' or 'label of the loop' into object ids.
-- `render`: Render a video (preset: preview 960x540@30, final, 4k) or one PNG (`frame`).
+- `render`: Render a video (preset: preview 960x540@30, draft 640x360@15 (fastest, roughest), final, 4k) or one PNG (`frame`).
 - `docs_search`: Search the API reference, patterns, pitfalls and examples.
 - `object_types`: What a patch may add: object types (use these exact names in `add_object`) with their parameters and defaults and style keys (role group, default role), the role names each group accepts (style takes roles, never raw colors), and the themes.
 

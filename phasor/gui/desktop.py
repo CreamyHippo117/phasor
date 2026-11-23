@@ -503,6 +503,7 @@ class ExportDialog(QDialog):
         where.addWidget(browse)
         self.preset = QComboBox()
         for p, text in (("preview", "Preview (960 x 540, 30 fps, quick)"),
+                        ("draft", "Draft (640 x 360, 15 fps, fastest, rough)"),
                         ("final", "Final (the scene's size and frame rate, motion blur)"),
                         ("4k", "4K (3840 x 2160)")):  # fmt: skip
             self.preset.addItem(text, p)

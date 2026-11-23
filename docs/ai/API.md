@@ -678,6 +678,12 @@ assert report["after"] < before and len(report["rounds"]) <= 3
 Finals render with motion blur (`phasor render --preset final`; `--motion-blur 0` turns it
 off): `engine.frame_blurred(t, fps)` averages sub-frames only where something moves.
 
+Render presets: `preview` (960x540, 30 fps, no blur), `final` (the scene's own size and rate,
+blur), `4k`, and `draft` (640x360, 15 fps, no blur, fast encode, fields such as domain coloring
+at half resolution): the quickest look at timing and layout, never for a finished video.
+`phasor render --preset draft`, or the MCP `render` tool with `preset="draft"`. Only `draft`
+gets the cuts; `engine.frame(t, size, field_scale=0.5)` is the picture it draws.
+
 ## Domains: fourier, linalg, acoustics
 
 Domain modules register their own object types: `from phasor import fourier, linalg, ac`.
