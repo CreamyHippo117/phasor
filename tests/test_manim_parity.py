@@ -510,7 +510,10 @@ def test_the_camera_tour_imports_with_every_feature_and_no_warning():
     assert ride[1] == pytest.approx((-3.0, 1.5, 0), abs=1e-3) and ride[3] == pytest.approx(ride[0])
     assert v(4.5)["sound_1"].params.start == 4.5
     assert v(9.25)["regularpolygon_1"].params.morph_from == "square_1"
-    assert not [i for i in r.scene.engine.lint() if i.severity == "error"]
+    assert r.scene.engine.lint() == []
+    # strict lint: only raw_motion, by design (an import keys Manim's own times as tracks;
+    # it never anchors motion to markers with verbs: M20 audit note 8)
+    assert {i.code for i in r.scene.engine.lint(strict=True)} == {"raw_motion"}
     track, rate = r.scene.engine.audio_track()
     assert len(track) == 12 * rate and abs(track[int(4.6 * rate)]) > 0
 

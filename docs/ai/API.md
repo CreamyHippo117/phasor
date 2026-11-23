@@ -288,9 +288,15 @@ assert s4.engine.lint(strict=True) == []
   (Manim's `add_sound`) plays a WAV file in the scene's folder from `start` seconds, `gain`
   dB louder, cut where the scene ends. PCM WAV only (8 to 32-bit, 8 to 192 kHz, 1 to 16
   channels, mixed down to mono and resampled to the narration's rate, else 48 kHz); at most
-  `MAX_CLIP_FRAMES` (2^26) frames of a clip are read, and the track covers at most 3 hours.
-  A missing file is lint `missing_file`, one phasor cannot mix is `bad_file`; the render
-  leaves either out and lists it in its warnings.
+  `MAX_CLIP_FRAMES` (2^26) frames of a clip are read, the track covers at most 3 hours, and
+  at most `MAX_SOUNDS` (256) clips and `MAX_MIX_SAMPLES` (2^30) clip samples in all are
+  mixed. The mix is made a chunk at a time on the scene's own sample grid (a render of part
+  of the scene gets exactly that part of the whole mix), before any frame is rendered. A
+  missing file is lint `missing_file`; one phasor cannot mix (not PCM WAV, or a header that
+  claims more than the file holds) is `bad_file`; a clip past the limits, or whose `start`
+  or `gain` is animated (the mix reads them at 0 s), is `sound_limit`. The render leaves
+  such clips out and lists them in its warnings; the semantics' `seconds` is what the file
+  really holds.
 
 ```python
 import tempfile
@@ -1710,11 +1716,12 @@ colors are Manim's own.
 | `Text`, `Tex`, `MathTex` | `text` (`Tex` is text mode with `$...$` maths, `MathTex` maths); `MathTex("a", "+", "b")` is an `equation` with a part each (`eq[1].set_color` colors that part by the nearest role); a `font_size` the script sets is an explicit size (48 is the `math` role's height), and `scale` scales it (a negative factor is a flip) |
 | `Axes` (`c2p`, `p2c`, `i2gp`, `get_axis_labels`, `add_coordinates`, `include_numbers`), `NumberPlane`, `ComplexPlane`, `NumberLine` (`n2p`), `BarChart`, `Table`, `MathTable`, `Matrix`, `Code` (`code_string` or a `code_file` in the scene's folder), `DecimalNumber`, `Integer` | `geo.Axes` (unequal scales; labels and numbers as its own), `dg.NumberPlane` (with its grid), `dg.NumberLine`, `dg.BarChart`, `dg.Table`, `dg.MatrixDisplay`, `dg.Code`, `Counter`; a step that makes more than 100 ticks is widened to a nice one, with a warning |
 | `VGroup` and `shift`, `move_to`, `next_to`, `to_edge`, `to_corner`, `scale`, `rotate`, `stretch`, `set_width`, `align_to`, `arrange`, `arrange_in_grid` | positions are computed as Manim would |
-| `Create`, `Uncreate`, `Write`, `Unwrite`, `DrawBorderThenFill`, `FadeIn`/`FadeOut` (`shift`, `scale`), `GrowFromCenter`, `GrowFromPoint`, `GrowArrow`, `ShrinkToCenter`, `Rotate`, `Indicate`, `Circumscribe`, `Flash`, `Wiggle`, `MoveToTarget`, `Restore`, `ApplyMethod`, `AnimationGroup`, `LaggedStart`, `Succession`, `.animate` (place, size and color: `set_color`, `set_fill`, `set_opacity`) | tracks with Manim's own run times and rate functions: `smooth` is the `sigmoid` easing, `linear`, `smoothstep` ... exactly; any other rate function (`there_and_back`, `double_smooth`, your own) is sampled into 16 straight pieces. Colors move as style tracks (mixed in linear light) |
+| `Create`, `Uncreate`, `Write`, `Unwrite`, `DrawBorderThenFill`, `FadeIn`/`FadeOut` (`shift`, `scale`), `GrowFromCenter`, `GrowFromPoint`, `GrowArrow`, `ShrinkToCenter`, `Rotate`, `Indicate`, `Circumscribe`, `Flash`, `Wiggle`, `MoveToTarget`, `Restore`, `ApplyMethod`, `AnimationGroup`, `LaggedStart`, `Succession`, `.animate` (place, size and color: `set_color`, `set_fill`, `set_opacity`) | tracks with Manim's own run times and rate functions: `smooth` is the `sigmoid` easing, `linear`, `smoothstep` ... exactly; any other rate function (`there_and_back`, `double_smooth`, your own) becomes straight pieces within 0.2% of the motion (at most 64, Douglas-Peucker). Colors move as style tracks (mixed in linear light) |
 | `Transform`, `ReplacementTransform`, `TransformMatchingTex`, `TransformMatchingShapes`, `FadeTransform` | the same kind moves its parameters; different outlines (shapes, paths, text, equations) morph (`transform`, `transform_matching`; text becomes `as_shapes`), played in Manim's run time; the rest crossfade |
 | `ValueTracker` (`get_value`, `set_value`, `.animate.set_value`) | a `Value` with a track |
-| updaters (`add_updater`, with or without `dt`), `always_redraw`, `always`, `f_always` | run by the stand-in at Manim's frames (30 a second, `dt` 1/30, the first frame of a play with `dt` 0, as Manim does) with every animated mobject where Manim has it; what they change becomes tracks (keys a straight line between does not reproduce within 1e-4 are kept). A baked record: the document never runs the script again, so changing the `Value` later does not move what the updater drove. At most 20000 frames and 2 million sampled numbers per import (then fewer frames a second, with a warning) |
-| `self.add_sound("click.wav", time_offset, gain)` | a `media.Sound` (a WAV file inside the scene's folder) mixed in when the scene renders |
+| updaters (`add_updater`, with or without `dt`), `always_redraw`, `always`, `f_always` | run by the stand-in at Manim's frames (`config.frame_rate`: 30 a second, Manim's `-qm`, unless the script sets 1 to 120; `dt` 1/30, the first frame of a play with `dt` 0, as Manim does) with every animated mobject where Manim has it; what they change becomes tracks (keys a straight line between does not reproduce within 1e-4 are kept). A baked record: the document never runs the script again, so changing the `Value` later does not move what the updater drove. The work is bounded per import: at most 20000 updater frames, 2 million updater calls and 1 million sampled numbers (a document of at most about 11 MB of keys). Past half of any of them, updaters run at fewer frames a second (down to 2), each at one of Manim's frame times and with `dt` adding up to Manim's; when they are spent, updaters stop and the warning says at what time (what they moved stays where it was). Measured: 200 half-second plays driving an `always_redraw` plot import in 9 s as an 11 MB document (updaters stop at 69 s); 2000 dots with updaters over `wait(30)` in 8 s |
+| `self.wait_until(condition, max_time)`, `self.wait(t, stop_condition=)` | the condition is checked after each frame of the wait, with Manim's clock one frame on (as Manim CE 0.22.1 does), and the wait ends at the first frame where it is true; a condition that fails is a `ManimImportError` |
+| `self.add_sound("click.wav", time_offset, gain)` | a `media.Sound` (a WAV file inside the scene's folder) mixed in when the scene renders; a start before 0 or a gain outside -60 to 24 dB is clamped, with a warning |
 | Colors the script sets (`RED`, `"#58C4DD"`), `stroke_width` / `set_stroke(width=)`, `camera.background_color` | explicit style values (a hex color; a width in world units, 4 is the `regular` role's); a class's own default color is the nearest role. A negative or too large width or font size keeps the role, with a warning; a background's alpha is dropped, with a warning (a background is opaque). `lint(aesthetic=True)` says which are off the theme (`off_palette`, `off_scale`) |
 
 What does not carry over, with a warning in `ManimImport.warnings` (printed by the command):
@@ -1722,8 +1729,14 @@ a turned or stretched text (drawn level), a turned camera frame, a part of a `Ma
 than its color, an updater that turns a mobject into another kind of shape, `Axes.get_area`,
 a file outside the scene's folder, a color phasor cannot read. A shape phasor cannot draw as
 its own kind (a zero radius, a coordinate past 1e9) is drawn as a path or a line, with a
-warning. A Manim name phasor lacks raises an error that says so; an updater or rate function
-that fails is a `ManimImportError` naming it.
+warning. A Manim name phasor lacks raises an error that says so; an updater, rate function
+or wait condition that fails, `exit()` in the script, and a script still running after
+`MAX_IMPORT_SECONDS` (600 s; checked at each play and updater call) are a
+`ManimImportError` naming it. The import applies its document in one patch at the end
+(and before each morph, which reads it), so its time grows with what the script makes, not
+with the number of plays. `lint(strict=True)` names every moving object of an import in
+`raw_motion`, by design: its motion is tracks at Manim's own times, never verbs anchored to
+markers (`examples/manim_camera_tour.py` is clean in `lint()` and has only that).
 
 ```python
 import tempfile

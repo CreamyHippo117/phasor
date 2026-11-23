@@ -459,7 +459,7 @@ def mix_track(
 
 
 MAX_SOUNDS = 256  # sound clips mixed into one track; the rest are left out (lint sound_limit)
-MAX_MIX_SAMPLES = 1 << 28  # clip samples mixed in all (about 90 minutes at 48 kHz)
+MAX_MIX_SAMPLES = 1 << 30  # clip samples mixed in all (6 hours at 48 kHz: 2 full tracks)
 _OUT_CHUNK = 1 << 20  # track samples mixed at a time
 
 

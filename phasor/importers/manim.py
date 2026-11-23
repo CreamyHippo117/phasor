@@ -111,7 +111,7 @@ MAX_UPDATE_RATE = 120  # a script's own ``config.frame_rate`` is clamped to 1..t
 # with dt still Manim's); once a play cannot have two frames, they stop, said.
 MAX_FRAMES = 20_000
 MAX_UPDATER_CALLS = 2_000_000  # updater functions called (2000 dots with updaters: 1000 frames)
-MAX_KEY_NUMBERS = 1_000_000  # a document of at most about 12 MB of updater keys
+MAX_KEY_NUMBERS = 1_000_000  # a document of at most about 11 MB of updater keys
 MIN_UPDATE_RATE = 2.0
 MAX_IMPORT_SECONDS = 600.0  # a script still running after this (in play, an updater) stops
 KEY_TOLERANCE = 1e-4  # sampled keys closer than this to a straight line between are dropped

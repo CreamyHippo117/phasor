@@ -30,8 +30,12 @@ uv run pytest tests/manim_real -v
 uv run python -m tests.manim_real.compare -v
 ```
 
-Expected: `10 passed`. The table the second command prints should match the one in
-`MILESTONE_20.md` (the same numbers to 3 decimals: both sides are deterministic).
+Expected: `11 passed` (`wait_until` was added by the M20 audit). In the table the second
+command prints, the clock, positions and sizes of shapes, dots, lines and the camera frame
+should match the one in `MILESTONE_20.md` to 3 decimals (both sides are deterministic). The
+`text` numbers, and positions of anything placed next to a text, will differ: Manim's
+`Text` is set by Pango in the system's fonts, which are not Linux's on Windows; they must
+stay within the tolerance (0.35), not match the Linux numbers.
 
 ## Results
 
