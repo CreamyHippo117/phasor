@@ -156,3 +156,43 @@ why = "kernel-level demo, not a scene"
 kind = "physics"
 tier = "technique"
 teaches = "Sound in a 3D room: rays and fronts bouncing off the walls, an orbiting camera, an impulse response filling in"
+
+[examples.linear_system]
+kind = "fourier_linalg"
+tier = "technique"
+teaches = "x' = A x: a saddle's eigenvector lines, trajectories, and a grid carried along the flow"
+
+[examples.convolution]
+kind = "fourier_linalg"
+tier = "technique"
+teaches = "Live convolution: a kernel flipped and sliding, the overlap lit, the output traced as it is made"
+
+[examples.filtering]
+kind = "fourier_linalg"
+tier = "technique"
+teaches = "A low-pass filter: poles and zeros over its transfer function, gain and phase, a signal and its spectrum cut"
+
+[examples.fourier_winding]
+kind = "fourier_linalg"
+tier = "technique"
+teaches = "The Fourier transform as a winding picture: a wound signal, its centre of mass and the spectrum it traces"
+
+[examples.prism_spectrogram]
+kind = "fourier_linalg"
+tier = "technique"
+teaches = "A spectrogram of a formula in the prism look, with a glowing playhead sweeping it"
+
+[examples.directivity]
+kind = "physics"
+tier = "technique"
+teaches = "Polar patterns: a steered array, a baffled piston and a cardioid"
+
+[examples.doppler]
+kind = "physics"
+tier = "technique"
+teaches = "Doppler: wavefronts bunching ahead of a moving source, then the Mach cone"
+
+[examples.strange_attractor]
+kind = "physics"
+tier = "technique"
+teaches = "The Lorenz attractor traced in 3D with hue along time as the camera circles"
