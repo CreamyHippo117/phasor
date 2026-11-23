@@ -25,7 +25,7 @@ from collections.abc import Callable
 from typing import Any, ClassVar, Literal
 
 import numpy as np
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from phasor.core import record
 from phasor.core.objects import DrawContext, ObjectBase, ParamsBase, register
@@ -45,6 +45,8 @@ TIP_MAX = 0.3  # ... and at most this share of its subpath's length
 NOT_GEOMETRY = frozenset({"opacity", "dim", "z_index", "flash", "progress", "fill_opacity",
                           "stroke_opacity"})  # fmt: skip
 CACHE_SIZE = 1024
+MAX_DASHES = 2000  # dashes (or dots) per path: past it they are drawn longer (lint dash_limit)
+MAX_COORD = 1e9  # world units: no parameter of a path may be larger (it could not be drawn)
 
 Tips = Literal["none", "start", "end", "both"]
 
@@ -93,6 +95,23 @@ class PathParams(ParamsBase):
     fill_opacity: float = Field(1.0, ge=0, le=1)  # times the fill role's opacity
     stroke_opacity: float = Field(1.0, ge=0, le=1)  # 0: a fill with no outline
 
+    @model_validator(mode="after")
+    def _bounded(self):
+        """Every number of a path is within ``MAX_COORD``: a size, a position, a point.
+        Beyond that nothing can be drawn (lengths overflow, dashes never end)."""
+
+        def big(v) -> bool:
+            if isinstance(v, int | float) and not isinstance(v, bool):
+                return abs(v) > MAX_COORD
+            if isinstance(v, tuple | list):
+                return any(big(x) for x in v)
+            return False
+
+        for name in type(self).model_fields:
+            if big(getattr(self, name)):
+                raise ValueError(f"{name}: numbers must be within +-{MAX_COORD:g}")
+        return self
+
 
 class PathBase(ObjectBase):
     """Draws, measures and describes a path; a subclass says what the path is (``bezier``)."""
@@ -116,6 +135,11 @@ class PathBase(ObjectBase):
 
     def tips(self, p: Any) -> str:
         return getattr(p, "tips", "none")
+
+    def is_closed(self, p: Any, sub: np.ndarray) -> bool:
+        """Whether a subpath is a closed loop (no tips; it has an area). A shape that is
+        open by nature (an arc of a full turn, a brace of no width) says no."""
+        return pm.is_closed(sub)
 
     def shape_features(self, p: Any) -> dict[str, np.ndarray]:
         """Named points of the shape (its ``vertices``, a ``tip``) besides the box's."""
@@ -167,7 +191,7 @@ class PathBase(ObjectBase):
             tol = max(pm.size_of(subs), 1e-9) * MEASURE
             polys = self.flat(p, tol)
             return {
-                "closed": all(pm.is_closed(s) for s in subs) if subs else False,
+                "closed": all(self.is_closed(p, s) for s in subs) if subs else False,
                 "length": sum(pm.length(q) for q in polys),
                 "area": pm.region(polys, self.rule(p)).area if polys else 0.0,
                 "crossing": pm.crossings(self.flat(p, tol * 30)),
@@ -203,7 +227,7 @@ class PathBase(ObjectBase):
                 # Plain paint: glow 1 always (a glow role, which life breathes, never fills).
                 ctx.triangles(pos, tris, color=(fc[0], fc[1], fc[2], fc[3] * alpha), glow=1.0)
         if p.opacity * p.stroke_opacity > 0 and p.progress > 0:
-            self._stroke(ctx, state, polys, [pm.is_closed(s) for s in subs], tol / FLATNESS)
+            self._stroke(ctx, state, polys, [self.is_closed(p, s) for s in subs], tol / FLATNESS)
 
     def _stroke(self, ctx, state, polys, closed, unit: float) -> None:
         me = self.me(state)
@@ -217,6 +241,8 @@ class PathBase(ObjectBase):
         tips = self.tips(p)
         lengths = [pm.length(q) for q in polys]
         left = p.progress * sum(lengths)
+        if period > 0:  # at most MAX_DASHES per path: past that they are drawn longer
+            period = max(period, sum(lengths) / MAX_DASHES)
         for i, (poly, total) in enumerate(zip(polys, lengths, strict=True)):
             if left <= 1e-12:
                 break
@@ -235,10 +261,11 @@ class PathBase(ObjectBase):
             if end <= start:
                 continue
             if period > 0 and dotted:
-                centers = pm.dots(poly, period, upto=end, start=start)
+                centers = pm.dots(poly, period, upto=end, start=start, limit=MAX_DASHES)
                 disc_batch(ctx, cam, centers, DOT * width, colors=color, glow=glow)
             elif period > 0:
-                for dash in pm.dashes(poly, period, DASH_ON, upto=end, start=start):
+                for dash in pm.dashes(poly, period, DASH_ON, upto=end, start=start,
+                                      limit=MAX_DASHES):  # fmt: skip
                     polyline(ctx, cam, dash, me.style["stroke"] * cam.units_per_height(dash),
                              color=color, glow=glow)  # fmt: skip
             else:
@@ -302,6 +329,9 @@ class PathBase(ObjectBase):
             out["tips"] = self.tips(p)
         if p.progress < 1:  # partly traced; 0 means nothing drawn yet
             out["drawn"] = round(p.progress, 4)
+        period = me.style["dash"] * self._tol(state) / FLATNESS
+        if period > 0 and m["length"] / period > MAX_DASHES:
+            out["dash_limit"] = int(m["length"] / period)  # lint dash_limit
         if m["crossing"] and self._fill_alpha(me) > 0:
             out["fill_crossing"] = True  # lint fill_crossing
         out.update(self.facts(p))

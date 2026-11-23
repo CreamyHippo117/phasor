@@ -131,7 +131,7 @@ class Network(ObjectBase):
         p = self.me(state).params
         if p.path:  # in the scene's folder; the key changes when the file does (re-read)
             try:
-                f = files.resolve(state.base_dir, p.path)
+                f = files.regular_file(state.base_dir, p.path)
                 st = f.stat()
                 return "file", ("file", str(f), st.st_mtime_ns, st.st_size)
             except (OSError, ValueError):

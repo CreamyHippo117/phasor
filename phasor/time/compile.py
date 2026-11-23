@@ -59,6 +59,20 @@ class Const:
 Node = Const | ResolvedTrack | CompiledExpr
 
 
+def file_values(c: Compiled, path: str) -> tuple[str, ...]:
+    """Every file name the parameter ``path`` (one a type lists in ``Files``) can hold: its
+    value, or each value its track takes. What the engine watches and lint checks (contract
+    3: a changed file is read again). An expression gives numbers, never a file name."""
+    node = c.nodes.get(path)
+    if isinstance(node, Const):
+        values: tuple = (node.value,)
+    elif isinstance(node, ResolvedTrack):
+        values = (node.initial, *(s.to for s in node.segments))
+    else:
+        values = ()
+    return tuple(dict.fromkeys(v for v in values if isinstance(v, str) and v))
+
+
 @dataclass(frozen=True)
 class CompiledObject:
     id: str
@@ -465,6 +479,9 @@ def evaluate(c: Compiled, t: float, replace: Mapping[str, Any] | None = None) ->
     if meta.background is not None:
         background = explicit.to_linear(meta.background)
 
+    reserved = frozenset({o.id for o in c.doc.objects} | {cam.id for cam in c.doc.cameras}
+                         | set(c.doc.retired_ids))  # fmt: skip
+
     def scene(objects: tuple[ObjectState, ...]) -> SceneState:
         return SceneState(
             t=t,
@@ -478,6 +495,7 @@ def evaluate(c: Compiled, t: float, replace: Mapping[str, Any] | None = None) ->
             light=MappingProxyType(c.theme.light),
             strokes=MappingProxyType(_strokes(c)),
             base_dir=c.base_dir,
+            reserved=reserved,
         )
 
     if any(callable(getattr(o.impl, "build", None)) for o in objects):

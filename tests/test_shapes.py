@@ -598,3 +598,397 @@ def test_tiny_waits_until_a_traced_curve_is_drawn(passes):
     s2.add(Line(id="speck", points=[(0, 0), (0.005, 0)]))
     (issue,) = [i for i in s2.engine.lint() if i.code == "tiny"]
     assert issue.ids == ("speck",)
+
+
+# ---------------------------------------------------------------- 6. hostile files (audit)
+#
+# The promise (svg.py, contract 3): a bad or hostile file in the scene's folder, or an edit
+# to it, is a lint issue and draws nothing; it never makes state_at, inspect or lint raise,
+# hang or run out of memory.
+
+H = '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
+H += 'viewBox="0 0 100 100">'
+DOT = '<circle id="dot" cx="50" cy="50" r="20"/>'
+
+
+def _bump(f):
+    import os
+
+    st = os.stat(f, follow_symlinks=False)
+    os.utime(f, ns=(st.st_atime_ns, st.st_mtime_ns + 10**9), follow_symlinks=False)
+
+
+def _svg_scene(tmp_path, text, **kw):
+    pytest.importorskip("svgelements")
+    (tmp_path / "logo.svg").write_text(text, encoding="utf-8")
+    s = Scene("svg", passes=None, base_dir=tmp_path, **kw)
+    s.add(shapes.SVG(id="logo", path="logo.svg"))
+    return s
+
+
+def _survives(e, t=0.5):
+    """state_at, inspect and lint all answer; the parts' points are finite."""
+    st = e.state_at(t)
+    e.inspect(t)
+    issues = e.lint()
+    for o in st.objects:
+        if o.parent == "logo":
+            assert all(np.isfinite(np.asarray(sub)).all() for sub in o.params.subpaths)
+    return st, {i.code: i for i in issues}
+
+
+def _parts(st):
+    return [o.id for o in st.objects if o.parent == "logo"]
+
+
+def test_svg_part_names_avoid_the_documents_ids_and_retired_ids(tmp_path):
+    from phasor import Text
+
+    f = tmp_path / "logo.svg"
+    s = _svg_scene(tmp_path, H + DOT + "</svg>")
+    s.add(Text(id="logo.label", text="logo"))
+    s.add(Text(id="logo.star", text="x"))
+    s.engine.apply([{"op": "remove_object", "id": "logo.star"}])
+    e = s.engine
+    assert _parts(e.state_at(0)) == ["logo.dot"]
+    f.write_text(H + '<circle id="label" cx="5" cy="5" r="4"/>'
+                 '<circle id="star" cx="5" cy="5" r="4"/></svg>', encoding="utf-8")  # fmt: skip
+    _bump(f)
+    st, _ = _survives(e)
+    assert _parts(st) == ["logo.label_2", "logo.star_2"]  # a suffix, deterministically
+
+
+def test_svg_part_names_are_capped_in_length():
+    from phasor.domains.svg import MAX_NAME, part_names
+
+    long = pm.SvgShape("A" * 5000, "circle", (), "nonzero", True, False)
+    names = part_names([long, long])
+    assert all(len(n) <= MAX_NAME + 4 for n in names) and names[0] != names[1]
+
+
+def test_svg_shapes_with_coordinates_that_are_not_finite_are_dropped(tmp_path):
+    bad = ('<path id="p" d="M0 0 L10 10" transform="scale(1e308) scale(1e308)"/>'
+           '<path id="q" d="M0 0 L1e300 1e300 L-1e300 5 Z"/>'
+           '<rect id="r" x="0" y="0" width="inf" height="5"/>')  # fmt: skip
+    f = tmp_path / "logo.svg"
+    s = _svg_scene(tmp_path, H + DOT + "</svg>")
+    e = s.engine
+    e.state_at(0)
+    f.write_text(H + DOT + bad + "</svg>", encoding="utf-8")
+    _bump(f)
+    st, issues = _survives(e)
+    assert _parts(st) == ["logo.dot"]
+    assert "bad_file" in issues and issues["bad_file"].ids == ("logo",)
+    assert "skipped" in issues["bad_file"].message
+
+
+@pytest.mark.parametrize("box", ["0 0 0 0", "0 0 -10 -10", "0 0 nan 1e999", None])
+def test_a_hostile_view_box_still_draws_finite_parts(tmp_path, box):
+    head = ('<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="0">' if box is None
+            else f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{box}">')  # fmt: skip
+    s = _svg_scene(tmp_path, head + DOT + "</svg>")
+    st, _ = _survives(s.engine)
+    # svgelements drops every shape under an empty view box: nothing drawn, no error
+    assert _parts(st) == ([] if box == "0 0 0 0" else ["logo.dot"])
+
+
+@pytest.mark.parametrize("text", ["", "\x00\x01garbage" * 10, H + '<path id="p" d="M0 0 L10'])
+def test_a_malformed_svg_is_bad_file_and_parsed_once(tmp_path, text, monkeypatch):
+    se = pytest.importorskip("svgelements")
+    calls = []
+    real = se.SVG.parse
+
+    def counted(*a, **k):
+        calls.append(1)
+        return real(*a, **k)
+
+    monkeypatch.setattr(se.SVG, "parse", staticmethod(counted))
+    pm._read_svg.cache_clear()
+    s = _svg_scene(tmp_path, text)
+    st, issues = _survives(s.engine)
+    assert _parts(st) == []
+    assert issues["bad_file"].ids == ("logo",) and issues["bad_file"].severity == "warning"
+    assert len(calls) <= 1  # a bad file is remembered as bad, not parsed at every t
+
+
+def _with_alarm(seconds, fn):
+    import signal
+
+    if not hasattr(signal, "SIGALRM"):
+        return fn()
+
+    def boom(*_):
+        raise TimeoutError(f"took more than {seconds} s")
+
+    old = signal.signal(signal.SIGALRM, boom)
+    signal.alarm(seconds)
+    try:
+        return fn()
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old)
+
+
+def test_nested_use_that_fans_out_is_svg_too_complex_and_fast(tmp_path):
+    fan = (H + '<defs><circle id="a0" cx="5" cy="5" r="1"/>'
+           + "".join(f'<g id="a{i + 1}">' + f'<use href="#a{i}"/>' * 10 + "</g>"
+                     for i in range(6))
+           + '</defs><use href="#a6"/></svg>')  # fmt: skip
+    s = _svg_scene(tmp_path, fan)
+    st, issues = _with_alarm(60, lambda: _survives(s.engine))
+    assert _parts(st) == []
+    assert issues["svg_too_complex"].ids == ("logo",)
+    d = pm.read_svg(str(tmp_path / "logo.svg"), ("x", 1, 1))
+    assert d.shapes == () and "use" in d.limited and not d.problem
+
+
+@pytest.mark.parametrize("kind", ["cycle", "deep"])
+def test_use_cycles_and_deep_nesting_never_raise(tmp_path, kind):
+    text = (H + '<g id="g1"><use xlink:href="#g2"/></g><g id="g2"><use xlink:href="#g1"/></g>'
+            '<use id="self" xlink:href="#self"/>' + DOT + "</svg>" if kind == "cycle"
+            else H + "<g>" * 5000 + DOT + "</g>" * 5000 + "</svg>")  # fmt: skip
+    s = _svg_scene(tmp_path, text)
+    st, issues = _with_alarm(60, lambda: _survives(s.engine))
+    assert _parts(st) == [] and "svg_too_complex" in issues
+
+
+def test_a_drawing_past_the_segment_limit_is_truncated_with_a_lint_note(tmp_path, monkeypatch):
+    monkeypatch.setattr(pm, "SVG_MAX_SEGMENTS", 50)
+    pm._read_svg.cache_clear()
+    many = "".join(f'<rect id="r{i}" x="{i}" y="0" width="1" height="1"/>' for i in range(40))
+    s = _svg_scene(tmp_path, H + many + "</svg>")
+    st, issues = _survives(s.engine)
+    assert 0 < len(_parts(st)) < 40
+    assert issues["svg_too_complex"].ids == ("logo",)
+    assert "segments" in issues["svg_too_complex"].message
+    pm._read_svg.cache_clear()
+
+
+def _loop(tmp_path, name):
+    import os
+
+    try:
+        os.symlink(name, tmp_path / name)
+    except (OSError, NotImplementedError):
+        pytest.skip("no symbolic links here")
+
+
+def test_a_link_that_loops_is_a_missing_file_for_every_type_that_reads_files(tmp_path):
+    from phasor import Image
+
+    pytest.importorskip("svgelements")
+    _loop(tmp_path, "logo.svg")
+    _loop(tmp_path, "pic.png")
+    s = Scene("loop", passes=None, base_dir=tmp_path)
+    s.add(shapes.SVG(id="logo", path="logo.svg"))
+    s.add(Image(id="pic", path="pic.png"))
+    st, _ = _survives(s.engine)
+    assert _parts(st) == []
+    found = {i.ids for i in s.engine.lint() if i.code == "missing_file"}
+    assert found == {("logo",), ("pic",)}
+
+
+def test_a_fifo_is_never_read(tmp_path):
+    import os
+
+    from phasor import Image
+    from phasor.core import files
+
+    if not hasattr(os, "mkfifo"):
+        pytest.skip("no FIFOs here")
+    pytest.importorskip("svgelements")
+    os.mkfifo(tmp_path / "logo.svg")
+    os.mkfifo(tmp_path / "pic.png")
+    s = Scene("fifo", passes=None, base_dir=tmp_path)
+    s.add(shapes.SVG(id="logo", path="logo.svg"))
+    s.add(Image(id="pic", path="pic.png"))
+    st, issues = _with_alarm(30, lambda: _survives(s.engine))
+    assert _parts(st) == [] and issues["missing_file"]
+    assert "not a regular file" in " ".join(i.message for i in s.engine.lint()
+                                            if i.code == "missing_file")  # fmt: skip
+    with pytest.raises(ValueError, match="regular file"):
+        _with_alarm(10, lambda: files.read_bytes(tmp_path / "logo.svg", 100))
+    assert not files.exists(tmp_path, "logo.svg") and files.stamp(tmp_path, "logo.svg")[1] is None
+
+
+# ---------------------------------------------------------------- 7. bounded parameters (audit)
+
+import phasor.domains.path as shapes_path  # noqa: E402
+
+
+class _Any:
+    """A DrawContext that counts every call, whatever it is."""
+
+    def __init__(self):
+        self.n = 0
+
+    def __getattr__(self, name):
+        def call(*a, **k):
+            self.n += 1
+
+        return call
+
+
+EXTREMES = (1e9, 1e12, 1e200, -1e200, 1e-300, 1e8)
+
+
+def _shape_cases():
+    for cls in (shapes.Circle, shapes.Ellipse, shapes.Arc, shapes.Sector, shapes.Annulus,
+                shapes.Polygon, shapes.RegularPolygon, shapes.Rectangle, shapes.Brace):  # fmt: skip
+        for name, f in cls.Params.model_fields.items():
+            if name in ("opacity", "dim", "z_index", "flash", "progress", "fill_opacity",
+                        "stroke_opacity"):  # fmt: skip
+                continue
+            ann = str(f.annotation)
+            for v in EXTREMES:
+                if "float" in ann and "tuple" not in ann:
+                    yield cls, {name: v}
+                elif "Vec3" in ann or ("tuple" in ann and "float" in ann and name != "vertices"):
+                    yield cls, {name: (v, -v, 0.0)}
+                elif name == "vertices":
+                    yield cls, {name: [(0, 0, 0), (v, 0, 0), (0, v, 0)]}
+                elif "int" in ann:
+                    yield cls, {name: int(min(abs(v), 1e9))}
+
+
+@pytest.mark.parametrize("dash", ["dashed", "dotted"])
+def test_shape_params_at_their_bounds_never_exhaust_memory(dash):
+    """Every value a shape's parameters accept draws in bounded time and memory; a value
+    past a bound is a clean validation error when it is set, never a crash later."""
+    import time
+
+    for cls, params in _shape_cases():
+        s = Scene("fuzz", passes=None)
+        try:
+            s.add(cls(id="x", style={"dash": dash, "fill": "solid"}, **params))
+        except DocumentError:
+            continue  # refused when set: fine
+        t0 = time.perf_counter()
+
+        def go(s=s):
+            st = s.engine.state_at(0)
+            ctx = _Any()
+            st["x"].impl.draw(ctx, st, "color")
+            s.engine.inspect(0)
+            return ctx.n
+
+        n = _with_alarm(30, go)
+        assert n <= 2 * shapes_path.MAX_DASHES + 16, (cls.__name__, params, n)
+        assert time.perf_counter() - t0 < 20, (cls.__name__, params)
+
+
+def test_arc_angle_is_bounded_and_a_full_turn_stays_open():
+    s = Scene("arc", passes=None)
+    for bad in (1e8, -720, 360.5):
+        with pytest.raises(DocumentError, match="angle"):
+            s.add(shapes.Arc(id="x", angle=bad))
+    s.add(shapes.Arc(id="full", r=1, angle=360, tips="both"))
+    sem = _sem(s.engine, "full")
+    assert sem["closed"] is False and sem["tips"] == "both"
+    assert "area" not in sem  # an open arc has no area unless filled
+    assert sem["length"] == pytest.approx(2 * math.pi, rel=1e-4)
+    ctx = _Any()
+    st = s.engine.state_at(0)
+    st["full"].impl.draw(ctx, st, "color")
+    assert ctx.n >= 3  # the stroke and both tips
+
+
+def test_a_brace_with_no_width_is_open():
+    s = Scene("brace", passes=None)
+    s.add(shapes.Brace(id="b", start=(1, 1, 0), end=(1, 1, 0)))
+    assert _sem(s.engine, "b")["closed"] is False
+
+
+def test_dashes_are_capped_per_path_and_counted_from_where_they_start():
+    poly = np.array([[0.0, 0, 0], [1e6, 0, 0]])
+    many = pm.dashes(poly, 1e-3, 0.5, limit=100)
+    assert len(many) == 100 and many[-1][-1][0] < 1  # the first ones
+    late = pm.dashes(poly, 1.0, 0.5, start=1e6 - 3)  # three dashes, found without a long loop
+    assert len(late) == 3
+    assert len(pm.dots(poly, 1e-3, limit=100)) <= 101
+    assert pm.dashes(poly, 1.0, 0.5, upto=float("inf"), limit=10)  # never OverflowError
+
+
+def test_a_huge_dashed_circle_draws_a_bounded_number_of_dashes_and_lint_says_so():
+    import time
+
+    s = Scene("dash", passes=None)
+    s.add(shapes.Circle(id="big", r=1e4, style={"dash": "dashed"}))
+    st = s.engine.state_at(0)
+    ctx = _Any()
+    t0 = time.perf_counter()
+    st["big"].impl.draw(ctx, st, "color")
+    assert ctx.n <= 2 * shapes_path.MAX_DASHES + 16 and time.perf_counter() - t0 < 10
+    assert _sem(s.engine, "big")["dash_limit"] > shapes_path.MAX_DASHES
+    (issue,) = [i for i in s.engine.lint() if i.code == "dash_limit"]
+    assert issue.ids == ("big",) and issue.severity == "warning"
+    small = Scene("dash2", passes=None)
+    small.add(shapes.Circle(id="c", r=1, style={"dash": "dashed"}))
+    assert "dash_limit" not in _sem(small.engine, "c")
+
+
+def test_a_theme_dash_too_small_to_draw_is_a_theme_error(tmp_path, monkeypatch):
+    from phasor.style import theme as th
+
+    text = (th.THEME_DIR / "midnight_glow.toml").read_text(encoding="utf-8")
+    (tmp_path / "tiny_dash.toml").write_text(text.replace("dashed = 0.03", "dashed = 1e-9"),
+                                             encoding="utf-8")  # fmt: skip
+    (tmp_path / "nan_dash.toml").write_text(text.replace("dotted = 0.014", "dotted = nan"),
+                                            encoding="utf-8")  # fmt: skip
+    monkeypatch.setattr(th, "THEME_DIR", tmp_path)
+    th.load_theme.cache_clear()
+    try:
+        for name in ("tiny_dash", "nan_dash"):
+            with pytest.raises(th.ThemeError, match=r"\[dash\]"):
+                th.load_theme(name)
+    finally:
+        th.load_theme.cache_clear()
+
+
+# ---------------------------------------------------------------- 8. files and the engine (audit)
+
+
+def test_a_worker_never_bakes_and_refuses_a_file_changed_mid_render(tmp_path, monkeypatch):
+    """ADR 0003 / contract 7: a render worker applies its parent's bake. A file that changes
+    under a render would mix old and new frames (and make the worker bake on its own), so
+    the worker stops with a clear error instead; a payload made before the change is
+    refused."""
+    import phasor.engine as engine_module
+    from phasor.engine import Engine
+
+    f = tmp_path / "logo.svg"
+    s = _svg_scene(tmp_path, H + DOT + "</svg>")
+    payload = s.engine.worker_payload()
+
+    def no_bake(*a, **k):
+        raise AssertionError("a worker must not bake")
+
+    monkeypatch.setattr(engine_module, "bake", no_bake)
+    w = Engine.from_payload(payload, passes=None)
+    assert _parts(w.state_at(0.0)) == ["logo.dot"]
+    f.write_text(H + '<rect id="box" x="1" y="1" width="8" height="8"/></svg>', encoding="utf-8")
+    _bump(f)
+    with pytest.raises(RuntimeError, match="changed while"):
+        w.state_at(0.1)
+    with pytest.raises(ValueError, match="changed since"):
+        Engine.from_payload(payload, passes=None)
+
+
+def test_a_tracked_file_path_is_read_again_when_any_of_its_files_changes(tmp_path):
+    """Contract 3 for a ``Files`` parameter on a track: every file it can name is watched,
+    by the engine's caches and by lint ``missing_file``."""
+    pytest.importorskip("svgelements")
+    (tmp_path / "a.svg").write_text(H + DOT + "</svg>", encoding="utf-8")
+    b = tmp_path / "b.svg"
+    b.write_text(H + '<rect id="box" x="1" y="1" width="8" height="8"/></svg>', encoding="utf-8")
+    s = Scene("track", passes=None, base_dir=tmp_path)
+    s.add(shapes.SVG(id="logo", path="a.svg"))
+    s.at(1.0).set("logo.path", "b.svg")
+    e = s.engine
+    assert _parts(e.state_at(0.5)) == ["logo.dot"]
+    assert _parts(e.state_at(2.0)) == ["logo.box"]
+    b.write_text(H + '<circle id="ring" cx="5" cy="5" r="4"/></svg>', encoding="utf-8")
+    _bump(b)
+    assert _parts(e.state_at(2.0)) == ["logo.ring"]
+    b.unlink()
+    assert [i.path for i in e.lint() if i.code == "missing_file"] == ["logo.path"]

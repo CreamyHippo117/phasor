@@ -43,7 +43,7 @@ def picture(state: SceneState, path: str) -> np.ndarray | None:
     """The picture ``path`` names in the scene's folder (core/files.py), re-read when the file
     changes; None while it is missing or unreadable (lint ``missing_file``: draws nothing)."""
     try:
-        file = files.resolve(state.base_dir, path)
+        file = files.regular_file(state.base_dir, path)
         return _read(str(file), os.path.getmtime(file))
     except (OSError, ValueError):
         return None

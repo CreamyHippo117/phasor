@@ -8,6 +8,7 @@ rules ``off_palette`` and ``off_scale`` say when it is far from the theme.
 from __future__ import annotations
 
 import functools
+import math
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -205,6 +206,7 @@ def load_theme(name: str) -> Theme:
             values[group] = {r: _colormap(name, r, data[r]) for r in ROLE_GROUPS[group]}
         else:
             values[group] = {r: float(data[r]) for r in ROLE_GROUPS[group]}
+    _check_paths(name, values)
     extra = {}
     for section, required in _TABLES.items():
         data = raw.get(section, {})
@@ -216,6 +218,21 @@ def load_theme(name: str) -> Theme:
     strokes = _strokes(name, raw.get("strokes", {}), values["colormap"])
     return Theme(name, hex_to_linear(raw["palette"]["background"]), values, **extra,
                  motion=motion, strokes=strokes)  # fmt: skip
+
+
+DASH_MIN = 0.002  # frame heights: the shortest dash period a theme may give (0: solid)
+
+
+def _check_paths(theme: str, values: dict[str, dict[str, Any]]) -> None:
+    """``[dash]`` periods are 0 (solid) or at least ``DASH_MIN`` of the frame height (a
+    tinier one would cut a path into millions of dashes); ``[fill]`` opacities are 0..1."""
+    for role, v in values["dash"].items():
+        if not (v == 0 or (math.isfinite(v) and DASH_MIN <= v <= 1)):
+            raise ThemeError(f"theme {theme!r}: [dash] {role} = {v!r}: a dash period is 0 "
+                             f"(solid) or between {DASH_MIN:g} and 1 frame heights")  # fmt: skip
+    for role, v in values["fill"].items():
+        if not (math.isfinite(v) and 0 <= v <= 1):
+            raise ThemeError(f"theme {theme!r}: [fill] {role} = {v!r}: an opacity is 0 to 1")
 
 
 def _raw(name: str, seen: tuple[str, ...] = ()) -> dict[str, Any]:

@@ -311,17 +311,23 @@ def piece(poly: np.ndarray, a: float, b: float) -> np.ndarray:
 
 
 def dashes(poly: np.ndarray, period: float, on: float = 0.55, upto: float | None = None,
-           start: float = 0.0) -> list[np.ndarray]:  # fmt: skip
+           start: float = 0.0, limit: int | None = None) -> list[np.ndarray]:  # fmt: skip
     """The dashes of a polyline: pieces ``on * period`` long every ``period``, measured by arc
     length from its start, so a dash never moves when the polyline grows past it. Only what
     lies between arc lengths ``start`` and ``upto`` is kept (a path being traced, the room
-    an arrow tip takes)."""
+    an arrow tip takes), and at most ``limit`` dashes (the first ones)."""
     along = arc_lengths(poly)
     end = along[-1] if upto is None else min(upto, along[-1])
+    if not (math.isfinite(end) and math.isfinite(period)):
+        return []
     if period <= 0:
         return [_cut(poly, along, start, end)] if end > start else []
     out = []
-    for k in range(math.ceil(end / period)):
+    first = max(0, math.floor(max(start, 0.0) / period))
+    last = math.ceil(end / period)
+    if limit is not None:
+        last = min(last, first + limit)
+    for k in range(first, last):
         a, b = max(k * period, start), min(k * period + on * period, end)
         if b > a + 1e-12:
             out.append(_cut(poly, along, a, b))
@@ -329,17 +335,21 @@ def dashes(poly: np.ndarray, period: float, on: float = 0.55, upto: float | None
 
 
 def dots(poly: np.ndarray, period: float, upto: float | None = None,
-         start: float = 0.0) -> np.ndarray:  # fmt: skip
+         start: float = 0.0, limit: int | None = None) -> np.ndarray:  # fmt: skip
     """(n, 3) points every ``period`` of arc length from the start (a dotted stroke), those
-    between ``start`` and ``upto``."""
+    between ``start`` and ``upto``, at most ``limit`` of them (the first ones)."""
     along = arc_lengths(poly)
     end = along[-1] if upto is None else min(upto, along[-1])
-    if period <= 0 or len(poly) < 2:
+    if period <= 0 or len(poly) < 2 or not (math.isfinite(end) and math.isfinite(period)):
         return np.zeros((0, 3))
-    s = np.arange(0.0, end + 1e-12, period)
+    first = max(0, math.ceil(max(start, 0.0) / period - 1e-9))
+    count = math.floor(end / period + 1e-9) + 1 - first
+    if limit is not None:
+        count = min(count, limit + 1)
+    s = (first + np.arange(max(count, 0))) * period
     if is_closed(poly) and len(s) > 1 and along[-1] - s[-1] < 0.5 * period:
         s = s[:-1]  # a closed loop: no dot on top of the first one
-    s = s[s >= start - 1e-12]
+    s = s[(s >= start - 1e-12) & (s <= end + 1e-12)]
     return np.stack([np.interp(s, along, poly[:, k]) for k in range(3)], axis=1)
 
 
@@ -591,6 +601,23 @@ def _project(pts3: np.ndarray, frame: Region) -> np.ndarray:
 
 
 # ---------------------------------------------------------------- SVG
+#
+# An SVG file sits in the scene's folder and may be hostile (Milestone 16 audit). It is read
+# within these limits, checked while it is read, so a file of a few bytes can never expand
+# into millions of shapes; past one, the drawing is empty or cut short (lint
+# ``svg_too_complex``), never an error.
+
+SVG_MAX_ELEMENTS = 50_000  # elements, once every <use> reference is expanded
+SVG_MAX_DEPTH = 100  # elements (and <use> references) nested inside one another
+SVG_MAX_SHAPES = 10_000  # shapes drawn; the rest are left out
+SVG_MAX_SEGMENTS = 200_000  # cubic segments in all the shapes; the rest are left out
+SVG_MAX_COORD = 1e12  # file units: a shape with a point farther out (or not finite) is skipped
+_XLINK = "{http://www.w3.org/1999/xlink}href"
+_UNIT_BOX = (0.0, 0.0, 1.0, 1.0)
+
+
+class _OverBudget(Exception):
+    """A drawing has more segments than ``SVG_MAX_SEGMENTS``."""
 
 
 @dataclass(frozen=True)
@@ -607,14 +634,18 @@ class SvgShape:
 
 @dataclass(frozen=True)
 class SvgDrawing:
-    box: tuple[float, float, float, float]  # x, y, width, height of the view box
+    box: tuple[float, float, float, float]  # x, y, width, height of the view box (finite, > 0)
     shapes: tuple[SvgShape, ...]
+    problem: str = ""  # why the file cannot be read (nothing drawn): lint ``bad_file``
+    limited: str = ""  # which limit it reached (cut short or empty): lint ``svg_too_complex``
+    skipped: int = 0  # shapes left out: points not finite or beyond SVG_MAX_COORD
 
 
 def read_svg(path: str, stamp: tuple) -> SvgDrawing:
-    """The shapes of an SVG file (cached by ``stamp``: path, mtime and size, so a changed
-    file is read again). Text, images and external references are ignored. Needs svgelements
-    (the ``svg`` extra)."""
+    """The shapes of the SVG file at ``path`` (cached by ``stamp``: path, mtime and size, so
+    a changed file is read again; a bad file is remembered as bad). Never raises for what is
+    in the file: a file that cannot be read has a ``problem``, one past a limit is ``limited``.
+    Text, images and external references are ignored. Needs svgelements (the ``svg`` extra)."""
     return _read_svg(path, stamp)
 
 
@@ -622,39 +653,155 @@ def read_svg(path: str, stamp: tuple) -> SvgDrawing:
 def _read_svg(path: str, stamp: tuple) -> SvgDrawing:
     if not extra_available("svgelements"):
         raise MissingExtra("svgelements", "svg", "SVG")
+    from phasor.core import files
+
+    try:
+        data = files.read_bytes(path, SVG_MAX_BYTES)
+    except files.TooLarge:
+        return SvgDrawing(_UNIT_BOX, (), limited=f"larger than {SVG_MAX_BYTES // 2**20} MB")
+    except ValueError as e:
+        return SvgDrawing(_UNIT_BOX, (), problem=str(e))
+    try:
+        why = _expansion_limit(data)
+    except Exception as e:  # not XML at all
+        return SvgDrawing(_UNIT_BOX, (), problem=f"not a valid SVG file ({e})")
+    if why:
+        return SvgDrawing(_UNIT_BOX, (), limited=why)
+    try:
+        return _svg_drawing(data)
+    except RecursionError:
+        return SvgDrawing(_UNIT_BOX, (), limited=f"nested more than {SVG_MAX_DEPTH} deep")
+    except Exception as e:  # svgelements could not make sense of it
+        return SvgDrawing(_UNIT_BOX, (), problem=f"not a valid SVG file ({type(e).__name__}: "
+                                                 f"{e})")  # fmt: skip
+
+
+def _expansion_limit(data: bytes) -> str:
+    """Why the file is too large once its ``<use>`` references are expanded (as svgelements
+    expands them: a ``<use>`` holds a copy of the element its ``href``, else its
+    ``xlink:href``, names; the last element with an id wins), or "" when it is within
+    ``SVG_MAX_ELEMENTS`` and ``SVG_MAX_DEPTH``. Counted on the file's tree without expanding
+    anything, so a few bytes that would expand a million times are caught at once."""
+    import io
+    from xml.etree.ElementTree import iterparse
+
+    kids: list[list[int]] = []
+    ref: list[str | None] = []
+    ids: dict[str, int] = {}
+    stack: list[int] = []
+    for event, el in iterparse(io.BytesIO(data), events=("start", "end")):
+        if event == "end":
+            stack.pop()
+            continue
+        i = len(kids)
+        if i >= SVG_MAX_ELEMENTS:
+            return f"more than {SVG_MAX_ELEMENTS} elements"
+        if len(stack) >= SVG_MAX_DEPTH:
+            return f"elements nested more than {SVG_MAX_DEPTH} deep"
+        a = el.attrib
+        url = a.get("href", a.get(_XLINK))
+        ref.append(url[1:] if el.tag.rsplit("}", 1)[-1] == "use" and url else None)
+        kids.append([])
+        if "id" in a:
+            ids[a["id"]] = i
+        if stack:
+            kids[stack[-1]].append(i)
+        stack.append(i)
+    if not kids:
+        return ""
+    deps = [k + ([ids[r]] if r in ids else []) for k, r in zip(kids, ref, strict=True)]
+    size, depth, seen = [0] * len(kids), [0] * len(kids), [0] * len(kids)  # 1 open, 2 done
+    todo = [0]
+    while todo:  # children (and what a <use> names) before their parent, iteratively
+        i = todo[-1]
+        if seen[i] == 0:
+            seen[i] = 1
+            for j in deps[i]:
+                if seen[j] == 1:
+                    return "its <use> references loop"
+                if seen[j] == 0:
+                    todo.append(j)
+            continue
+        todo.pop()
+        if seen[i] == 2:
+            continue
+        seen[i] = 2
+        size[i] = min(1 + sum(size[j] for j in deps[i]), SVG_MAX_ELEMENTS + 1)
+        depth[i] = 1 + max((depth[j] for j in deps[i]), default=0)
+    if size[0] > SVG_MAX_ELEMENTS:
+        return f"its <use> references expand it to more than {SVG_MAX_ELEMENTS} elements"
+    if depth[0] > SVG_MAX_DEPTH:
+        return f"its <use> references nest more than {SVG_MAX_DEPTH} deep"
+    return ""
+
+
+def _svg_drawing(data: bytes) -> SvgDrawing:
     import io
 
     import svgelements as se
 
-    with open(path, "rb") as f:
-        data = f.read(SVG_MAX_BYTES + 1)
-    if len(data) > SVG_MAX_BYTES:
-        raise ValueError(f"{path}: larger than {SVG_MAX_BYTES // (1024 * 1024)} MB")
     doc = se.SVG.parse(io.BytesIO(data))
-    vb = doc.viewbox
-    box = ((vb.x, vb.y, vb.width, vb.height) if vb is not None
-           else (0.0, 0.0, float(doc.width or 1.0), float(doc.height or 1.0)))  # fmt: skip
-    shapes = []
+    shapes: list[SvgShape] = []
+    segments, skipped, limited = 0, 0, ""
     for el in doc.elements():
         if not isinstance(el, se.Shape) or isinstance(el, se.Group):
             continue
         if el.values.get("visibility") == "hidden" or el.values.get("display") == "none":
             continue
-        subs = _svg_subpaths(se, se.Path(el))
-        if not subs:
+        if len(shapes) >= SVG_MAX_SHAPES:
+            limited = f"more than {SVG_MAX_SHAPES} shapes: the rest are left out"
+            break
+        try:
+            subs = _svg_subpaths(se, se.Path(el), SVG_MAX_SEGMENTS - segments)
+        except _OverBudget:
+            limited = f"more than {SVG_MAX_SEGMENTS} segments: the rest are left out"
+            break
+        except Exception:  # a shape svgelements cannot turn into a path
+            skipped += 1
             continue
+        good = [s for s in subs if np.isfinite(s).all() and np.abs(s).max() <= SVG_MAX_COORD]
+        if len(good) < len(subs):
+            skipped += 1
+            continue
+        if not good:
+            continue
+        segments += sum((len(s) - 1) // 3 for s in good)
         fill = el.values.get("fill", "black")
         stroke = el.values.get("stroke", "none")
         rule = "evenodd" if el.values.get("fill-rule") == "evenodd" else "nonzero"
         tag = type(el).__name__.lower()
         filled, stroked = str(fill).lower() != "none", str(stroke).lower() != "none"
-        shapes.append(SvgShape(str(el.id or ""), tag, tuple(subs), rule, filled, stroked))
-    return SvgDrawing(tuple(float(v) for v in box), tuple(shapes))
+        shapes.append(SvgShape(str(el.id or ""), tag, tuple(good), rule, filled, stroked))
+    return SvgDrawing(_view_box(doc, shapes), tuple(shapes), limited=limited, skipped=skipped)
 
 
-def _svg_subpaths(se, path) -> list[np.ndarray]:
+def _view_box(doc, shapes: Sequence[SvgShape]) -> tuple[float, float, float, float]:
+    """The file's view box (or its width and height); the box around its shapes when that
+    is missing, not finite, empty or absurd."""
+    try:
+        vb = doc.viewbox
+        box = ((vb.x, vb.y, vb.width, vb.height) if vb is not None
+               else (0.0, 0.0, doc.width or 1.0, doc.height or 1.0))  # fmt: skip
+        box = tuple(float(v) for v in box)
+    except (TypeError, ValueError, AttributeError):
+        box = (math.nan,) * 4
+    if (all(math.isfinite(v) and abs(v) <= SVG_MAX_COORD for v in box)
+            and box[2] > 0 and box[3] > 0):  # fmt: skip
+        return box  # type: ignore[return-value]
+    if not shapes:
+        return _UNIT_BOX
+    pts = np.vstack([s for sh in shapes for s in sh.subpaths])
+    lo, size = pts.min(axis=0), np.ptp(pts, axis=0)
+    w, h = float(size[0]), float(size[1])
+    side = max(w, h) if max(w, h) > 0 else 1.0
+    return (float(lo[0]), float(lo[1]), w if w > 0 else side, h if h > 0 else side)
+
+
+def _svg_subpaths(se, path, budget: int) -> list[np.ndarray]:
+    """The subpaths of an svgelements path; ``_OverBudget`` past ``budget`` cubics."""
     subs: list[list[np.ndarray]] = []
     cur: list[np.ndarray] = []
+    count = 0
 
     def p(c) -> np.ndarray:
         return np.array([float(c.x), float(c.y), 0.0])
@@ -664,6 +811,8 @@ def _svg_subpaths(se, path) -> list[np.ndarray]:
             subs.append(cur.copy())
 
     for seg in path.segments():
+        if count > budget:
+            raise _OverBudget
         if isinstance(seg, se.Move):
             done()
             cur = [p(seg.end)]
@@ -673,13 +822,19 @@ def _svg_subpaths(se, path) -> list[np.ndarray]:
             end = p(seg.end) if seg.end is not None else cur[0]
             if not np.allclose(end, cur[-1]):
                 cur.extend(line_cubic(cur[-1], end))
+                count += 1
         elif isinstance(seg, se.CubicBezier):
             cur.extend([p(seg.control1), p(seg.control2), p(seg.end)])
+            count += 1
         elif isinstance(seg, se.QuadraticBezier):
             q0, q1, q2 = cur[-1], p(seg.control), p(seg.end)
             cur.extend([q0 + 2 / 3 * (q1 - q0), q2 + 2 / 3 * (q1 - q2), q2])
+            count += 1
         elif isinstance(seg, se.Arc):
             for cb in seg.as_cubic_curves():
                 cur.extend([p(cb.control1), p(cb.control2), p(cb.end)])
+                count += 1
+    if count > budget:
+        raise _OverBudget
     done()
     return [np.array(s) for s in subs]

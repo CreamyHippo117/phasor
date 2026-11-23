@@ -33,7 +33,7 @@ from phasor.inspect.oracle import PassOracle
 from phasor.inspect.passes import PassRunner
 from phasor.layout.bake import Bake, bake, baked_state
 from phasor.layout.plan import Plan, compile_plan
-from phasor.time.compile import Compiled, Const, compile_document
+from phasor.time.compile import Compiled, compile_document, file_values
 from phasor.time.expr import CompiledExpr
 from phasor.time.tracks import ResolvedTrack
 
@@ -111,13 +111,22 @@ class _Snapshot:
         self.states: OrderedDict[float, SceneState] = OrderedDict()
         self.snapshots: OrderedDict[float, dict[str, Any]] = OrderedDict()
         self.file_stamps = file_stamps(self.compiled)
+        # A render worker's snapshot (ADR 0003): it holds its parent's bake, made from the
+        # files as they were; it never forgets it and never bakes.
+        self.frozen = False
 
     def refresh(self) -> None:
         """Forget what was derived from the files the document names when one of them
         changed (contract 3: a changed file is read again). A composite builds its parts from
-        a file (an ``SVG``), so a state made before the change is stale too."""
+        a file (an ``SVG``), so a state made before the change is stale too. In a render
+        worker a changed file is an error: its frames would mix the old file and the new."""
         now = file_stamps(self.compiled)
         if now != self.file_stamps:
+            if self.frozen:
+                changed = sorted({a[0] for a, b in zip(now, self.file_stamps, strict=False)
+                                  if a != b} or {"a file"})  # fmt: skip
+                raise RuntimeError(f"{', '.join(changed)} changed while the scene was being "
+                                   "rendered; render it again")  # fmt: skip
             self.file_stamps = now
             self.bake, self.aesthetic = None, None
             self.lint = {}
@@ -130,10 +139,7 @@ def file_stamps(c: Compiled) -> tuple:
     out = []
     for o in c.objects:
         for name in getattr(type(o.impl), "Files", ()):
-            node = c.nodes.get(f"{o.id}.{name}")
-            value = node.value if isinstance(node, Const) else None
-            if isinstance(value, str) and value:
-                out.append(files.stamp(c.base_dir, value))
+            out.extend(files.stamp(c.base_dir, v) for v in file_values(c, f"{o.id}.{name}"))
     return tuple(out)
 
 
@@ -306,7 +312,10 @@ class Engine:
         """What a render worker needs to draw this scene without baking it again (ADR 0003):
         the document and overrides as canonical JSON, this engine's bake (baked here first
         if need be) and the fingerprint it was made for. Plain data: it pickles."""
+        self._snap.refresh()
         return {
+            # the files the bake was made from: a worker refuses to start if they changed
+            "file_stamps": self._snap.file_stamps,
             "document": io.dumps(self._snap.base),
             "overrides": io.dumps(self._snap.overrides),
             "bake": self._bake(self._snap),
@@ -342,7 +351,11 @@ class Engine:
         engine = cls(doc, overrides=overrides, **kwargs)
         if engine.fingerprint() != payload["fingerprint"]:
             raise ValueError("this bake was made for another document; bake it here instead")
+        if tuple(payload.get("file_stamps", engine._snap.file_stamps)) != engine._snap.file_stamps:
+            raise ValueError("a file the scene reads changed since this bake was made; "
+                             "render it again")  # fmt: skip
         engine._snap.bake = payload["bake"]
+        engine._snap.frozen = True
         return engine
 
     def fork(self, *, allow_scripts: bool | None = None) -> Engine:

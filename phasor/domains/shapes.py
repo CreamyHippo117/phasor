@@ -100,9 +100,13 @@ class Arc(PathBase):
 
         @model_validator(mode="after")
         def _angle(self):
-            if self.angle == 0:
-                raise ValueError("an arc's angle must not be 0")
+            if self.angle == 0 or abs(self.angle) > 360:
+                raise ValueError("an arc's angle must not be 0, and at most a full turn "
+                                 "(-360 to 360 degrees)")  # fmt: skip
             return self
+
+    def is_closed(self, p, sub) -> bool:
+        return False  # a full turn is still an arc: it keeps its tips and has no area
 
     def bezier(self, p):
         return [pm.arc(p.pos, p.r, math.radians(p.start), math.radians(p.angle))]
@@ -279,6 +283,9 @@ class Brace(PathBase):
 
     def bezier(self, p):
         return [pm.brace(p.start, p.end, p.depth)]
+
+    def is_closed(self, p, sub) -> bool:
+        return False  # a brace of no width is a point, not a loop
 
     def _tip(self, p) -> np.ndarray:
         sub = pm.brace(p.start, p.end, p.depth)

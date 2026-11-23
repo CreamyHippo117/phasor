@@ -2,10 +2,20 @@
 
 It is a composite (ADR 0005): each shape of the file becomes a ``Path`` part,
 ``<svg id>.<shape id>``, named from the shape's ``id`` attribute (lower case, other
-characters as ``_``; a shape without one is named by its kind: ``circle``, ``circle_2``).
+characters as ``_``, at most ``MAX_NAME`` characters; a shape without one is named by its
+kind: ``circle``, ``circle_2``). A name the document already uses or has retired under the
+``SVG`` (``logo.label``, say) gets the next free suffix (``label_2``), so a file can never
+take an id that belongs to the document. Names follow file order: a shape without an id
+added early in the file renumbers the later unnamed shapes of its kind (give shapes ids
+to keep constraints and overrides on them).
+
 The file is read only from inside the scene's folder (contract 3: ``Files``), and read again
-when it changes; a missing file is lint ``missing_file``, and without svgelements (the
-``svg`` extra) lint ``missing_extra``. Either way the drawing is empty, never an error.
+when it changes. A bad or hostile file never makes the scene fail; the drawing is empty (or
+cut short) and lint says why: a missing file (or a folder, a FIFO, a device, a link that
+loops) is ``missing_file``; a file that is not valid SVG is ``bad_file``, as are shapes
+skipped for points that are not finite or absurdly far out; a file past one of the limits
+in ``path_math`` (size, elements once ``<use>`` is expanded, nesting, shapes, segments) is
+``svg_too_complex``; without svgelements (the ``svg`` extra) it is ``missing_extra``.
 
 The drawing's view box is centered on ``pos`` and scaled to ``height`` world units, with
 the file's y axis (down) turned up. Shapes take the roles of the ``SVG`` object's style:
@@ -32,9 +42,14 @@ from phasor.domains.path import STYLE, Path
 EXTRA = {"svgelements": "svg"}  # module -> the extra that installs it
 
 
-def part_names(shapes) -> list[str]:
-    """A valid, unique part name per shape, from its ``id`` (or its kind), in file order."""
-    used: set[str] = set()
+MAX_NAME = 40  # characters of a part's name taken from the file (before any suffix)
+MAX_WORLD = 1e6  # a part with a point this far from ``pos`` (in heights) is skipped
+
+
+def part_names(shapes, reserved=()) -> list[str]:
+    """A valid, unique part name per shape, from its ``id`` (or its kind), in file order,
+    none of them in ``reserved`` (names the document holds under the ``SVG``)."""
+    used: set[str] = set(reserved)
     out = []
     for sh in shapes:
         base = re.sub(r"[^a-z0-9_]+", "_", sh.id.lower()).strip("_")
@@ -42,6 +57,7 @@ def part_names(shapes) -> list[str]:
             base = sh.tag
         elif not base[0].isalpha():
             base = f"{sh.tag}_{base}"
+        base = base[:MAX_NAME].rstrip("_")
         name, n = base, 2
         while name in used:
             name, n = f"{base}_{n}", n + 1
@@ -75,8 +91,8 @@ class SVG(ObjectBase):
             return files.relative_path(v) if v else v
 
     def drawing(self, state: SceneState) -> pm.SvgDrawing | None:
-        """The file's shapes, or None while it is missing or cannot be read (or svgelements
-        is not installed)."""
+        """The file's shapes (empty, with ``problem`` or ``limited``, when the file is bad or
+        too complex), or None while it is missing or svgelements is not installed."""
         p = self.me(state).params
         if not p.path or not pm.extra_available("svgelements"):
             return None
@@ -85,30 +101,47 @@ class SVG(ObjectBase):
             return None
         try:
             return pm.read_svg(stamp[0], stamp)
-        except (OSError, ValueError, pm.MissingExtra):
-            return None
-        except Exception:  # a malformed file: nothing to draw (lint says the file is bad)
+        except pm.MissingExtra:
             return None
 
-    def build(self, state: SceneState) -> list[ObjectBase]:
-        me = self.me(state)
-        p = me.params
+    def _parts(self, state: SceneState) -> tuple[list[tuple[str, list, Any]], int]:
+        """(name, world subpaths, shape) per shape drawn, and how many were skipped because
+        a point is not finite or absurdly far out once placed."""
+        p = self.me(state).params
         d = self.drawing(state)
-        if d is None:
-            return []
+        if d is None or not d.shapes:
+            return [], 0
         x0, y0, w, h = d.box
-        s = p.height / (h if h > 0 else 1.0)
+        s = p.height / h
         mid = np.array([x0 + w / 2, y0 + h / 2, 0.0])
         flip = np.array([s, -s, 1.0])
         origin = np.asarray(p.pos, dtype=np.float64)
+        prefix = f"{self.id}."
+        reserved = {i[len(prefix) :].split(".")[0] for i in state.reserved if i.startswith(prefix)}
+        out, skipped = [], 0
+        far = MAX_WORLD * max(p.height, 1.0)
+        with np.errstate(over="ignore", invalid="ignore"):
+            placed = [[np.round((sub - mid) * flip + origin, 9) for sub in sh.subpaths]
+                      for sh in d.shapes]  # fmt: skip
+        keep = []
+        for sh, subs in zip(d.shapes, placed, strict=True):
+            if all(np.isfinite(a).all() and np.abs(a - origin).max() <= far for a in subs):
+                keep.append((sh, subs))
+            else:
+                skipped += 1
+        names = part_names([sh for sh, _ in keep], reserved)
+        out = [
+            (n, [a.tolist() for a in subs], sh) for n, (sh, subs) in zip(names, keep, strict=True)
+        ]
+        return out, skipped
+
+    def build(self, state: SceneState) -> list[ObjectBase]:
+        me = self.me(state)
         style = {k: me.roles[k] for k in STYLE if k in me.roles}
-        parts = []
-        for name, sh in zip(part_names(d.shapes), d.shapes, strict=True):
-            subs = [np.round((sub - mid) * flip + origin, 9).tolist() for sub in sh.subpaths]
-            parts.append(Path(name, subpaths=subs, rule=sh.rule, style=style,
-                              fill_opacity=1.0 if sh.filled else 0.0,
-                              stroke_opacity=1.0 if sh.stroked else 0.0))  # fmt: skip
-        return parts
+        return [Path(name, subpaths=subs, rule=sh.rule, style=style,
+                     fill_opacity=1.0 if sh.filled else 0.0,
+                     stroke_opacity=1.0 if sh.stroked else 0.0)
+                for name, subs, sh in self._parts(state)[0]]  # fmt: skip
 
     def semantics(self, state: SceneState) -> dict[str, Any]:
         from phasor.core.record import parts
@@ -119,7 +152,16 @@ class SVG(ObjectBase):
         out: dict[str, Any] = {"kind": "svg", "file": p.path, "parts": names}
         if not pm.extra_available("svgelements"):
             out["missing_extra"] = "svg"
-        elif self.drawing(state) is None:
-            there = p.path and files.exists(state.base_dir, p.path)
-            out["unreadable" if there else "missing_file"] = p.path
+            return out
+        d = self.drawing(state)
+        if d is None:
+            out["missing_file"] = p.path
+            return out
+        if d.problem:
+            out["unreadable"] = d.problem  # lint bad_file
+        if d.limited:
+            out["too_complex"] = d.limited  # lint svg_too_complex
+        skipped = d.skipped + self._parts(state)[1]
+        if skipped:
+            out["skipped"] = skipped  # lint bad_file
         return out

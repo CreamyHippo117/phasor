@@ -16,6 +16,9 @@ returns one issue per problem with the times it was seen. Rules in this mileston
 | missing_file | warning | a file an object reads (a mesh) is not in the scene's folder    |
 | missing_extra | warning | an object needs an optional package that is not installed (SVG) |
 | fill_crossing | warning | a filled path whose edges cross: its fill may not follow the rule |
+| bad_file  | warning  | a file an object reads is not valid (or some of its shapes are skipped) |
+| svg_too_complex | warning | an SVG past a reading limit: its drawing is empty or cut short |
+| dash_limit | warning | a dashed or dotted path with more dashes than are drawn per path |
 
 Under a perspective camera ``overlap`` only compares labels with labels and points with
 points: a label in front of a surface is fine, and one behind it is ``occluded_label``.
@@ -284,7 +287,7 @@ def file_rules(c: Compiled) -> list[Issue]:
     import sys
 
     from phasor.core import files
-    from phasor.time.compile import Const
+    from phasor.time.compile import file_values
 
     def importable(module: str) -> bool:
         if module in sys.modules:
@@ -307,11 +310,12 @@ def file_rules(c: Compiled) -> list[Issue]:
                 ))  # fmt: skip
         for name in getattr(type(o.impl), "Files", ()):
             path = f"{o.id}.{name}"
-            node = c.nodes.get(path)
-            value = node.value if isinstance(node, Const) else None
-            if isinstance(value, str) and value and not files.exists(c.base_dir, value):
+            for value in file_values(c, path):
+                why = files.problem(c.base_dir, value)
+                if not why:
+                    continue
                 out.append(Issue(
-                    "missing_file", f"{path}: no file {value!r} in the scene's folder",
+                    "missing_file", f"{path}: {why}",
                     severity="warning", ids=(o.id,), path=path, times=(0.0,),
                     fix_hint=f"put {value!r} next to the scene, or set {path} to a file that is",
                 ))  # fmt: skip
@@ -534,6 +538,16 @@ def run(
                 f.add("tiny", (e["id"],), t, px=max(x1 - x0, y1 - y0), what="object")
             if e["semantic"].get("fill_crossing"):
                 f.add("fill_crossing", (e["id"],), t)
+        for e in fr.entries.values():  # also what is off screen or draws nothing
+            sem = e["semantic"]
+            if sem.get("dash_limit"):
+                f.add("dash_limit", (e["id"],), t, n=sem["dash_limit"])
+            if sem.get("unreadable") or sem.get("skipped"):
+                f.add("bad_file", (e["id"],), t, why=sem.get("unreadable"),
+                      skipped=sem.get("skipped", 0), file=sem.get("file"))  # fmt: skip
+            if sem.get("too_complex"):
+                f.add("svg_too_complex", (e["id"],), t, why=sem["too_complex"],
+                      file=sem.get("file"))  # fmt: skip
         if persp:
             for e in labels:
                 v = e["visible_fraction"]
@@ -631,6 +645,22 @@ def run(
                          "missing or doubled", "warning", ids, times=ts,
                          fix_hint="split it into subpaths that do not cross (a boolean "
                          "union does that), or turn its fill off")  # fmt: skip
+        if code == "bad_file":
+            what = (f"cannot be read: {info['why']}" if info["why"] else
+                    f"has {info['skipped']} shape(s) skipped: points not finite or absurdly "
+                    "far out")  # fmt: skip
+            return Issue(code, f"{ids[0]!r}: the file {info['file']!r} {what}", "warning", ids,
+                         times=ts, fix_hint="export the file again (plain SVG), or point "
+                         "the object at another file")  # fmt: skip
+        if code == "svg_too_complex":
+            return Issue(code, f"{ids[0]!r}: the file {info['file']!r} is past a reading "
+                         f"limit ({info['why']}); its drawing is empty or cut short",
+                         "warning", ids, times=ts, fix_hint="simplify the drawing (fewer "
+                         "shapes or <use> copies), or split it into several files")  # fmt: skip
+        if code == "dash_limit":
+            return Issue(code, f"{ids[0]!r} would need {info['n']} dashes or dots {when}; "
+                         "only the first ones are drawn", "warning", ids, times=ts,
+                         fix_hint="use a solid stroke, or make the path smaller")  # fmt: skip
         if code == "tiny":
             return Issue(code, f"{info['what']} {ids[0]!r} is only {info['px']:.0f} px "
                          f"{when}", "warning", ids,
