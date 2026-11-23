@@ -5,8 +5,9 @@ From `MANIM_PARITY.md` ("Milestone 16"), on the open object contract of Mileston
 correctly, and every type has inspector output, lint, docs, an example and a golden**
 (`examples/shapes.py`, `examples/vector_toolkit.py`).
 
-Status: **built on Linux (llvmpipe OpenGL, no CUDA); gate run by the authoring model, not
-independently (see Verification).** Untested on Windows, macOS and CUDA.
+Status: **built on Linux (llvmpipe OpenGL, no CUDA); independent audit done 2026-11-23,
+its findings fixed (see "Independent audit"); a few items deferred.** Untested on Windows,
+macOS and CUDA.
 
 ## Built
 
@@ -70,7 +71,7 @@ independently (see Verification).** Untested on Windows, macOS and CUDA.
    `circle_2`): there is no meaning to name them by. Ids that start with a digit get the
    kind in front (`rect_1st`).
 7. **A missing or unreadable SVG is also `orphan`** (it draws nothing, so it never
-   appears), next to `missing_file` / `missing_extra`.
+   appears), next to `missing_file`, `bad_file`, `svg_too_complex` or `missing_extra`.
 8. **`tiny` no longer fires while a curve is being traced** (`drawn` < 1). It affects `Line`
    and every type with `progress`; it removed a warning at the first instant of every
    `trace`.
@@ -83,14 +84,39 @@ independently (see Verification).** Untested on Windows, macOS and CUDA.
     lint already rely on; `Arrow` is a vector (`components`). Making them paths would change
     saved scenes' pictures and semantics; they share the stroke and head helpers instead.
     `Path` is the one way to draw a filled or dashed outline.
-12. `core/pycode.py` (the Code view) reaches the new types as `shapes.<Name>`. Found on the
-    way, not fixed (it is older than this milestone): a script regenerated from a document
-    whose verb staggers four objects can differ in the last float digit of a track's end
-    (`0.36 + 1.4` vs the stored `1.76`), which `tests/test_final.py`'s round trip flags;
-    `examples/vector_toolkit.py` traces two at a time so it does not hit it.
+12. `core/pycode.py` (the Code view) reaches the new types as `shapes.<Name>`. A script
+    regenerated from a document whose verb staggered four objects differed in the last
+    float digit of a track's end (`0.36 + 1.4` vs the stored `1.76`). Fixed in the audit: a
+    segment whose end is not exactly start + duration is written with both ends
+    (`s.segment`), so the round trip is exact; stored values are not rounded.
 13. `Engine.layout`, `state_at`, the inspector and lint all call `_Snapshot.refresh` first.
 14. Shapes lie in the plane z = `pos.z`; a `Path` may lie in any plane (fills are
     triangulated in the plane of its points).
+15. **Audit: new bounds that can refuse a saved document.** `Arc.angle` is -360..360 (not
+    0), and every number of a path or shape is within ±1e9 (`path.MAX_COORD`). Nothing in
+    `examples/`, `gallery/`, `showcase/` or the tests was outside them. A full-turn `Arc` stays
+    open (tips kept, no area unless filled); a `Brace` is always open.
+16. **Audit: `SceneState.reserved`** (new field, `compare=False`): the document's object and
+    camera ids and its retired ids, so a composite whose part names come from a file avoids
+    them. An `SVG` part that would take one gets the next suffix (`label_2`).
+17. **Audit: only regular files are read.** `core/files.py`: a folder, FIFO, device or a
+    link that loops is "not there" for every `Files` type (`missing_file`, saying why);
+    `resolve` turns a looping link into `ValueError`; `regular_file` and `read_bytes`
+    (non-blocking open, `fstat` check, size cap) are the readers' way in. `Image`, `Room3D`
+    and `Network` read through `regular_file`.
+18. **Audit: a render worker refuses a changed file** (ADR 0003). `worker_payload` carries the
+    file stamps the bake was made from; `from_payload` refuses a payload whose files changed
+    since, and a worker engine never forgets its applied bake: a file that changes during the
+    render stops it with "changed while the scene was being rendered; render it again".
+19. **Audit: dashes per path are capped** at `MAX_DASHES` (2000); past it the period grows so
+    the whole path is still dashed (lint `dash_limit`). Theme `[dash]` periods must be 0 or
+    0.002..1 frame heights, `[fill]` 0..1 (`ThemeError`).
+20. **Audit: geometry cache bounded by bytes** (`path.CACHE_BYTES`, 256 MB) instead of 1024
+    entries. `Camera.project`/`to_screen` build their arrays without `np.c_` (same values).
+21. **Audit: `core/extras.py`** is the one "can this optional package be imported" check and
+    module -> extra map (was in `path_math`, `lint.file_rules` and `doctor`).
+22. **Audit: boolean operations** keep only the parts with an area before the overlay, snap
+    and retry on a GEOS error, and otherwise raise a `ValueError` naming the operation.
 
 ## Deferred
 
@@ -104,8 +130,24 @@ independently (see Verification).** Untested on Windows, macOS and CUDA.
   mitered butt ends.
 - Path morphing (Milestone 17).
 
-- An `SVG` builds and validates its parts at every `state_at` (the file itself is parsed
-  once per change); the frame cost of a large drawing is not measured.
+- Frame cost of a large SVG (audit item 8): the file is parsed and placed once per change
+  and the geometry is no longer flattened or measured again each frame, but `state_at` still
+  validates every part's parameters at each new t (in `time/compile.py` `_expand`, generic
+  for composites) and the inspector's per-object work (recording, screen boxes) is the
+  same for a part as for any object: about 0.2 s per 1000 parts per new t for `state_at`
+  and 2.5 s per 1000 parts for a new inspector snapshot (numbers below). Caching validated
+  parts across t in `_expand` would need a key cheaper than the parameters themselves. Lint
+  of a 5000-part drawing still takes about 94 s and 2.1 GB (it keeps an inspector snapshot
+  of every part at each sampled time).
+- `progress < 1` objects never get `tiny` (Deviation 8): a curve left part-drawn at the end
+  of a scene is not judged; its `drawn` value stays in its semantics.
+- `Image` and `Room3D` check the file is regular and then open it by path (Pillow, the OBJ
+  reader); a file swapped for a FIFO between the check and the read could still block.
+  Only the SVG reader opens non-blocking and checks the open file.
+- SVG part names follow file order: an unnamed shape added early renumbers later unnamed
+  shapes of its kind (documented; give shapes ids).
+- A `Files` parameter driven by an expression is not watched (expressions give numbers);
+  Const and track values are.
 
 ## Untested
 
@@ -114,10 +156,9 @@ svgelements publish Windows wheels; not installed on Windows here.
 
 ## Setup lines
 
-README and TESTING.md install `--extra boolean --extra svg`; CI and packaging too. The
-Commands block in `CLAUDE.md` was left for the owner (it says `uv sync --extra gl --extra
-encode`); without the two extras the suite skips the tests that need them (named in the
-skip reason) instead of failing.
+README, TESTING.md and the Commands block in `CLAUDE.md` (c62e033) install `--extra boolean
+--extra svg`; CI and packaging too. Without the two extras the suite skips the tests that
+need them (named in the skip reason) instead of failing.
 
 ## Merge notes (Milestone 18 runs in parallel)
 
@@ -138,5 +179,44 @@ untouched. `inspect/lint.py`: `file_rules` (missing_extra), the per-frame loop (
 | exit demo | pass (Linux) | `examples/shapes.py`, `examples/vector_toolkit.py`: strict lint empty; both goldens looked at |
 | contract audit | done by the authoring model, not independently | no write path besides `Engine.apply`; state depends on the document, t and named files (SVG through `Files`; the engine's caches are dropped when a named file changes); layers kept (lint-imports); every type has the five members after registration; deviations above |
 | docs and artifacts | pass | API.md section with running blocks, examples, goldens, this file |
+| independent audit (2026-11-23) | findings fixed; deferred items listed | after the fixes: ruff, ruff format, lint-imports clean; test_shapes, test_lint, test_docs, test_layers, test_open_contract, test_beauty, test_engine, test_workers, test_style_freedom, test_pycode, test_doctor: 323 passed, 4 skipped; test_final `-k "not slow"`: 374 passed, 2 skipped. Full suite left to CI |
 
-**MILESTONE 16: DONE on Linux, pending an independent audit.** Untested on Windows, macOS and CUDA.
+## Independent audit (2026-11-23) and fixes
+
+An independent audit found four blockers, five should-fix items and notes; each is fixed
+with a test written first in `tests/test_shapes.py` (sections 6-10), hostile files made in
+`tmp_path`:
+
+| Finding | Fix | Test |
+| --- | --- | --- |
+| B1a SVG ids colliding with document/retired ids raised `bad_part` | suffix past `SceneState.reserved` | `test_svg_part_names_avoid_the_documents_ids_and_retired_ids` |
+| B1b `scale(1e308)` made NaN points (validator raised) | shapes with non-finite or absurd points skipped, view box sanitized; `bad_file` | `test_svg_shapes_with_coordinates_that_are_not_finite_are_dropped`, `test_a_hostile_view_box_still_draws_finite_parts` |
+| B1c a looping link raised `RuntimeError` from every read | `files.resolve` -> `ValueError`; missing | `test_a_link_that_loops_is_a_missing_file_for_every_type_that_reads_files` |
+| B2 a FIFO hung forever | regular files only; non-blocking read with a cap | `test_a_fifo_is_never_read` |
+| B3 nested `<use>` expanded 10^6 times | expansion counted on the tree first (elements, depth, cycles), shape and segment limits; `svg_too_complex` | `test_nested_use_that_fans_out_is_svg_too_complex_and_fast`, `test_use_cycles_and_deep_nesting_never_raise`, `test_a_drawing_past_the_segment_limit_is_truncated_with_a_lint_note` |
+| B4 `Arc.angle=1e8` exhausted memory | `|angle| <= 360`; every path number within ±1e9 | `test_shape_params_at_their_bounds_never_exhaust_memory`, `test_arc_angle_is_bounded_and_a_full_turn_stays_open` |
+| 5 dashes unbounded; theme dashes unchecked | `MAX_DASHES` per path, `dash_limit`; dashes counted from `start`; theme validated | `test_dashes_are_capped_per_path_and_counted_from_where_they_start`, `test_a_huge_dashed_circle_draws_a_bounded_number_of_dashes_and_lint_says_so`, `test_a_theme_dash_too_small_to_draw_is_a_theme_error` |
+| 6 a worker re-baked after a file change | stamps in the payload, frozen worker snapshot | `test_a_worker_never_bakes_and_refuses_a_file_changed_mid_render` |
+| 7 a `Files` param on a track was never re-read | `compile.file_values` for the engine and lint | `test_a_tracked_file_path_is_read_again_when_any_of_its_files_changes` |
+| 8 SVG frame cost | byte-bounded cache; placement cached; see numbers | `test_a_drawing_of_many_parts_is_not_flattened_again_at_a_new_frame` |
+| 9 raw `GEOSException` | areas only, snap and retry, else `ValueError` | `test_a_boolean_on_degenerate_input_never_raises_a_raw_geos_error` |
+| notes | `bad_file` rule; malformed files cached as bad; part names capped (40) and documented; `fill_unchecked`; `core/extras.py`; full-turn Arc and degenerate Brace open; pycode round trip exact; setup lines | `test_a_malformed_svg_is_bad_file_and_parsed_once`, `test_svg_part_names_are_capped_in_length`, `test_a_fill_too_detailed_to_check_for_crossings_says_so`, `test_a_brace_with_no_width_is_open`, `test_a_staggered_trace_round_trips_through_the_code_view_exactly` |
+
+Frame cost (Linux, 4 cores, no OpenGL: `state_at`, every part's `draw` into a context that
+records nothing, an inspector snapshot at a new t, then `lint()`; synthetic files of 1000
+and 5000 filled paths, scratch benchmark, wall clock):
+
+| Parts | | `state_at`, new t | draw all parts, first t / later t | inspector, new t | `lint()` | peak memory |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1000 | before | 0.15-0.19 s | 0.53 s / 0.42-0.45 s | 3.8 s | 33.2 s | 542 MB |
+| 1000 | after | 0.16-0.21 s | 0.47 s / 0.03 s | 2.6 s | 14.8 s | 528 MB |
+| 5000 | before | 0.87-1.04 s | 2.5 s / 2.4-2.7 s | 28.9 s | 314 s | 2.2 GB |
+| 5000 | after | 0.89-1.01 s | 2.5 s / 0.14-0.16 s | 15.8 s | 94 s | 2.1 GB |
+
+Drawing a later frame is 15-17 times faster and lint 2.2-3.3 times; `state_at` and lint's
+memory are unchanged and deferred (above): lint keeps an inspector snapshot of all 5000
+parts per sampled time, and `state_at` validates every part at each new t.
+
+
+**MILESTONE 16: DONE on Linux after the independent audit (2026-11-23); deferred items
+above.** Untested on Windows, macOS and CUDA.
