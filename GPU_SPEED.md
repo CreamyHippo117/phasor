@@ -360,8 +360,8 @@ the old path (`pc_tasks/pin_frames.py` on three frames each, compared with a tol
 
 **Done 2026-11-23.** `gpu.box_mean` averages where the kernel left the picture, in the same
 float64 arithmetic as before, so the bits do not change; `gpu.render(supersample=)` and
-`cx.Fractal`'s glow path use it. prism_fractal 1371 -> 259 ms/frame (draw 1280 -> 219),
-prism_domain 330 -> 63 (draw 312 -> 45). What is left of the fractal's draw is the escape
+`cx.Fractal`'s glow path use it. prism_fractal 1371 -> 241 ms/frame (draw 1280 -> about 200),
+prism_domain 330 -> 60 (draw 312 -> about 45). What is left of the fractal's draw is the escape
 field going to the host and back (`_escape_field` returns a host array): a later trim.
 
 ### 9b. Point clouds stay on the card (expected: buddhabrot 3035 -> ~100 ms draw)
@@ -389,7 +389,7 @@ same bits) run there as CuPy operations, each one correctly rounded op as in Num
 `splat` launcher takes arrays already on the card. The palette was not moved into the kernel:
 with the work on the card it costs a few milliseconds, and keeping NumPy's own operations
 keeps the bits. Twinkle's `sin` and `color_by="phase"`'s `arctan2` stay on the host (libm and
-CUDA differ in the last bit). buddhabrot 3077 -> 592 ms/frame (draw 3035 -> 552); what is
+CUDA differ in the last bit). buddhabrot 3077 -> 525 ms/frame (draw 3035 -> about 490); what is
 left is the splat of 8 M points itself. Bifurcation keeps its host path (its points are
 made per view). Tests: `tests/test_fields_on_card.py` (card and host pictures equal bit for
 bit; `box_mean` and `_colors` equal the old code); finals of six examples hash-identical.
