@@ -136,7 +136,11 @@ were off by up to 2.5.
 4. A scene that moves a shape past 1e9 world units fails the import (shapes are bounded by
    `MAX_COORD`, M16); before, a `Line` took any number. A shape that *starts* past it falls back
    to a path or a line, as before.
-5. Each `play` adds its mobjects to `self.mobjects` as Manim does (only those not already in
+5. Two WAV readers in `time/narration.py`: `read_wav` (narration, exact int16, any rate, as
+   before) and `read_sound` (sound clips: any PCM width, bounded rates and frames, chunked).
+   Folding narration into `read_sound` would refuse the low-rate clips narration tests and
+   tools write today (lesson 1); left as two, side by side.
+6. Each `play` adds its mobjects to `self.mobjects` as Manim does (only those not already in
    the scene's family); removers leave at the end. The order inside `self.mobjects` is not
    checked against Manim's.
 
