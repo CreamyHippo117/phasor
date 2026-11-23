@@ -11,24 +11,32 @@ read what it emitted. Pure NumPy, so ``core`` stays free of GPU libraries.
   object drew exactly one stroke (through ``domains/strokes.py``).
 - ``semantics``: ``{"type", "params"}``.
 
-A recording is cached by (type, id, resolved params, resolved style, camera, scene folder).
-If ``draw`` reads another object's state (``state["other"]``), those reads are remembered
-and the recording is made again when what it read changes.
+A recording is cached by (type, id, resolved params, resolved style, camera, scene folder,
+and the path, modification time and size of each file the type names in ``Files``). What
+else ``draw`` reads is remembered and the recording is made again when it changes: another
+object's state (``state["other"]``), the time (``state.t``), entries of ``state.values``,
+and any other part of the state. The arrays a recording keeps are shared, so they are
+read-only.
 """
 
 from __future__ import annotations
 
+import threading
 from collections import OrderedDict
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 
+from phasor.core import files
 from phasor.core import text as text_metrics
 from phasor.core.objects import Bounds
 from phasor.core.state import SceneState
 
 CACHE_SIZE = 4096
+_ABSENT = object()  # a ``state.values`` key the draw asked for that was not there
+_ALL = object()  # the draw went through all of ``state.values``
 # The compass points of the box, as (along the camera's right, along its up).
 COMPASS = {
     "top": (0, 1), "bottom": (0, -1), "left": (-1, 0), "right": (1, 0),
@@ -71,7 +79,9 @@ class Recorder:
 
     def note_path(self, points) -> None:
         """Called by ``domains/strokes.py`` with the center line of each stroke it draws."""
-        self.strokes.append(np.asarray(points, dtype=np.float64).reshape(-1, 3))
+        kept = np.array(points, dtype=np.float64).reshape(-1, 3)  # a copy: it is made read-only
+        kept.flags.writeable = False
+        self.strokes.append(kept)
 
 
 @dataclass(frozen=True)
@@ -83,25 +93,94 @@ class Recording:
     up: np.ndarray
 
 
+class _Values(Mapping):
+    """``state.values`` as a recorded ``draw`` sees it: every entry it reads is noted."""
+
+    def __init__(self, inner: Mapping[str, Any], log: dict[Any, Any]) -> None:
+        self._inner, self._log = inner, log
+
+    def __getitem__(self, key: str) -> Any:
+        try:
+            value = self._inner[key]
+        except KeyError:
+            self._log[key] = _ABSENT
+            raise
+        self._log[key] = value
+        return value
+
+    def __iter__(self) -> Iterator[str]:
+        self._log[_ALL] = dict(self._inner)
+        return iter(self._inner)
+
+    def __len__(self) -> int:
+        self._log[_ALL] = dict(self._inner)
+        return len(self._inner)
+
+
+# Parts of the state the cache key already covers (the object's camera, the folder).
+_IN_KEY = frozenset({"camera_for", "base_dir"})
+
+
 class _Watch:
-    """The state a recorded ``draw`` sees: the real one, noting which other objects it reads."""
+    """The state a recorded ``draw`` sees: the real one, noting what it reads besides its own
+    object: other objects, ``values`` entries and any other part of the state (``t``...)."""
 
     def __init__(self, state: SceneState, own: str) -> None:
-        self._state, self._own, self.reads = state, own, set()
+        self._state, self._own = state, own
+        self._objects: set[str] = set()
+        self._values: dict[Any, Any] = {}
+        self._parts: dict[str, Any] = {}
 
     def __getitem__(self, object_id: str):
         if object_id != self._own:
-            self.reads.add(object_id)
+            self._objects.add(object_id)
         return self._state[object_id]
 
     def __contains__(self, object_id: object) -> bool:
+        if object_id != self._own and isinstance(object_id, str):
+            self._objects.add(object_id)
         return object_id in self._state
 
     def __getattr__(self, name: str) -> Any:
-        return getattr(self._state, name)
+        value = getattr(self._state, name)
+        if name == "values":
+            return _Values(value, self._values)
+        if name not in _IN_KEY:
+            self._parts[name] = _comparable(name, value)
+        return value
+
+    def reads(self, state: SceneState) -> tuple:
+        objects = {i: _fingerprint(state, i) if i in state else None
+                   for i in sorted(self._objects)}  # fmt: skip
+        return objects, dict(self._values), dict(self._parts)
 
 
-_CACHE: OrderedDict[tuple, tuple[dict[str, Any], Recording]] = OrderedDict()
+def _comparable(name: str, value: Any) -> Any:
+    return _camera_key(value) if name in ("camera", "overlay") else value
+
+
+def _same(a: Any, b: Any) -> bool:
+    try:
+        return bool(a == b)
+    except Exception:  # arrays and the like: compare as unequal, so it is drawn again
+        return False
+
+
+def _still(state: SceneState, reads: tuple) -> bool:
+    """Whether everything a recording read is the same in ``state``."""
+    objects, values, parts = reads
+    for i, fp in objects.items():
+        if (i in state) != (fp is not None) or (fp is not None and _fingerprint(state, i) != fp):
+            return False
+    for key, value in values.items():
+        now = dict(state.values) if key is _ALL else state.values.get(key, _ABSENT)
+        if not (now is value or _same(now, value)):
+            return False
+    return all(_same(_comparable(n, getattr(state, n)), v) for n, v in parts.items())
+
+
+_CACHE: OrderedDict[tuple, tuple[tuple, Recording]] = OrderedDict()
+_LOCK = threading.Lock()  # the cache is the process's: the GUI and an MCP client share it
 
 
 def _camera_key(cam) -> tuple:
@@ -118,26 +197,36 @@ def _fingerprint(state: SceneState, object_id: str) -> tuple:
     return (o.params, _style_key(o.style), _camera_key(state.camera_for(o)))
 
 
+def _files_key(impl, state: SceneState, me) -> tuple:
+    """Each file the type names (``Files``) as it is now: a changed file is read again."""
+    names = getattr(type(impl), "Files", ())
+    paths = [getattr(me.params, n, None) for n in names]
+    return tuple(files.stamp(state.base_dir, p) for p in paths if isinstance(p, str) and p)
+
+
 def record(impl, state: SceneState) -> Recording:
     """What ``impl.draw`` emits for its object in ``state`` (cached)."""
     me = state[impl.id]
     cam = state.camera_for(me)
-    key = (type(impl), impl.id, *_fingerprint(state, impl.id), state.base_dir)
-    hit = _CACHE.get(key)
-    if hit is not None:
-        reads, rec = hit
-        if all(i in state and _fingerprint(state, i) == fp for i, fp in reads.items()):
-            _CACHE.move_to_end(key)
-            return rec
+    key = (type(impl), impl.id, *_fingerprint(state, impl.id), state.base_dir,
+           _files_key(impl, state, me))  # fmt: skip
+    with _LOCK:
+        hit = _CACHE.get(key)
+    if hit is not None and _still(state, hit[0]):
+        with _LOCK:
+            if key in _CACHE:
+                _CACHE.move_to_end(key)
+        return hit[1]
     rec_ctx = Recorder(cam.right, cam.up)
     watch = _Watch(state, impl.id)
     impl.draw(rec_ctx, watch, "color")
     pts = np.vstack(rec_ctx.points) if rec_ctx.points else np.zeros((0, 3))
+    pts.flags.writeable = False  # shared by everyone who asks: nobody may change it
     rec = Recording(pts, tuple(rec_ctx.kinds), tuple(rec_ctx.strokes), rec_ctx.right, rec_ctx.up)
-    reads = {i: _fingerprint(state, i) for i in sorted(watch.reads) if i in state}
-    _CACHE[key] = (reads, rec)
-    if len(_CACHE) > CACHE_SIZE:
-        _CACHE.popitem(last=False)
+    with _LOCK:
+        _CACHE[key] = (watch.reads(state), rec)
+        if len(_CACHE) > CACHE_SIZE:
+            _CACHE.popitem(last=False)
     return rec
 
 

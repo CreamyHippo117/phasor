@@ -35,6 +35,18 @@ def resolve(base_dir: str | Path, value: str) -> Path:
     return path
 
 
+def stamp(base_dir: str | Path, value: str) -> tuple:
+    """What the file ``value`` names is now, to tell when it changed (contract 3: a changed
+    file is read again): its path, modification time and size; ``None`` for the last two
+    when it is not there."""
+    try:
+        path = resolve(base_dir, value)
+        st = path.stat()
+    except (ValueError, OSError):
+        return (value, None, None)
+    return (str(path), st.st_mtime_ns, st.st_size)
+
+
 def exists(base_dir: str | Path, value: str) -> bool:
     """Whether ``value`` names a file inside ``base_dir``."""
     try:
