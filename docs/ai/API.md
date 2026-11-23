@@ -298,9 +298,10 @@ assert s4.engine.lint(strict=True) == []
 | `focus_pull(id, margin=0.15)` | move the camera onto an object |
 | `morph(path, value)` | change any parameter smoothly (a whole-number one, such as `terms`, in whole steps) |
 | `settle(path, value)` | move like a released spring (overshoot, then rest) |
-| `transform(a, b)` | equation `a` becomes `b`: parts that appear in both glide over (and change color); the rest fade |
+| `transform(a, b)` | `a` becomes `b`. Two equations (as pictures): parts that appear in both glide over (and change color); the rest fade. Anything else with an outline (paths, shapes, text, an equation as shapes, an SVG): the outline morphs (see "Text as shapes and morphing") |
+| `transform_matching(a, b)` | `a` becomes `b` piece by piece: equal pieces move to their new place (equations: by TeX and keys; anything else: glyph or path by shape), the rest fade |
 | `become(a, b)` | curve `a` turns into the shape of curve `b` (a circle into a square), then `b` takes its place |
-| `write(*ids)` | write text or an equation in, left to right (`write` 0 to 1) |
+| `write(*ids)` | write text or an equation in, left to right (`write` 0 to 1); drawn `as_shapes`, each glyph's outline is drawn, then filled |
 | `travel(*ids)` | send `Tracer`s along their curves, trailing light (`progress` 0 to 1) |
 | `flash(*ids)` | a quick brightening (every object has `flash`, 0 to 1) |
 | `circumscribe(id, shape="circle")` | draw a ring (or `"box"`) around an object, then fade it: the child `<id>.ring` |
@@ -524,6 +525,9 @@ Each issue has `code`, `severity`, `message`, `ids`, `times`, `fix_hint`, and `f
 | `fill_crossing` | warning | a filled path whose edges cross: the fill may not follow its rule |
 | `fill_unchecked` | warning | a filled path with more edges than are checked for crossings (`path_math.CROSSING_LIMIT`, 20000) |
 | `dash_limit` | warning | a dashed or dotted path that would need more than `MAX_DASHES` (2000) dashes: they are drawn longer |
+| `glyph_limit` | warning | text or an equation drawn `as_shapes` with more than `glyph_math.MAX_GLYPHS` (400) glyphs: the rest are not drawn |
+| `morph_missing` | warning | a morph whose source (`morph_from`) is not in the scene or has no outline: the object draws itself |
+| `morph_limit` | warning | a morph between outlines with more than `morph_math.MAX_SUBPATHS` (512) subpaths a side: the rest fade |
 | `bad_file` | warning | a file an object reads is not valid (an SVG that is not SVG), or some of its shapes are skipped (points not finite or absurdly far out); what cannot be read draws nothing |
 | `svg_too_complex` | warning | an SVG past a reading limit (size, elements once `<use>` is expanded, nesting, shapes, segments): its drawing is empty or cut short |
 | `crowded_ticks` | warning | numbers along an axis (or a chart's bar names) closer than `[lint] tick_gap` text heights; `path` names the axis (`ax.x`), the hint the smallest nice step that clears them |
@@ -889,6 +893,33 @@ own.engine.polish()  # fixes and suggestions only: typed values stay
 assert own.engine.document.object("sun").style["color"] == "#83C167"
 own.engine.polish(snap=True)  # asked: snapped to the nearest roles
 assert own.engine.document.object("orbit").style["stroke"] == "bold"
+```
+
+**Style transitions.** A track on `<id>.style.<key>` moves a style key from the role (or
+explicit value) it holds to another: `s.at("go").morph("dot.style.color", "highlight")` (the
+theme's `morph` timing; strict-lint clean) or a raw `.to("dot.style.color", "#58C4DD",
+duration=1)`. Colors (`emphasis` keys: `color`, `fill_color`, ...) mix in linear RGBA; `fill`
+(the fill's opacity), `stroke` and text `size` move as numbers, and an explicit world size
+follows the camera at every t. Glow, surface, colormap and dash keys cannot be animated
+(`bad_style_track`). The document stores a role or a value at each key and in each segment
+(a hex target is stored upper case). `state.roles[key]` is the typed value nearer in time
+(the start until half-way, then the target); the inspector shows a transition in progress
+as `restyling: {key: {from, to, progress}}`; `off_palette` judges an explicit target where
+it is reached (its snap is left to the track). A child object named `<id>.style` keeps its
+own parameter paths. On a `Line` with `hue_along` the colors come from the colormap, so a
+color transition does not show on it.
+
+```python
+from phasor import Dot, Scene
+
+fade = Scene("restyle", passes=None, look="none")
+fade.marker("go", 1.0)
+fade.add(Dot(id="dot", pos=(0, 0), style={"color": "primary"}))
+fade.at("go").morph("dot.style.color", "highlight")
+st = fade.engine.state_at(1.5)
+assert st["dot"].restyling["color"]["to"] == "highlight"
+assert fade.engine.document.object("dot").style["color"] == "primary"  # still a role
+assert not [i for i in fade.engine.lint(strict=True) if i.code == "raw_motion"]
 ```
 
 Finals render with motion blur (`phasor render --preset final`; `--motion-blur 0` turns it
@@ -1430,6 +1461,71 @@ s.add(geo.Axes(id="ax", dims=2, x_range=(0, 1000, 25), x_scale=0.006, numbers=Tr
 (issue,) = [i for i in s.engine.lint() if i.code == "crowded_ticks"]
 assert issue.path == "ax.x" and "step of at least" in issue.fix_hint
 assert not [i for i in s.engine.lint() if i.code == "overlap"]  # not pair by pair
+```
+
+### Text as shapes and morphing
+
+**Glyph outlines.** `Text(..., as_shapes=True)` and `Equation(..., as_shapes=True)` draw
+their glyphs as outlines (matplotlib's font code: plain text in the picture's font, Aileron;
+maths through mathtext in Computer Modern), one `Path` part per glyph named by what it shows:
+`word.cap_h`, `word.e`, `word.l`, `word.l_2`, `eq.plus`, `eq.pi`, `eq.bar` (a fraction
+bar), clear of the document's ids. They lie in the box the picture would fill. Parameters:
+`fill_opacity` (default 1) and `stroke_opacity` (the outline once written, default 0); the outline
+is `basic.OUTLINE` (0.04) of the line height wide, so it scales with the text; an
+equation's `colors` color each part's glyphs. `write` draws each glyph's outline, then fills
+it, glyph after glyph (`basic.WRITE_SPAN` of the write each). A text that is not drawn as
+shapes draws as before. At most `glyph_math.MAX_GLYPHS` (400) glyphs (all parts of an
+equation together) are drawn (lint `glyph_limit`). With the `latex` math engine the picture
+comes from TeX but the outlines from mathtext.
+
+**`transform` between any two outlines.** Paths, every shape, text and equations can be
+morphed into (`morph_from`, `morph`, `morph_kind` parameters, set by the verbs); paths,
+shapes, text, equations and SVGs (their parts) can be morphed from. The target draws the
+in-between every frame from the source as the state has it at that time (a moving source is
+followed; nothing is baked into the document): subpaths are put in a canonical order, the
+side with fewer is split (its longest piece at half its length) until the counts agree,
+pieces pair by least travel, each pair is resampled by arc length and aligned (two rings keep
+the target's winding, so holes stay holes, and turn to the start that moves least; an open
+piece runs the shorter way). Colors, widths and fill opacity mix in linear light; the fill
+crossfades from the source's layout to the target's, so both ends are exact. Identical
+outlines are an identity at every step. Dashes and arrow tips are not drawn in between.
+Bounds (`morph_math`): `MAX_SUBPATHS` 512 a side (the shortest beyond fade; lint
+`morph_limit`), `MAX_POINTS` 512 points a piece, `MAX_TOTAL` 40 000 in all, `MAX_ASSIGN` 256
+pairs by optimal assignment (more pair in canonical order), `SAMPLE_CUBICS` 2048 cubics a
+subpath is sampled through. A source that is gone is lint `morph_missing` (it draws itself).
+One object can become itself several times (`morph_from` switches at each verb). The
+`morph` verb also animates style keys (see "Style transitions").
+
+**`transform_matching`** pairs pieces: two equations' parts by key, then by equal TeX in
+reading order (a part moved across the `=` still pairs); an equal part glides glyph by glyph,
+a keyed part whose text changes morphs its outline; anything else pairs glyphs (same font
+glyph) or paths (`morph_math.signature`: the same outline at any place and size) in reading
+order. Pairs carried past others arc round them (`[motion] transform_arc`, on equations); the
+source's other pieces fade out in the first half, the target's fade in in the second. Two
+equations drawn `as_shapes` use it for `transform` too (their changed parts morph instead of
+crossfading). Inspector semantics while morphing: `morphing_from`, `morph`, `morph_kind`.
+
+```python
+from phasor import Equation, Scene, Text, shapes
+
+m = Scene("text_shapes_demo", passes=None, look="none")
+m.set("camera.height", 8)
+m.marker("write", 0.2)
+m.marker("morph", 2.0)
+m.add(Text(id="word", text="circle", pos=(-3, 1), as_shapes=True, style={"size": "title"}))
+m.add(shapes.Circle(id="disc", pos=(3, 1), r=1.0, style={"fill": "soft"}))
+m.add(Equation(id="one", parts=("$a$", "$+$", "$b$", "$=$", "$c$"), pos=(0, -2), as_shapes=True))
+m.add(Equation(id="two", parts=("$a$", "$=$", "$c$", "$-$", "$b$"), pos=(0, -2), as_shapes=True))
+m.at("write").write("word", "one")
+m.at("morph").transform("word", "disc").transform_matching("one", "two")
+st = m.engine.state_at(2.3)
+assert [o.id for o in m.engine.state_at(1.9).objects if o.parent == "word"][:2] == [
+    "word.c",
+    "word.i",
+]
+assert st["disc"].impl.semantics(st)["morphing_from"] == "word"
+assert st["two"].params.morph_kind == "matching"
+assert m.engine.lint(strict=True) == []
 ```
 
 ## Space: axes, curves, surfaces and fields (`geo`)

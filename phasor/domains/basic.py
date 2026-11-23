@@ -21,6 +21,9 @@ from phasor.core.objects import Bounds, DrawContext, ObjectBase, ParamsBase, Pas
 from phasor.core.state import SceneState
 from phasor.core.texconv import join_latex, to_latex
 from phasor.core.values import Vec3
+from phasor.domains import glyph_math as gm
+from phasor.domains import morph_math as mm
+from phasor.domains.path import MorphParams, Path
 from phasor.domains.strokes import hue_colors, polyline
 
 DISC_SEGMENTS = 64
@@ -168,7 +171,11 @@ class Line(ObjectBase):
 
 @register
 class Text(ObjectBase):
-    """One line of text facing the camera, sized by a text role."""
+    """One line of text facing the camera, sized by a text role. With ``as_shapes`` it is
+    drawn as glyph outlines, one ``Path`` part per glyph (``<id>.<glyph>``), filled
+    (``fill_opacity``) and stroked (``stroke_opacity``, ``OUTLINE`` of its height); ``write``
+    draws each glyph's outline, then fills it. It can become another outline, or be
+    becoming one (``morph_from``, the ``transform`` verbs)."""
 
     type: ClassVar[str] = "text"
     Style: ClassVar = {
@@ -177,7 +184,7 @@ class Text(ObjectBase):
         "leader": ("stroke", "hairline"),
     }
 
-    class Params(ParamsBase):
+    class Params(MorphParams):
         text: str = Field(min_length=1)
         pos: Vec3 = (0.0, 0.0, 0.0)
         anchor: Literal["center", "left", "right"] = "center"
@@ -186,6 +193,9 @@ class Text(ObjectBase):
         leader: Vec3 = (0.0, 0.0, 0.0)
         leader_on: float = Field(0.0, ge=0, le=1)
         write: float = Field(1.0, ge=0, le=1)  # share written in, left to right (``write``)
+        as_shapes: bool = False  # glyph outlines, one Path part per glyph (not a picture)
+        fill_opacity: float = Field(1.0, ge=0, le=1)  # as shapes: the glyphs' fill
+        stroke_opacity: float = Field(0.0, ge=0, le=1)  # as shapes: their outline, once written
 
         @field_validator("text")
         @classmethod
@@ -203,26 +213,47 @@ class Text(ObjectBase):
 
     def world_bounds(self, state: SceneState) -> Bounds:
         corner, wv, hv, _ = self._box(state)
-        return Bounds.of_points([corner, corner + wv, corner + hv, corner + wv + hv])
+        box = Bounds.of_points([corner, corner + wv, corner + hv, corner + wv + hv])
+        return _with_morph(self, state, box)
 
     def features(self, state: SceneState) -> dict[str, np.ndarray]:
         corner, wv, hv, _ = self._box(state)
         return {"anchor": np.asarray(self.me(state).params.pos), "center": corner + (wv + hv) / 2}
 
     def semantics(self, state: SceneState) -> dict[str, Any]:
-        text = self.me(state).params.text
+        p = self.me(state).params
+        text = p.text
         out: dict[str, Any] = {"kind": "label", "text": text}
         if text_metrics.is_math(text):
             out["math"] = True
             out["latex"] = to_latex(text)  # the same maths as LaTeX source, to show or export
+        out.update(_shape_facts(state, self.me(state), [text]))
         return out
+
+    def morph_shape(self, state: SceneState) -> mm.Shape:
+        """Its glyphs as outlines in world space, one group per glyph (``domains/morph``)."""
+        me = self.me(state)
+        corner, _, _, h = self._box(state)
+        look = _glyph_look(me, me.style["color"])
+        return _glyph_shape([(gm.outline(me.params.text), corner, look, None, "")], h,
+                            state.camera_for(me))  # fmt: skip
+
+    def build(self, state: SceneState) -> list[ObjectBase]:
+        """As shapes: a ``Path`` part per glyph (none while it is becoming something)."""
+        me = self.me(state)
+        if not me.params.as_shapes or _becoming(state, me):
+            return []
+        return _glyph_parts(state, me, self.morph_shape(state))
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
         me = self.me(state)
         p = me.params
         corner, wv, hv, h = self._box(state)
         color = _rgba(me.style["color"], p.opacity)
-        ctx.text(p.text, np.asarray(p.pos), h, color=color, anchor=p.anchor, reveal=p.write)
+        if _becoming(state, me):
+            _draw_morph(ctx, state, self)
+        elif not p.as_shapes:  # as shapes, its parts draw the glyphs
+            ctx.text(p.text, np.asarray(p.pos), h, color=color, anchor=p.anchor, reveal=p.write)
         if p.leader_on > 0:
             cam = state.camera_for(me)
             target = np.asarray(p.leader)
@@ -267,6 +298,7 @@ _RELATIONS = (
     "\\ne",
 )
 THICK = 5 / 18
+MAX_ARC = 10.0  # line heights a part may arc by in a transform (the theme's is about 1)
 # Relations mathtext sets with a space before them even alone (measured: about 0.2 em of
 # left margin); a lone "+", "-", "\cdot" or "\times" is set tight, like a sign.
 _SET_APART = tuple(r for r in _RELATIONS if r not in ("+", "-", "\\cdot", "\\times"))
@@ -304,7 +336,7 @@ class Equation(ObjectBase):
     }
     Presets: ClassVar = {"glowing": {"style": {"glow": "soft"}}}
 
-    class Params(ParamsBase):
+    class Params(MorphParams):
         parts: tuple[str, ...] = Field(min_length=1)
         colors: tuple[str, ...] = ()  # an emphasis role per part; missing ones use ``color``
         pos: Vec3 = (0.0, 0.0, 0.0)  # center of the equation, on its baseline's middle
@@ -323,7 +355,10 @@ class Equation(ObjectBase):
         from_pos: Vec3 = (0.0, 0.0, 0.0)
         from_id: str = ""  # the source: life's drift passes from its to this one's, no jump
         morph: float = Field(1.0, ge=0, le=1)
-        arc: float = Field(0.0, ge=0)
+        arc: float = Field(0.0, ge=0, le=MAX_ARC)
+        as_shapes: bool = False  # glyph outlines, one Path part per glyph (not pictures)
+        fill_opacity: float = Field(1.0, ge=0, le=1)  # as shapes: the glyphs' fill
+        stroke_opacity: float = Field(0.0, ge=0, le=1)  # as shapes: their outline, once written
 
         @field_validator("parts", "from_parts")
         @classmethod
@@ -375,14 +410,41 @@ class Equation(ObjectBase):
                 for sx in (-1, 1) for sy in (-bottom, top)]  # fmt: skip
 
     def _transforming(self, p) -> bool:
-        return bool(p.from_parts) and p.morph < 1.0
+        return bool(p.from_parts) and p.morph < 1.0 and not p.morph_from
 
     def world_bounds(self, state: SceneState) -> Bounds:
         p = self.me(state).params
         corners = self._corners(state)
         if self._transforming(p):  # mid-transform: both places
             corners += self._corners(state, p.from_parts, p.from_pos)
-        return Bounds.of_points(corners)
+        return _with_morph(self, state, Bounds.of_points(corners))
+
+    def morph_shape(self, state: SceneState) -> mm.Shape:
+        """Its glyphs as outlines in world space, one group per glyph, each knowing its part
+        (its TeX and key: ``transform_matching`` pairs equations' parts by TeX)."""
+        me = self.me(state)
+        p = me.params
+        layout, h, _, _, _ = self._layout(state)
+        cam = state.camera_for(me)
+        up = np.asarray(cam.up, dtype=np.float64)
+        pieces = []
+        glyphs = 0
+        for i, (part, origin, hh) in enumerate(layout):
+            if glyphs >= gm.MAX_GLYPHS:  # every part together keeps MAX_GLYPHS
+                break
+            glyphs += len(gm.outline(part).glyphs)
+            corner = np.asarray(origin) - up * (text_metrics.box(part) * hh / 2)
+            look = _glyph_look(me, self._color(me, p.colors, i))
+            key = p.keys[i] if i < len(p.keys) else ""
+            pieces.append((gm.outline(part), corner, look, (i, part), key))
+        return _glyph_shape(pieces, h, cam)
+
+    def build(self, state: SceneState) -> list[ObjectBase]:
+        """As shapes: a ``Path`` part per glyph (none while it is becoming something)."""
+        me = self.me(state)
+        if not me.params.as_shapes or _becoming(state, me) or self._transforming(me.params):
+            return []
+        return _glyph_parts(state, me, self.morph_shape(state))
 
     def features(self, state: SceneState) -> dict[str, np.ndarray]:
         return {"center": np.asarray(self.me(state).params.pos, dtype=np.float64)}
@@ -390,6 +452,7 @@ class Equation(ObjectBase):
     def semantics(self, state: SceneState) -> dict[str, Any]:
         p = self.me(state).params
         return {
+            **_shape_facts(state, self.me(state), p.parts),
             "kind": "equation",
             "text": "".join(p.parts),
             "parts": list(p.parts),
@@ -415,6 +478,11 @@ class Equation(ObjectBase):
         me = self.me(state)
         p = me.params
         glow = me.style["glow"]
+        if _becoming(state, me):
+            _draw_morph(ctx, state, self, arc=p.arc)
+            return
+        if p.as_shapes and not self._transforming(p):
+            return  # its parts draw the glyphs
         layout, _, total, _, _ = self._layout(state)
         if not self._transforming(p):
             x0 = layout[0][1] if layout else None  # the left edge, for writing in
@@ -473,6 +541,150 @@ class Equation(ObjectBase):
                 if i not in gone:
                     ctx.text(part, origin, h, color=_rgba(self._color(me, p.from_colors, i),
                              p.opacity * (1 - 2 * m)), anchor="left", glow=glow)  # fmt: skip
+
+
+# ---------------------------------------------------------------- text as shapes
+
+
+WRITE_SPAN = 0.5  # share of a ``write`` each glyph takes; they start one after another
+OUTLINE = 0.04  # a glyph outline's width, as a share of the text's line height
+GLYPH = "glyph"  # the tag of a glyph part: its text is judged (tiny, focal point), not it
+
+
+def written(write: float, k: int, n: int) -> tuple[float, float]:
+    """How far glyph ``k`` of ``n`` is written at ``write`` (0..1): (its outline drawn, its
+    fill in), each 0..1. Like Manim's ``Write``: the outline is drawn, then filled."""
+    start = k / n * (1.0 - WRITE_SPAN) if n > 1 else 0.0
+    u = min(max((write - start) / WRITE_SPAN, 0.0), 1.0)
+    return min(2.0 * u, 1.0), max(2.0 * u - 1.0, 0.0)
+
+
+def _becoming(state: SceneState, me) -> bool:
+    """Morphing from an object that is in the scene (``domains/morph.py``)."""
+    p = me.params
+    return bool(p.morph_from) and p.morph < 1.0 and p.morph_from in state
+
+
+def _glyph_look(me, color) -> mm.Look:
+    p = me.params
+    c = tuple(color)
+    return mm.Look((c[0], c[1], c[2], c[3] * p.stroke_opacity),
+                   (c[0], c[1], c[2], c[3] * p.fill_opacity), OUTLINE * float(me.style["size"]),
+                   float(me.style.get("glow", 1.0)))  # fmt: skip
+
+
+def _glyph_shape(pieces, h: float, cam) -> mm.Shape:
+    """Outlines placed in world space: ``pieces`` are (outline, its box's lower-left corner,
+    look, (part index, TeX) or None, key); ``h`` is the line height."""
+    right, up = np.asarray(cam.right, dtype=np.float64), np.asarray(cam.up, dtype=np.float64)
+    subs: list[np.ndarray] = []
+    groups: list[mm.Group] = []
+    for outline, corner, look, part, key in pieces:
+        c = np.asarray(corner, dtype=np.float64)
+        for g in outline.glyphs[: max(gm.MAX_GLYPHS - len(groups), 0)]:  # all parts together
+            members = []
+            for sub in g.subpaths:
+                world = c + np.outer(sub[:, 0] * h, right) + np.outer(sub[:, 1] * h, up)
+                world.setflags(write=False)
+                members.append(len(subs))
+                subs.append(world)
+            groups.append(mm.Group(g.name, g.key, tuple(members), look, len(groups),
+                                   part[1] if part else None, key,
+                                   part[0] if part else -1))  # fmt: skip
+    closed = tuple(True for _ in subs)  # glyph contours are closed
+    return mm.Shape(tuple(subs), closed, tuple(groups), "nonzero", float(h),
+                    tuple(float(v) for v in right), tuple(float(v) for v in up))  # fmt: skip
+
+
+def _glyph_parts(state: SceneState, me, shape: mm.Shape) -> list[ObjectBase]:
+    """A ``Path`` part per glyph, named by what it shows (``cap_a``, ``plus``), written in
+    one after another by ``write`` (its outline drawn, then filled)."""
+    from types import SimpleNamespace
+
+    from phasor.core.ids import children
+    from phasor.domains.svg import part_names
+
+    p = me.params
+    names = part_names([SimpleNamespace(id=g.name, tag="glyph") for g in shape.groups],
+                       children(state.reserved, me.id))  # fmt: skip
+    style = {
+        "color": _typed(state, me, "color"),
+        "fill": "solid",
+        "stroke": max(OUTLINE * shape.line, 1e-9),
+    }  # world units: it scales with the text
+    if "glow" in me.roles:
+        style["glow"] = me.roles["glow"]
+    colors = getattr(p, "colors", ())
+    n = len(shape.groups)
+    out: list[ObjectBase] = []
+    for k, (g, name) in enumerate(zip(shape.groups, names, strict=True)):
+        drawn, filled = written(p.write, k, n)
+        own = dict(style)
+        if 0 <= g.part < len(colors):  # an equation part's own color role
+            own["color"] = colors[g.part]
+        own["fill_color"] = own["color"]
+        subs = [shape.subpaths[i].tolist() for i in g.members]
+        out.append(Path(name, subpaths=subs, style=own, progress=drawn, tags=(GLYPH,),
+                        fill_opacity=p.fill_opacity * filled,
+                        stroke_opacity=1.0 - (1.0 - p.stroke_opacity) * filled))  # fmt: skip
+    return out
+
+
+def _typed(state: SceneState, me, key: str):
+    """The style value a part takes from its text: what the scene typed, or, while a style
+    transition moves it, the value at t (a linear color, a world size)."""
+    if key not in me.restyling:
+        return me.roles[key]
+    value = me.style[key]
+    if isinstance(value, tuple):
+        return tuple(float(min(max(v, 0.0), 1.0)) for v in value)
+    world = float(value) * float(state.camera_for(me).units_per_height(me.params.pos))
+    return max(world, 1e-9)
+
+
+def _draw_morph(ctx: DrawContext, state: SceneState, impl, arc: float = 0.0) -> None:
+    """A text or equation becoming itself from another object: the in-between, or its own
+    glyphs when the source has no outline."""
+    from phasor.domains import morph
+
+    me = impl.me(state)
+    items = morph.frame(state, impl.id, arc=arc)
+    if items is None:
+        items = morph.own(state, me, impl.morph_shape(state))
+    morph.paint(ctx, state, me, items)
+
+
+def _with_morph(impl, state: SceneState, box: Bounds) -> Bounds:
+    """A morphing text's box also covers what it draws on the way."""
+    me = impl.me(state)
+    if not _becoming(state, me):
+        return box
+    from phasor.core import record
+
+    drawn = record.derived_world_bounds(impl, state)
+    return Bounds.of_points([box.lo, box.hi, drawn.lo, drawn.hi])
+
+
+def _shape_facts(state: SceneState, me, texts) -> dict[str, Any]:
+    """Semantics of a text drawn as shapes, or becoming something."""
+    from phasor.domains import morph
+
+    p = me.params
+    out: dict[str, Any] = {}
+    if p.as_shapes:
+        total = drawn = 0
+        for k, t in enumerate(texts):
+            o = gm.outline(t)
+            total, drawn = total + o.total, drawn + len(o.glyphs)
+            if drawn >= gm.MAX_GLYPHS:  # the rest is not read: at least one glyph a part
+                total += len(texts) - k - 1
+                break
+        drawn = min(drawn, gm.MAX_GLYPHS)
+        out.update(as_shapes=True, glyphs=drawn)
+        if drawn < total:
+            out["glyph_limit"] = total  # lint glyph_limit (at least this many)
+    out.update(morph.facts(state, me))
+    return out
 
 
 def match_parts(a, b) -> list[tuple[int, int]]:

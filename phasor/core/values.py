@@ -22,8 +22,8 @@ def normalize(v: Any) -> Value:
     if isinstance(v, numbers.Real):
         try:
             f = float(v)
-        except OverflowError:  # an int too large for a float: a value error, as NaN is
-            raise ValueError(f"number too large: {v!r}") from None
+        except OverflowError:  # an int too large for a float: a ValueError, as for inf
+            raise ValueError(f"number too large: {str(v)[:20]}...") from None
         if not math.isfinite(f):
             raise ValueError(f"non-finite number: {v!r}")
         return f

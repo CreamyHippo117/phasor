@@ -23,6 +23,9 @@ returns one issue per problem with the times it was seen. Rules in this mileston
 | crowded_ticks | warning | numbers along an axis (or a chart's bar names) too close to read |
 | truncated | warning | a file a table or code block reads is past a limit: only part shown |
 | unknown_language | warning | code in a language pygments does not know: drawn plain   |
+| glyph_limit | warning | text drawn as shapes with more glyphs than are drawn (``MAX_GLYPHS``) |
+| morph_missing | warning | a morph whose source is gone or has no outline: it draws itself |
+| morph_limit | warning | a morph with more subpaths than morph (``MAX_SUBPATHS``): the rest fade |
 
 ``missing_extra`` also warns when a type draws without its extra, plainer (``Code`` without
 pygments is drawn in one color).
@@ -425,9 +428,11 @@ def strict_rules(c: Compiled) -> list[Issue]:
     see ``updater_rules``."""
     raw: dict[str, list[float]] = {}
     for path, segs in c.doc.timeline.tracks.items():
+        styled = c.doc.style_track(path)  # ``dot.style.color`` moves ``dot``
+        owner = styled[0] if styled is not None else path.rpartition(".")[0]
         for seg in segs:
             if seg.verb is None:
-                raw.setdefault(path.rpartition(".")[0], []).append(c.time_map.resolve(seg.t0))
+                raw.setdefault(owner, []).append(c.time_map.resolve(seg.t0))
     return [
         Issue(
             "raw_motion",
@@ -548,6 +553,7 @@ def run(
             elif (
                 max(x1 - x0, y1 - y0) < th["tiny"] * height
                 and e["semantic"].get("drawn", 1.0) >= 1.0
+                and "glyph" not in e["tags"]  # a glyph of a text: the text is judged
             ):  # a curve being traced starts small; it is judged once drawn
                 f.add("tiny", (e["id"],), t, px=max(x1 - x0, y1 - y0), what="object")
             if e["semantic"].get("fill_crossing"):
@@ -565,6 +571,12 @@ def run(
                 f.add("fill_unchecked", (e["id"],), t)
             if sem.get("dash_limit"):
                 f.add("dash_limit", (e["id"],), t, n=sem["dash_limit"])
+            if sem.get("glyph_limit"):
+                f.add("glyph_limit", (e["id"],), t, n=sem["glyph_limit"], drawn=sem.get("glyphs"))
+            if sem.get("morph_missing"):
+                f.add("morph_missing", (e["id"],), t, src=sem.get("morphing_from"))
+            if sem.get("morph_limit"):
+                f.add("morph_limit", (e["id"],), t, n=sem["morph_limit"])
             if sem.get("unreadable") or sem.get("skipped"):
                 f.add("bad_file", (e["id"],), t, why=sem.get("unreadable"),
                       skipped=sem.get("skipped", 0), file=sem.get("file"))  # fmt: skip
@@ -724,6 +736,22 @@ def run(
             return Issue(code, f"{ids[0]!r} would need {info['n']} dashes or dots {when}; "
                          "only the first ones are drawn", "warning", ids, times=ts,
                          fix_hint="use a solid stroke, or make the path smaller")  # fmt: skip
+        if code == "glyph_limit":
+            return Issue(code, f"{ids[0]!r} has {info['n']} glyphs {when}; drawn as shapes, "
+                         f"only the first {info['drawn']} are drawn (glyph_math.MAX_GLYPHS)",
+                         "warning", ids,
+                         times=ts, fix_hint="split the text into several, or draw it as a "
+                         "picture (as_shapes off)")  # fmt: skip
+        if code == "morph_missing":
+            return Issue(code, f"{ids[0]!r} is becoming itself from {info['src']!r} {when}, "
+                         "which is not in the scene or has no outline: it draws itself "
+                         "instead", "warning", ids, times=ts, fix_hint="morph from an object "
+                         "that is there (a path, a shape, text)")  # fmt: skip
+        if code == "morph_limit":
+            return Issue(code, f"{ids[0]!r} morphs between outlines with {info['n']} more "
+                         f"subpaths than morph (morph_math.MAX_SUBPATHS) {when}; those fade "
+                         "instead", "warning", ids, times=ts, fix_hint="morph simpler "
+                         "outlines, or split the drawing into several objects")  # fmt: skip
         if code == "tiny":
             return Issue(code, f"{info['what']} {ids[0]!r} is only {info['px']:.0f} px "
                          f"{when}", "warning", ids,

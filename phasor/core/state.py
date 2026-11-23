@@ -28,6 +28,8 @@ class ObjectState:
     impl: SceneObject = field(repr=False, compare=False)  # stateless behavior for this object
     # The composite that built this object (ADR 0005), or None for an object of the document.
     parent: str | None = None
+    # Style transitions in progress at t: key -> {"from", "to" (as typed), "progress" 0..1}.
+    restyling: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
 
 
 @dataclass(frozen=True)

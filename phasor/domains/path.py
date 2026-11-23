@@ -28,9 +28,11 @@ import numpy as np
 from pydantic import Field, field_validator, model_validator
 
 from phasor.core import record
+from phasor.core.ids import is_valid_id
 from phasor.core.objects import DrawContext, ObjectBase, ParamsBase, register
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
+from phasor.domains import morph_math as mm
 from phasor.domains import path_math as pm
 from phasor.domains.strokes import arrow_head, disc_batch, polyline, with_alpha
 
@@ -43,7 +45,7 @@ TIP_MAX = 0.3  # ... and at most this share of its subpath's length
 # Parameters that change how a path is drawn but not its geometry (the cache key leaves
 # them out, so a fade does not flatten and triangulate again every frame).
 NOT_GEOMETRY = frozenset({"opacity", "dim", "z_index", "flash", "progress", "fill_opacity",
-                          "stroke_opacity"})  # fmt: skip
+                          "stroke_opacity", "morph", "morph_from", "morph_kind"})  # fmt: skip
 CACHE_BYTES = 256 * 2**20  # geometry kept between frames (flattened curves, fills, measures)
 MAX_DASHES = 2000  # dashes (or dots) per path: past it they are drawn longer (lint dash_limit)
 MAX_COORD = 1e9  # world units: no parameter of a path may be larger (it could not be drawn)
@@ -109,7 +111,28 @@ def _frozen(*arrays: np.ndarray) -> None:
         a.setflags(write=False)
 
 
-class PathParams(ParamsBase):
+MAX_ID = 200  # characters of an object id a parameter names (``morph_from``)
+
+
+class MorphParams(ParamsBase):
+    """Becoming this object from another (the ``transform`` and ``transform_matching``
+    verbs, ``domains/morph.py``): the source's id, how far along (1: done, drawn as itself)
+    and how: ``whole`` (outline into outline) or ``matching`` (matching pieces move, the
+    rest fade)."""
+
+    morph_from: str = ""
+    morph: float = Field(1.0, ge=0, le=1)
+    morph_kind: Literal["whole", "matching"] = "whole"
+
+    @field_validator("morph_from")
+    @classmethod
+    def _source(cls, v: str) -> str:
+        if v and (len(v) > MAX_ID or not is_valid_id(v)):
+            raise ValueError(f"morph_from must be an object id (at most {MAX_ID} characters)")
+        return v
+
+
+class PathParams(MorphParams):
     """What every path and shape has, besides its geometry."""
 
     progress: float = Field(1.0, ge=0, le=1)  # drawn share of the stroke (the trace verb)
@@ -235,9 +258,28 @@ class PathBase(ObjectBase):
 
     # ---------------------------------------------------------------- drawing
 
+    def morph_shape(self, state: SceneState) -> mm.Shape:
+        """Its outline for a morph (``domains/morph.py``): one group, the whole path."""
+        from phasor.domains.morph import path_look
+
+        me = self.me(state)
+        p = me.params
+        subs = self.subpaths(p)
+        group = mm.Group(self.KIND, mm.signature(subs), tuple(range(len(subs))), path_look(me))
+        cam = state.camera_for(me)
+        return mm.Shape(subs, tuple(self.is_closed(p, s) for s in subs), (group,), self.rule(p),
+                        right=tuple(cam.right), up=tuple(cam.up))  # fmt: skip
+
     def draw(self, ctx: DrawContext, state: SceneState) -> None:
         me = self.me(state)
         p = me.params
+        if p.morph_from and p.morph < 1.0:  # becoming this from another (``transform``)
+            from phasor.domains import morph
+
+            items = morph.frame(state, self.id)
+            if items is not None:
+                morph.paint(ctx, state, me, items)
+                return
         subs = self.subpaths(p)
         if not subs:
             return
@@ -325,6 +367,8 @@ class PathBase(ObjectBase):
         rec = record.record(self, state)
         out = record.box_features(record.derived_world_bounds(self, state), rec.right, rec.up)
         polys = pm.trim(self.flat(p, self._tol(state)), p.progress)
+        if p.morph_from and p.morph < 1.0:  # mid-morph: what is drawn is not its own shape
+            polys = []
         if polys:
             out["start"], out["end"] = polys[0][0], polys[-1][-1]
             if self._fill_alpha(me) > 0 and len(polys) == 1 and len(polys[0]) >= 3:
@@ -360,6 +404,10 @@ class PathBase(ObjectBase):
             out["fill_crossing"] = True  # lint fill_crossing
         if m["crossing"] is None and self._fill_alpha(me) > 0:
             out["fill_unchecked"] = True  # lint fill_unchecked: too many edges to check
+        if p.morph_from and p.morph < 1.0:
+            from phasor.domains import morph
+
+            out.update(morph.facts(state, me))
         out.update(self.facts(p))
         return out
 

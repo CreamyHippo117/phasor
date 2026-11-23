@@ -13,7 +13,7 @@
 - `scene_palette`: Pick the colors run along strokes: `spectrum` (the prism rainbow), `moonlight` (white with a cool and warm shimmer), `gold`, `glacier`, `borealis`, `rose`, or None for the theme's own. In the prism looks it recolors every glowing curve and the lines the look runs a hue along; fringes, vignette and glow stay. One undo step.
 - `undo`: Revert the last edit (each patch, verb or narration is one step).
 - `redo`: Re-apply the edit that undo reverted.
-- `animate`: Animate with a choreography verb starting at a marker (or seconds). Timing comes from the theme. Returns when it starts and ends so the next step can follow it. `orbit` swings the 3D camera `value` degrees (default 360), until marker `until` if given; `morph` too runs until `until` if given. `transform` and `become` take `targets=[from, to]`; `sweep` takes `path` and `value`; `circumscribe` takes one target and `value` "circle" or "box".
+- `animate`: Animate with a choreography verb starting at a marker (or seconds). Timing comes from the theme. Returns when it starts and ends so the next step can follow it. `orbit` swings the 3D camera `value` degrees (default 360), until marker `until` if given; `morph` too runs until `until` if given. `transform`, `transform_matching` and `become` take `targets=[from, to]`; `sweep` takes `path` and `value`; `circumscribe` takes one target and `value` "circle" or "box".
 - `narrate`: Set the narration. `[[name]]` puts a marker at the next word. Every animation anchored to a marker follows the voice. `pace` adds breathing room after busy sentences.
 - `checkpoint`: Remember the current document under `name` (to compare or return to later).
 - `restore`: Go back to a checkpoint, as one step (undo brings you back again).
@@ -37,16 +37,16 @@
 
 ## Object types (use these names in add_object)
 
-- `annulus`: flash, progress, fill_opacity, stroke_opacity, pos, outer, inner
-- `arc`: flash, progress, fill_opacity, stroke_opacity, pos, r, start, angle, tips
+- `annulus`: flash, morph_from, morph, morph_kind, progress, fill_opacity, stroke_opacity, pos, outer, inner
+- `arc`: flash, morph_from, morph, morph_kind, progress, fill_opacity, stroke_opacity, pos, r, start, angle, tips
 - `arrow`: flash, start, end
 - `axes`: flash, dims, x_range, y_range, z_range, pos, scale, x_scale, y_scale, z_scale, tick, labels, numbers, digits
 - `bar_chart`: flash, values, names, colors, pos, width, height, y_range, gap, grow, numbers, show_values, digits
-- `brace`: flash, progress, fill_opacity, stroke_opacity, start, end, depth
+- `brace`: flash, morph_from, morph, morph_kind, progress, fill_opacity, stroke_opacity, start, end, depth
 - `callout`: flash, target, shape, pad, progress
 - `cayley_graph`: flash, group, generators, pos, r, draw
 - `cayley_table`: flash, group, pos, cell, reveal, subgroup, cosets
-- `circle`: flash, progress, fill_opacity, stroke_opacity, pos, r
+- `circle`: flash, morph_from, morph, morph_kind, progress, fill_opacity, stroke_opacity, pos, r
 - `clock_diagram`: flash, n, step, pos, r, cosets
 - `code`: flash, code, path, language, pos, line_numbers, reveal
 - `code_line`: flash, text, classes, pos
@@ -55,9 +55,9 @@
 - `domain_coloring`: flash, function, pos, size, contour, softness, hue, radius, ambient, lines, a, to, blend, line_glow, light
 - `dot`: flash, pos, r
 - `eigen_lines`: flash, matrix, pos, length
-- `ellipse`: flash, progress, fill_opacity, stroke_opacity, pos, width, height, rotation
+- `ellipse`: flash, morph_from, morph, morph_kind, progress, fill_opacity, stroke_opacity, pos, width, height, rotation
 - `epicycles`: flash, points, terms, phase, trace
-- `equation`: flash, parts, colors, pos, write, drift, keys, from_parts, from_colors, from_keys, from_pos, from_id, morph, arc
+- `equation`: flash, morph_from, morph, morph_kind, parts, colors, pos, write, drift, keys, from_parts, from_colors, from_keys, from_pos, from_id, arc, as_shapes, fill_opacity, stroke_opacity
 - `fixed_points`: flash, f, g, constants, pos, extent, rays, labels, ray_length, reveal, grid
 - `flow_lines`: flash, fp, fq, fr, pos, extent, seeds, steps, length, both, progress
 - `flow_particles`: flash, fp, fq, fr, pos, extent, count, speed, lifetime, tail, seed
@@ -80,7 +80,7 @@
 - `parametric_curve`: flash, fx, fy, fz, t_range, samples, pos, scale, progress, color_by, hue, to_fx, to_fy, to_fz, blend
 - `parametric_surface`: flash, fx, fy, fz, u_range, v_range, res, pos, scale, color_by, color_expr, with_map, domain_pos, domain_size, morph, to_fx, to_fy, to_fz, blend
 - `partial_sum`: flash, kind, terms, pos, extent, reveal
-- `path`: flash, progress, fill_opacity, stroke_opacity, subpaths, rule, tips
+- `path`: flash, morph_from, morph, morph_kind, progress, fill_opacity, stroke_opacity, subpaths, rule, tips
 - `pde_field`: flash, smooth, isolines, hue_cycles, hue, fade, ambient, contrast, kind, time, pos, size, n, diffusivity, speed, mode, feed, kill, seed, scale
 - `pde_modes`: flash, time, pos, extent, length, diffusivity, modes, count, boundary, components, ymax
 - `pde_profile`: flash, kind, time, pos, extent, length, n, diffusivity, speed, modes, potential, dt, exact, ymax, boundary, method
@@ -90,15 +90,15 @@
 - `phase_portrait`: flash, f, g, constants, pos, extent, seeds, n_seeds, t_end, steps, progress, backward, flow, flow_spacing, nullclines, hue_cycles, seed
 - `point_cloud`: flash, source, degree, coefficients, kind, constants, max_iter, points, values, count, seed, pos, size, scale, point_size, exposure, hue, color_by, twist, twinkle, white
 - `polygon`: flash, n, pos, r, rotation, flip, fill
-- `polygon_path`: flash, progress, fill_opacity, stroke_opacity, vertices
+- `polygon_path`: flash, morph_from, morph, morph_kind, progress, fill_opacity, stroke_opacity, vertices
 - `pressure_slice`: flash, smooth, isolines, hue_cycles, hue, fade, ambient, contrast, size, origin, source, z, time, dx, material, absorption, frequency, gain, seed
-- `rectangle`: flash, progress, fill_opacity, stroke_opacity, pos, width, height, corner_radius, rotation
-- `regular_polygon`: flash, progress, fill_opacity, stroke_opacity, n, pos, r, rotation
+- `rectangle`: flash, morph_from, morph, morph_kind, progress, fill_opacity, stroke_opacity, pos, width, height, corner_radius, rotation
+- `regular_polygon`: flash, morph_from, morph, morph_kind, progress, fill_opacity, stroke_opacity, n, pos, r, rotation
 - `riemann_sum`: flash, function, a, b, n, rule, pos
 - `riemann_surface`: flash, kind, pos, radius, height, scale, rings, segments
 - `room`: flash, size, origin, material, absorption
 - `room3d`: flash, size, origin, path, scale, material, absorption, walls, edge_angle
-- `sector`: flash, progress, fill_opacity, stroke_opacity, pos, r, start, angle, inner
+- `sector`: flash, morph_from, morph, morph_kind, progress, fill_opacity, stroke_opacity, pos, r, start, angle, inner
 - `sound_rays`: flash, room, source, time, speed, hue_step, count, bounces, trail, seed
 - `source`: flash, pos, r
 - `spectrogram`: flash, smooth, isolines, hue_cycles, hue, fade, ambient, contrast, f0, f1, duration, fs, nwin, pos, size
@@ -107,7 +107,7 @@
 - `svg`: flash, path, pos, height
 - `table`: flash, cells, path, pos, header, lines, align, reveal
 - `taylor`: flash, function, center, order, xmin, xmax, ymax, pos
-- `text`: flash, text, pos, anchor, leader, leader_on, write
+- `text`: flash, morph_from, morph, morph_kind, text, pos, anchor, leader, leader_on, write, as_shapes, fill_opacity, stroke_opacity
 - `tracer`: flash, path, progress, trail, r
 - `transform_grid`: flash, matrix, pos, extent, spacing, square, basis
 - `value`: flash, value

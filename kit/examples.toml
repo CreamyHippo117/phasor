@@ -186,3 +186,8 @@ teaches = "The diagram kit: a number line, a number plane with a grid, axes with
 kind = "motion"
 tier = "technique"
 teaches = "Data that moves: bars growing from their baseline (grow), a table filled row by row (reveal), a grouped counter counting up with them"
+
+[examples.text_shapes]
+kind = "basics"
+tier = "reference"
+teaches = "Text drawn as glyph outlines and written outline-first, a word morphing into a circle (transform), a formula rearranging by TeX (transform_matching), and a fill color moving between two roles"

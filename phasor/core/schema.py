@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, PlainValidator, model_validat
 
 from phasor.core.constraints import PRIORITIES, RuleError, normalize_rule, parse_rule
 from phasor.core.files import relative_path
-from phasor.core.ids import is_valid_id, is_valid_name, parent_of, split_path
+from phasor.core.ids import is_valid_id, is_valid_name, parent_of, split_path, split_style_path
 from phasor.core.values import normalize
 
 SCHEMA_VERSION = 9  # 2: `constraints` (M2); 3: `retired_ids`; 4: `narration`, `Segment.verb` (M4);
@@ -351,6 +351,17 @@ class Document(Model):
 
     def camera(self, camera_id: str) -> CameraSpec | None:
         return next((c for c in self.cameras if c.id == camera_id), None)
+
+    def style_track(self, path: str) -> tuple[str, str] | None:
+        """(object id, style key) when the track ``path`` animates a style key
+        (``dot.style.color``); None for a parameter path. A real object ``<id>.style``
+        keeps its own parameter paths (existence first)."""
+        found = split_style_path(path)
+        if found is None or self.object(found[0]) is None:
+            return None
+        if self.object(f"{found[0]}.style") is not None or self.camera(found[0]) is not None:
+            return None
+        return found
 
 
 class Overrides(Model):

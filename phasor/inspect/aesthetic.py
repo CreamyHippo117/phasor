@@ -143,7 +143,10 @@ def rules(
         shown = {i for i, e in entries.items() if _shown(e)}
         content = _content(state, shown)
         non_label = [
-            o for o in content if o.impl.semantics(state).get("kind") != "label"
+            o
+            for o in content
+            if o.impl.semantics(state).get("kind") != "label"
+            and "glyph" not in o.tags  # a glyph of a text as shapes is part of a label
         ]  # labels annotate; the picture is the rest
         if not content:
             continue  # nothing yet: a blank beat is not "empty", it is not there yet
@@ -195,7 +198,8 @@ def rules(
 
         # off_palette, off_scale: explicit values far from the theme
         for o in state.objects:
-            if o.id in shown:
+            # A part's values come from its composite (a glyph from its text), judged there.
+            if o.id in shown and o.parent is None:
                 for key in o.roles:
                     judged = judge(c, o, key)
                     if judged is not None:
@@ -205,6 +209,17 @@ def rules(
             far = explicit.oklab_distance(state.background, c.theme.background)
             if far > th["off_palette"]:
                 add("off_palette", (), t, "background", role="background", measure=far)
+
+    # A style transition's explicit target is judged where it is reached, beat or not.
+    for o in c.objects:
+        for key, track in o.style_tracks.items():
+            for seg in track.segments:
+                if explicit.is_role(seg.to.typed) or not 0 <= seg.t1 <= c.duration:
+                    continue
+                judged = judge(c, state_at(seg.t1)[o.id], key)
+                if judged is not None and seg.t1 not in found.get((judged[0], (o.id,), key),
+                                                                  {}).get("times", ()):  # fmt: skip
+                    add(judged[0], (o.id,), seg.t1, key, role=judged[1], measure=judged[2])
 
     issues = [
         _make(c, plan, th, code, ids, variant, info)
@@ -250,6 +265,8 @@ def snaps(
     oid, _, key = issue.path.rpartition(".")
     if c.doc.object(oid) is None:  # a composite's part: its composite's build sets it
         return ()
+    if f"{oid}.style.{key}" in c.doc.timeline.tracks:  # a transition's target: change it there
+        return ()
     judged = judge(c, state_at(issue.times[0])[oid], key)
     if judged is None:
         return ()
@@ -257,7 +274,7 @@ def snaps(
 
 
 def _make(c: Compiled, plan: Plan, th, code: str, ids: tuple[str, ...], variant: str, info):
-    ts = tuple(info["times"])
+    ts = tuple(sorted(info["times"]))
     when = _when(list(ts))
     if code in ("off_palette", "off_scale") and variant == "background":
         return Issue(

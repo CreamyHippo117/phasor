@@ -43,6 +43,7 @@ VERBS = (
     "orbit",
     "orbit_reveal",
     "transform",
+    "transform_matching",
     "become",
     "write",
     "travel",
@@ -399,8 +400,8 @@ class Workspace:
         """Animate with a choreography verb starting at a marker (or seconds). Timing comes
         from the theme. Returns when it starts and ends so the next step can follow it.
         ``orbit`` swings the 3D camera ``value`` degrees (default 360), until marker ``until``
-        if given; ``morph`` too runs until ``until`` if given. ``transform`` and
-        ``become`` take ``targets=[from, to]``; ``sweep`` takes
+        if given; ``morph`` too runs until ``until`` if given. ``transform``,
+        ``transform_matching`` and ``become`` take ``targets=[from, to]``; ``sweep`` takes
         ``path`` and ``value``; ``circumscribe`` takes one target and ``value`` "circle" or
         "box"."""
         if verb not in VERBS:
@@ -422,7 +423,7 @@ class Workspace:
             if len(targets) != 1:
                 raise ToolError("focus_pull needs exactly one target id")
             args = (targets[0],)
-        elif verb in ("transform", "become"):
+        elif verb in ("transform", "transform_matching", "become"):
             if len(targets) != 2:
                 raise ToolError(f"{verb} needs two target ids: [from, to]")
             args = (targets[0], targets[1])

@@ -143,10 +143,12 @@ def snapshot(state: SceneState, runner: PassRunner | None = None) -> dict[str, A
             visible, hidden_by = 0.0, []
         feats = obj.impl.features(state)
         cam = state.camera_for(obj)
-        part_of = {"part_of": obj.parent} if obj.parent is not None else {}
+        extra: dict[str, Any] = {"part_of": obj.parent} if obj.parent is not None else {}
+        if obj.restyling:  # style transitions in progress (``<id>.style.<key>`` tracks)
+            extra["restyling"] = {k: dict(v) for k, v in sorted(obj.restyling.items())}
         entries.append(
             {
-                **part_of,
+                **extra,
                 "id": obj.id,
                 "type": obj.type,
                 "layer": obj.layer,
