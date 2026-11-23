@@ -10,10 +10,12 @@ circle's ``progress`` here. The result is an ordinary phasor scene (save it, lin
 in the editor, render it), with the Manim frame (8 units tall, y up, origin in the middle).
 
 What carries over, and what does not, is listed in ``docs/ai/API.md`` ("Manim import"):
-anything phasor cannot express (updaters, ``always_redraw``, fills, arbitrary colors, font
-sizes) becomes an entry in ``ManimImport.warnings`` and the closest thing phasor has: colors
-become the nearest style *role* (phasor scenes use roles, never raw colors), fills are
-outlines. A name phasor's stand-in lacks raises an error that says so.
+anything phasor cannot express (updaters, ``always_redraw``, fills) becomes an entry in
+``ManimImport.warnings`` and the closest thing phasor has: fills are outlines. Colors, font
+sizes and stroke widths the script sets carry over as explicit style values (a hex color, a
+size in world units; the aesthetic lint says when they are off the theme), and a changed
+``camera.background_color`` becomes the scene's background; a mobject's class default color
+becomes the nearest style role. A name phasor's stand-in lacks raises an error that says so.
 """
 
 from __future__ import annotations
@@ -47,7 +49,7 @@ LEFT, RIGHT = np.array([-1.0, 0.0, 0.0]), np.array([1.0, 0.0, 0.0])
 OUT, IN = np.array([0.0, 0.0, 1.0]), np.array([0.0, 0.0, -1.0])
 UL, UR, DL, DR = UP + LEFT, UP + RIGHT, DOWN + LEFT, DOWN + RIGHT
 
-# Manim's named colors (hex), so ``color=RED`` reads the same; mapped to roles on the way in.
+# Manim's named colors (hex), so ``color=RED`` reads the same, as an explicit color.
 _COLORS = {
     "WHITE": "#FFFFFF", "BLACK": "#000000", "GRAY": "#888888", "GREY": "#888888",
     "LIGHT_GRAY": "#BBBBBB", "LIGHT_GREY": "#BBBBBB", "DARK_GRAY": "#444444",
@@ -65,6 +67,12 @@ _COLORS = {
 }  # fmt: skip
 
 TEXT_ROLES = (("title", 60), ("math", 40), ("label", 30), ("annotation", 0))  # font_size -> role
+# Manim sizes in world units of the 8-unit frame: Manim's default font size (48) lands where
+# the ``math`` text role does in the house themes (0.048 of the frame height), its default
+# stroke width (4) where ``regular`` does (0.004). Approximate: Milestone 20 checks them
+# against real Manim.
+FONT_UNIT = 0.048 * FRAME_HEIGHT / 48
+STROKE_UNIT = 0.004 * FRAME_HEIGHT / 4
 
 
 class ManimImportError(NotImplementedError):
@@ -123,6 +131,31 @@ def color_role(color: Any) -> str:
     return "secondary"
 
 
+class _Default(str):
+    """A mobject class's own default color (the script did not set one): it becomes the
+    nearest role, as phasor's own objects would be styled."""
+
+
+# Class defaults (Manim's WHITE, RED, BLUE): roles, since the script did not choose them.
+_WHITE, _RED, _BLUE = _Default("#FFFFFF"), _Default("#FC6255"), _Default("#58C4DD")
+
+
+def style_color(color: Any) -> str:
+    """The phasor style value for a Manim color: the color the script set, as an explicit
+    hex color; a class default, or a color phasor cannot read, as the nearest role."""
+    if isinstance(color, _Default):
+        return color_role(color)
+    c = _COLORS.get(str(color).upper(), str(color))
+    if c.startswith("#") and len(c) in (4, 7, 9):
+        h = c[1:] if len(c) != 4 else "".join(ch * 2 for ch in c[1:])
+        if all(ch in "0123456789abcdefABCDEF" for ch in h):
+            return "#" + h.upper()
+    if _CTX is not None:
+        _CTX.warnings.append(f"color {color!r} is not a hex color or Manim name: the nearest "
+                             "role is used")  # fmt: skip
+    return color_role(color)
+
+
 def text_role(font_size: float) -> str:
     return next(role for role, floor in TEXT_ROLES if font_size >= floor)
 
@@ -138,7 +171,9 @@ class Mobject:
 
     def __init__(self, *children: Mobject, color: Any = None, **kw: Any) -> None:
         self.children: list[Mobject] = list(children)
-        self.color_role = color_role(color) if color is not None else None
+        self.color = style_color(color) if color is not None else None  # a role or a hex color
+        width = kw.get("stroke_width")
+        self.stroke = None if width is None else round(float(width) * STROKE_UNIT, 6)
         self.opacity = 1.0
         self.pts = np.zeros((0, 3))
         self.size = 0.0  # a dot's radius
@@ -243,8 +278,9 @@ class Mobject:
         for leaf in self.leaves():
             leaf.pts = c + (leaf.pts - c) * factor
             leaf.size *= factor
-            if leaf.kind == "text":
-                leaf._warn("scaling text is not carried over (phasor text sizes are roles)")
+            if leaf.kind == "text":  # an explicit text size in world units now
+                leaf._ref *= factor
+                leaf.text_size = leaf._ref
         return self
 
     def rotate(self, angle: float, axis: Any = OUT, about_point: Any = None, **kw: Any) -> Mobject:
@@ -314,7 +350,7 @@ class Mobject:
 
     # -- look
     def set_color(self, color: Any) -> Mobject:
-        self.color_role = color_role(color)
+        self.color = style_color(color)
         for ch in self.children:
             ch.set_color(color)
         return self
@@ -334,6 +370,10 @@ class Mobject:
     def set_stroke(self, color: Any = None, width: float | None = None, **kw: Any) -> Mobject:
         if color is not None:
             self.set_color(color)
+        if width is not None:
+            self.stroke = round(float(width) * STROKE_UNIT, 6)
+            for ch in self.children:
+                ch.set_stroke(width=width)
         return self
 
     def set_z_index(self, z: int) -> Mobject:
@@ -359,11 +399,14 @@ class Mobject:
                                "Manim import yet")  # fmt: skip
 
     # -- what phasor gets (leaves)
-    def _style(self, **extra: str) -> dict[str, str]:
-        """Style roles for the phasor object: the color role, plus ``extra`` (a text size)."""
+    def _style(self, **extra: Any) -> dict[str, Any]:
+        """Style for the phasor object: the color (a role or the script's hex color), a
+        stroke width the script set (world units), plus ``extra`` (a text size)."""
         out = dict(extra)
-        if self.color_role:
-            out["color"] = self.color_role
+        if self.color:
+            out["color"] = self.color
+        if self.stroke is not None and self.kind in ("line", "arrow", "axes"):
+            out["stroke"] = self.stroke
         return out
 
     def phasor_object(self, ident: str):  # pragma: no cover (overridden)
@@ -399,7 +442,7 @@ Group = VGroup
 class Dot(Mobject):
     kind = "dot"
 
-    def __init__(self, point: Any = ORIGIN, radius: float = 0.08, color: Any = "#FFFFFF",
+    def __init__(self, point: Any = ORIGIN, radius: float = 0.08, color: Any = _WHITE,
                  **kw: Any) -> None:  # fmt: skip
         super().__init__(color=color, **kw)
         self.pts = _vec3(point)[None, :]
@@ -418,7 +461,7 @@ class _Path(Mobject):
     kind = "line"
     closed = False
 
-    def __init__(self, pts: np.ndarray, color: Any = "#FFFFFF", **kw: Any) -> None:
+    def __init__(self, pts: np.ndarray, color: Any = _WHITE, **kw: Any) -> None:
         super().__init__(color=color, **kw)
         pts = np.asarray(pts, float)
         self.pts = np.vstack([pts, pts[:1]]) if self.closed else pts
@@ -437,7 +480,7 @@ def _ring(radius: float, center: Any = ORIGIN, n: int = 72) -> np.ndarray:
 class Circle(_Path):
     closed = True
 
-    def __init__(self, radius: float = 1.0, color: Any = "#FC6255", arc_center: Any = ORIGIN,
+    def __init__(self, radius: float = 1.0, color: Any = _RED, arc_center: Any = ORIGIN,
                  **kw: Any) -> None:  # fmt: skip
         super().__init__(_ring(radius, arc_center), color, **kw)
 
@@ -445,12 +488,12 @@ class Circle(_Path):
 class Polygon(_Path):
     closed = True
 
-    def __init__(self, *vertices: Any, color: Any = "#58C4DD", **kw: Any) -> None:
+    def __init__(self, *vertices: Any, color: Any = _BLUE, **kw: Any) -> None:
         super().__init__(np.array([_vec3(v) for v in vertices]), color, **kw)
 
 
 class RegularPolygon(Polygon):
-    def __init__(self, n: int = 6, radius: float = 1.0, color: Any = "#58C4DD", **kw: Any) -> None:
+    def __init__(self, n: int = 6, radius: float = 1.0, color: Any = _BLUE, **kw: Any) -> None:
         t = np.pi / 2 + np.arange(n) * TAU / n
         super().__init__(*[(radius * math.cos(a), radius * math.sin(a), 0) for a in t],
                          color=color, **kw)  # fmt: skip
@@ -462,7 +505,7 @@ class Triangle(RegularPolygon):
 
 
 class Rectangle(Polygon):
-    def __init__(self, width: float = 4.0, height: float = 2.0, color: Any = "#FFFFFF",
+    def __init__(self, width: float = 4.0, height: float = 2.0, color: Any = _WHITE,
                  **kw: Any) -> None:  # fmt: skip
         w, h = width / 2, height / 2
         super().__init__((-w, -h, 0), (w, -h, 0), (w, h, 0), (-w, h, 0), color=color, **kw)
@@ -474,9 +517,7 @@ class Square(Rectangle):
 
 
 class Line(_Path):
-    def __init__(
-        self, start: Any = LEFT, end: Any = RIGHT, color: Any = "#FFFFFF", **kw: Any
-    ) -> None:
+    def __init__(self, start: Any = LEFT, end: Any = RIGHT, color: Any = _WHITE, **kw: Any) -> None:
         super().__init__(np.array([_vec3(start), _vec3(end)]), color, **kw)
 
 
@@ -486,9 +527,7 @@ DashedLine = Line
 class Arrow(Mobject):
     kind = "arrow"
 
-    def __init__(
-        self, start: Any = LEFT, end: Any = RIGHT, color: Any = "#FFFFFF", **kw: Any
-    ) -> None:
+    def __init__(self, start: Any = LEFT, end: Any = RIGHT, color: Any = _WHITE, **kw: Any) -> None:
         super().__init__(color=color, **kw)
         self.pts = np.array([_vec3(start), _vec3(end)])
 
@@ -506,7 +545,7 @@ class Vector(Arrow):
 
 class ParametricFunction(_Path):
     def __init__(self, function: Callable[[float], Any], t_range: Sequence[float] = (0, 1),
-                 color: Any = "#FFFFFF", **kw: Any) -> None:  # fmt: skip
+                 color: Any = _WHITE, **kw: Any) -> None:  # fmt: skip
         lo, hi = float(t_range[0]), float(t_range[1])
         n = 240
         pts = np.array([_vec3(function(t)) for t in np.linspace(lo, hi, n)])
@@ -516,11 +555,12 @@ class ParametricFunction(_Path):
 class Text(Mobject):
     kind = "text"
 
-    def __init__(self, *strings: str, font_size: float = 48, color: Any = "#FFFFFF",
+    def __init__(self, *strings: str, font_size: float | None = None,
+                 color: Any = _WHITE,
                  math: bool = False, **kw: Any) -> None:  # fmt: skip
         super().__init__(color=color, **kw)
         raw = "".join(strings)
-        self.role = text_role(font_size)
+        self.role = text_role(48 if font_size is None else font_size)
         self.math = math
         self.text = raw if not math or "$" in raw else f"${raw}$"
         try:
@@ -531,6 +571,10 @@ class Text(Mobject):
         self.pts = np.zeros((1, 3))
         self._ref = FRAME_HEIGHT * {"title": 0.075, "math": 0.048, "label": 0.042,
                                     "annotation": 0.032}[self.role]  # fmt: skip
+        # the size the script set, in world units; none set: the role (Manim's default)
+        self.text_size: str | float = self.role
+        if font_size is not None:
+            self._ref = self.text_size = round(float(font_size) * FONT_UNIT, 6)
 
     def _text_extent(self) -> tuple[float, float]:
         return text_metrics.aspect(self.text) * self._ref, text_metrics.box(self.text) * self._ref
@@ -539,7 +583,7 @@ class Text(Mobject):
         from phasor import Text as T
 
         return T(id=ident, text=self.text, pos=tuple(self.pts[0]), opacity=0.0,
-                 style=self._style(size=self.role))  # fmt: skip
+                 style=self._style(size=self.text_size))  # fmt: skip
 
 
 class MathTex(Text):
@@ -561,7 +605,7 @@ class Axes(Mobject):
         y_range: Sequence[float] = (-4, 4, 1),
         x_length: float | None = None,
         y_length: float | None = None,
-        color: Any = "#FFFFFF",
+        color: Any = _WHITE,
         **kw: Any,
     ) -> None:
         super().__init__(color=color, **kw)
@@ -583,7 +627,7 @@ class Axes(Mobject):
     coords_to_point = c2p
 
     def plot(self, func: Callable[[float], float], x_range: Sequence[float] | None = None,
-             color: Any = "#58C4DD", **kw: Any) -> Mobject:  # fmt: skip
+             color: Any = _BLUE, **kw: Any) -> Mobject:  # fmt: skip
         lo, hi = (x_range or self.xr)[:2]
         xs = np.linspace(lo, hi, 240)
         with np.errstate(all="ignore"):
@@ -796,7 +840,7 @@ class Transform(_MorphTo):
         ease = _ease_of(self.rate_func)
         mine, theirs = self.mob.leaves(), self.goal.leaves()
         if len(mine) == 1 and len(theirs) == 1 and self._morph(ctx, mine[0], theirs[0], t0, d):
-            mine[0].color_role = theirs[0].color_role or mine[0].color_role
+            mine[0].color = theirs[0].color or mine[0].color
             return
         for leaf in mine:
             _fade(ctx, leaf, t0, d, 1.0, 0.0, ease)
@@ -914,10 +958,10 @@ class _MorphToGoal(_MorphTo):
             self._morph(ctx, leaf, g, t0, d)
             if g.opacity != leaf.opacity:
                 _fade(ctx, leaf, t0, d, leaf.opacity, g.opacity, "smooth")
-            if g.color_role != leaf.color_role and g.color_role:
-                leaf.color_role = g.color_role
+            if g.color != leaf.color and g.color:
+                leaf.color = g.color
                 ctx.restyle(leaf)
-                ctx.warnings.append("a color change is instant here (style roles do not animate)")
+                ctx.warnings.append("a color change is instant here (style does not animate)")
 
 
 # ---------------------------------------------------------------- the scene
@@ -948,11 +992,11 @@ class _Context:
         return leaf.obj_id
 
     def restyle(self, leaf: Mobject) -> None:
-        if leaf.obj_id and leaf.color_role:
+        if leaf.obj_id and leaf.color:
             from phasor.core.objects import registered_types  # noqa: F401
 
             self.scene.engine.apply({"op": "set_style", "id": leaf.obj_id, "key": "color",
-                                     "role": leaf.color_role}, origin="script")  # fmt: skip
+                                     "role": leaf.color}, origin="script")  # fmt: skip
 
     def show(self, leaf: Mobject, t: float, **start: Any) -> None:
         """Make the leaf visible from time ``t`` (with starting values for animated params)."""
@@ -1182,6 +1226,12 @@ def import_manim(path: str | Path, scene: str | None = None) -> ManimImport:
         if isinstance(instance, ThreeDScene):
             instance._finish_rotation()
         s.marker("end", ctx.t)
+        background = str(instance.camera.background_color)
+        if background.upper() not in ("#000000", "BLACK"):  # Manim's own: keep the theme's
+            value = style_color(background)
+            if value.startswith("#"):  # not a role: a color phasor could read
+                op = {"op": "set_meta", "field": "background", "value": value}
+                s.engine.apply(op, origin="script").raise_for_errors()
     finally:
         _CTX = None
     return ManimImport(

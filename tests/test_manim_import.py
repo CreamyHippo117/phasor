@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 from phasor.importers import import_manim
-from phasor.importers.manim import ManimImportError, color_role
+from phasor.importers.manim import FONT_UNIT, STROKE_UNIT, ManimImportError, color_role
 from tests.conftest import gl_available
 
 ROOT = Path(__file__).parents[1]
@@ -154,7 +154,42 @@ class S(Scene):
     assert state(r, 4.5, "text_1").opacity == pytest.approx(0.5, abs=0.2)
 
 
-def test_colors_become_the_nearest_style_roles():
+def test_colors_sizes_and_widths_the_script_sets_become_explicit_values(tmp_path):
+    """Milestone 18: what a script chooses carries over as it is (the aesthetic lint says when
+    it is off the theme); what it leaves to Manim's class defaults becomes roles."""
+    p = script(tmp_path, """
+class S(Scene):
+    def construct(self):
+        self.camera.background_color = "#1E1E2E"
+        a = Dot(LEFT, color=GREEN)
+        b = Circle(radius=1)  # Manim's default (red): a role
+        c = Line(LEFT, RIGHT, stroke_width=8).set_color("#ff8800")
+        d = Text("big", font_size=96)
+        e = Text("plain")  # Manim's default size: the role it was
+        f = Text("scaled", font_size=24).scale(2)
+        g = Square().set_stroke(width=2)
+        self.add(a, b, c, d, e, f, g)
+        self.wait(1)
+""")  # fmt: skip
+    r = import_manim(p)
+    doc = r.scene.engine.document
+    style = {o.id: o.style for o in doc.objects}
+    assert style["dot_1"]["color"] == "#83C167"
+    assert style["circle_1"]["color"] == "danger"
+    assert style["line_1"] == {"color": "#FF8800", "stroke": pytest.approx(8 * STROKE_UNIT)}
+    assert style["text_1"]["size"] == pytest.approx(96 * FONT_UNIT)
+    assert style["text_2"]["size"] == "math" and style["text_2"]["color"] == "primary"
+    assert style["text_3"]["size"] == pytest.approx(48 * FONT_UNIT)  # scaled, not warned
+    assert style["square_1"]["stroke"] == pytest.approx(2 * STROKE_UNIT)
+    assert doc.meta.background == "#1E1E2E"
+    assert not [w for w in r.warnings if "scaling text" in w or "color" in w]
+    st = r.scene.engine.state_at(0.5)
+    assert st["text_1"].style["size"] * 8.0 == pytest.approx(96 * FONT_UNIT)  # world units
+    codes = {i.code for i in r.scene.engine.lint(aesthetic=True)}
+    assert "off_palette" in codes  # Manim's GREEN is far from the house palette
+
+
+def test_class_default_colors_become_the_nearest_style_roles():
     colors = (
         "#FFFFFF",
         "#888888",
