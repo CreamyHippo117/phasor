@@ -415,6 +415,32 @@ def test_a_text_mathtext_cannot_outline_is_morph_missing_and_never_raises(tex_ac
         _scene().add(Text(id="w", text=tex, as_shapes=True))
 
 
+@pytest.mark.parametrize("passes", MODES)
+def test_glyphs_past_the_coordinate_limit_are_left_out_with_a_lint_not_an_error(passes):
+    """Audit 17 #7: a glyph ``Path`` part past ``path.MAX_COORD`` failed validation, so an
+    as_shapes text moved there made ``state_at`` raise from that time on (a picture text
+    was fine), and a static one was refused with a message about part 'f'. Such glyphs
+    are left out, and ``glyph_limit`` says why."""
+    from phasor.domains.path import MAX_COORD
+
+    s = _scene(passes)
+    s.marker("end", 4.0)
+    s.add(Text(id="w", text="far", as_shapes=True))
+    r = s.engine.apply({"op": "add_segment", "path": "w.pos", "segment": {
+        "t0": 1.0, "t1": 3.0, "to": [2 * MAX_COORD, 0, 0]}}, origin="script")  # fmt: skip
+    assert r.ok and not [i for i in r.lint_added if i.severity == "error"]
+    near = s.engine.state_at(0.5)
+    assert len([o for o in near.objects if o.parent == "w"]) == 3
+    st = s.engine.state_at(3.5)
+    assert not [o for o in st.objects if o.parent == "w"]
+    s.engine.inspect(3.5)
+    (issue,) = [i for i in s.engine.lint() if i.code == "glyph_limit"]
+    assert issue.ids == ("w",) and "1e+09" in issue.message and min(issue.times) >= 1.0
+    s2 = _scene(passes)
+    s2.add(Text(id="w", text="far", pos=(2 * MAX_COORD, 0, 0), as_shapes=True))
+    assert [i.code for i in s2.engine.lint() if i.code == "glyph_limit"] == ["glyph_limit"]
+
+
 def _points_of(e, oid, t):
     st = e.state_at(t)
     return np.asarray(record(st[oid].impl, st).points)

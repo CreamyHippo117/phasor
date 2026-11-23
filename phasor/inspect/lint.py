@@ -571,8 +571,9 @@ def run(
                 f.add("fill_unchecked", (e["id"],), t)
             if sem.get("dash_limit"):
                 f.add("dash_limit", (e["id"],), t, n=sem["dash_limit"])
-            if sem.get("glyph_limit"):
-                f.add("glyph_limit", (e["id"],), t, n=sem["glyph_limit"], drawn=sem.get("glyphs"))
+            if sem.get("glyph_limit") or sem.get("glyphs_far"):
+                f.add("glyph_limit", (e["id"],), t, n=sem.get("glyph_limit", 0),
+                      drawn=sem.get("glyphs"), far=sem.get("glyphs_far", 0))  # fmt: skip
             if sem.get("morph_missing"):
                 f.add("morph_missing", (e["id"],), t, src=sem.get("morphing_from"))
             if sem.get("morph_limit"):
@@ -736,10 +737,17 @@ def run(
             return Issue(code, f"{ids[0]!r} would need {info['n']} dashes or dots {when}; "
                          "only the first ones are drawn", "warning", ids, times=ts,
                          fix_hint="use a solid stroke, or make the path smaller")  # fmt: skip
+        if code == "glyph_limit" and info.get("far") and not info.get("n"):
+            return Issue(code, f"{ids[0]!r} has {info['far']} glyphs past +-1e+09 world "
+                         f"units {when} (path.MAX_COORD); drawn as shapes, they are not "
+                         "drawn", "warning", ids, times=ts, fix_hint="keep it nearer the "
+                         "origin, or draw it as a picture (as_shapes off)")  # fmt: skip
         if code == "glyph_limit":
+            far = f", and {info['far']} of those lie past +-1e+09 world units" \
+                if info.get("far") else ""  # fmt: skip
             return Issue(code, f"{ids[0]!r} has {info['n']} glyphs {when}; drawn as shapes, "
-                         f"only the first {info['drawn']} are drawn (glyph_math.MAX_GLYPHS)",
-                         "warning", ids,
+                         f"only the first {info['drawn']} are drawn (glyph_math.MAX_GLYPHS)"
+                         f"{far}", "warning", ids,
                          times=ts, fix_hint="split the text into several, or draw it as a "
                          "picture (as_shapes off)")  # fmt: skip
         if code == "morph_missing":

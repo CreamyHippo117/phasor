@@ -23,7 +23,7 @@ from phasor.core.texconv import join_latex, to_latex
 from phasor.core.values import Vec3
 from phasor.domains import glyph_math as gm
 from phasor.domains import morph_math as mm
-from phasor.domains.path import MorphParams, Path
+from phasor.domains.path import MAX_COORD, MorphParams, Path
 from phasor.domains.strokes import hue_colors, polyline
 
 DISC_SEGMENTS = 64
@@ -625,6 +625,8 @@ def _glyph_parts(state: SceneState, me, shape: mm.Shape) -> list[ObjectBase]:
     n = len(shape.groups)
     out: list[ObjectBase] = []
     for k, (g, name) in enumerate(zip(shape.groups, names, strict=True)):
+        if _far(shape, g):  # a Path cannot hold it: left out (lint glyph_limit)
+            continue
         drawn, filled = written(p.write, k, n)
         own = dict(style)
         if 0 <= g.part < len(colors):  # an equation part's own color role
@@ -635,6 +637,12 @@ def _glyph_parts(state: SceneState, me, shape: mm.Shape) -> list[ObjectBase]:
                         fill_opacity=p.fill_opacity * filled,
                         stroke_opacity=1.0 - (1.0 - p.stroke_opacity) * filled))  # fmt: skip
     return out
+
+
+def _far(shape: mm.Shape, g: mm.Group) -> bool:
+    """A glyph with a point past ``path.MAX_COORD`` (or not finite): no ``Path`` part can
+    hold it, so it is left out of the parts (lint ``glyph_limit`` says why)."""
+    return any(not float(np.abs(shape.subpaths[i]).max()) <= MAX_COORD for i in g.members)
 
 
 def _typed(state: SceneState, me, key: str):
@@ -702,9 +710,13 @@ def _shape_facts(state: SceneState, me, texts) -> dict[str, Any]:
                 total += len(texts) - k - 1
                 break
         drawn = min(drawn, gm.MAX_GLYPHS)
-        out.update(as_shapes=True, glyphs=drawn)
+        shape = me.impl.morph_shape(state)
+        far = sum(_far(shape, g) for g in shape.groups) if shape is not None else 0
+        out.update(as_shapes=True, glyphs=drawn - far)
         if drawn < total:
             out["glyph_limit"] = total  # lint glyph_limit (at least this many)
+        if far:
+            out["glyphs_far"] = far  # lint glyph_limit: past path.MAX_COORD, not drawn
     out.update(morph.facts(state, me))
     return out
 
