@@ -18,7 +18,7 @@ into_cone = "0.5 - 0.5 * cos(pi * clamp((t - 5.55) / 0.9, 0, 1))"
 frame_for_cone = "0.5 - 0.5 * cos(pi * clamp((t - 3.45) / 2.15, 0, 1))"
 source_x = f"2.65 + 0.20 * t + 1.85 * ({frame_for_cone})"
 
-s.add(Line(id="travel_axis", points=((-7.7, y, 0), (7.7, y, 0)), opacity=0.35,
+s.add(Line(id="travel_axis", points=((-7.7, y, 0), (7.7, y, 0)),
            style={"color": "muted", "stroke": "hairline", "glow": "none"}))  # fmt: skip
 
 runs = (

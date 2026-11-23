@@ -19,6 +19,17 @@ def test_observed_frequency_ahead_and_behind(mach):
     assert heard == pytest.approx([frequency / (1 - mach), frequency / (1 + mach)])
 
 
+@pytest.mark.parametrize("mach", [0.3, 0.8])
+def test_ring_geometry_gives_the_observed_frequencies(mach):
+    """Sound speed is 1: the spacing of successive crests on the axis is the heard period."""
+    frequency = 5.0
+    centers, radii = ac_math.doppler_wavefronts(mach, frequency, 2.37, 6)
+    ahead = np.diff(centers + radii)  # leading edges, oldest first
+    behind = np.diff(centers - radii)
+    np.testing.assert_allclose(-1 / ahead, frequency / (1 - mach))
+    np.testing.assert_allclose(1 / behind, frequency / (1 + mach))
+
+
 def test_rings_expand_from_the_source_position_at_emission():
     centers, radii = ac_math.doppler_wavefronts(0.5, 4.0, 0.8, 2)
     assert centers == pytest.approx(np.array([0.25, 0.375]))
