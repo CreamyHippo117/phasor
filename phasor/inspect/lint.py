@@ -23,7 +23,7 @@ returns one issue per problem with the times it was seen. Rules in this mileston
 | crowded_ticks | warning | numbers along an axis (or a chart's bar names) too close to read |
 | truncated | warning | a file a table or code block reads is past a limit: only part shown |
 | unknown_language | warning | code in a language pygments does not know: drawn plain   |
-| glyph_limit | warning | text drawn as shapes with more glyphs than are drawn (``MAX_GLYPHS``, or past ``MAX_COORD``) |
+| glyph_limit | warning | as shapes, glyphs not drawn (past ``MAX_GLYPHS`` or ``MAX_COORD``) |
 | morph_missing | warning | a morph whose source is gone or has no outline: it draws itself |
 | morph_limit | warning | a morph with more subpaths than morph (``MAX_SUBPATHS``): the rest fade |
 

@@ -1496,7 +1496,8 @@ Bounds (`morph_math`): `MAX_SUBPATHS` 512 a side (the shortest beyond fade; lint
 `morph_limit`), `MAX_POINTS` 512 points a piece, `MAX_TOTAL` 40 000 in all, `MAX_ASSIGN` 256
 pairs by optimal assignment (more pair in canonical order), `SAMPLE_CUBICS` 2048 cubics a
 subpath is sampled through; the in-between's fill triangulates at most `morph.MAX_FILL_RING`
-(4096) points a ring (a longer ring keeps every k-th point; strokes keep all). Plans are
+(4096) points a ring (a longer ring keeps every k-th point, also at the first frame when one
+subpath is split into many pieces; strokes keep all). Plans are
 cached by both outlines in the world (pairs are by least travel, so a source that moves or
 a camera that zooms makes a plan a frame), in a pool of `morph.PLAN_BYTES` (64 MB) measured
 by their arrays. A source that is gone is lint `morph_missing` (it draws itself); a source

@@ -456,13 +456,15 @@ def test_outlines_read_matplotlib_before_and_after_3_10(monkeypatch):
     from matplotlib import ft2font
     from matplotlib.mathtext import MathTextParser
 
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        if not hasattr(ft2font, "LOAD_NO_HINTING"):  # removed in 3.12: nothing to fall back to
+            pytest.skip("this matplotlib has no pre-3.10 font constants")
+        old_flags = (ft2font.LOAD_NO_HINTING, ft2font.KERNING_DEFAULT)
     texts = ("AVa, Wo", "$\\frac{a}{b} + \\sqrt{x}$")
     gm.outline.cache_clear()
     gm._ft_flags.cache_clear()
     new = [gm.outline(t) for t in texts]
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        old_flags = (ft2font.LOAD_NO_HINTING, ft2font.KERNING_DEFAULT)
     monkeypatch.delattr(ft2font, "LoadFlags", raising=False)
     monkeypatch.delattr(ft2font, "Kerning", raising=False)
     parse = MathTextParser.parse

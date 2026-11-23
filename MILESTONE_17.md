@@ -112,13 +112,15 @@ Suite results: see "Gate" (counts above are from the build; test_glyphs grew to 
     travel in the world and the start of a ring by least travel too, so a plan depends on
     where the two outlines are relative to each other: a source that moves, a camera that
     zooms (a text's size is a share of the frame) or orbits makes a new plan each frame
-    (about 0.2-0.3 s for 400 glyphs into a circle; a 34-character text, a few ms). Planning
+    (measured: about 0.2-0.3 s for 400 glyphs into a circle; about 25 ms for a 34-character text). Planning
     in normalised frames would pair by shape and change still frames, so it was not done;
     plans are bounded by bytes instead (`morph.PLAN_BYTES`).
 16. **The in-between's fill thins long rings**: a ring of more than `morph.MAX_FILL_RING`
     (4096) points (only the in-between makes them: the pieces of one subpath joined, up to
-    40 000 points, crossing itself mid-way) keeps every k-th point before earcut. The
-    stroke keeps every point; both ends of a morph are drawn exactly as before.
+    40 000 points, crossing itself mid-way) keeps every k-th point before earcut. Strokes
+    keep every point and the end (`morph` 1, drawn as itself) is exact; the first frame's
+    fill is thinned too when one source subpath is split into many pieces (a circle into
+    a long text), within a fraction of a pixel of its outline for smooth curves.
 17. **A text drawn as a picture pops a little at `m = 0`**: the morph draws its outline
     from the first frame (the picture's anti-aliased glyphs become filled outlines at the
     same place). Small; recorded, not changed.
@@ -185,7 +187,8 @@ suite, Windows, macOS and CUDA remain.**
 
 ## Independent audit (2026-11-23)
 
-Repro scripts were turned into tests (tests first: each failed before its fix).
+Repro scripts were turned into tests; each test fails without its fix (most were written
+first; for #1 and #4 the fix came first and the test was then run against the old code).
 
 | # | Finding | Fix | Test |
 | --- | --- | --- | --- |
