@@ -62,6 +62,18 @@ def _is_label(e: dict[str, Any]) -> bool:
     return e["semantic"].get("kind") == "label"
 
 
+def _part_of(entries: dict[str, dict[str, Any]], a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """Whether one of two entries is a part a composite built for the other (ADR 0005): a
+    composite covers its own parts by design."""
+    for x, y in ((a, b), (b, a)):
+        up = x.get("part_of")
+        while up is not None:
+            if up == y["id"]:
+                return True
+            up = entries[up].get("part_of") if up in entries else None
+    return False
+
+
 def _shown(e: dict[str, Any]) -> bool:
     drawn = e["semantic"].get("drawn", 1.0) > 0  # a curve not yet traced shows nothing
     return e["opacity"] > FAINT and e["on_screen_fraction"] > 0 and drawn
@@ -364,7 +376,7 @@ def run(
                 continue
             for b in shown:
                 pair = tuple(sorted((a["id"], b["id"])))
-                if a is b or pair in seen_pairs:
+                if a is b or pair in seen_pairs or _part_of(fr.entries, a, b):
                     continue
                 if persp and not (both(a, b, "label") or both(a, b, "point")):
                     continue  # depth decides in 3D: see occluded_label

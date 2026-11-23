@@ -1,7 +1,13 @@
-"""The object contract (SPEC contract 5) and the type registry.
+"""The object contract (SPEC contract 5, ADR 0005) and the type registry.
 
-Every object type implements ``Params``, ``world_bounds``, ``features``, ``semantics`` and
-``draw``. ``register`` refuses a type that is missing any of them.
+A type needs two members: ``Params`` and ``draw(ctx, state)`` (or, for a composite,
+``build(state) -> [objects]`` instead of ``draw``). ``register`` refuses a type without
+them. ``world_bounds``, ``features`` and ``semantics`` are the type's own when it defines
+them and are derived from what ``draw`` records otherwise (``core/record.py``); a composite's
+are the union of its parts'. ``draw`` may take a third argument, the pass (``color``, ``id``,
+``solo``); one that does not is given a wrapper at registration that drops it, so every
+renderer calls ``draw(ctx, state, pass_)``. After ``register`` every type has all five
+``CONTRACT_MEMBERS``.
 
 An instance is bound to one object id and holds no scene state: everything it needs comes
 from the ``SceneState`` it is handed. The same instance doubles as the Python builder
@@ -10,8 +16,11 @@ from the ``SceneState`` it is handed. The same instance doubles as the Python bu
 
 from __future__ import annotations
 
+import functools
+import inspect
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, ClassVar, Literal, Protocol, runtime_checkable
 
 import numpy as np
@@ -23,7 +32,9 @@ from phasor.core.state import ObjectState, SceneState
 
 Pass = Literal["color", "id", "solo"]
 PASSES: tuple[str, ...] = ("color", "id", "solo")
-REQUIRED_MEMBERS = ("Params", "world_bounds", "features", "semantics", "draw")
+REQUIRED_MEMBERS = ("Params", "draw")  # ``build`` may stand in for ``draw`` (a composite)
+DERIVED_MEMBERS = ("world_bounds", "features", "semantics")
+CONTRACT_MEMBERS = ("Params", *DERIVED_MEMBERS, "draw")  # what every registered type has
 
 
 class ParamsBase(BaseModel):
@@ -197,26 +208,95 @@ class RegistrationError(TypeError):
     pass
 
 
+def _takes_pass(draw: Callable) -> bool:
+    """Whether ``draw`` accepts the pass as a third argument (after ``ctx`` and ``state``)."""
+    if getattr(draw, "short_form", False):
+        return True
+    try:
+        params = list(inspect.signature(draw, follow_wrapped=False).parameters.values())
+    except (TypeError, ValueError):
+        return True
+    if any(p.kind is p.VAR_POSITIONAL for p in params):
+        return True
+    positional = [p for p in params if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
+    return len(positional) >= 4 or any(p.name == "pass_" for p in params)  # self, ctx, state, pass_
+
+
+def _without_pass(draw: Callable) -> Callable:
+    @functools.wraps(draw)
+    def full(self, ctx: DrawContext, state: SceneState, pass_: Pass = "color") -> None:
+        return draw(self, ctx, state)
+
+    full.short_form = True  # type: ignore[attr-defined]
+    return full
+
+
+def _draw_parts(self, ctx: DrawContext, state: SceneState, pass_: Pass = "color") -> None:
+    """A composite draws nothing itself: its parts are objects of their own in the state."""
+
+
+def source_file(cls_or_fn: Any) -> str | None:
+    """The file that defines a class or function, or None (built in C, typed at a prompt)."""
+    code = getattr(cls_or_fn, "__code__", None)
+    if code is not None:
+        return str(Path(code.co_filename).resolve())
+    try:
+        return str(Path(inspect.getsourcefile(cls_or_fn) or "").resolve()) or None
+    except (TypeError, OSError):
+        return None
+
+
+def is_builtin(cls: type) -> bool:
+    """Whether a type ships inside phasor (not defined in a scene or another package)."""
+    return cls.__module__ == "phasor" or cls.__module__.startswith("phasor.")
+
+
 def register(cls: type) -> type:
-    """Class decorator: add an object type, or fail loudly if it breaks the contract."""
+    """Class decorator: add an object type, or fail loudly if it breaks the contract.
+
+    Required: ``Params`` (a ``ParamsBase``) and ``draw`` (or ``build``). The other members
+    are filled in from ``core/record.py`` (or, for a composite, from its parts) when the
+    type does not define them. A type may be registered again under the same name only by
+    the file that defined it (a scene script run twice); built-in types never change."""
+    from phasor.core import record
+
     name = getattr(cls, "type", None)
     if not isinstance(name, str) or not is_valid_name(name):
         raise RegistrationError(f"{cls.__name__}.type must be a name like 'dot', got {name!r}")
-    missing = [m for m in REQUIRED_MEMBERS if not hasattr(cls, m)]
+    composite = callable(getattr(cls, "build", None))
+    missing = [m for m in REQUIRED_MEMBERS if not hasattr(cls, m)
+               and not (m == "draw" and composite)]  # fmt: skip
     if missing:
         raise RegistrationError(f"{cls.__name__} breaks the object contract: missing {missing}")
     if not (isinstance(cls.Params, type) and issubclass(cls.Params, ParamsBase)):
         raise RegistrationError(f"{cls.__name__}.Params must subclass ParamsBase")
-    for m in REQUIRED_MEMBERS[1:]:
-        if not callable(getattr(cls, m)):
+    for m in ("draw", *DERIVED_MEMBERS):
+        if hasattr(cls, m) and not callable(getattr(cls, m)):
             raise RegistrationError(f"{cls.__name__}.{m} must be a method")
     bad = [f for f in getattr(cls, "Files", ()) if f not in cls.Params.model_fields]
     if bad:
         raise RegistrationError(f"{cls.__name__}.Files names {bad}, which are not parameters")
-    if name in _REGISTRY and _REGISTRY[name] is not cls:
-        raise RegistrationError(f"object type {name!r} is already registered")
+    source = source_file(cls)
+    old = _REGISTRY.get(name)
+    if old is not None and old is not cls:
+        same_file = source is not None and getattr(old, "_phasor_source", None) == source
+        if is_builtin(old) or not same_file:
+            raise RegistrationError(f"object type {name!r} is already registered")
+    if not hasattr(cls, "draw"):
+        cls.draw = _draw_parts
+    elif not _takes_pass(cls.draw):
+        cls.draw = _without_pass(cls.draw)
+    for m in DERIVED_MEMBERS:
+        if not hasattr(cls, m):
+            setattr(cls, m, (record.COMPOSITE if composite else record.DERIVED)[m])
+    cls._phasor_source = source
     _REGISTRY[name] = cls
     return cls
+
+
+def unregister(name: str) -> None:
+    """Forget a type (a scene module that failed to load takes its types with it)."""
+    _REGISTRY.pop(name, None)
 
 
 def get_type(name: str) -> type | None:

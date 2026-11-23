@@ -17,6 +17,7 @@ from typing import Annotated, Any
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from phasor.core import life
+from phasor.core.ids import is_valid_id
 from phasor.core.issues import DocumentError, Issue
 from phasor.core.objects import SceneObject, get_type, registered_types
 from phasor.core.schema import Document, ExprSpec
@@ -333,16 +334,95 @@ def evaluate(c: Compiled, t: float, replace: Mapping[str, Any] | None = None) ->
                     MappingProxyType(built[o.id]), o.roles, o.tags, o.layer, o.impl)
         for o in c.objects
     )  # fmt: skip
-    return SceneState(
-        t=t,
-        width=meta.width,
-        height=meta.height,
-        background=c.theme.background,
-        objects=objects,
-        camera=camera,
-        overlay=overlay_camera(aspect),
-        values=MappingProxyType(env),
-        light=MappingProxyType(c.theme.light),
-        strokes=MappingProxyType(_strokes(c)),
-        base_dir=c.base_dir,
-    )
+
+    def scene(objects: tuple[ObjectState, ...]) -> SceneState:
+        return SceneState(
+            t=t,
+            width=meta.width,
+            height=meta.height,
+            background=c.theme.background,
+            objects=objects,
+            camera=camera,
+            overlay=overlay_camera(aspect),
+            values=MappingProxyType(env),
+            light=MappingProxyType(c.theme.light),
+            strokes=MappingProxyType(_strokes(c)),
+            base_dir=c.base_dir,
+        )
+
+    if any(callable(getattr(o.impl, "build", None)) for o in objects):
+        objects = _expand(c, t, objects, scene)
+    return scene(objects)
+
+
+def _expand(c: Compiled, t: float, objects: tuple[ObjectState, ...], scene) -> tuple:
+    """The parts composites build (ADR 0005), after the document's objects. A part's id is
+    ``<composite>.<name>``; it may not be an id the document uses or has retired. A part's
+    opacity is its own times its composite's, and it lies on the composite's layer, above
+    it by its own ``z_index``. Parts are built in document order, a composite part's own
+    parts right after it."""
+    taken = {o.id for o in c.doc.objects} | {cam.id for cam in c.doc.cameras}
+    retired = set(c.doc.retired_ids)
+    out = list(objects)
+    queue = [o for o in objects if callable(getattr(o.impl, "build", None))]
+
+    def fail(parent: str, msg: str) -> DocumentError:
+        return DocumentError(Issue("bad_part", f"{parent} at t={t:g}: {msg}", ids=(parent,)))
+
+    while queue:
+        parent = queue.pop(0)
+        try:
+            made = list(parent.impl.build(scene(tuple(out))))
+        except DocumentError:
+            raise
+        except Exception as e:
+            raise fail(parent.id, f"build failed: {type(e).__name__}: {e}") from e
+        for part in made:
+            cls = type(part)
+            if get_type(getattr(cls, "type", "")) is not cls or not isinstance(part.id, str):
+                raise fail(parent.id, f"build must return objects of registered types: {part!r}")
+            full = f"{parent.id}.{part.id}"
+            if not is_valid_id(full):
+                raise fail(parent.id, f"part id {part.id!r} is not a valid name")
+            if full in retired:
+                raise fail(parent.id, f"part id {full!r} was retired; ids are never reused")
+            if full in taken:
+                raise fail(parent.id, f"part id {full!r} is already taken")
+            taken.add(full)
+            spec = part.to_spec()
+            model = cls.Params
+            values: dict[str, Any] = {}
+            try:
+                for name, raw in spec.params.items():
+                    if name not in model.model_fields:
+                        raise ValueError(f"{cls.type!r} has no parameter {name!r}")
+                    if isinstance(raw, ExprSpec):
+                        raise ValueError(f"{name}: a part takes values, not expressions")
+                    values[name] = _coerce(model, name, raw)
+                params = model.model_validate(values)
+            except (ValidationError, ValueError) as e:
+                msg = _first_error(e) if isinstance(e, ValidationError) else str(e)
+                raise fail(parent.id, f"part {part.id!r}: {msg}") from e
+            pp = parent.params
+            params = params.model_copy(update={
+                "opacity": params.opacity * params.dim * pp.opacity,
+                "z_index": params.z_index + pp.z_index,
+            })  # fmt: skip
+            style, roles = {}, {}
+            for key in spec.style:
+                if key not in cls.Style:
+                    raise fail(parent.id, f"part {part.id!r} has no style key {key!r}")
+            for key, (group, default) in cls.Style.items():
+                role = spec.style.get(key, default)
+                try:
+                    style[key], roles[key] = c.theme.resolve(group, role), role
+                except ThemeError as e:
+                    raise fail(parent.id, f"part {part.id!r}.{key}: {e}") from e
+            part.id = full
+            state = ObjectState(full, cls.type, len(out) + 1, params, MappingProxyType(style),
+                                MappingProxyType(roles), spec.tags, parent.layer, part,
+                                parent=parent.id)  # fmt: skip
+            out.append(state)
+            if callable(getattr(part, "build", None)):
+                queue.insert(0, state)
+    return tuple(out)

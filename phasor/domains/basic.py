@@ -63,7 +63,7 @@ class Dot(ObjectBase):
         p = self.me(state).params
         return {"kind": "point", "position": list(p.pos), "radius": p.r}
 
-    def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
+    def draw(self, ctx: DrawContext, state: SceneState) -> None:
         me = self.me(state)
         p = me.params
         right, up = self._basis(state)
@@ -148,7 +148,7 @@ class Line(ObjectBase):
             out["drawn"] = round(self.me(state).params.progress, 4)
         return out
 
-    def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
+    def draw(self, ctx: DrawContext, state: SceneState) -> None:
         me = self.me(state)
         cam = state.camera_for(me)
         pts = self._drawn(state)

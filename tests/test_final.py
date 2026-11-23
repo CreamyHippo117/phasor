@@ -94,12 +94,12 @@ def _examples(include_slow: bool = False):
 
 
 def test_every_type_keeps_the_object_contract_and_has_docs():
-    from phasor.core.objects import REQUIRED_MEMBERS
+    from phasor.core.objects import CONTRACT_MEMBERS
 
     api = (ROOT / "docs" / "ai" / "API.md").read_text(encoding="utf-8")
     for name in TYPES:
         cls = registered_types()[name]
-        assert all(hasattr(cls, m) for m in REQUIRED_MEMBERS), name
+        assert all(hasattr(cls, m) for m in CONTRACT_MEMBERS), name
         assert cls.Style, f"{name}: no style roles"
         assert cls.__name__ in api, f"{name} ({cls.__name__}) is not in docs/ai/API.md"
 

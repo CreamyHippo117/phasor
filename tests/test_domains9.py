@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from phasor import Scene, algebra, calc, expr, pde
-from phasor.core.objects import REQUIRED_MEMBERS, registered_types
+from phasor.core.objects import CONTRACT_MEMBERS, registered_types
 from phasor.domains import algebra_math as am
 from tests.conftest import gl_available
 
@@ -31,7 +31,7 @@ def test_the_new_types_keep_the_object_contract():
     types = registered_types()
     assert set(types) >= NEW
     for name in NEW:
-        assert all(hasattr(types[name], m) for m in REQUIRED_MEMBERS), name
+        assert all(hasattr(types[name], m) for m in CONTRACT_MEMBERS), name
         assert types[name].Style, name
 
 
