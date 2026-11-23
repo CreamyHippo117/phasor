@@ -33,7 +33,7 @@ s.set("camera.height", 6)  # world units visible top to bottom
 | `Dot` | `pos`, `r` (world radius, default 0.1) | `color` (emphasis, primary), `glow` (glow, none) |
 | `Line` | `points` (2 or more), `progress`, `hue_along` (colormap cycles along the length; 0: one color), `hue` (shifts them) | `color` (emphasis, primary), `stroke` (stroke, regular), `glow` (glow, none), `colormap` (colormap, spectrum) |
 | `cx.DomainColoring` | `function` (e.g. `"1/(z**2 + 1)"`; it may use the constant `a`), `a` ((re, im), the value of `a`: animate it with `.to("id.a", (re, im))` and the zeros and poles move, nothing recompiles), `pos` (center), `size` (w, h), `contour` (0-1), `softness` (0-1, edge feathering), `hue` (turns the wheel); the prism look: `radius` (> 0 turns it on: zeros and poles glow this far), `ambient` (0-1, light elsewhere), `lines` (glowing rays of phase per turn, plus a ring each time \|f\| doubles) | `colormap` (colormap, phase), `glow` (glow, none; used by the prism look) |
-| `cx.Fractal` | `kind` (`mandelbrot`/`julia`), `c` (Julia constant), `pos`, `size`, `max_iter`, `density`, `hue`, `center` (exact text `"re im"`), `zoom` (powers of ten, to 280), `steady` (hold the outer color in a dive); the prism look: `radius` (> 0 turns it on: the edge of the set glows this far, in world units of the rectangle), `ambient` (0-1, light far from the edge) | `colormap` (colormap, sequential), `glow` (glow, none; used by the prism look) |
+| `cx.Fractal` | `kind` (`mandelbrot`/`julia`), `c` (Julia constant), `pos`, `size`, `max_iter`, `density`, `hue`, `center` (exact text `"re im"`), `zoom` (powers of ten, to 280), `steady` (hold the outer color in a dive); the prism look: `radius` (> 0 turns it on: the edge of the set glows this far, in world units of the rectangle), `ambient` (0-1, light far from the edge); the cloud mode `kind="buddhabrot"`: `count`, `seed`, `exposure`, `point_size`, `white` (as `cloud.PointCloud`; `max_iter` at most 5000) | `colormap` (colormap, sequential), `glow` (glow, none; used by the prism look and the cloud mode) |
 | `cx.RiemannSurface` | `kind` (`sqrt`/`cbrt`/`log`), `pos` (branch point), `radius`, `height` (`re`/`im`), `scale`, `rings`, `segments` | `colormap` (colormap, phase), `material` (surface, solid) |
 | `cloud.PointCloud` | `source` (`roots`/`attractor`/`buddhabrot`/`points`), `degree` and `coefficients` (roots), `kind` (`clifford`/`dejong`/`lorenz`) and `constants` (attractor), `max_iter` (buddhabrot), `points` and `values` (given directly), `count` (at most), `seed`, `pos` (centre and origin of the points), `size` (the rectangle it is seen in), `scale`, `point_size` (splat radius, px), `exposure`, `hue`, `color_by` (`source`/`phase`), `twist` (roots: turns of the last coefficient, animatable), `twinkle` (0-1, life), `white` (0-1, white-hot dense parts) | `colormap` (colormap, spectrum), `glow` (glow, none) |
 
@@ -1755,4 +1755,36 @@ s.marker("end", 4.0)
 sem = s.engine.inspect(2.0, id="sg")["objects"][0]["semantic"]
 assert sem["source"] == "formula" and abs(sem["dominant_frequency"] - 600) < 50
 # from a file next to the scene: Spectrogram(id="sg", wav="voice.wav", fmax=4000)
+```
+
+**Fractal cloud mode (the Buddhabrot).** `cx.Fractal(kind="buddhabrot")` draws not the escape
+time of each pixel but the orbits: `count` points of the orbits z -> z^2 + c (from 0) of
+random c that escape within `max_iter` steps (at most 5000), splatted as light by the
+`splat` kernel exactly as `cloud.PointCloud` draws. Colour is the `colormap` at
+log(escape time) / log(max_iter), turned by `hue`; `exposure`, `point_size` and `white` as in
+`PointCloud`; the `glow` role makes it shine (the `prism` looks: soft glow, a white-hot
+core). `center` and `zoom` set the view as for the other kinds. The orbits come from
+`rng(id, seed)` and are cached per (id, seed, max_iter, count): tween the camera, `hue` or
+`exposure`, not `count` or `max_iter`. A few million points take a second or two to make.
+The semantics report `points` and `in_rectangle`. See `examples/buddhabrot.py`.
+
+```python
+from phasor import Scene, cx
+
+s = Scene("nebula", look="prism", passes=None)
+s.add(
+    cx.Fractal(
+        id="b",
+        kind="buddhabrot",
+        pos=(0, 0, 0),
+        size=(8, 4.5),
+        center="-0.45 0",
+        zoom=0.2,
+        max_iter=200,
+        count=50_000,
+        style={"colormap": "spectrum"},
+    )
+)
+sem = s.engine.inspect(0.0, id="b")["objects"][0]["semantic"]
+assert sem["set"] == "buddhabrot" and sem["points"] == 50_000 and sem["in_rectangle"] > 40_000
 ```

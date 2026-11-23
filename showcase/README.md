@@ -36,6 +36,7 @@ render only those: `uv run python showcase/render_all.py prism_primes deep_zoom`
 | `room_acoustics` | a room, its echoes and the pressure wave |
 | `doppler` | wavefront compression, the sonic pileup, and the Mach cone |
 | `room_3d` | a 3D room with sound bouncing in it: rays and fronts reflecting, reverberation building |
+| `buddhabrot` | the Mandelbrot set's cloud mode: eight million escaping orbits glowing like a nebula |
 
 Narrated scenes have sound only where a speech engine is installed (espeak-ng); without one
 the timing is estimated and the video is silent.

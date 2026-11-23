@@ -42,7 +42,7 @@ TWINKLE_PERIOD = 2.5  # seconds, typical; each point (each polynomial's roots) h
 
 
 @functools.lru_cache(maxsize=CACHE)
-def _points(oid: str, seed: int, source: str, key: tuple) -> tuple[np.ndarray, np.ndarray]:
+def source_points(oid: str, seed: int, source: str, key: tuple) -> tuple[np.ndarray, np.ndarray]:
     """(points (n, 2) float64, value (n,) in [0, 1)) for one source; cached per params."""
     gen = rng(oid, seed)
     if source == "roots":
@@ -159,7 +159,7 @@ class PointCloud(ObjectBase):
     def cloud(self, state: SceneState) -> tuple[np.ndarray, np.ndarray]:
         """(points (n, 2) in world x, y; value (n,) 0-1) at this state, from the cache."""
         p = self.me(state).params
-        pts, v = _points(self.id, p.seed, p.source, _key(p))
+        pts, v = source_points(self.id, p.seed, p.source, _key(p))
         return pts * p.scale + np.asarray(p.pos[:2]), v
 
     def _rect(self, p) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -201,8 +201,6 @@ class PointCloud(ObjectBase):
         glow = float(me.style.get("glow", 1.0))
 
         def pixels(pw: int, ph: int, center: tuple[float, float], height: float) -> np.ndarray:
-            from phasor.render import gpu
-
             pts, v = self.cloud(state)
             inside = _inside(pts, corner, r, u)
             weights = None
@@ -216,23 +214,51 @@ class PointCloud(ObjectBase):
             if p.color_by == "phase":
                 d = pts - (np.asarray(p.pos[:2]) - corner[:2])
                 v = np.arctan2(d[:, 1], d[:, 0]) / (2 * np.pi)
-            x = ((v + p.hue) % 1.0) * len(lut)
-            k0 = np.minimum(x.astype(np.int64), len(lut) - 1)
-            t = (x - k0)[:, None].astype(np.float32)
-            colors = lut[k0] * (1 - t) + lut[(k0 + 1) % len(lut)] * t
-            per_px = len(pts) * (height / ph) ** 2 / (p.size[0] * p.size[1])
-            # zooming in spreads the points over more pixels; light per point grows only as
-            # the square root of that, so a dense region seen close up does not wash out
-            whole = len(pts) * (p.size[1] / ph) ** 2 / (p.size[0] * p.size[1])
-            base = max(whole, MIN_DENSITY)
-            gain = p.exposure / base * (base / max(per_px, MIN_DENSITY)) ** ZOOM_LIGHT
-            out = gpu.render("splat", pw, ph, points=pts, colors=colors, center=center,
-                             height=height, sigma=p.point_size, gain=gain, weights=weights,
-                             white=p.white)  # fmt: skip
-            out[..., :3] += bg * (1.0 - out[..., 3:4])  # light on the scene's ground
-            return out
+            return splat_pixels(pts, v, lut, bg, pw, ph, center, height, size=p.size,
+                                hue=p.hue, point_size=p.point_size, exposure=p.exposure,
+                                white=p.white, weights=weights)  # fmt: skip
 
         ctx.field(corner, r, u, pixels=pixels, opacity=p.opacity, glow=glow)
+
+
+def splat_pixels(
+    pts: np.ndarray,
+    v: np.ndarray,
+    lut: np.ndarray,
+    bg: np.ndarray,
+    pw: int,
+    ph: int,
+    center: tuple[float, float],
+    height: float,
+    *,
+    size: tuple[float, float],
+    hue: float,
+    point_size: float,
+    exposure: float,
+    white: float,
+    weights: np.ndarray | None = None,
+) -> np.ndarray:
+    """The ``ctx.field`` pixels of points of light: ``pts`` (n, 2) in the coordinates of a
+    ``size`` rectangle (lower-left corner at 0), already cut to it; ``v`` (n,) their colour
+    values, read from ``lut`` turned by ``hue``. Shared by every object that draws a cloud
+    (``PointCloud``, ``cx.Fractal``'s Buddhabrot)."""
+    from phasor.render import gpu
+
+    x = ((v + hue) % 1.0) * len(lut)
+    k0 = np.minimum(x.astype(np.int64), len(lut) - 1)
+    t = (x - k0)[:, None].astype(np.float32)
+    colors = lut[k0] * (1 - t) + lut[(k0 + 1) % len(lut)] * t
+    per_px = len(pts) * (height / ph) ** 2 / (size[0] * size[1])
+    # zooming in spreads the points over more pixels; light per point grows only as
+    # the square root of that, so a dense region seen close up does not wash out
+    whole = len(pts) * (size[1] / ph) ** 2 / (size[0] * size[1])
+    base = max(whole, MIN_DENSITY)
+    gain = exposure / base * (base / max(per_px, MIN_DENSITY)) ** ZOOM_LIGHT
+    out = gpu.render("splat", pw, ph, points=pts, colors=colors, center=center,
+                     height=height, sigma=point_size, gain=gain, weights=weights,
+                     white=white)  # fmt: skip
+    out[..., :3] += bg * (1.0 - out[..., 3:4])  # light on the scene's ground
+    return out
 
 
 def _key(p) -> tuple:

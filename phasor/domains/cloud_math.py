@@ -24,6 +24,7 @@ ATTRACTORS = {  # kind -> the classic constants
 }
 ORBITS = 2048  # orbits an attractor runs side by side
 TRANSIENT = 64  # first iterates of each orbit, dropped (not yet on the attractor)
+BUDDHA_BATCH = 1 << 16  # Buddhabrot: random c tried per pass
 
 
 def polynomial_roots(
@@ -176,39 +177,46 @@ def buddhabrot(
     "nebulabrot" colouring."""
     if max_iter < 2:
         raise ValueError("max_iter must be at least 2")
-    batch = max(1024, (1 << 22) // max_iter)  # orbits per pass: about 64 MB of them
     pts: list[np.ndarray] = []
     vals: list[np.ndarray] = []
     have = 0
     for _ in range(10_000):
         if have >= n:
             break
-        r = 2.0 * np.sqrt(gen.random(batch))
-        c = r * np.exp(2j * np.pi * gen.random(batch))
+        r = 2.0 * np.sqrt(gen.random(BUDDHA_BATCH))
+        c = r * np.exp(2j * np.pi * gen.random(BUDDHA_BATCH))
         q = (c.real - 0.25) ** 2 + c.imag**2
         inside = (q * (q + (c.real - 0.25)) <= 0.25 * c.imag**2) | (
             (c.real + 1) ** 2 + c.imag**2 <= 1 / 16
         )
         c = c[~inside]
-        z = np.zeros_like(c)
-        orbit = np.empty((max_iter, len(c)), dtype=np.complex128)
         escaped = np.full(len(c), -1)
-        alive = np.ones(len(c), dtype=bool)
+        # only the orbits still alive are stepped (most escape within a few steps), and
+        # only their steps are kept, so memory follows the points made, not max_iter
+        idx, z, ca = np.arange(len(c)), np.zeros_like(c), c
+        steps_z: list[np.ndarray] = []
+        steps_i: list[np.ndarray] = []
         for k in range(max_iter):
-            z = np.where(alive, z * z + c, z)
-            orbit[k] = z
-            gone = alive & (z.real * z.real + z.imag * z.imag > 4.0)
-            escaped[gone] = k + 1
-            alive &= ~gone
-            if not alive.any():
-                break
+            z = z * z + ca
+            steps_z.append(z)
+            steps_i.append(idx)
+            gone = z.real * z.real + z.imag * z.imag > 4.0
+            if gone.any():
+                escaped[idx[gone]] = k + 1
+                stay = ~gone
+                idx, z, ca = idx[stay], z[stay], ca[stay]
+                if not len(idx):
+                    break
         keep = escaped >= min_iter
         if not keep.any():
             continue
+        zs, owner = np.concatenate(steps_z), np.concatenate(steps_i)
+        mine = keep[owner]
+        zs, owner = zs[mine], owner[mine]
+        # steps were made in time order, orbits in index order within each: a stable sort
+        # by orbit lays every orbit out whole, in order
+        pts.append(zs[np.argsort(owner, kind="stable")])
         e = escaped[keep]
-        o = orbit[:, keep]
-        mask = np.arange(max_iter)[:, None] < e[None, :]  # each orbit up to its escape
-        pts.append(o.T[mask.T])
         vals.append(np.repeat(np.log(e) / np.log(max_iter), e))
         have += int(e.sum())
     if not pts:
