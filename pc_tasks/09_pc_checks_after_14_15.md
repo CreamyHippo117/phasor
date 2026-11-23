@@ -55,11 +55,15 @@ is then the next thing to move onto the card (the CUDA/GL bridge).
 
 ## 4. Goldens
 
-- `tests/test_beauty.py::test_prism_domain_golden_storyboard` and `..._prism_heat_...` fail
-  against the software goldens on Linux CI (SSIM 0.958 and 0.798, threshold 0.98), also before
-  Milestone 14. A cloud agent investigated; its findings are in
-  `pending/golden_prism_domain_heat/README.md` if that folder exists. Read it, look at the
-  pictures, then decide: regenerate, fix the code, or loosen the threshold.
+- `test_prism_domain_golden_storyboard` and `test_prism_heat_golden_storyboard` fail against the
+  software goldens (SSIM 0.958 and 0.798, threshold 0.98). **Cause found (cloud agent, checked by
+  looking at the pictures): the two software goldens are stale**, not a renderer bug. Look changes
+  (`ccffe76`, `76ff8bb`) regenerated only the GPU goldens. The current software render matches
+  the GPU goldens (SSIM 0.996 and 1.000). Read `pending/golden_prism_domain_heat/README.md`,
+  look at the before/after pictures there, and if you like the "after", apply the patch or
+  regenerate with `PHASOR_UPDATE_GOLDEN=1 uv run pytest tests/test_beauty.py -k "prism_domain_golden or prism_heat_golden"`
+  on a no-CUDA machine (the cloud session can do it once you say OK). Optional on the PC: run
+  the two tests there to confirm the GPU goldens still pass.
 - Milestone 15 made only a software golden for `examples/open_contract.py`
   (`tests/golden/software/open_contract.png`). Make the GPU one and **look at it**:
 
