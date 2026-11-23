@@ -312,6 +312,31 @@ def composite_semantics(self, state: SceneState) -> dict[str, Any]:
             "parts": [o.id[len(self.id) + 1 :] for o in parts(state, self.id)]}  # fmt: skip
 
 
+def hybrid_world_bounds(self, state: SceneState) -> Bounds:
+    """A composite that also draws (an axis draws its lines, its numbers are parts): the box
+    around what it draws and every part."""
+    boxes = [derived_world_bounds(self, state)]
+    boxes += [o.impl.world_bounds(state) for o in parts(state, self.id)]
+    return Bounds.of_points([p for b in boxes for p in (b.lo, b.hi)])
+
+
+def hybrid_features(self, state: SceneState) -> dict[str, np.ndarray]:
+    """As ``composite_features``, around what it draws and its parts."""
+    cam = state.camera_for(state[self.id])
+    out = box_features(hybrid_world_bounds(self, state), cam.right, cam.up)
+    for o in parts(state, self.id):
+        local = o.id[len(self.id) + 1 :]
+        for name, pts in o.impl.features(state).items():
+            out[f"{local}.{name}"] = pts
+    return out
+
+
+HYBRID = {
+    "world_bounds": hybrid_world_bounds,
+    "features": hybrid_features,
+    "semantics": composite_semantics,
+}
+
 COMPOSITE = {
     "world_bounds": composite_world_bounds,
     "features": composite_features,

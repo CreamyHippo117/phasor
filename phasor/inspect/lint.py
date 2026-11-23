@@ -198,9 +198,12 @@ class _Frame:
                 bg = (*np.clip(behind.mean(axis=0), 0, None), 1.0)
                 return contrast_ratio(over((*c[:3], alpha), bg), bg)
         bg = self.state.background
+        mine = self.entries[label_id]
         for obj in self.state.draw_order():
             if obj.id == label_id:
                 break
+            if obj.id in self.entries and _part_of(self.entries, mine, self.entries[obj.id]):
+                continue  # the composite a number belongs to is drawn around it, not under it
             on_it = obj.params.opacity > FAINT and "color" in obj.style
             if on_it and self.covered(label_id, obj.id) > 0.5:
                 under = obj.style["color"]
