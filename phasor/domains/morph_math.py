@@ -107,9 +107,7 @@ def dense(sub: np.ndarray) -> np.ndarray:
         p0, p1, p2, p3 = (c[:, i][:, None, :] for i in range(4))
         body = v**3 * p0 + 3 * v * v * u * p1 + 3 * v * u * u * p2 + u**3 * p3
         pts = np.vstack([sub[:1], body.reshape(-1, 3)])
-    step = np.abs(np.diff(pts, axis=0)).max(axis=1)
-    scale = max(1.0, float(np.abs(pts).max()))
-    return pts[np.r_[True, step > 1e-12 * scale]]
+    return _clean(pts)
 
 
 def _resample(poly: np.ndarray, along: np.ndarray, s0: float, s1: float, n: int,
@@ -312,10 +310,8 @@ def at(p: Plan, m: float) -> list[tuple[np.ndarray, bool, int]]:
         pts = a + (b - a) * float(m)
         if closed:
             pts = np.vstack([pts, pts[:1]])
-        step = np.abs(np.diff(pts, axis=0)).max(axis=1) if len(pts) > 1 else np.zeros(0)
+        pts = _clean(pts)
         scale = max(1.0, float(np.abs(pts).max()))
-        keep = np.r_[True, step > 1e-12 * scale]
-        pts = pts[keep]
         if closed and len(pts) > 1 and not np.array_equal(pts[-1], pts[0]):
             pts = np.vstack([pts, pts[:1]])  # the closing point was a repeat of the last
         if len(pts) >= 2 and np.ptp(pts, axis=0).max() > 1e-12 * scale:
@@ -324,7 +320,7 @@ def at(p: Plan, m: float) -> list[tuple[np.ndarray, bool, int]]:
 
 
 def _clean(pts: np.ndarray) -> np.ndarray:
-    """Consecutive repeats dropped."""
+    """Consecutive repeats dropped (within 1e-12 of the points' size; the first stays)."""
     if len(pts) < 2:
         return pts
     step = np.abs(np.diff(pts, axis=0)).max(axis=1)
