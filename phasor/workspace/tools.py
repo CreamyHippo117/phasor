@@ -164,11 +164,15 @@ class Workspace:
                 ".phasor.json instead, or start the server with --allow-scripts"
             )
         from phasor.importers import import_manim, looks_like_manim
+        from phasor.importers.manim import ManimImportError
 
         if p.suffix == ".py" and looks_like_manim(p):
             # A Manim script: run through the stand-in module; the result is a plain scene
             # (saved beside the script as name.phasor.json), free to edit.
-            result = self._guard(lambda: import_manim(p))
+            try:
+                result = self._guard(lambda: import_manim(p))
+            except ManimImportError as e:
+                raise ToolError(f"{p.name} could not be imported: {e}") from e
             self._engine = Engine(result.document(), base_dir=p.parent)
             self.path = p.with_suffix(io.DOC_SUFFIX)
             self.import_notes = result.warnings

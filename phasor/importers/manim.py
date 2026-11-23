@@ -33,9 +33,11 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from pydantic import ValidationError
 
 from phasor.core import text as text_metrics
-from phasor.core.schema import Document
+from phasor.core.issues import DocumentError
+from phasor.core.schema import MAX_SIZE, Document, check_color
 from phasor.scene import Scene as PhasorScene
 
 FRAME_HEIGHT = 8.0
@@ -76,7 +78,16 @@ STROKE_UNIT = 0.004 * FRAME_HEIGHT / 4
 
 
 class ManimImportError(NotImplementedError):
-    """A Manim feature phasor's import does not have (the message says which)."""
+    """A Manim feature phasor's import does not have, or a value it cannot carry over (the
+    message says which, and for which object)."""
+
+
+def _validation_message(e: ValidationError) -> str:
+    """A pydantic error as one line per problem: ``style.size: bad size -1.0 ...``."""
+    return "; ".join(
+        f"{'.'.join(str(p) for p in err['loc'])}: {err['msg'].removeprefix('Value error, ')}"
+        for err in e.errors()
+    )
 
 
 @dataclass
@@ -146,10 +157,11 @@ def style_color(color: Any) -> str:
     if isinstance(color, _Default):
         return color_role(color)
     c = _COLORS.get(str(color).upper(), str(color))
-    if c.startswith("#") and len(c) in (4, 7, 9):
-        h = c[1:] if len(c) != 4 else "".join(ch * 2 for ch in c[1:])
-        if all(ch in "0123456789abcdefABCDEF" for ch in h):
-            return "#" + h.upper()
+    try:
+        if c.startswith("#"):
+            return str(check_color(c))  # the document's own reading of a hex color
+    except ValueError:
+        pass
     if _CTX is not None:
         _CTX.warnings.append(f"color {color!r} is not a hex color or Manim name: the nearest "
                              "role is used")  # fmt: skip
@@ -157,7 +169,20 @@ def style_color(color: Any) -> str:
 
 
 def text_role(font_size: float) -> str:
-    return next(role for role, floor in TEXT_ROLES if font_size >= floor)
+    return next(role for role, floor in TEXT_ROLES if font_size >= floor or floor == 0)
+
+
+def carried_size(value: float, unit: float, what: str) -> float | None:
+    """A Manim size (``what``: ``stroke_width=0``, ...) times ``unit`` as a phasor explicit
+    size in world units, or None (the role stays) with a warning when phasor's sizes cannot
+    hold it: zero (Manim's "no outline", common on filled shapes), negative or too large."""
+    v = round(float(value) * unit, 6)
+    if 0.0 < v <= MAX_SIZE:
+        return v
+    if _CTX is not None:
+        limit = f"a phasor size is a positive number of world units, at most {MAX_SIZE:g}"
+        _CTX.warnings.append(f"{what} is not carried over ({limit}): the role is used")
+    return None
 
 
 # ---------------------------------------------------------------- mobjects
@@ -173,7 +198,8 @@ class Mobject:
         self.children: list[Mobject] = list(children)
         self.color = style_color(color) if color is not None else None  # a role or a hex color
         width = kw.get("stroke_width")
-        self.stroke = None if width is None else round(float(width) * STROKE_UNIT, 6)
+        what = f"stroke_width={width!r}"
+        self.stroke = None if width is None else carried_size(width, STROKE_UNIT, what)
         self.opacity = 1.0
         self.pts = np.zeros((0, 3))
         self.size = 0.0  # a dot's radius
@@ -275,12 +301,14 @@ class Mobject:
 
     def scale(self, factor: float, about_point: Any = None) -> Mobject:
         c = np.asarray(about_point, float) if about_point is not None else self.get_center()
+        f = abs(float(factor))  # a negative factor is a flip: the points turn, sizes stay sizes
         for leaf in self.leaves():
             leaf.pts = c + (leaf.pts - c) * factor
-            leaf.size *= factor
+            leaf.size *= f
             if leaf.kind == "text":  # an explicit text size in world units now
-                leaf._ref *= factor
-                leaf.text_size = leaf._ref
+                leaf._ref *= f
+                size = carried_size(leaf._ref, 1.0, f"a text size after scale({factor!r})")
+                leaf.text_size = leaf.role if size is None else size
         return self
 
     def rotate(self, angle: float, axis: Any = OUT, about_point: Any = None, **kw: Any) -> Mobject:
@@ -371,7 +399,7 @@ class Mobject:
         if color is not None:
             self.set_color(color)
         if width is not None:
-            self.stroke = round(float(width) * STROKE_UNIT, 6)
+            self.stroke = carried_size(width, STROKE_UNIT, f"set_stroke(width={width!r})")
             for ch in self.children:
                 ch.set_stroke(width=width)
         return self
@@ -560,7 +588,9 @@ class Text(Mobject):
                  math: bool = False, **kw: Any) -> None:  # fmt: skip
         super().__init__(color=color, **kw)
         raw = "".join(strings)
-        self.role = text_role(48 if font_size is None else font_size)
+        size = None if font_size is None else carried_size(font_size, FONT_UNIT,
+                                                           f"font_size={font_size!r}")  # fmt: skip
+        self.role = text_role(48 if size is None else font_size)
         self.math = math
         self.text = raw if not math or "$" in raw else f"${raw}$"
         try:
@@ -573,8 +603,8 @@ class Text(Mobject):
                                     "annotation": 0.032}[self.role]  # fmt: skip
         # the size the script set, in world units; none set: the role (Manim's default)
         self.text_size: str | float = self.role
-        if font_size is not None:
-            self._ref = self.text_size = round(float(font_size) * FONT_UNIT, 6)
+        if size is not None:
+            self._ref = self.text_size = size
 
     def _text_extent(self) -> tuple[float, float]:
         return text_metrics.aspect(self.text) * self._ref, text_metrics.box(self.text) * self._ref
@@ -988,7 +1018,13 @@ class _Context:
         invisible (opacity 0): ``show`` switches them on at the time Manim first shows them."""
         if leaf.obj_id is None:
             leaf.obj_id = self.ident(leaf)
-            self.scene.add(leaf.phasor_object(leaf.obj_id))
+            what = f"{leaf.obj_id} ({type(leaf).__name__})"
+            try:
+                self.scene.add(leaf.phasor_object(leaf.obj_id))
+            except ValidationError as e:
+                raise ManimImportError(f"{what}: {_validation_message(e)}") from None
+            except DocumentError as e:
+                raise ManimImportError(f"{what}: {e}") from None
         return leaf.obj_id
 
     def restyle(self, leaf: Mobject) -> None:
@@ -1230,8 +1266,17 @@ def import_manim(path: str | Path, scene: str | None = None) -> ManimImport:
         if background.upper() not in ("#000000", "BLACK"):  # Manim's own: keep the theme's
             value = style_color(background)
             if value.startswith("#"):  # not a role: a color phasor could read
+                if len(value) == 9:  # a background is opaque: nothing is behind it
+                    if value[7:] != "FF":
+                        ctx.warnings.append(f"the background's alpha ({background!r}) is not "
+                                            "carried over: a background is opaque")  # fmt: skip
+                    value = value[:7]
                 op = {"op": "set_meta", "field": "background", "value": value}
                 s.engine.apply(op, origin="script").raise_for_errors()
+    except ValidationError as e:  # anything the checks above missed: said, not a traceback
+        raise ManimImportError(f"{path.name}: {_validation_message(e)}") from None
+    except DocumentError as e:
+        raise ManimImportError(f"{path.name}: {e}") from None
     finally:
         _CTX = None
     return ManimImport(
