@@ -143,7 +143,10 @@ def rules(
         shown = {i for i, e in entries.items() if _shown(e)}
         content = _content(state, shown)
         non_label = [
-            o for o in content if o.impl.semantics(state).get("kind") != "label"
+            o
+            for o in content
+            if o.impl.semantics(state).get("kind") != "label"
+            and "glyph" not in o.tags  # a glyph of a text as shapes is part of a label
         ]  # labels annotate; the picture is the rest
         if not content:
             continue  # nothing yet: a blank beat is not "empty", it is not there yet

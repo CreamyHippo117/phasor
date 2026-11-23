@@ -257,3 +257,68 @@ def test_any_text_as_shapes_never_breaks_state_inspect_or_lint(text):
         s.engine.state_at(t)
         s.engine.inspect(t)
     s.engine.lint()
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_small_glyphs_of_a_label_are_not_tiny_and_the_label_lints_like_a_picture(passes):
+    """A comma's outline is small, but it is a glyph of a readable label: the label is
+    judged (tiny, contrast), not each glyph."""
+    plain, shaped = _scene(passes), _scene(passes)
+    plain.add(Text(id="note", text="a, b.", pos=(0, 0)))
+    shaped.add(Text(id="note", text="a, b.", pos=(0, 0), as_shapes=True))
+    assert shaped.engine.lint() == plain.engine.lint() == []
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_a_highlighted_text_as_shapes_is_one_focal_point_not_one_per_glyph(passes):
+    s = _scene(passes)
+    s.add(Dot(id="sun", pos=(2, 0), r=0.5, style={"color": "highlight"}))
+    s.add(Text(id="word", text="sun", pos=(-2, 0), as_shapes=True, style={"color": "highlight"}))
+    codes = [i for i in s.engine.lint(aesthetic=True) if i.code == "focal_point"]
+    assert codes == []
+
+
+def test_outlines_do_not_depend_on_the_math_engine(monkeypatch):
+    """The outline cache is keyed by text: what it holds must not change with the engine."""
+    gm.outline.cache_clear()
+    one = gm.outline("$x_1^2$")
+    gm.outline.cache_clear()
+    monkeypatch.setattr(text_metrics, "math_box", lambda t: (9.0, 9.0, 9.0))  # any engine's box
+    two = gm.outline("$x_1^2$")
+    gm.outline.cache_clear()
+    for a, b in zip(one.glyphs, two.glyphs, strict=True):
+        assert all(np.array_equal(x, y) for x, y in zip(a.subpaths, b.subpaths, strict=True))
+
+
+def test_a_huge_text_as_shapes_is_bounded_in_time():
+    import time
+
+    start = time.perf_counter()
+    o = gm.outline("w" * 200_000)
+    assert len(o.glyphs) == gm.MAX_GLYPHS and o.total == 200_000
+    s = _scene()
+    s.add(Equation(id="eq", parts=tuple(f"${k}$" for k in range(600)), as_shapes=True))
+    st = s.engine.state_at(0)
+    assert len([o for o in st.objects if o.parent == "eq"]) <= gm.MAX_GLYPHS
+    assert st["eq"].impl.semantics(st)["glyph_limit"] >= 600
+    assert time.perf_counter() - start < 120
+
+
+@pytest.mark.parametrize("morph", [0.0, 1e-300, 0.5, 1.0])
+@pytest.mark.parametrize("kind", ["whole", "matching"])
+def test_morph_params_at_their_bounds_never_break_state_inspect_or_lint(morph, kind):
+    from phasor.core.objects import ObjectBase  # noqa: F401  (registration)
+    from phasor.domains.path import MAX_ID
+
+    s = _scene()
+    long_id = "s" * MAX_ID
+    s.add(Text(id=long_id, text="ab", pos=(-2, 0)))
+    s.add(Equation(id="eq", parts=("$a$", "$b$"), as_shapes=True, morph_from=long_id,
+                   morph=morph, morph_kind=kind, arc=10.0))  # fmt: skip
+    s.add(Text(id="t", text="x", morph_from="nowhere", morph=morph, morph_kind=kind))
+    for t in (0.0, 1.0):
+        s.engine.state_at(t)
+        s.engine.inspect(t)
+    s.engine.lint()
+    r = s.engine.apply({"op": "set_param", "path": "eq.arc", "value": 1e300}, origin="script")
+    assert not r.ok

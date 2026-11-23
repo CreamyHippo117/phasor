@@ -56,7 +56,7 @@ Tests written first or with the code:
 - Changed: `tests/test_motion.py::test_transform_refuses_what_is_not_an_equation` encoded
   the old equations-only rule; it now checks what has no outline is refused.
 
-Suite results: see "Gate".
+Suite results: see "Gate" (counts above are from the build; test_glyphs grew to 51 and test_transform to 28 with the review fixes).
 
 ## Deviations
 
@@ -116,3 +116,37 @@ Suite results: see "Gate".
 
 Windows, macOS, CUDA (no GPU golden for `text_shapes`). The plain-text outline needs
 matplotlib's FT2Font to read a font from bytes (true on matplotlib 3.8+; checked on 3.11).
+
+## Advisor review fixes (before the gate)
+
+A review by a stronger model of this session (not an independent audit) found, and the
+commit after it fixes, with tests first in `tests/test_glyphs.py`:
+
+- the outline cache read the picture's math depth (engine-dependent) under a text-only key:
+  outlines now take the depth from their own mathtext parse (`test_outlines_do_not_depend_on_the_math_engine`);
+- glyph parts were judged as objects: a full stop was `tiny`, a highlighted text was one
+  focal point per glyph. Glyph parts carry the tag `glyph`; `tiny` and `focal_point` judge
+  the text, not its glyphs (both lint MODES);
+- work past `MAX_GLYPHS` was unbounded (every character loaded, every equation part
+  outlined): it stops at the cap; `glyph_limit` then reports a lower bound (a 200 000-char
+  text, a 600-part equation, timed);
+- `Equation.arc` had no upper bound: `MAX_ARC` (10 line heights);
+- morph parameters fuzzed at their bounds (`morph` 0, 1e-300, 1; `morph_from` at
+  `MAX_ID` characters and pointing nowhere; both kinds; `arc` at its maximum);
+- `transform_matching` was missing from the MCP `animate` tool (`workspace/tools.py`
+  `VERBS`, `docs/ai/MCP.md`).
+
+## Gate (phasor-milestone-gate, 2026-11-23, by the authoring model)
+
+| Step | Result | Evidence |
+| --- | --- | --- |
+| ruff check, ruff format --check, lint-imports | pass | clean; 2 import contracts kept |
+| full `uv run pytest -q` | not run | over an hour here; left to CI (as for M15, M16, M18) |
+| focused suites | pass | test_final `-k "not slow"`, test_lint, test_aesthetic, test_beauty, test_mcp, test_kit, test_docs, test_open_contract, test_style_freedom, test_engine, test_time, test_layers, test_manim_import, test_shapes, test_motion, test_transitions, test_pycode, test_contracts, test_style_motion, test_morph: **888 passed, 3 skipped** (Value draws nothing x2, no PySide6), 13 deselected (slow). test_glyphs, test_transform: **79 passed** (gl tests ran on llvmpipe) |
+| `phasor doctor` | tier B | llvmpipe OpenGL 4.5, CPU kernels (g++), extras installed, no CUDA |
+| exit demo | pass (Linux) | `examples/text_shapes.py`: the word "circle" morphs into a circle, `a^2+b^2=c^2` rearranges into `a^2=c^2-b^2` by TeX (b^2 arcs over the `=`), the disc's fill moves from `highlight` to `danger`; `lint(strict=True)` empty; golden `tests/golden/software/text_shapes.png` looked at |
+| contract audit | done by the authoring model, **not independently** (no subagent tool in this session) | 1: every change goes through `Engine.apply` (verbs return ops). 2: a role or value at each style key and in each segment; part ids by meaning, clear of `retired_ids`. 3: the in-between reads only the state at t; caches keyed by content digest (plans) or text (outlines, fonts fixed in a process). 4: colors mix in linear RGBA. 5: no new types; Text/Equation keep every member and gain `build`. 6: lint-imports kept (`time` and `inspect` import no `domains`). 7: layout untouched. Second ways: Deviations 1, 5 |
+| docs and artifacts | pass | API.md (verbs, lint table, two running blocks), MCP.md, llms.txt regenerated, SPEC "As built (Milestone 17)" (non-contract text), example, golden, this file |
+
+**MILESTONE 17: DONE on Linux for the focused gates; the full suite, an independent audit,
+Windows, macOS and CUDA remain.**

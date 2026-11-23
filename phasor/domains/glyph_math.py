@@ -162,7 +162,12 @@ def _plain(text: str) -> Outline:
     pen, prev = 0.0, None
     placed: list[tuple[str, str, list[np.ndarray]]] = []
     total = 0
-    for ch in text:
+    cut = len(text)
+    for at, ch in enumerate(text):
+        if len(placed) >= MAX_GLYPHS:  # the rest is only counted (bounded work)
+            cut = at
+            total += sum(1 for c in text[at:] if not c.isspace())
+            break
         gi = font.get_char_index(ord(ch))
         if prev is not None and gi:
             pen += font.get_kerning(prev, gi, Kerning.DEFAULT) / 64.0
@@ -173,15 +178,17 @@ def _plain(text: str) -> Outline:
             continue
         if gi and not ch.isspace():
             total += 1
-            if len(placed) < MAX_GLYPHS:
-                verts, codes = font.get_path()
-                subs = subpaths(verts, codes, 1.0, (pen, 0.0))
-                if subs:
-                    key = f"{font.postscript_name}:{gi}"
-                    placed.append((glyph_name(ch), key, subs))
+            verts, codes = font.get_path()
+            subs = subpaths(verts, codes, 1.0, (pen, 0.0))
+            if subs:
+                placed.append((glyph_name(ch), f"{font.postscript_name}:{gi}", subs))
         pen += glyph.linearHoriAdvance / 65536.0
         prev = gi or None
-    width = text_metrics.aspect(text)  # the picture is stretched to it: so are the shapes
+    # The picture is stretched to Pillow's width: so are the shapes (of the part drawn).
+    if cut < len(text):
+        width = text_metrics._font(text_metrics._REF).getlength(text[:cut]) / (ascent + descent)
+    else:
+        width = text_metrics.aspect(text)
     sx = width / pen if pen > 0 else line / FONT_SCALE  # pixels to line heights
     out = []
     for k, (name, key, subs) in enumerate(placed):
@@ -206,7 +213,7 @@ def _math(text: str) -> Outline:
         parsed = MathTextParser("path").parse(to_mathtext(text), dpi=72,
                                               prop=FontProperties(size=FONT_SCALE))  # fmt: skip
     em = text_metrics.MATH_EM  # line heights per em
-    lift = text_metrics.math_box(text)[2]  # the picture's depth below the baseline, in ems
+    lift = float(parsed.depth) / FONT_SCALE  # depth below the baseline, in ems (mathtext)
     found: list[tuple[float, str, str, list[np.ndarray]]] = []
     total = len(parsed.rects) + sum(not (0 < g[2] < 0x110000 and chr(g[2]).isspace())
                                     for g in parsed.glyphs)  # fmt: skip

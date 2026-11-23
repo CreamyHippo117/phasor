@@ -296,6 +296,7 @@ _RELATIONS = (
     "\\ne",
 )
 THICK = 5 / 18
+MAX_ARC = 10.0  # line heights a part may arc by in a transform (the theme's is about 1)
 # Relations mathtext sets with a space before them even alone (measured: about 0.2 em of
 # left margin); a lone "+", "-", "\cdot" or "\times" is set tight, like a sign.
 _SET_APART = tuple(r for r in _RELATIONS if r not in ("+", "-", "\\cdot", "\\times"))
@@ -352,7 +353,7 @@ class Equation(ObjectBase):
         from_pos: Vec3 = (0.0, 0.0, 0.0)
         from_id: str = ""  # the source: life's drift passes from its to this one's, no jump
         morph: float = Field(1.0, ge=0, le=1)
-        arc: float = Field(0.0, ge=0)
+        arc: float = Field(0.0, ge=0, le=MAX_ARC)
         as_shapes: bool = False  # glyph outlines, one Path part per glyph (not pictures)
         fill_opacity: float = Field(1.0, ge=0, le=1)  # as shapes: the glyphs' fill
         stroke_opacity: float = Field(0.0, ge=0, le=1)  # as shapes: their outline, once written
@@ -425,7 +426,11 @@ class Equation(ObjectBase):
         cam = state.camera_for(me)
         up = np.asarray(cam.up, dtype=np.float64)
         pieces = []
+        glyphs = 0
         for i, (part, origin, hh) in enumerate(layout):
+            if glyphs >= gm.MAX_GLYPHS:  # every part together keeps MAX_GLYPHS
+                break
+            glyphs += len(gm.outline(part).glyphs)
             corner = np.asarray(origin) - up * (text_metrics.box(part) * hh / 2)
             look = _glyph_look(me, self._color(me, p.colors, i))
             key = p.keys[i] if i < len(p.keys) else ""
@@ -541,6 +546,7 @@ class Equation(ObjectBase):
 
 WRITE_SPAN = 0.5  # share of a ``write`` each glyph takes; they start one after another
 OUTLINE = 0.04  # a glyph outline's width, as a share of the text's line height
+GLYPH = "glyph"  # the tag of a glyph part: its text is judged (tiny, focal point), not it
 
 
 def written(write: float, k: int, n: int) -> tuple[float, float]:
@@ -615,7 +621,7 @@ def _glyph_parts(state: SceneState, me, shape: mm.Shape) -> list[ObjectBase]:
             own["color"] = colors[g.part]
         own["fill_color"] = own["color"]
         subs = [shape.subpaths[i].tolist() for i in g.members]
-        out.append(Path(name, subpaths=subs, style=own, progress=drawn,
+        out.append(Path(name, subpaths=subs, style=own, progress=drawn, tags=(GLYPH,),
                         fill_opacity=p.fill_opacity * filled,
                         stroke_opacity=1.0 - (1.0 - p.stroke_opacity) * filled))  # fmt: skip
     return out
@@ -663,11 +669,17 @@ def _shape_facts(state: SceneState, me, texts) -> dict[str, Any]:
     p = me.params
     out: dict[str, Any] = {}
     if p.as_shapes:
-        total = sum(gm.outline(t).total for t in texts)
-        drawn = min(sum(len(gm.outline(t).glyphs) for t in texts), gm.MAX_GLYPHS)
+        total = drawn = 0
+        for k, t in enumerate(texts):
+            o = gm.outline(t)
+            total, drawn = total + o.total, drawn + len(o.glyphs)
+            if drawn >= gm.MAX_GLYPHS:  # the rest is not read: at least one glyph a part
+                total += len(texts) - k - 1
+                break
+        drawn = min(drawn, gm.MAX_GLYPHS)
         out.update(as_shapes=True, glyphs=drawn)
         if drawn < total:
-            out["glyph_limit"] = total  # lint glyph_limit
+            out["glyph_limit"] = total  # lint glyph_limit (at least this many)
     out.update(morph.facts(state, me))
     return out
 
