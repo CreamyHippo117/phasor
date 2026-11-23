@@ -228,7 +228,12 @@ assert not [i for i in k.engine.lint(strict=True) if i.code == "impure_updater"]
 scripts may run (`phasor.load("scene.py")`, `Engine(..., allow_scripts=True)`, the MCP
 server's `--allow-scripts`, and `--allow-scripts` on `phasor inspect`, `lint`, `storyboard`,
 `render`, `web`, `bench --frames` and `sketch`; render workers get exactly the engine's own
-`allow_scripts`), only from inside the scene's folder. A missing, refused or
+`allow_scripts`), only from inside the scene's folder. The desktop app runs a `.py` the
+person opens (their own script); a `.phasor.json` it opens runs none of the modules it
+names until the person trusts them (`Editor.trust_scene_code()`, which keeps unsaved edits
+and starts undo again). An AI attached to the app (`phasor mcp --attach`) never makes code
+run: it cannot call that, opens documents without their code, and an edit of its that
+changes `meta.modules` or adds an updater is refused (`scene_code`). A missing, refused or
 broken module is lint `missing_type`: the object draws as a placeholder box and keeps its
 parameters and overrides (saving it changes nothing). An updater defined anywhere else (a
 notebook cell, a prompt) is refused: the document could not find it again. Types shipped in phasor still get an entry here, an
@@ -1462,6 +1467,9 @@ field and nullclines kept faint.
 `--allow-scripts` (off by default) runs the Python modules a saved document names in
 `meta.modules` (its own object types and updaters); without it those objects are
 `missing_type` placeholder boxes. A `.py` scene is code you ran, so it needs no flag.
+`phasor gui SCENE.phasor.json` (and the app's Open, recent scenes and examples) likewise
+opens a document without running its modules; the person trusts them in the editor
+(`Editor.trust_scene_code()`).
 
 ## The desktop app (`phasor-gui`)
 

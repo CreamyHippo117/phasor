@@ -219,7 +219,11 @@ the document sets them, and `diff` compares with the saved file. Undo is one sha
 `undo` takes back the most recent edit, whoever made it: check `diff` before undoing. You
 cannot open a `.py` scene through the editor (only the person can); a Manim script
 (`from manim import ...`) opens as a plain scene, with `notes` on what could not be carried
-over, on a server started with `--allow-scripts`.
+over, on a server started with `--allow-scripts`. You never make code run in the editor: a
+document you open there runs none of the modules it names (lint `missing_type`), and an
+edit that changes `meta.modules` or adds an updater (`always`) is refused (`scene_code`),
+even on a scene whose code the person trusted. Draw with phasor's own types, or ask the
+person: only they can trust a scene's code (in the editor).
 
 ## Traps this loop has already hit
 
