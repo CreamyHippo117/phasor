@@ -116,6 +116,16 @@ def record_phasor(script: Path, times: list[tuple[float, bool]], scene: str | No
         mobs = []
         for m in listing:
             seen = _measure(state, m["cls"], m["ids"])
+            if seen is not None:  # the color the document holds: explicit hex, or a role
+                spec = engine.document.object(m["ids"][0])
+                seen["color"] = spec.style.get("color") if spec is not None else None
+                segs = [
+                    s
+                    for s in engine.document.timeline.tracks.get(f"{m['ids'][0]}.style.color", ())
+                    if s.t1 <= t + 1e-9
+                ]  # an animated color
+                if segs:
+                    seen["color"] = segs[-1].to
             if seen is not None:
                 mobs.append(seen)
         sample = {"t": t, "mobjects": mobs}
@@ -229,8 +239,22 @@ def compare(real: dict, ours: dict) -> Finding:
         (f.matched if frame_err <= POS_TOL else f.differed).append(
             f"camera frame within {frame_err:.3f}"
         )
-    real_colors = {m["cls"]: m["color"] for m in real["samples"][-1]["mobjects"]}
-    f.matched.append(f"colors at the end: {sorted(set(real_colors.values()) - {None})}")
+    # colors at the end: an explicit color must be Manim's; a role stands for a class default
+    same, roles, wrong = 0, 0, []
+    last_real = [m for m in real["samples"][-1]["mobjects"] if m["cls"] not in INTERNAL]
+    for m, o in _pair(last_real, ours["samples"][-1]["mobjects"]):
+        c = (o or {}).get("color")
+        if not isinstance(c, str) or m["color"] is None:
+            continue
+        if not c.startswith("#"):
+            roles += 1
+        elif c[:7].upper() == m["color"][:7].upper():
+            same += 1
+        else:
+            wrong.append(f"{m['cls']} {c} (Manim {m['color']})")
+    (f.differed if wrong else f.matched).append(
+        f"colors at the end: {same} the same, {roles} class defaults as roles"
+        + (f", differ: {wrong}" if wrong else ""))  # fmt: skip
     return f
 
 

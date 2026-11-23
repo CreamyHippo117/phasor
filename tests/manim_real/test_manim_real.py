@@ -42,7 +42,7 @@ def test_the_import_matches_real_manim(name):
     f = compare.run_scene(SCENES[name])
     differed = " ".join(f.differed)
     assert "duration" not in differed and "play " not in differed, f.differed
-    assert "never found" not in differed, f.differed
+    assert "never found" not in differed and "colors at the end" not in differed, f.differed
     skip = BY_DESIGN.get(name, set())
     if "position" not in skip:
         assert f.worst["position"] <= compare.POS_TOL, f.details
