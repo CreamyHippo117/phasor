@@ -533,6 +533,7 @@ Each issue has `code`, `severity`, `message`, `ids`, `times`, `fix_hint`, and `f
 | `crowded_ticks` | warning | numbers along an axis (or a chart's bar names) closer than `[lint] tick_gap` text heights; `path` names the axis (`ax.x`), the hint the smallest nice step that clears them |
 | `truncated` | warning | a file a `Table` or `Code` reads is past a limit (rows, columns, lines); only its first part is shown |
 | `unknown_language` | warning | a `Code` language pygments does not know: drawn plain |
+| `clamped` | warning | less is drawn than asked: an axis range past 100 ticks (drawn at a wider nice step), a span lost in rounding (no ticks), axis labels past one per axis or that cannot be typeset (left out), bars outside a chart's `y_range` (cut at it) |
 
 `engine.autofix()` applies every `fix` the linter offers (add `near` for a child label that
 overlaps, `on_screen` for something cut by the frame), lints again, and returns
@@ -1389,8 +1390,10 @@ roles; explicit values are allowed (`off_palette` / `off_scale` warn).
   code is drawn plain and lint says `missing_extra`. A language pygments does not know is
   drawn plain with `unknown_language`. Style keys: `color` (plain), `keyword`, `name`,
   `string`, `number`, `comment`, `size`.
-- **Bounds** (`core/ticks.py`, `domains/diagrams_math.py`): a range is finite, within ±1e9,
-  `min < max`, and makes at most `MAX_TICKS` (100) ticks; tables at most 40 rows, 12 columns,
+- **Bounds** (`core/ticks.py`, `domains/diagrams_math.py`): a range of a new diagram type
+  is finite, within ±1e9, `min < max`, and makes at most `MAX_TICKS` (100) ticks
+  (`geo.Axes`, older, only finite and `min < max`: past 100 ticks it is drawn at a wider step,
+  lint `clamped`); tables at most 40 rows, 12 columns,
   300 cells of 60 characters; matrices 10 by 10; charts 40 bars; code 120 lines of 120
   characters (12000 in all, no control characters). Past a bound is a validation error when
   it is set. A file read for a table or code is cut to the bounds instead (lint
@@ -1538,7 +1541,11 @@ around them: the `orbit` verb, or drag in the editor. Formulas are text in `t` (
   (ranges are (min, max, tick step), step 0 a nice one; `scale` is world units per unit, and
   `x_scale`, `y_scale`, `z_scale` (0: `scale`) make them unequal). `numbers=True` writes the
   value at every tick but zero as parts (`axes.x_2`, `axes.y_m1`; the `numbers` text role,
-  `digits` -1 as the step needs). A range makes at most 100 ticks.
+  `digits` -1 as the step needs). A range is drawn with at most 100 ticks: a step that would
+  make more is drawn at the next nice step that makes fewer, and lint `clamped` says so.
+  Axes predate these limits, so a saved document past them still loads: more labels than
+  axes, or a label that cannot be typeset, is left out (`clamped`); labels and ranges have
+  no other limit.
 - `geo.ParametricCurve(fx="cos(t)", fy="sin(t)", fz="0.2*t", t_range=(0, 37.7),
   color_by="t")`: a curve; `color_by` is `none`, `t`, `speed`, `x`, `y` or `z` (through the
   `colormap`); `progress` traces it. Semantics: length, closed, color range.

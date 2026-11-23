@@ -162,18 +162,22 @@ def test_axes_reject_ranges_and_scales_that_would_not_draw():
     P = geo.Axes.Params
     for bad in (
         {"x_range": (float("nan"), 1, 1)},
-        {"x_range": (0, 1e6, 1)},  # 1e6 ticks
         {"x_range": (1, 1, 1)},
+        {"x_range": (0, 1, -1)},
         {"x_scale": float("inf")},
-        {"scale": 1e300},
-        {"x_range": (0, 1e8, 0), "scale": 100},  # 1e10 world units
-        {"labels": ("x" * 200,)},
+        {"x_scale": 1e300},  # a new parameter (Milestone 19): bounded
+        {"x_range": (0, 1e300, 0), "scale": 1e300},  # world coordinates overflow
         {"pos": (0, 10**400, 0)},
     ):
         with pytest.raises((ValidationError, ValueError)):
             P(**bad)
     P(x_range=(0, ticks.MAX_TICKS, 1), x_scale=0.01)  # at the bound: taken
     P(x_range=(-1e9, 1e9, 0), scale=0.5)  # enormous: a nice step
+    # What a document saved before Milestone 19 may hold still loads (audit B1): drawn
+    # bounded, lint ``clamped`` (see section 12)
+    P(x_range=(0, 1e6, 1))
+    P(labels=("x" * 200, "y", "z", "w"))
+    P(scale=1e300)
 
 
 # ---------------------------------------------------------------- 3. number line and plane
@@ -556,8 +560,9 @@ def test_a_counter_groups_signs_and_stays_short_whatever_it_is_fed():
     assert Counter.text_of(P(value=-0.001, digits=2)) == "$0.00$"  # as before: no -0
     assert Counter.text_of(P(value=3.14159, digits=3, prefix="\\pi = ")) == "$\\pi = 3.142$"
     assert len(Counter.text_of(P(value=1e300, digits=10))) < 30
-    with pytest.raises(ValueError):
-        P(prefix="x" * 100)
+    # No length limit on prefix and suffix, as for any Text: documents saved before
+    # Milestone 19 hold longer ones (audit B1)
+    assert Counter.text_of(P(value=1, digits=0, prefix="x" * 100, math=False)) == "x" * 100 + "1"
 
 
 def test_a_counter_animates_with_the_value_it_follows():
@@ -667,7 +672,7 @@ def test_every_diagram_at_its_bounds_builds_inspects_and_lints_in_bounded_time(n
 
 
 HOSTILE = [
-    ("axes", {"x_range": (0, 1e300, 0)}),
+    ("axes", {"x_range": (0, 1e300, 0), "scale": 1e300}),  # world coordinates overflow
     ("axes", {"x_range": (0, 10**400, 1)}),
     ("number_line", {"x_range": (0, 1, 1e-9)}),
     ("number_line", {"scale": float("inf")}),
@@ -761,3 +766,94 @@ def test_example_golden_storyboards(name, times):
     e = _example(name)
     sheet = e.storyboard(times, size=(320, 180))["image"]
     _golden(name, sheet, e.pass_runner().renderer_class())
+
+
+# ---------------------------------------------------------------- 12. independent audit (2026-11-23)
+
+# B1: objects a document saved at bc99a79 (before Milestone 19) could hold; each must still
+# load, draw a bounded picture, and lint must say when less is drawn than asked.
+_OLD_DOC = {
+    "cameras": [{"id": "camera", "kind": "ortho", "params": {}}], "constraints": [],
+    "controls": [], "narration": None, "retired_ids": [], "schema_version": 9,
+    "meta": {"background": None, "color_space": "srgb", "duration": None, "fps": 60.0,
+             "height": 1080, "life": "off", "look": None, "modules": [], "palette": None,
+             "seed": 0, "source": "script", "theme": "midnight_glow", "title": "old",
+             "width": 1920},
+    "timeline": {"camera": "camera", "markers": {}, "tracks": {}},
+}  # fmt: skip
+# name: (type, params, whether lint reports ``clamped``)
+OLD_OBJECTS = {
+    "counter_prefix": ("counter", {"value": 1.0, "prefix": "\\mathrm{total\\ visitors\\ so"
+                                   "\\ far\\ today} = "}, False),
+    "many_ticks": ("axes", {"scale": 0.4, "x_range": [-10, 10, 0.1], "y_range": [-1, 1, 0.1]},
+                   True),
+    "million_ticks": ("axes", {"dims": 2, "x_range": [0, 1e6, 1], "scale": 1e-5}, True),
+    "tiny_step": ("axes", {"dims": 2, "x_range": [0, 1, 1e-12]}, True),
+    "four_labels": ("axes", {"labels": ["x", "y", "z", "w"]}, True),
+    "three_labels_2d": ("axes", {"dims": 2, "labels": ["x", "y", "z"]}, True),
+    "long_label": ("axes", {"dims": 2, "labels": ["x" * 100]}, False),
+    "bad_math_label": ("axes", {"dims": 2, "labels": ["$\\frac{$", "y"]}, True),
+    "huge_range": ("axes", {"dims": 2, "x_range": [0, 2e10, 1e9], "scale": 5e-10}, False),
+    "lost_span": ("axes", {"dims": 2, "x_range": [1e8, 1e8 + 1e-3, 1e-4], "scale": 1e3}, True),
+    "huge_scale": ("axes", {"dims": 2, "scale": 1e300}, False),
+    "far_pos": ("axes", {"dims": 2, "pos": [1e300, 0, 0]}, False),
+    "long_tick": ("axes", {"dims": 2, "tick": 1e10}, False),
+}  # fmt: skip
+
+
+def _old_document(tmp_path, kind: str, params: dict):
+    import json
+
+    from phasor.scene import load
+
+    obj = {"always": [], "id": "old", "layer": "world", "params": params, "style": {},
+           "tags": [], "type": kind}  # fmt: skip
+    path = tmp_path / "old.phasor.json"
+    path.write_text(json.dumps({**_OLD_DOC, "objects": [obj]}, sort_keys=True), encoding="utf-8")
+    return load(path, passes=None)
+
+
+@pytest.mark.parametrize("name", sorted(OLD_OBJECTS))
+def test_documents_saved_before_milestone_19_still_load_draw_bounded_and_lint_why(tmp_path, name):
+    import numpy as np
+
+    from phasor.core.record import Recorder
+
+    kind, params, clamped = OLD_OBJECTS[name]
+    e = _old_document(tmp_path, kind, params)
+    st = e.state_at(0.0)
+    sem = _sem(e, "old")
+    for axis in (sem.get("axes") or {}).values():
+        assert axis["ticks"] <= ticks.MAX_TICKS + 1
+    b = st["old"].impl.world_bounds(st)
+    assert np.isfinite(b.lo).all() and np.isfinite(b.hi).all()
+    rec = Recorder(st.camera.right, st.camera.up)
+    st["old"].impl.draw(rec, st, "color")
+    assert 0 < len(rec.kinds) <= 4 * ticks.MAX_TICKS + 20
+    issues = e.lint()
+    found = [i for i in issues if i.code == "clamped"]
+    assert bool(found) == clamped, [i.message for i in issues]
+    if found:
+        (issue,) = found
+        assert issue.ids == ("old",) and issue.times == (0.0,) and issue.severity == "warning"
+
+
+def test_a_range_past_the_tick_limit_is_drawn_at_a_wider_nice_step():
+    assert ticks.step_of(-10, 10, 0.1) == 0.2  # 200 ticks asked: drawn at 0.2 (101)
+    assert ticks.step_of(0, 200, 1) == 2.0
+    assert ticks.step_of(0, ticks.MAX_TICKS, 1) == 1.0  # at the limit: as asked
+    assert len(ticks.values(0, 1e6, 1)) <= ticks.MAX_TICKS + 1
+    assert ticks.values(1e8, 1e8 + 1e-3, 1e-4) == []  # lost in rounding: no ticks
+    assert "100" in ticks.clamp_note(-10, 10, 0.1, "x_range")
+    assert ticks.clamp_note(-10, 10, 1, "x_range") is None
+
+
+def test_a_write_past_the_tick_limit_is_taken_and_its_lint_delta_says_so():
+    from phasor import geo
+
+    s = _scene()
+    s.add(geo.Axes(id="ax", dims=2))
+    r = s.engine.apply({"op": "set_param", "path": "ax.x_range", "value": [0, 1000, 0.1]})
+    assert r.ok
+    assert [i.code for i in r.lint_added] == ["clamped"]
+    assert "step of 10" in r.lint_added[0].message

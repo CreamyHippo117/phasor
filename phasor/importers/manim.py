@@ -36,6 +36,7 @@ import numpy as np
 from pydantic import ValidationError
 
 from phasor.core import text as text_metrics
+from phasor.core import ticks
 from phasor.core.issues import DocumentError
 from phasor.core.schema import MAX_SIZE, Document, check_color
 from phasor.scene import Scene as PhasorScene
@@ -641,6 +642,12 @@ class Axes(Mobject):
         super().__init__(color=color, **kw)
         xr = [*list(x_range), 1][:3]
         yr = [*list(y_range), 1][:3]
+        for name, r in (("x_range", xr), ("y_range", yr)):
+            lo, hi, step = (float(v) for v in r)
+            wider = ticks.step_of(lo, hi, step) if hi > lo and step > 0 else step
+            if wider != step:  # past phasor's tick limit: a wider nice step, said here
+                self._warn(f"axes {ticks.clamp_note(lo, hi, step, name)}")
+                r[2] = wider
         self.xr, self.yr = xr, yr
         self.sx = (x_length or 12.0) / (xr[1] - xr[0])
         self.sy = (y_length or 6.0) / (yr[1] - yr[0])

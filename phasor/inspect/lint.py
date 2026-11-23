@@ -23,6 +23,7 @@ returns one issue per problem with the times it was seen. Rules in this mileston
 | crowded_ticks | warning | numbers along an axis (or a chart's bar names) too close to read |
 | truncated | warning | a file a table or code block reads is past a limit: only part shown |
 | unknown_language | warning | code in a language pygments does not know: drawn plain   |
+| clamped   | warning  | less drawn than asked (ticks past ``MAX_TICKS``, bars past a range) |
 | glyph_limit | warning | text drawn as shapes with more glyphs than are drawn (``MAX_GLYPHS``) |
 | morph_missing | warning | a morph whose source is gone or has no outline: it draws itself |
 | morph_limit | warning | a morph with more subpaths than morph (``MAX_SUBPATHS``): the rest fade |
@@ -585,6 +586,8 @@ def run(
                       file=sem.get("file"))  # fmt: skip
             if sem.get("truncated"):
                 f.add("truncated", (e["id"],), t, why=sem["truncated"], file=sem.get("file"))
+            if sem.get("clamped"):
+                f.add("clamped", (e["id"],), t, why=sem["clamped"])
             if sem.get("unknown_language"):
                 f.add("unknown_language", (e["id"],), t, language=sem["unknown_language"])
             if sem.get("plain_without"):  # a type that draws without its extra, plainer
@@ -706,6 +709,11 @@ def run(
                          f"({info['why']}); only the first part is shown", "warning", ids,
                          times=ts, fix_hint="shorten the file, or split it into several "
                          "objects")  # fmt: skip
+        if code == "clamped":
+            return Issue(code, f"{ids[0]!r} is not drawn as asked {when}: {info['why']}",
+                         "warning", ids, times=ts, fix_hint="ask for what can be drawn: "
+                         "a larger step, labels that typeset, a range that holds the "
+                         "values")  # fmt: skip
         if code == "unknown_language":
             return Issue(code, f"{ids[0]!r}: pygments does not know the language "
                          f"{info['language']!r}; the code is drawn plain {when}", "warning", ids,

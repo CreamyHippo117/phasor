@@ -27,7 +27,6 @@ from phasor.domains.path import MorphParams, Path
 from phasor.domains.strokes import hue_colors, polyline
 
 DISC_SEGMENTS = 64
-COUNTER_AFFIX = 40  # characters of a counter's prefix or suffix
 
 
 def _rgba(color: tuple[float, ...], opacity: float) -> tuple[float, float, float, float]:
@@ -916,8 +915,8 @@ class Counter(ObjectBase):
     class Params(ParamsBase):
         value: float = 0.0
         digits: int = Field(2, ge=0, le=10)
-        prefix: str = Field("", max_length=COUNTER_AFFIX)
-        suffix: str = Field("", max_length=COUNTER_AFFIX)
+        prefix: str = ""  # no length limit, as for any Text (documents saved before M19)
+        suffix: str = ""
         math: bool = True  # typeset as maths: "$" + prefix + number + suffix + "$"
         pos: Vec3 = (0.0, 0.0, 0.0)
         anchor: Literal["center", "left", "right"] = "center"

@@ -233,6 +233,26 @@ class S(Scene):
     assert m["math"] is True and r"\frac" in m["text"]
 
 
+@pytest.mark.parametrize(
+    "x_range, step",
+    [("[-10, 10, 0.1]", 0.2), ("[0, 200, 1]", 2.0), ("[0, 2e10, 1e9]", 1e9)],
+)
+def test_axes_past_the_tick_limit_import_at_a_nice_step(tmp_path, x_range, step):
+    """Milestone 19 audit B1: these failed the whole import (more than 100 ticks, or numbers
+    past 1e9); now the importer picks the step and says so, and the scene lints clean."""
+    p = script(tmp_path, f"""
+class S(Scene):
+    def construct(self):
+        ax = Axes(x_range={x_range}, y_range=[0, 5, 1])
+        self.play(Create(ax))
+""")  # fmt: skip
+    r = import_manim(p)
+    assert state(r, 1.0, "axes_1").x_range[2] == pytest.approx(step)
+    widened = step != eval(x_range)[2]
+    assert any("past the limit" in w for w in r.warnings) == widened
+    assert [i.code for i in r.scene.engine.lint() if i.code == "clamped"] == []
+
+
 def test_three_d_scenes_use_the_orbit_camera(tmp_path):
     p = script(tmp_path, """
 class S(ThreeDScene):

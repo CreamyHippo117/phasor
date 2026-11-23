@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import functools
 import itertools
+import math
 from typing import Any, ClassVar, Literal
 
 import numpy as np
@@ -39,7 +40,6 @@ UV = ("u", "v")
 XYZ = ("x", "y", "z")
 COLOR_BY_CURVE = Literal["none", "t", "speed", "x", "y", "z"]
 COLOR_BY_SURFACE = Literal["none", "height", "u", "v", "radius", "expr"]
-MAX_LABEL = 80  # characters of an axis label
 
 
 def _vec(p) -> np.ndarray:
@@ -114,7 +114,7 @@ class Axes(ObjectBase):
         x_scale: float = Field(0.0, ge=0)  # world units per x unit (0: ``scale``)
         y_scale: float = Field(0.0, ge=0)
         z_scale: float = Field(0.0, ge=0)
-        tick: float = Field(0.12, gt=0, le=ticks.MAX_VALUE)  # tick length in world units
+        tick: float = Field(0.12, gt=0)  # tick length in world units
         labels: tuple[str, ...] = ()
         numbers: bool = False  # write the value at each tick (parts)
         digits: int = Field(-1, ge=-1, le=ticks.MAX_DECIMALS)  # -1: as the step needs
@@ -124,28 +124,20 @@ class Axes(ObjectBase):
         def _scale(cls, v, info):
             return _finite_scale(v, info.field_name)
 
-        @field_validator("labels")
-        @classmethod
-        def _labels(cls, v):
-            if len(v) > 3 or any(len(x) > MAX_LABEL for x in v):
-                raise ValueError(f"at most 3 labels of at most {MAX_LABEL} characters")
-            for x in v:
-                text_metrics.check_math(x)
-            return v
-
+        # Axes existed before Milestone 19's limits, so only what a document saved before
+        # them already had to be is refused here (finite, min < max, a step >= 0); ranges
+        # past the tick limit, many labels and labels that cannot be typeset still load and
+        # are drawn bounded, and lint ``clamped`` says what was left out (``_clamped``).
         @model_validator(mode="after")
         def _ranges(self):
-            _finite_scale(self.scale, "scale", zero=False)
+            ticks.number(self.scale, "scale")
             for name in ("x_range", "y_range", "z_range"):
                 lo, hi, step = getattr(self, name)
-                ticks.check_range(lo, hi, step, name)
+                ticks.check_loose(lo, hi, step, name)
                 sc = getattr(self, f"{name[0]}_scale") or self.scale
-                if max(abs(lo), abs(hi)) * sc > ticks.MAX_VALUE:
-                    raise ValueError(f"{name} times its scale must be within "
-                                     f"+-{ticks.MAX_VALUE:g} world units")  # fmt: skip
-            for i, c in enumerate(self.pos):
-                if abs(ticks.number(c, "pos")) > ticks.MAX_VALUE:
-                    raise ValueError(f"pos[{i}] must be within +-{ticks.MAX_VALUE:g}")
+                if not all(math.isfinite(c + v * sc) for v in (lo, hi) for c in self.pos):
+                    raise ValueError(f"{name} times its scale must be a finite number of "
+                                     "world units")  # fmt: skip
             return self
 
     def _axes(self, p) -> list[tuple[np.ndarray, tuple[float, float, float], np.ndarray, float]]:
@@ -156,6 +148,31 @@ class Axes(ObjectBase):
         if p.dims == 3:
             out.append((e[2], p.z_range, e[0], p.z_scale or p.scale))
         return out
+
+    def _labels(self, p) -> tuple[list[tuple[int, str]], list[str]]:
+        """(index, text) of the end labels drawn, and why any are not (lint ``clamped``):
+        one per axis at most; one that cannot be typeset is left out."""
+        drawn, notes = [], []
+        n = len(self._axes(p))
+        if len(p.labels) > n:
+            notes.append(f"labels: {len(p.labels)} given for {n} axes; the rest are not drawn")
+        for i, label in enumerate(p.labels[:n]):
+            try:
+                text_metrics.check_math(label)
+            except ValueError as e:
+                notes.append(f"label {label!r} cannot be typeset ({e}); it is not drawn")
+                continue
+            drawn.append((i, label))
+        return drawn, notes
+
+    def _clamped(self, p) -> str | None:
+        """What is drawn other than asked (lint ``clamped``), or None."""
+        notes = [
+            ticks.clamp_note(*r, f"{n}_range")
+            for n, (_, r, _, _) in zip("xyz", self._axes(p), strict=False)
+        ]
+        notes = [x for x in notes if x] + self._labels(p)[1]
+        return "; ".join(notes) or None
 
     def world_bounds(self, state: SceneState) -> Bounds:
         p = self.me(state).params
@@ -207,6 +224,9 @@ class Axes(ObjectBase):
             for n, (_, r, _, s) in zip("xyz", self._axes(p), strict=False)
         }  # fmt: skip
         out = {"kind": "axes", "dims": p.dims, "axes": axes, "scale": p.scale}
+        clamped = self._clamped(p)
+        if clamped:
+            out["clamped"] = clamped  # lint clamped
         if p.numbers:
             cam = state.camera_for(self.me(state))
             out["numbers"] = {
@@ -235,6 +255,7 @@ class Axes(ObjectBase):
         o = _vec(p.pos)
         col = with_alpha(me.style["color"], p.opacity)
         size = me.style["size"] * float(cam.units_per_height(o))
+        labels = dict(self._labels(p)[0])
         for i, (d, (lo, hi, step), td, s) in enumerate(self._axes(p)):
             a, b = o + d * lo * s, o + d * hi * s
             w = me.style["stroke"] * float(cam.units_per_height((a + b) / 2))
@@ -242,8 +263,8 @@ class Axes(ObjectBase):
             for v in gm.tick_values(lo, hi, step):
                 c = o + d * v * s
                 polyline(ctx, cam, [c - td * p.tick / 2, c + td * p.tick / 2], w, color=col)
-            if i < len(p.labels):
-                ctx.text(p.labels[i], b + d * size * 0.9, size, color=col)
+            if i in labels:
+                ctx.text(labels[i], b + d * size * 0.9, size, color=col)
 
 
 # ---------------------------------------------------------------- ParametricCurve
