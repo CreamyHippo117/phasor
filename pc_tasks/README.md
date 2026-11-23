@@ -1,5 +1,7 @@
 # Tasks for Claude Code on the owner's PC
 
+**Back at the PC? Start with `09_pc_checks_after_14_15.md`**: short checks for what the cloud box could not run.
+
 Steps 3, 4 and 7 of `BEAUTY.md` need the RTX card (GPU kernels, GPU reference pictures,
 fast renders), so they are done on the PC. Each has its own instruction file here, written so
 **three sessions can work at the same time** without touching each other's work.
@@ -9,7 +11,10 @@ fast renders), so they are done on the PC. Each has its own instruction file her
 | `03_point_clouds.md` | 3. Point clouds: millions of glowing points, splatted on the GPU | `beauty/point-clouds` | `C:\Users\Atlas\phasor-clouds` |
 | `04_prism_fractals.md` | 4. Fractals in the prism look | `beauty/prism-fractals` | `C:\Users\Atlas\phasor-fractals` |
 | `07_acoustics_3d.md` | 7. A 3D room with sound bouncing in it | `beauty/acoustics-3d` | `C:\Users\Atlas\phasor-room` |
+| `cpu_workers.md` | Milestone 14.3: how many render workers the RTX card wants | `perf/cuda-workers` | `C:\Users\Atlas\phasor-workers` |
 | `08_wave_fields.md` | Interference, beamforming, bifurcation (`ANIMATIONS.md`); after 3 and 4 | `anim/wave-fields` | `C:\Users\Atlas\phasor-waves` |
+| `09_pc_checks_after_14_15.md` | Milestones 14 and 15: Windows CPU backend, GPU kernels, Riemann timing, GPU golden for `open_contract`, decisions | `claude/eloquent-mayer-jiqxs9` (no new branch) | `C:\Users\Atlas\phasor-dev` |
+| `10_render_speed.md` | Render speed: measure before/after on the card (`GPU_SPEED.md` steps 7-8); measurements only, no code | `perf/measure` | `C:\Users\Atlas\phasor-speed` |
 
 ## Starting the three at once (PowerShell)
 

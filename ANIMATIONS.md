@@ -18,10 +18,10 @@ eigenvectors of a matrix, a grid being transformed.
 
 | # | What | Where | Prism version |
 |---|---|---|---|
-| S1 | **Live convolution**: the kernel flipped and sliding along the signal, their product shaded under the curve, its area tracing the output point by point | here | the two signals as glowing strokes in two palette hues, the overlap glowing where they multiply, the output drawn as light as it is made |
-| S2 | **Fourier transform, the winding picture**: the signal wound round a circle at a test frequency, its centre of mass marked; sweeping the frequency traces the spectrum, which spikes where the winding balances | here | the winding as a glowing curve with hue along it, the centre of mass a beacon, the spectrum drawn as light beside it |
-| S3 | **Filtering**: a filter's poles and zeros on the plane, its frequency response (gain and phase), and a signal before and after, with its spectrum losing the cut band | here | pole-zero plot over prism domain coloring of the transfer function; response curves glowing; the removed part of the spectrum fading out |
-| S4 | **Spectrogram of any signal**: from a formula or a `.wav` file next to the scene, the playhead moving along | here | prism heat map (already built), the playhead a glowing line |
+| S1 | **Live convolution** (done: `conv.Convolution`): the kernel flipped and sliding along the signal, their product shaded under the curve, its area tracing the output point by point | here | the two signals as glowing strokes in two palette hues, the overlap glowing where they multiply, the output drawn as light as it is made |
+| S2 | **Fourier transform, the winding picture** (done: `fourier.Winding`): the signal wound round a circle at a test frequency, its centre of mass marked; sweeping the frequency traces the spectrum, which spikes where the winding balances | here | the winding as a glowing curve with hue along it, the centre of mass a beacon, the spectrum drawn as light beside it |
+| S3 | **Filtering** (done: `filt.PoleZero`, `filt.FrequencyResponse`, `filt.FilteredSignal`, `filt.FilteredSpectrum`): a filter's poles and zeros on the plane, its frequency response (gain and phase), and a signal before and after, with its spectrum losing the cut band | here | pole-zero plot over prism domain coloring of the transfer function; response curves glowing; the removed part of the spectrum fading out |
+| S4 | **Spectrogram of any signal** (done: `fourier.Spectrogram` with `signal`, `wav`, `playhead`): from a formula or a `.wav` file next to the scene, the playhead moving along | here | prism heat map (already built), the playhead a glowing line. **Done** 2026-11-23: `fourier.Spectrogram` takes `signal` (formula in t), `wav`, `window`, `hop`, `fmax`, `playhead`; `examples/prism_spectrogram.py` |
 | S5 | **Sampling and aliasing**: samples taken from a fast wave, the slow wave they also fit | here | the true wave and its alias in two hues, the samples as beacons |
 
 ## Wave propagation
@@ -30,8 +30,8 @@ eigenvectors of a matrix, a grid being transformed.
 |---|---|---|---|
 | W1 | **Interference**: two or more point sources, the field they make (crests, troughs, the dark lines where they cancel), animated in time | PC (a per-pixel field kernel) | the field as a prism heat map: crests warm, troughs cool, the quiet lines dark, haze |
 | W2 | **Beamforming**: a line or ring of sources with phase delays steering the beam; change the delays and the beam swings | PC (the same kernel, with phases) | as W1, plus the array as glowing beacons and the beam direction as a ray |
-| W3 | **Directivity**: polar patterns (an array's beam pattern, a piston, a cardioid) | here | a glowing polar curve, side lobes fainter, the main lobe brightest |
-| W4 | **Doppler**: a moving source leaving bunched and stretched wavefronts; at sound speed, the shock cone | here | wavefront circles as fading glowing rings, hue by frequency heard |
+| W3 | **Directivity** (done: `ac.Directivity`): polar patterns (an array's beam pattern, a piston, a cardioid) | here | a glowing polar curve, side lobes fainter, the main lobe brightest |
+| W4 | **Doppler** (done: `ac.Doppler`): a moving source leaving bunched and stretched wavefronts; at sound speed, the shock cone | here | wavefront circles as fading glowing rings, hue by frequency heard |
 | W5 | **3D room acoustics** | PC (beauty step 7, `pc_tasks/07_acoustics_3d.md`) | faint glowing walls, rays of light bouncing |
 
 ## Dynamical systems
@@ -41,8 +41,8 @@ eigenvectors of a matrix, a grid being transformed.
 | D1 | **Phase portrait** (done: `dyn.PhasePortrait`): a system x' = f(x, y), y' = g(x, y) from formulas, trajectories traced from seeds over time, the nullclines drawn | here | trajectories as glowing strokes with hue along time, nullclines faint, the flow field in dense small arrows |
 | D2 | **Fixed points and stability** (done: `dyn.FixedPoints`): fixed points found, the Jacobian's eigenvalues computed, each classified (saddle, node, spiral, centre; stable or not) with its eigen-directions drawn | here | fixed points as beacons coloured by stability, eigen-directions as rays of light, a label with the eigenvalues |
 | D3 | **Bifurcation diagram**: the logistic map (or any map) over a parameter, the period doubling into chaos | PC (millions of points: the point-cloud splat of step 3) | the classic picture as a glowing point cloud |
-| D4 | **Strange attractors**: the Lorenz system traced as a moving trajectory in 3D (and Rossler, Thomas) | here (the curve); PC for the dense cloud version | a glowing 3D curve with hue along time, the camera orbiting |
-| D5 | **Linear systems and their modes**: x' = A x, the eigenvectors as invariant lines, trajectories, the matrix exponential acting on a grid | here (reuses `EigenLines`, `TransformGrid`) | glowing, as above |
+| D5 | **Linear systems and their modes** (done: `dyn.LinearSystem`): x' = A x, the eigenvectors as invariant lines, trajectories, the matrix exponential acting on a grid | here (reuses `EigenLines`, `TransformGrid`) | glowing, as above |
+| D4 | **Strange attractors** (done: `dyn.StrangeAttractor`): the Lorenz system traced as a moving trajectory in 3D (and Rossler, Thomas) | here (the curve); PC for the dense cloud version | a glowing 3D curve with hue along time, the camera orbiting |
 
 ## Order
 

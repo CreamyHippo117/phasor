@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from phasor import Scene, expr, fourier, linalg
-from phasor.core.objects import REQUIRED_MEMBERS, registered_types
+from phasor.core.objects import CONTRACT_MEMBERS, registered_types
 from tests.conftest import gl_available
 
 gl = [pytest.mark.gl, pytest.mark.skipif(not gl_available(), reason="needs OpenGL")]
@@ -22,7 +22,7 @@ def test_every_new_type_is_registered_and_keeps_the_object_contract():
     assert set(types) >= NEW
     for name in NEW:
         cls = types[name]
-        assert all(hasattr(cls, m) for m in REQUIRED_MEMBERS), name
+        assert all(hasattr(cls, m) for m in CONTRACT_MEMBERS), name
         assert cls.Style, name  # takes only roles
 
 

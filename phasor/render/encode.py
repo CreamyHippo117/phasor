@@ -1,6 +1,6 @@
 """Video output (SPEC "Encoding").
 
-``open_writer(path, width, height, fps)`` returns a writer with ``write(frame)`` and
+``open_writer(path, width, height, fps, fast=False)`` returns a writer with ``write(frame)`` and
 ``close()``; frames are (h, w, 3) uint8 sRGB from ``render.output.encode_srgb8``.
 
 - ``*.png`` with a ``%d`` pattern, or a directory: a PNG sequence (for editing).
@@ -76,8 +76,15 @@ class PngSequence:
         pass
 
 
+# Drafts (``render.job`` preset ``draft``): the quickest encodes, for frames nobody keeps.
+FAST_X264 = {"crf": "28", "preset": "veryfast"}
+FAST_NVENC = {"preset": "p1", "rc": "vbr", "cq": "30"}
+
+
 class PyAVWriter:
-    def __init__(self, path: Path, width: int, height: int, fps: float, codec: str) -> None:
+    def __init__(
+        self, path: Path, width: int, height: int, fps: float, codec: str, fast: bool = False
+    ) -> None:
         import av
 
         self.path, self.encoder, self.size = path, f"pyav:{codec}", (width, height)
@@ -86,12 +93,14 @@ class PyAVWriter:
         self._stream.width, self._stream.height = width, height
         self._stream.pix_fmt = "yuv420p"
         if codec == "libx264":
-            self._stream.options = {"crf": "16", "preset": "medium"}
+            self._stream.options = {"crf": "16", "preset": "medium"} if not fast else FAST_X264
         elif codec == "h264_nvenc":
             # Constant quality, not NVENC's fixed default bitrate: on prism_primes cq 19 matched
             # the default's 43 dB PSNR at a fifth of the size, and hard frames get more bits.
             self._stream.bit_rate = 0
-            self._stream.options = {"preset": "p5", "rc": "vbr", "cq": "19"}
+            self._stream.options = (
+                {"preset": "p5", "rc": "vbr", "cq": "19"} if not fast else FAST_NVENC
+            )
         self._frame_type = av.VideoFrame
 
     def write(self, frame: np.ndarray) -> None:
@@ -105,9 +114,24 @@ class PyAVWriter:
         self._container.close()
 
 
+def _fast_flags(codec: str, fast: bool) -> list[str]:
+    """ffmpeg arguments for a draft encode of ``codec`` (none when not ``fast``)."""
+    if not fast:
+        return []
+    opts = FAST_X264 if codec == "libx264" else FAST_NVENC if codec.endswith("_nvenc") else {}
+    return [a for k, v in opts.items() for a in (f"-{k}", v)]
+
+
 class FFmpegWriter:
     def __init__(
-        self, path: Path, width: int, height: int, fps: float, codec: str, pix_fmt: str
+        self,
+        path: Path,
+        width: int,
+        height: int,
+        fps: float,
+        codec: str,
+        pix_fmt: str,
+        fast: bool = False,
     ) -> None:
         exe = shutil.which("ffmpeg")
         if exe is None:
@@ -117,7 +141,8 @@ class FFmpegWriter:
         cmd = [exe, "-y", "-hide_banner", "-loglevel", "error",
                "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{width}x{height}",
                "-r", f"{rate.numerator}/{rate.denominator}", "-i", "-",
-               "-c:v", codec, "-pix_fmt", pix_fmt, str(path)]  # fmt: skip
+               "-c:v", codec, "-pix_fmt", pix_fmt, *_fast_flags(codec, fast),
+               str(path)]  # fmt: skip
         self._proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE,
                                       creationflags=NO_WINDOW)  # fmt: skip
 
@@ -188,7 +213,8 @@ class BackgroundWriter:
             self.inner.close()
 
 
-def open_writer(path: str | Path, width: int, height: int, fps: float) -> Writer:
+def open_writer(path: str | Path, width: int, height: int, fps: float,
+                fast: bool = False) -> Writer:  # fmt: skip
     path = Path(path)
     if path.suffix == "" or (path.suffix == ".png" and "%" in path.name):
         return PngSequence(path, width, height)
@@ -204,8 +230,8 @@ def open_writer(path: str | Path, width: int, height: int, fps: float) -> Writer
     if backend == "pyav" and codec.endswith("_nvenc") and not _nvenc_takes(codec, width, height):
         codec = "libx264"  # NVENC has a minimum frame size (found 2026-11-21: 64x48 refused)
     if backend == "pyav":
-        return PyAVWriter(path, width, height, fps, codec)
-    return FFmpegWriter(path, width, height, fps, codec, "yuv420p")
+        return PyAVWriter(path, width, height, fps, codec, fast)
+    return FFmpegWriter(path, width, height, fps, codec, "yuv420p", fast)
 
 
 @functools.cache

@@ -12,11 +12,13 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, PlainValidator, model_validator
 
 from phasor.core.constraints import PRIORITIES, RuleError, normalize_rule, parse_rule
+from phasor.core.files import relative_path
 from phasor.core.ids import is_valid_id, is_valid_name, parent_of, split_path
 from phasor.core.values import normalize
 
-SCHEMA_VERSION = 7  # 2: `constraints` (M2); 3: `retired_ids`; 4: `narration`, `Segment.verb` (M4);
-# 5: `meta.life`, `meta.seed`, `meta.look` (M7); 6: `controls` (M12); 7: `meta.palette`
+SCHEMA_VERSION = 8  # 2: `constraints` (M2); 3: `retired_ids`; 4: `narration`, `Segment.verb` (M4);
+# 5: `meta.life`, `meta.seed`, `meta.look` (M7); 6: `controls` (M12); 7: `meta.palette`;
+# 8: `meta.modules`, `ObjectSpec.always` (M15, ADR 0005)
 OVERRIDES_VERSION = 1
 
 
@@ -63,6 +65,21 @@ class Segment(Model):
     verb: str | None = None  # the choreography verb that made it; None is a raw transition
 
 
+def _check_module(path: str) -> str:
+    """A code module the document needs: a ``.py`` file inside the scene's folder."""
+    path = relative_path(path)
+    if not path.endswith(".py"):
+        raise ValueError(f"module {path!r} must be a .py file (a scene script or *.types.py)")
+    return path
+
+
+def _check_updater(ref: str) -> str:
+    module, sep, name = ref.rpartition(":") if isinstance(ref, str) else ("", "", "")
+    if not sep or not module or not name:
+        raise ValueError(f"updater {ref!r} must be written '<module>.py:<function>'")
+    return f"{_check_module(module)}:{name}"
+
+
 class ObjectSpec(Model):
     id: str
     type: str
@@ -70,6 +87,9 @@ class ObjectSpec(Model):
     style: dict[str, str] = Field(default_factory=dict)  # style key -> role name
     tags: tuple[str, ...] = ()
     layer: Literal["world", "overlay"] = "world"
+    # Pure updaters (ADR 0005), each ``"<module>:<function>"``: a function in one of the
+    # document's ``meta.modules`` that sets parameters of this object from (t, look).
+    always: tuple[Annotated[str, PlainValidator(_check_updater)], ...] = ()
 
 
 class CameraSpec(Model):
@@ -162,6 +182,9 @@ class Meta(Model):
     # The colors run along strokes (a colormap role: "spectrum", the prism rainbow, or
     # "moonlight", "gold", "glacier", "borealis", "rose"); None: the theme's own.
     palette: str | None = None
+    # Code the scene needs (ADR 0005): the scene script or ``*.types.py`` files in its folder
+    # that define its own object types and updaters. Loaded only where scripts may run.
+    modules: tuple[Annotated[str, PlainValidator(_check_module)], ...] = ()
     # "script": built by a Python script; later tweaks go to name.overrides.json.
     source: Literal["document", "script"] = "document"
 
@@ -192,7 +215,7 @@ class Control(Model):
 
 
 class Document(Model):
-    schema_version: Literal[7] = SCHEMA_VERSION
+    schema_version: Literal[8] = SCHEMA_VERSION
     meta: Meta
     objects: tuple[ObjectSpec, ...] = ()
     constraints: tuple[ConstraintSpec, ...] = ()
@@ -213,7 +236,12 @@ class Document(Model):
                 raise ValueError(f"duplicate id {thing.id!r}")
             seen.add(thing.id)
         object_ids = {o.id for o in self.objects}
+        modules = set(self.meta.modules)
         for o in self.objects:
+            for ref in o.always:
+                if ref.rpartition(":")[0] not in modules:
+                    raise ValueError(f"{o.id}: updater {ref!r} names a module that is not in "
+                                     f"meta.modules {sorted(modules)}")  # fmt: skip
             parent = parent_of(o.id)
             if parent is not None and parent not in object_ids:
                 raise ValueError(f"object {o.id!r} needs its parent {parent!r} to exist")

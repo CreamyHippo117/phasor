@@ -43,6 +43,7 @@ def _zeros_and_poles(
     """Zeros and poles of a rational function (with the constant ``a`` put in; with ``to``,
     of the blend (1 - blend) f + blend g), with multiplicity; () for anything else."""
     import sympy as sp
+    from mpmath.libmp.libhyper import NoConvergence
 
     from phasor.render.gpu.codegen import A, Z
 
@@ -61,7 +62,10 @@ def _zeros_and_poles(
         poly = sp.Poly(p, Z)
         if poly.degree() < 1:
             return ()
-        return tuple(complex(r) for r in poly.nroots(n=15))
+        try:
+            return tuple(complex(r) for r in poly.nroots(n=15))
+        except NoConvergence:  # a repeated float root (a filter's zeros at -1)
+            return tuple(complex(r) for r in np.roots([complex(c) for c in poly.all_coeffs()]))
 
     return roots(num), roots(den)
 
@@ -74,11 +78,8 @@ def _rect(p) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
 
 class _Plane(ObjectBase):
-    """What both kernel-drawn rectangles share."""
-
-    def world_bounds(self, state: SceneState) -> Bounds:
-        corner, r, u = _rect(self.me(state).params)
-        return Bounds.of_points([corner, corner + r + u])
+    """What both kernel-drawn rectangles share. Their bounds are the box of the one ``field``
+    quad they draw, derived from the recorded draw (ADR 0005, ``core/record.py``)."""
 
     def _inside(self, state: SceneState, points: tuple[complex, ...]) -> np.ndarray:
         p = self.me(state).params
@@ -187,7 +188,7 @@ class DomainColoring(_Plane):
             "poles": [[round(float(x), 6), round(float(y), 6)] for x, y, _ in feats["poles"]],
         }
 
-    def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
+    def draw(self, ctx: DrawContext, state: SceneState) -> None:
         me = self.me(state)
         p = me.params
         corner, r, u = _rect(p)
@@ -339,7 +340,7 @@ class Fractal(_Plane):
             out["precision"] = _precision(p.kind, p.size[1] * k, 1080)
         return out
 
-    def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
+    def draw(self, ctx: DrawContext, state: SceneState) -> None:
         me = self.me(state)
         p = me.params
         corner, r, u = _rect(p)

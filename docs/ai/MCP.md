@@ -40,7 +40,7 @@ a variant and compare.
 | `critique`, `polish` | the art director: a taste score, aesthetic issues with fixes and the rubric; apply the fixes (3 rounds at most) |
 | `variants`, `choose` | alternative looks of one beat side by side (as is, calmer, bolder); pick one, it is recorded in `style/choices.jsonl` and applied |
 | `diff`, `checkpoint`, `restore`, `undo`, `redo` | compare and branch |
-| `render` | a video (`preview`, `final`, `4k`) or one PNG with `frame` |
+| `render` | a video (`draft` is the quickest and roughest, then `preview`, `final`, `4k`) or one PNG with `frame` |
 | `docs_search` | find the API, a pattern or an example |
 
 ## Patch operations
@@ -235,3 +235,9 @@ over, on a server started with `--allow-scripts`.
 - **A second `reveal` of the same object is refused** (`bad_segment`): its fade already
   exists. Change the first one's marker instead, or `undo`.
 - **`.py` scenes are code.** The server refuses them unless started with `--allow-scripts`.
+- **A scene may bring its own types** (ADR 0005: `meta.modules`, a scene script or
+  `*.types.py` next to it). `object_types` marks those `"scene_local": true`. On a server
+  without `--allow-scripts` their code does not run: lint `missing_type`, the object draws as
+  a placeholder box, and its parameters and overrides stay as they are. Edit its parameters
+  as usual; do not remove it to make the issue go away. A `value` object is a number with
+  nothing to draw: animate its `value` and read it with `{"expr": "speed.value"}`.

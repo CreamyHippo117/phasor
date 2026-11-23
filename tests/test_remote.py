@@ -64,8 +64,15 @@ def test_strangers_and_private_methods_are_refused(hosted, tmp_path):
         import subprocess
 
         acl = subprocess.run(["icacls", str(handoff)], capture_output=True, text=True).stdout
-        grants = [ln for ln in acl.splitlines()[:-2] if ":" in ln.replace(str(handoff), "")]
-        assert len(grants) == 1 and os.environ["USERNAME"].lower() in grants[0].lower(), acl
+        lines = acl.replace(str(handoff), "").splitlines()[:-2]
+        # one "domain\name:(F)" per line, the first after the file's own path
+        who = [ln.rsplit(":(", 1)[0].strip().lower() for ln in lines if ":(" in ln]
+        assert any(os.environ["USERNAME"].lower() in w for w in who), acl  # this user may read it
+        # No group of other people may. An elevated (administrator) process also leaves the
+        # system, the Administrators group and OWNER RIGHTS on the file; those can read any
+        # file anyway, so they are not strangers.
+        strangers = {"everyone", "users", "authenticated users", "interactive", "network"}
+        assert not [w for w in who if w.rsplit("\\", 1)[-1] in strangers], acl
     else:
         assert oct(handoff.stat().st_mode & 0o777) == "0o600"  # only this user can read it
 

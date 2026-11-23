@@ -588,6 +588,7 @@ def test_the_domain_constant_a_animates_and_the_poles_follow():
         s.add(cx.ComplexMap(id="m", function="z + a"))
 
 
+@needs_gl
 def test_picture_golden_storyboard():
     e = runpy.run_path(str(ROOT / "examples" / "picture.py"), run_name="x")["s"].engine
     assert e.lint(strict=True) == []

@@ -24,6 +24,9 @@ def register(sub: argparse._SubParsersAction) -> None:
     m.add_argument("--text", action="append", default=[], metavar="K=TEXT",
                    help="what handwriting proposal K says (LaTeX in $...$ for maths)")  # fmt: skip
     m.add_argument("--out", help="folder for handwriting pictures (default: beside the scene)")
+    m.add_argument("--allow-scripts", action="store_true",
+                   help="run the Python code the scene names (meta.modules); it runs only on "
+                   "your request, so only your own code")  # fmt: skip
     m.set_defaults(func=_run)
 
 
@@ -35,7 +38,7 @@ def _run(args: argparse.Namespace) -> int:
     raw = json.loads(Path(args.strokes).read_text(encoding="utf-8"))
     strokes = raw["strokes"] if isinstance(raw, dict) else raw
     t = args.t if args.t is not None else (raw.get("t", 0.0) if isinstance(raw, dict) else 0.0)
-    ws = Workspace(scene.parent)
+    ws = Workspace(scene.parent, allow_scripts=args.allow_scripts)
     try:
         ws.scene_open(scene.name)
     except ToolError as e:

@@ -22,11 +22,16 @@ COUNTS = (1, 5, 20, 60)  # how many zeros each approximation uses
 
 
 @functools.cache
-def zeta_zeros(n: int) -> tuple[float, ...]:
-    """Imaginary parts gamma_1..gamma_n of the first nontrivial zeros of zeta."""
+def _all_zeros() -> tuple[float, ...]:
     import mpmath
 
-    return tuple(float(mpmath.zetazero(k).imag) for k in range(1, n + 1))
+    return tuple(float(mpmath.zetazero(k).imag) for k in range(1, max(COUNTS) + 1))
+
+
+def zeta_zeros(n: int) -> tuple[float, ...]:
+    """Imaginary parts gamma_1..gamma_n of the first nontrivial zeros of zeta (each zero is
+    found once, however many approximations use it)."""
+    return _all_zeros()[:n]
 
 
 def chebyshev_psi(x: np.ndarray) -> np.ndarray:

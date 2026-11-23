@@ -62,6 +62,18 @@ def _is_label(e: dict[str, Any]) -> bool:
     return e["semantic"].get("kind") == "label"
 
 
+def _part_of(entries: dict[str, dict[str, Any]], a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """Whether one of two entries is a part a composite built for the other (ADR 0005): a
+    composite covers its own parts by design."""
+    for x, y in ((a, b), (b, a)):
+        up = x.get("part_of")
+        while up is not None:
+            if up == y["id"]:
+                return True
+            up = entries[up].get("part_of") if up in entries else None
+    return False
+
+
 def _shown(e: dict[str, Any]) -> bool:
     drawn = e["semantic"].get("drawn", 1.0) > 0  # a curve not yet traced shows nothing
     return e["opacity"] > FAINT and e["on_screen_fraction"] > 0 and drawn
@@ -279,9 +291,72 @@ def file_rules(c: Compiled) -> list[Issue]:
     return out
 
 
+def type_rules(c: Compiled) -> list[Issue]:
+    """``missing_type``: the document names code (``meta.modules``, ADR 0005) for a type or an
+    updater that is not here: the module is missing, was refused (scripts may not run here)
+    or failed to load. The object draws as a placeholder box, or without its updater, and
+    keeps its parameters and overrides; nothing is lost."""
+    return [
+        Issue("missing_type", f"{object_id}: {why}", severity="error", ids=(object_id,),
+              times=(0.0,), fix_hint="put the module next to the scene, or open it where "
+              "scripts may run (allow_scripts=True, or the MCP server with --allow-scripts)")
+        for object_id, why in c.missing
+    ]  # fmt: skip
+
+
+def _differ(a: Any, b: Any, tol: float) -> bool:
+    if isinstance(a, dict) and isinstance(b, dict):
+        return a.keys() != b.keys() or any(_differ(a[k], b[k], tol) for k in a)
+    if isinstance(a, list | tuple) and isinstance(b, list | tuple):
+        return len(a) != len(b) or any(_differ(x, y, tol) for x, y in zip(a, b, strict=True))
+    if isinstance(a, int | float) and isinstance(b, int | float):
+        return not abs(float(a) - float(b)) <= tol  # NaN differs from everything
+    return a != b
+
+
+def updater_rules(c: Compiled, step: float = DEFAULT_STEP) -> list[Issue]:
+    """``impure_updater`` (ADR 0005): an updater must give the same result for the same t and
+    the same reads. Each one is called again at every sample time, twice, the second time in
+    the opposite order of times and of updaters, all with the same evaluated parameters; it
+    fires when two answers differ by more than the theme's ``[lint] impure``. Hidden state (a
+    counter, a global another updater writes, randomness) shows up this way."""
+    from phasor.time.compile import _env
+    from phasor.time.updaters import UpdaterOut
+
+    ups = list({id(n.updater): n.updater for n in c.nodes.values()
+                if isinstance(n, UpdaterOut)}.values())  # fmt: skip
+    if not ups:
+        return []
+    tol = c.theme.lint["impure"]
+    times = sample_times(c, step)
+    envs = {t: _env(c.nodes, c.order, t) for t in times}
+
+    def call(i: int, t: float) -> Any:
+        try:
+            return ups[i].call(envs[t], t)
+        except ValueError as e:  # an updater that fails now and then is not pure either
+            return ("failed", str(e))
+
+    first = {(t, i): call(i, t) for t in times for i in range(len(ups))}
+    again = {(t, i): call(i, t) for t in reversed(times) for i in reversed(range(len(ups)))}
+    bad: dict[int, list[float]] = {}
+    for key, value in first.items():
+        if _differ(value, again[key], tol):
+            bad.setdefault(key[1], []).append(key[0])
+    return [
+        Issue("impure_updater", f"{ups[i].object_id}: updater {ups[i].ref} gives different "
+              f"answers for the same t {_when(sorted(ts))}: it keeps state, or reads something "
+              "other than t and look(...)", severity="error", ids=(ups[i].object_id,),
+              times=tuple(sorted(ts)), fix_hint="compute everything from t and look(...); "
+              "something that needs the previous frame is a Simulation (fixed dt, a seed)")
+        for i, ts in sorted(bad.items())
+    ]  # fmt: skip
+
+
 def strict_rules(c: Compiled) -> list[Issue]:
     """Rules for finished scenes only. ``raw_motion``: transitions written with raw ``to()``
-    instead of a choreography verb (their timing is not the theme's)."""
+    instead of a choreography verb (their timing is not the theme's). ``impure_updater``:
+    see ``updater_rules``."""
     raw: dict[str, list[float]] = {}
     for path, segs in c.doc.timeline.tracks.items():
         for seg in segs:
@@ -298,7 +373,7 @@ def strict_rules(c: Compiled) -> list[Issue]:
             "theme sets timing and easing",
         )
         for object_id, ts in sorted(raw.items())
-    ]
+    ] + updater_rules(c)
 
 
 def clutter(c: Compiled) -> list[Issue]:
@@ -352,6 +427,10 @@ def run(
         height = state.height
         shown = [e for e in fr.entries.values() if _shown(e)]
         ever_shown.update(e["id"] for e in shown)
+        # A Value is a number with nothing to draw (ADR 0005): never "missing" from the frame.
+        ever_shown.update(
+            e["id"] for e in fr.entries.values() if e["semantic"].get("kind") == "value"
+        )
         labels = [e for e in shown if _is_label(e)]
         persp = state.camera.perspective
 
@@ -364,7 +443,7 @@ def run(
                 continue
             for b in shown:
                 pair = tuple(sorted((a["id"], b["id"])))
-                if a is b or pair in seen_pairs:
+                if a is b or pair in seen_pairs or _part_of(fr.entries, a, b):
                     continue
                 if persp and not (both(a, b, "label") or both(a, b, "point")):
                     continue  # depth decides in 3D: see occluded_label

@@ -49,6 +49,16 @@ def _frozen(a) -> np.ndarray:
     return a
 
 
+def _homogeneous(points) -> np.ndarray:
+    """(N, 4): the points with a 1 appended. Same values as ``np.c_[p, ones]``, without its
+    per-call overhead (the layout bake projects hundreds of thousands of tiny arrays)."""
+    p = np.atleast_2d(np.asarray(points, dtype=np.float64))
+    h = np.empty((len(p), 4))
+    h[:, :3] = p
+    h[:, 3] = 1.0
+    return h
+
+
 @dataclass(frozen=True, eq=False)
 class Camera:
     """A resolved camera: matrices plus the basis vectors objects need to face the viewer."""
@@ -81,13 +91,11 @@ class Camera:
 
     def clip_w(self, points) -> np.ndarray:
         """The homogeneous w of each point: positive in front of the camera."""
-        p = np.atleast_2d(np.asarray(points, dtype=np.float64))
-        return np.c_[p, np.ones(len(p))] @ self.view_proj[3]
+        return _homogeneous(points) @ self.view_proj[3]
 
     def project(self, points) -> np.ndarray:
         """World points (N, 3) -> NDC (N, 3); x, y in [-1, 1] inside the frame, y up."""
-        p = np.atleast_2d(np.asarray(points, dtype=np.float64))
-        clip = np.c_[p, np.ones(len(p))] @ self.view_proj.T
+        clip = _homogeneous(points) @ self.view_proj.T
         return clip[:, :3] / clip[:, 3:4]
 
     def to_screen(self, points, width: int, height: int) -> np.ndarray:

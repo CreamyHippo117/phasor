@@ -37,6 +37,7 @@ s.set("camera.height", 6)  # world units visible top to bottom
 | `cx.RiemannSurface` | `kind` (`sqrt`/`cbrt`/`log`), `pos` (branch point), `radius`, `height` (`re`/`im`), `scale`, `rings`, `segments` | `colormap` (colormap, phase), `material` (surface, solid) |
 | `cloud.PointCloud` | `source` (`roots`/`attractor`/`buddhabrot`/`points`), `degree` and `coefficients` (roots), `kind` (`clifford`/`dejong`/`lorenz`) and `constants` (attractor), `max_iter` (buddhabrot), `points` and `values` (given directly), `count` (at most), `seed`, `pos` (centre and origin of the points), `size` (the rectangle it is seen in), `scale`, `point_size` (splat radius, px), `exposure`, `hue`, `color_by` (`source`/`phase`), `twist` (roots: turns of the last coefficient, animatable), `twinkle` (0-1, life), `white` (0-1, white-hot dense parts) | `colormap` (colormap, spectrum), `glow` (glow, none) |
 
+| `Value` | `value` (a named number to animate; nothing is drawn: see "Your own types") | none |
 | `Image` | `path` (a PNG/JPEG/WebP file, relative to the scene's folder), `pos` (centre), `width`, `height` (0: keep the picture's shape), `frame` (an outline of light) | `glow` (glow, none: bright parts shine), `frame` (emphasis, muted), `stroke` (stroke, hairline). Presets `plain`, `framed`, `luminous`. A missing file is issue `missing_file`; transparent parts show the background; an AI may only name files inside its folder |
 | `Text` | `text` (`$...$` is typeset math), `pos`, `anchor` (`center`/`left`/`right`), `leader`, `leader_on` (set by layout) | `color` (emphasis, primary), `size` (text, label), `leader` (stroke, hairline) |
 | `Equation` | `parts` (math or text, set on one baseline), `colors` (an emphasis role per part), `pos` | `color` (emphasis, primary), `size` (text, math), `glow` (glow, none) |
@@ -108,6 +109,122 @@ final look blooms it. Plain paint (`glow: none`) never blooms, and colors below 
 Operators `+ - * / ** %`, indexing `dot.pos[0]`, constants `pi tau e`, functions
 `sin cos tan exp log sqrt floor ceil abs min max clamp lerp vec length normalize dot midpoint`.
 Scalars broadcast over vectors. A cycle is an error.
+
+## Your own types, composites and updaters (ADR 0005)
+
+A type needs two members: `Params` and `draw(ctx, state)`. Its `world_bounds`, `features`
+and `semantics` are worked out from what `draw` emits (`core/record.py`), so the inspector,
+layout and lint know it like any shipped type:
+
+```python
+import numpy as np
+from typing import ClassVar
+
+from phasor import Dot, Line, Scene, Text, Value
+from phasor.core.objects import ObjectBase, ParamsBase, register
+from phasor.core.values import Vec3
+
+
+@register
+class Kite(ObjectBase):
+    type: ClassVar[str] = "doc_kite"
+    Style: ClassVar = {"color": ("emphasis", "highlight")}
+
+    class Params(ParamsBase):
+        pos: Vec3 = (0.0, 0.0, 0.0)
+        r: float = 0.4
+
+    def draw(self, ctx, state):
+        (x, y, z), r = self.me(state).params.pos, self.me(state).params.r
+        pts = np.array([[x, y + r, z], [x + r / 2, y, z], [x, y - r, z], [x - r / 2, y, z]])
+        ctx.triangles(pts, np.array([[0, 1, 2], [0, 2, 3]]), color=self.me(state).style["color"])
+
+
+k = Scene("kites")
+k.add(Kite(id="kite", pos=(1, 0)))
+seen = k.engine.inspect(0.0, id="kite", detail="full")["objects"][0]
+assert seen["semantic"]["type"] == "doc_kite" and "top" in seen["features"]
+```
+
+- Derived `world_bounds`: the box of everything drawn (a `field`'s quad corners; its pixels
+  are never computed). Derived `features`: `center` and the box's compass points (`top`,
+  `top_right`, ...), plus `start`, `end` and `curve` when the object draws one stroke through
+  `domains/strokes.py`. Derived `semantics`: `{"type", "params"}`.
+- Write any of the three yourself when you know more (a pole, a tip, `"kind": "point"`);
+  yours wins. `draw(self, ctx, state, pass_)` still works: the pass is optional.
+- A recording is cached per (type, id, parameters, style, camera); `draw` may read other
+  objects (`state["other"]`), and the recording is made again when they change.
+
+**Composites.** `build(self, state)` instead of `draw` returns other objects. Each part
+gets the id `<composite>.<name>`, is drawn and inspected as itself (`"part_of"` in the
+inspector), fades with its composite and may not reuse a retired id. The composite's bounds
+are the union of its parts', its features are the box's plus each part's as `<part>.<name>`:
+
+```python
+@register
+class Signpost(ObjectBase):
+    type: ClassVar[str] = "doc_signpost"
+
+    class Params(ParamsBase):
+        pos: Vec3 = (0.0, 0.0, 0.0)
+
+    def build(self, state):
+        x, y, z = self.me(state).params.pos
+        return [
+            Line(id="post", points=[(x, y, z), (x, y + 1.2, z)]),
+            Kite(id="sign", pos=(x, y + 1.2, z), r=0.3),
+        ]
+
+
+k.add(Signpost(id="post", pos=(-2, -1)))
+state = k.engine.state_at(0.0)
+assert [o.id for o in state.objects if o.parent == "post"] == ["post.post", "post.sign"]
+```
+
+Constraints name document objects; a part is placed through its composite.
+
+**Updaters.** `obj.always(fn)` with `fn(t, look) -> {param: value}` keeps parameters set
+from time and other objects. `look("id")` gives that object's parameters at `t`
+(`look("dot").pos`); each one read is an edge in the parameter graph, so a cycle is an
+error, and a read the updater did not make at t = 0 is an error too (read the same things at
+every t). It must be pure: `lint(strict=True)` calls every updater again, in another order,
+and reports `impure_updater` when answers differ (threshold: the theme's `[lint] impure`).
+Something that needs the previous frame is a `Simulation`. `look` sees parameters before
+living motion: tag an object `exact` when something must sit on it exactly.
+
+**`Value`** is a named number to animate with no drawing (Manim's `ValueTracker`): read
+it in an expression (`expr("speed.value")`), in an updater, or show it with a `Counter`.
+
+```python no-run
+# no-run: an updater must be defined in a file in the scene's folder (the document names
+# it), and this page's text is not one. examples/open_contract.py runs the same thing, and
+# tests/test_open_contract.py checks it.
+def above(t, look):
+    x, y, z = look("ball").pos
+    return {"pos": (x, y + 0.5, z)}
+
+
+def roll(t, look):
+    return {"pos": (look("speed").value * t, 0.0, 0.0)}
+
+
+k.add(Value(id="speed", value=0.5))
+k.add(Dot(id="ball", r=0.15, tags=["exact"]).always(roll))
+k.add(Text(id="ball.label", text="ball").always(above))
+assert k.engine.state_at(2.0)["ball.label"].params.pos == (1.0, 0.5, 0.0)
+assert not [i for i in k.engine.lint(strict=True) if i.code == "impure_updater"]
+```
+
+**Where the code lives.** A type or updater defined in the scene script, or in a
+`*.types.py` file next to it, is named by the document: `meta.modules` lists the file and
+`always` lists `"<file>:<function>"`. Opening the document loads those modules only where
+scripts may run (`phasor.load("scene.py")`, `Engine(..., allow_scripts=True)`, the MCP
+server's `--allow-scripts`, and `--allow-scripts` on `phasor inspect`, `lint`, `storyboard`,
+`render`, `web`, `bench --frames` and `sketch`; render workers inherit it), only from inside the scene's folder. A missing, refused or
+broken module is lint `missing_type`: the object draws as a placeholder box and keeps its
+parameters and overrides (saving it changes nothing). An updater defined anywhere else (a
+notebook cell, a prompt) is refused: the document could not find it again. Types shipped in phasor still get an entry here, an
+example and a storyboard test; scene-local types do not need them.
 
 ## Narrate: words drive time
 
@@ -465,8 +582,26 @@ assert field.shape == (90, 160) and (field == -1).any()  # -1 marks points in th
 - `gpu.render(name, width, height_px, supersample=1, backend="auto", **params)` runs tile by
   tile within the VRAM budget and returns a NumPy array. `gpu.run(name, tile, **params)`
   runs one tile and returns a CuPy array on CUDA.
-- With no CUDA the NumPy reference runs instead: same result, slower. `backend="cuda"`
-  demands the GPU; `backend="reference"` forces NumPy.
+- With no CUDA (tier B) the same CUDA source is compiled for the CPU by g++ or clang++
+  (found at run time, cached in the user cache) and runs on every core; with no compiler
+  either, the NumPy reference runs: same picture, slower. `backend="cuda"` demands the GPU,
+  `backend="cpu"` the CPU backend, `backend="reference"` forces NumPy. `gpu.run(...,
+  threads=n)`, `phasor.render.cpu.set_threads(n)` or `PHASOR_THREADS` set the CPU threads
+  (default: every core); results are the same bits at any thread count.
+
+```python
+import numpy as np
+
+from phasor.render import cpu, gpu
+from phasor.render.gpu.registry import active_backend
+
+print(active_backend(), cpu.threads(), cpu.find_compiler())  # e.g. "cpu", 4, g++ 13.3
+if cpu.find_compiler() is not None:
+    lit = np.ones((4, 8, 4), dtype=np.float32)
+    one = gpu.run("vignette", gpu.Tile.full(8, 4), image=lit, backend="cpu", threads=1)
+    all_cores = gpu.run("vignette", gpu.Tile.full(8, 4), image=lit, backend="cpu")
+    assert np.array_equal(one, all_cores)  # the thread count never changes a result
+```
 - `escape` picks float64 by itself once `height` is under 1e-5.
 - Formulas may use `z`, `i`, `pi`, `e`, numbers, `+ - * / **` and
   `exp log sqrt sin cos tan sinh cosh tanh conj abs`. Anything else is a `FunctionError`.
@@ -678,6 +813,12 @@ assert report["after"] < before and len(report["rounds"]) <= 3
 Finals render with motion blur (`phasor render --preset final`; `--motion-blur 0` turns it
 off): `engine.frame_blurred(t, fps)` averages sub-frames only where something moves.
 
+Render presets: `preview` (960x540, 30 fps, no blur), `final` (the scene's own size and rate,
+blur), `4k`, and `draft` (640x360, 15 fps, no blur, fast encode, fields such as domain coloring
+at half resolution): the quickest look at timing and layout, never for a finished video.
+`phasor render --preset draft`, or the MCP `render` tool with `preset="draft"`. Only `draft`
+gets the cuts; `engine.frame(t, size, field_scale=0.5)` is the picture it draws.
+
 ## Domains: fourier, linalg, acoustics
 
 Domain modules register their own object types: `from phasor import fourier, linalg, ac`.
@@ -688,9 +829,30 @@ expression.
 **`fourier`**: `Epicycles(points=..., terms=N, phase=0..1)` (a closed curve drawn by N rotating
 circles; `phase` animates the tip), `PartialSum(kind="square"|"sawtooth"|"triangle", terms=N)`
 (the Gibbs overshoot is in the semantics), `Spectrum(frequencies=, amplitudes=, window=)` (bars
-per bin; `leakage` in the semantics), `Spectrogram(f0=, f1=)` (a chirp, backdrop). The maths is
+per bin; `leakage` in the semantics), `Spectrogram(...)` (any signal, backdrop; below). The maths is
 `phasor.domains.fourier_math`: `epicycle_coefficients`, `series_partial_sum`, `window`,
-`spectrum`, `leakage`, `spectrogram`, `convolve`.
+`spectrum`, `leakage`, `spectrogram`, `dominant_frequency`, `sampled`, `convolve`.
+
+`fourier.Winding` draws a sum of real sine tones wound clockwise at `freq` (Hz). Its
+centroid is the mean of the wound samples, equal to the complex DFT divided by the sample
+count at DFT bins. The spectrum stroke plots the centroid magnitude from zero to `freq`.
+`max_freq` sets the right edge of the spectrum and must be at or below Nyquist (`fs / 2`).
+`spectrum_guide=False` hides the spectrum axes while retaining the winding circle.
+`progress` traces the winding curve independently of the frequency sweep. `pos` sets the
+circle centre and `size` its radius. Inspector semantics expose the complex centroid as
+`(real, imag)`; the `centroid` and `spectrum_tip` features are world positions.
+
+```python
+from phasor import Scene, fourier
+
+s = Scene("winding_demo", look="prism", passes=None)
+s.add(fourier.Winding(id="wind", frequencies=(3.0,), amplitudes=(1.0,), pos=(-4, 0, 0)))
+s.marker("scan", 0.5)
+s.marker("end", 5.0)
+s.at("scan").sweep("wind.freq", 8.0, show=False)
+```
+
+See `examples/fourier_winding.py` for a two-tone sweep.
 
 **`linalg`**: `TransformGrid(matrix=((a, b), (c, d)))` (2x2: the grid, the unit square whose
 area is the determinant, the images of the basis vectors; 3x3: the unit cube), `EigenLines`,
@@ -732,6 +894,46 @@ room.add(
 ir = room.engine.inspect(0.0, id="ir")["objects"][0]["semantic"]
 assert abs(ir["first_arrival_ms"] - 4.0311 / 343 * 1000) < 1e-3 and ir["arrivals"] > 1000
 ```
+
+**`ac.Directivity`** draws normalized pressure magnitude as a polar curve. Choose
+`kind="array"` (a uniform linear array), `"piston"` (a circular piston in an infinite
+baffle), or `"cardioid"`. `steer` is in degrees counterclockwise from +x. The array lies along y,
+so +x is broadside. Front/back symmetry can yield two equal peaks.
+`elements` and `spacing` (meters) set the array, `radius` (meters) sets the piston, and
+`frequency` (Hz) applies to both. `pos` sets the plot center and `size` is the radius of
+the unity-gain guide in world units. The prism look gives stronger lobes more glow.
+
+```python
+from phasor import Scene, ac
+
+beam = Scene("beam", look="prism", passes=None)
+beam.add(ac.Directivity(id="array", elements=8, spacing=0.1715, frequency=1000, steer=-25))
+beam.marker("turn", 1.0)
+beam.at("turn").sweep("array.steer", 25.0, show=False)
+assert beam.engine.inspect(0, id="array")["objects"][0]["semantic"]["peak_gain"] == 1.0
+```
+
+**`ac.Doppler(speed=, frequency=, time=, pos=, size=)`** draws wavefronts from a sound
+source traveling along +x. `speed` is the constant Mach number for the frame,
+`frequency` is in Hz, `time` is seconds from emission start, `pos` is the starting
+position, and `size` is the world distance sound travels in one second. Animate `time`
+to move the source. For a different constant speed, restart the run. In the prism look
+the rings fade with age and their hue encodes local apparent frequency. At Mach 1 the
+leading edges meet at the source. Above Mach 1 the lines show the planar section of
+the Mach cone. Inspector semantics use `None` for frequency ahead at and above Mach 1
+and report the cone half-angle in degrees for supersonic motion.
+
+```python
+from phasor import Scene, ac, expr
+
+doppler = Scene("doppler", look="prism", passes=None)
+doppler.add(ac.Doppler(id="source", speed=0.5, frequency=12, time=expr("t"), size=2))
+doppler.marker("end", 1.0)
+wave = doppler.engine.inspect(0.8, id="source")["objects"][0]["semantic"]
+assert wave["frequency_ahead"] == 24.0 and wave["frequency_behind"] == 8.0
+```
+
+Example: `examples/doppler.py`.
 
 **Simulations** (`phasor.core.simulation`): a `Simulation` has a fixed `dt`, `params()` (the
 seed included), `initial()` and a pure `step(state, dt)`. `runner_for(sim).state_at(t)` is the
@@ -1285,25 +1487,108 @@ assert kinds == ["saddle", "stable spiral", "saddle"]
 Example: `examples/phase_portrait.py`. The prism looks make trajectories glow with the arrow
 field and nullclines kept faint.
 
+### Linear systems and their modes
+
+`dyn.LinearSystem(matrix=((a, b), (c, d)), extent=, seeds= or n_seeds=, t_end=, progress=,
+backward=, labels=)`: x' = A x with exact trajectories `e^(tA) x0` (`backward` runs each seed
+back in time too, so the whole curve shows) and a label of the type and eigenvalues. Semantics:
+the type (`saddle`, `stable node`, ...), eigenvalues, real eigenvectors, trace and determinant.
+Its modes and the matrix exponential acting on a grid are drawn by the linalg objects beside it:
+`linalg.EigenLines(matrix=A)` (the invariant lines) and `linalg.TransformGrid(flow=A,
+flow_time=t)`, which shows `e^(tA)` on the grid instead of `matrix` (sweep it with
+`s.at("m").sweep("grid.flow_time", 0.6, show=False)`; every cell's area is multiplied by
+`e^(trace * t)`). `linalg_math.expm(m, t)` is the matrix exponential.
+
+```python
+from phasor import Scene, dyn, linalg
+
+A = ((1, 2), (2, 1))
+s = Scene("modes", passes=None)
+s.add(dyn.LinearSystem(id="sys", matrix=A))
+s.add(linalg.TransformGrid(id="grid", flow=A, flow_time=0.5))
+sem = s.engine.inspect(0.0, id="sys")["objects"][0]["semantic"]
+assert sem["type"] == "saddle"
+det = s.engine.inspect(0.0, id="grid")["objects"][0]["semantic"]["determinant"]
+assert abs(det - 2.718282) < 1e-5  # e^(trace * 0.5)
+```
+
+Example: `examples/linear_system.py`.
+## Signals: live convolution
+
+`from phasor import conv`. `conv.Convolution(f=, g=, progress=, pos=, extent=)` shows two signals
+and the output they make. The top panel has `f`, the kernel `g` flipped and slid to the shift
+tau (two hues), and under them their product f(s) g(tau - s), filled where they overlap. The
+bottom panel shares the time axis: the area of that product is the output (f * g)(tau), traced
+point by point with a beacon at the point being made. `progress` 0 -> 1 slides the kernel over
+every shift at which the two can overlap (`s.at("m").sweep("c.progress", 1.0, show=False)`).
+
+- A signal is a name (`box`, `triangle`, `decay`, `ramp`, `gauss`, `wave`) or a formula in `t`
+  (read safely, never run as Python), zero outside its support. `f_support=(lo, hi)` and
+  `g_support` set where it is not zero (`(0, 0)`: the shape's own; a formula without one gets
+  -1..1).
+- `ghost` draws the whole output faintly ahead of the traced part; `shade` (0..1) is how strongly
+  the product is filled; `hue_cycles` runs the palette along the output.
+- Semantics: `shift`, `shift_range`, `output` (the area at this shift), `peak` and `overlapping`.
+
+```python
+from phasor import Scene, conv
+
+s = Scene("overlap", passes=None)
+s.add(conv.Convolution(id="c", f="box", g="box", progress=0.5))  # halfway: shift 0
+sem = s.engine.inspect(0.0, id="c")["objects"][0]["semantic"]
+assert sem["shift_range"] == [-2.0, 2.0] and abs(sem["shift"]) < 1e-9
+assert abs(sem["output"] - 2.0) < 0.01  # a box with itself peaks at its width
+```
+
+Example: `examples/convolution.py`. The prism looks make both signals and the output glow, the
+product lit where they overlap. Numerics (a sum on a fine grid, checked against box * box = a
+triangle, decay * decay = t e^-at and Gaussian widths adding) are in
+`phasor/domains/convolution_math.py`.
+- `dyn.StrangeAttractor(system="lorenz", sigma=10, rho=28, beta=8/3, seed=0, t_end=36,
+  progress=1, pos=(0, 0, 0), size=6)` traces a single three-dimensional trajectory. Use
+  `system="rossler"` or `"thomas"` for their classic parameter sets. The three named
+  coefficients customize Lorenz. The object ID and seed determine the starting point.
+  The solver uses a fixed step of 0.01 and `t_end` is in simulation time, from 0.01 to
+  120, rounded to the nearest step. The complete path is centered on `pos` with longest span `size`. Animate
+  `progress` from 0 to 1 and use an orbit camera to view its depth. The prism look colors
+  the stroke by simulation time. The inspector reports the simulated time at the head.
+
+```python
+from phasor import Scene, dyn
+
+s = Scene("lorenz", look="prism")
+s.use_camera("orbit", azimuth=-90, elevation=12, distance=11)
+s.add(dyn.StrangeAttractor(id="trajectory", progress=0))
+s.marker("begin", 0.0)
+s.marker("finish", 8.0)
+s.at("begin").trace("trajectory")
+s.at("begin").orbit(70, until="finish")
+```
+
+Example: `examples/strange_attractor.py`.
+
 ## Command line
 
 | Command | Status | Purpose |
 | --- | --- | --- |
-| `phasor doctor [--json] [--require A\|B\|C]` | M0 | Prove CUDA, NVRTC, OpenGL 4.3, encoders; print tier |
-| `phasor inspect SCENE [--t T] [--id ID] [--detail brief\|standard\|full]` | M1 | What is on screen at time t |
-| `phasor lint SCENE [--fix] [--strict] [--json] [--step S]` | M2 | Lint; exit 1 on errors (`--strict`: on warnings too). `--fix` applies suggested fixes and saves them |
-| `phasor storyboard SCENE [-o PNG] [--t T]... [--marks] [--json]` | M2 | Keyframe contact sheet plus what the inspector sees |
-| `phasor render SCENE [-o OUT] [--preset preview\|final\|4k] [--fps F] [--start S] [--end E] [--frame T] [--workers N]` | M3 | Video (`.mp4`; `.mov` is ProRes; a folder or `%05d.png` is a PNG sequence) or one PNG with `--frame`. `--workers`: render processes (default a quarter of the CPU threads, 1 to 4); the result is the same file as one process makes |
+| `phasor doctor [--json] [--require A\|B\|C]` | M0 | Prove CUDA, NVRTC, OpenGL 4.3, encoders and, without CUDA, the C++ compiler for CPU kernels (name, version, threads); print tier |
+| `phasor inspect SCENE [--t T] [--id ID] [--detail brief\|standard\|full] [--allow-scripts]` | M1 | What is on screen at time t |
+| `phasor lint SCENE [--fix] [--strict] [--json] [--step S] [--allow-scripts]` | M2 | Lint; exit 1 on errors (`--strict`: on warnings too). `--fix` applies suggested fixes and saves them |
+| `phasor storyboard SCENE [-o PNG] [--t T]... [--marks] [--json] [--allow-scripts]` | M2 | Keyframe contact sheet plus what the inspector sees |
+| `phasor render SCENE [-o OUT] [--preset preview\|final\|4k] [--fps F] [--start S] [--end E] [--frame T] [--workers N] [--threads T] [--allow-scripts]` | M3 | Video (`.mp4`; `.mov` is ProRes; a folder or `%05d.png` is a PNG sequence) or one PNG with `--frame`. `--workers`: render processes (default a quarter of the CPU threads, 1 to 4); the result is the same file as one process makes. `--threads`: CPU kernel threads per process without CUDA (default: the cores shared out, workers x threads <= cores) |
 | `phasor kit [FOLDER]` | kit | Set up or update a folder where an AI writes scenes (default `Documents/phasor`): `CLAUDE.md`, the AI docs, the examples sorted by kind, the `/scene` command, `TASTE.md`, and the phasor tools in `.mcp.json`. Your `TASTE.md`, `WISHLIST.md` and `scenes/` are never replaced |
 | `phasor bench [--width W] [--height H]` | M3 | ms per frame per kernel and peak VRAM; saved in `benchmarks/` |
-| `phasor bench --frames SCENE [--count N] [--preset P]` | GPU_SPEED.md | ms per final frame per stage (state, simulation, draw, gpu draw, readback, widen, blur sum, post, srgb, encode); saved in `benchmarks/` |
+| `phasor bench --frames SCENE [--count N] [--preset P] [--allow-scripts]` | GPU_SPEED.md | ms per final frame per stage (state, simulation, draw, gpu draw, readback, widen, blur sum, post, srgb, encode); saved in `benchmarks/` |
 | `phasor mcp [--root DIR] [--allow-scripts] [--attach]` | M5, M10 | MCP server; `--attach` edits the scene open in a running `phasor gui` |
 | `phasor gui [SCENE] [--root DIR] [--no-ai] [--install-shortcut]` | M10 | The desktop app (needs `uv sync --extra gui`): a start screen, or the editor on SCENE; also `phasor-gui`; a Manim script opens too |
-| `phasor web SCENE [-o PAGE.html] [--steps N]` | M12 | Bake a self-contained interactive web page from the scene's sliders |
+| `phasor web SCENE [-o PAGE.html] [--steps N] [--allow-scripts]` | M12 | Bake a self-contained interactive web page from the scene's sliders |
 | `phasor manim SCRIPT [--scene NAME] [-o OUT] [--code]` | M13 | Import a Manim Community scene as a phasor scene |
 | `phasor sketch SCENE STROKES.json [--t T] [--accept [K ...]] [--text K=TEXT]` | M11 | Turn drawn strokes into proposals; `--accept` applies them |
 
 `SCENE` is a `.phasor.json` document or a `.py` script that defines exactly one `Scene`.
+`--allow-scripts` (off by default) runs the Python modules a saved document names in
+`meta.modules` (its own object types and updaters); without it those objects are
+`missing_type` placeholder boxes. A `.py` scene is code you ran, so it needs no flag.
 
 ## The desktop app (`phasor-gui`)
 
@@ -1389,3 +1674,85 @@ assert report.tier in {"A", "B", "C"}
 
 Tiers: **A** CUDA kernels and GL 4.3. **B** GL 4.3 only. **C** no usable GL: the inspector
 runs in analytic mode, stills are unavailable.
+
+## Filtering: poles and zeros, response, signal and spectrum
+
+`from phasor import filt`. One digital filter, shown four ways. Every object takes the same
+filter parameters: `kind` (`lowpass`, `highpass`, `bandpass`, `bandstop`: Butterworth, with the
+half-power frequency `cutoff` in Hz and, for the bands, `cutoff2`; `notch`: zeros on the unit
+circle at `cutoff`, poles at `radius` times them; `custom`: `zeros`, `poles` as (re, im) pairs
+in conjugate pairs, and `gain`), `order`, and the sample rate `fs`. A cutoff outside 0 to `fs / 2`
+is refused when the object is added.
+
+- `filt.transfer_plane(id, pos=, scale=, size=, **filter)`: the `cx.DomainColoring` of H(z),
+  placed so the z plane sits at `pos` with `scale` world units per unit of z. In the prism look
+  its zeros and poles glow with the phase wrapped round them.
+- `filt.PoleZero(pos=, scale=, size=, probe=, **filter)`: the unit circle, zeros (rings) and poles
+  (crosses) with their multiplicity. Give it the plane's `pos`, `scale`, `size` and a higher
+  `z_index`. `probe` (0 to 1, DC to half the sample rate) puts a bright point on the circle at
+  that frequency; sweep it together with the response's `reveal`. Semantics list zeros, poles
+  (with multiplicity), `stable` and the largest pole radius.
+- `filt.FrequencyResponse(plot="gain" | "phase", scale="db" | "linear", reveal=, pos=,
+  extent=, **filter)`: the gain (dB with a floor, or linear) or the unwrapped phase from DC to
+  half the sample rate, the cutoffs marked, traced as `reveal` goes 0 -> 1. Semantics give the
+  gain and phase at each cutoff (-3.01 dB at a Butterworth cutoff; -n pi / 4 radians for an
+  order-n low-pass).
+- `filt.FilteredSignal(frequencies=, amplitudes=, duration=, progress=, **filter)`: a sum of
+  sinusoids before (faint) and after (bright) the filter, run from rest so the start-up shows.
+- `filt.FilteredSpectrum(frequencies=, amplitudes=, window=, samples=, fade=, envelope=,
+  **filter)`: the spectrum of the same tones through a window (the one `fourier.Spectrum` draws),
+  what the filter keeps solid and what it removes on top in a second color; `fade` 0 -> 1 fades the
+  removed part out. Semantics: `removed_energy_share` and each tone's gain.
+
+```python
+from phasor import Scene, filt
+
+low = dict(kind="lowpass", order=4, cutoff=1000.0, fs=8000.0)
+s = Scene("low_pass", passes=None)
+s.add(filt.transfer_plane("plane", **low))
+s.add(filt.PoleZero(id="poles", z_index=1, **low))
+s.add(filt.FrequencyResponse(id="gain", pos=(0, -4), **low))
+s.add(filt.FilteredSpectrum(id="spec", frequencies=(300.0, 2800.0), amplitudes=(1.0, 1.0),
+                            pos=(0, 4), **low))  # fmt: skip
+e = s.engine
+sem = {o["id"]: o["semantic"] for o in e.inspect(0.0)["objects"]}
+assert sem["poles"]["zeros"] == [[-1.0, 0.0, 4]] and len(sem["poles"]["poles"]) == 4
+assert abs(sem["gain"]["gain_db_at_cutoff"][0] + 3.0103) < 1e-3
+assert sem["spec"]["tones"][0]["kept"] > 0.99 > 0.01 > sem["spec"]["tones"][1]["kept"]
+```
+
+Example: `examples/filtering.py` (the poles, a probe round the circle with the gain and phase
+traced, a signal going in and out, the removed band fading). Numerics are in
+`phasor/domains/filters_math.py` (Butterworth by the bilinear transform with the cutoff
+pre-warped; checked against `scipy.signal`).
+
+**Spectrogram of any signal.** `fourier.Spectrogram` shows the short-time spectrum of one of
+three sources: a `.wav` file next to the scene (`wav="voice.wav"`, mixed down to mono; its length
+and sample rate are the file's own; the AI may name only files in its folder), a formula in `t`
+seconds (`signal="sin(tau * 440 * t)"` over `duration` at `fs`; at most 400000 samples), or,
+with neither, a chirp from `f0` to `f1`. `nwin`, `hop` (0: `nwin / 4`) and `window`
+(`rect`, `hann`, `hamming`, `blackman`) shape the frames; `fmax` crops the frequency axis
+(0: half the sample rate). `playhead` (0..1 of the duration, below 0 for none) draws a glowing
+line, in the `playhead` style role; track it or give it `expr("t / 6")` to sweep. The semantics
+report `source`, `duration`, `max_frequency`, `playhead_time` and `dominant_frequency`, the
+strongest frequency under the playhead. A missing file is the `missing_file` issue.
+
+```python
+from phasor import Scene, expr
+from phasor.domains.fourier import Spectrogram
+
+s = Scene("sweep", look="prism", passes=None)
+s.add(
+    Spectrogram(
+        id="sg",
+        signal="sin(tau * (200 * t + 400 * t * t))",
+        duration=1.0,
+        fs=4000.0,
+        playhead=expr("t / 4"),
+    )
+)
+s.marker("end", 4.0)
+sem = s.engine.inspect(2.0, id="sg")["objects"][0]["semantic"]
+assert sem["source"] == "formula" and abs(sem["dominant_frequency"] - 600) < 50
+# from a file next to the scene: Spectrogram(id="sg", wav="voice.wav", fmax=4000)
+```

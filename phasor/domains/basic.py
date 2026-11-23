@@ -63,7 +63,7 @@ class Dot(ObjectBase):
         p = self.me(state).params
         return {"kind": "point", "position": list(p.pos), "radius": p.r}
 
-    def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
+    def draw(self, ctx: DrawContext, state: SceneState) -> None:
         me = self.me(state)
         p = me.params
         right, up = self._basis(state)
@@ -148,7 +148,7 @@ class Line(ObjectBase):
             out["drawn"] = round(self.me(state).params.progress, 4)
         return out
 
-    def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
+    def draw(self, ctx: DrawContext, state: SceneState) -> None:
         me = self.me(state)
         cam = state.camera_for(me)
         pts = self._drawn(state)
@@ -746,3 +746,23 @@ class Counter(ObjectBase):
         _, _, _, h = self._box(state)
         ctx.text(self.text_of(p), np.asarray(p.pos), h, color=_rgba(me.style["color"], p.opacity),
                  anchor=p.anchor, glow=me.style["glow"])  # fmt: skip
+
+
+@register
+class Value(ObjectBase):
+    """A named number to animate, with no drawing (Manim's ``ValueTracker``, ADR 0005).
+    Animate ``value`` like any parameter; read it in an expression (``expr("speed.value")``),
+    in an updater (``look("speed").value``) or show it with a ``Counter``."""
+
+    type: ClassVar[str] = "value"
+    Life: ClassVar = frozenset()  # a number that means something: life never touches it
+
+    class Params(ParamsBase):
+        value: float = 0.0
+
+    def semantics(self, state: SceneState) -> dict[str, Any]:
+        # drawn 0: nothing shows, so no visual lint rule judges it
+        return {"kind": "value", "value": self.me(state).params.value, "drawn": 0.0}
+
+    def draw(self, ctx: DrawContext, state: SceneState) -> None:
+        """Nothing: a value is only a number."""

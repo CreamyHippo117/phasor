@@ -37,6 +37,8 @@ def build() -> str:
         lines.append(f"- `{name}`: {_first(inspect.getdoc(fn)) if fn else ''}")
     lines += ["", "## Object types (use these names in add_object)", ""]
     for name, t in ws.object_types()["types"].items():
+        if t.get("scene_local"):
+            continue  # only the types phasor ships
         params = ", ".join(p for p in t["params"] if p not in ("opacity", "dim", "z_index"))
         lines.append(f"- `{name}`: {params}")
     lines += [

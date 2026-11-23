@@ -17,7 +17,7 @@ from phasor.domains import fractal_math as fm
 from phasor.render import gpu
 from phasor.render.gpu import ComplexFunction, FunctionError, KernelError, Tile, plan_tiles
 from phasor.render.gpu.kernels.fractal import precision_for
-from phasor.render.gpu.registry import get, kernel, plane, registered
+from phasor.render.gpu.registry import active_backend, get, kernel, plane, registered
 from tests import cuda_emu
 
 FULL = Tile.full(64, 64)
@@ -207,8 +207,10 @@ def test_run_falls_back_to_the_reference_and_cuda_can_be_demanded():
     tile, params = CASES["escape"][0]
     want = get("escape").reference(tile, **params)
     np.testing.assert_array_equal(gpu.run("escape", tile, backend="reference", **params), want)
-    if gpu.default_gpu() is None:
-        np.testing.assert_array_equal(gpu.run("escape", tile, **params), want)
+    if gpu.default_gpu() is None:  # auto is the CPU backend when a compiler is found
+        auto = active_backend()
+        same = want if auto == "reference" else gpu.run("escape", tile, backend=auto, **params)
+        np.testing.assert_array_equal(gpu.run("escape", tile, **params), same)
         with pytest.raises(KernelError, match="no CUDA device"):
             gpu.run("escape", tile, backend="cuda", **params)
     with pytest.raises(ValueError, match="backend"):
