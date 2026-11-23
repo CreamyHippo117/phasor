@@ -142,6 +142,17 @@ def subpaths(verts: np.ndarray, codes: np.ndarray, scale: float = 1.0,
 
 
 @functools.cache
+def _ft_flags() -> tuple[int, int]:
+    """(load without hinting, default kerning) in matplotlib's font API: the enums from
+    3.10 (``LoadFlags``, ``Kerning``), the module constants before (3.8, 3.9)."""
+    from matplotlib import ft2font
+
+    if hasattr(ft2font, "LoadFlags") and hasattr(ft2font, "Kerning"):
+        return ft2font.LoadFlags.NO_HINTING, ft2font.Kerning.DEFAULT
+    return ft2font.LOAD_NO_HINTING, ft2font.KERNING_DEFAULT
+
+
+@functools.cache
 def _plain_font():
     """Aileron, the font Pillow bundles (``core.text`` draws plain text with it)."""
     from matplotlib.ft2font import FT2Font
@@ -153,8 +164,7 @@ def _plain_font():
 
 
 def _plain(text: str) -> Outline:
-    from matplotlib.ft2font import Kerning, LoadFlags
-
+    no_hinting, kerning = _ft_flags()
     font = _plain_font()
     ascent, descent = text_metrics._font(text_metrics._REF).getmetrics()
     line = text_metrics._REF / (ascent + descent)  # ems per line height, as Pillow sizes it
@@ -170,9 +180,9 @@ def _plain(text: str) -> Outline:
             break
         gi = font.get_char_index(ord(ch))
         if prev is not None and gi:
-            pen += font.get_kerning(prev, gi, Kerning.DEFAULT) / 64.0
+            pen += font.get_kerning(prev, gi, kerning) / 64.0
         try:
-            glyph = font.load_glyph(gi, flags=LoadFlags.NO_HINTING)  # 0: the missing glyph
+            glyph = font.load_glyph(gi, flags=no_hinting)  # 0: the missing glyph
         except RuntimeError:
             prev = None
             continue
@@ -206,9 +216,9 @@ def _plain(text: str) -> Outline:
 def _math(text: str) -> Outline:
     from matplotlib import rc_context
     from matplotlib.font_manager import FontProperties
-    from matplotlib.ft2font import LoadFlags
     from matplotlib.mathtext import MathTextParser
 
+    no_hinting, _ = _ft_flags()
     with rc_context({"mathtext.fontset": "cm"}):
         parsed = MathTextParser("path").parse(to_mathtext(text), dpi=72,
                                               prop=FontProperties(size=FONT_SCALE))  # fmt: skip
@@ -217,12 +227,17 @@ def _math(text: str) -> Outline:
     found: list[tuple[float, str, str, list[np.ndarray]]] = []
     total = len(parsed.rects) + sum(not (0 < g[2] < 0x110000 and chr(g[2]).isspace())
                                     for g in parsed.glyphs)  # fmt: skip
-    for font, fontsize, ccode, gi, ox, oy in parsed.glyphs:
+    for entry in parsed.glyphs:
         if len(found) >= MAX_GLYPHS:
             break
+        if len(entry) == 6:  # matplotlib 3.10+: (font, size, char, glyph index, x, y)
+            font, fontsize, ccode, gi, ox, oy = entry
+        else:  # 3.8, 3.9: (font, size, char, x, y); the glyph is the font's for the char
+            font, fontsize, ccode, ox, oy = entry
+            gi = font.get_char_index(ccode)
         font.clear()
         font.set_size(FONT_SCALE, 72)
-        font.load_glyph(gi, flags=LoadFlags.NO_HINTING)
+        font.load_glyph(gi, flags=no_hinting)
         verts, codes = font.get_path()
         s = fontsize / FONT_SCALE
         subs = subpaths(

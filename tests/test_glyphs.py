@@ -359,3 +359,44 @@ def test_a_composite_part_with_explicit_values_is_judged_but_a_glyph_is_not(pass
     assert ("off_palette", ("b.ring",)) in found and ("off_scale", ("b.ring",)) in found
     assert ("off_palette", ("word",)) in found  # the text, once
     assert not [ids for _, ids in found if ids and ids[0].startswith("word.")]
+
+
+def test_outlines_read_matplotlib_before_and_after_3_10(monkeypatch):
+    """Audit 17 #4: ``LoadFlags``/``Kerning`` and the 6-entry mathtext glyphs are new in
+    matplotlib 3.10; 3.8 and 3.9 (allowed by the pyproject floor) have module constants
+    and 5 entries (font, size, char, x, y). Both give the same outlines (also run for real
+    on 3.8.4 and 3.9.4)."""
+    import warnings
+
+    from matplotlib import ft2font
+    from matplotlib.mathtext import MathTextParser
+
+    texts = ("AVa, Wo", "$\\frac{a}{b} + \\sqrt{x}$")
+    gm.outline.cache_clear()
+    gm._ft_flags.cache_clear()
+    new = [gm.outline(t) for t in texts]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        old_flags = (ft2font.LOAD_NO_HINTING, ft2font.KERNING_DEFAULT)
+    monkeypatch.delattr(ft2font, "LoadFlags", raising=False)
+    monkeypatch.delattr(ft2font, "Kerning", raising=False)
+    parse = MathTextParser.parse
+
+    def five(self, *a, **k):  # the 3.9 layout: no glyph index
+        got = parse(self, *a, **k)
+        return got._replace(glyphs=[(f, s, c, x, y) for f, s, c, _, x, y in got.glyphs])
+
+    monkeypatch.setattr(MathTextParser, "parse", five)
+    gm.outline.cache_clear()
+    gm._ft_flags.cache_clear()
+    try:
+        assert gm._ft_flags() == old_flags
+        old = [gm.outline(t) for t in texts]
+    finally:
+        gm.outline.cache_clear()
+        gm._ft_flags.cache_clear()
+    for a, b in zip(new, old, strict=True):
+        assert a.total == b.total and len(a.glyphs) == len(b.glyphs)
+        for ga, gb in zip(a.glyphs, b.glyphs, strict=True):
+            assert ga.key == gb.key and ga.name == gb.name
+            assert all(np.array_equal(x, y) for x, y in zip(ga.subpaths, gb.subpaths, strict=True))
