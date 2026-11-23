@@ -15,7 +15,7 @@ returns one issue per problem with the times it was seen. Rules in this mileston
 | occluded_label | warning | 3D: a label partly hidden by something in front of it      |
 | missing_file | warning | a file an object reads (a mesh) is not in the scene's folder    |
 | missing_extra | warning | an object needs an optional package that is not installed (SVG) |
-| fill_crossing | warning | a filled path whose edges cross: the fill may not be what the rule says |
+| fill_crossing | warning | a filled path whose edges cross: its fill may not follow the rule |
 
 Under a perspective camera ``overlap`` only compares labels with labels and points with
 points: a label in front of a surface is fine, and one behind it is ``occluded_label``.

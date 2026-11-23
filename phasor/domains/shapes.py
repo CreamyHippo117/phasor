@@ -249,8 +249,9 @@ class Rectangle(PathBase):
 
     def facts(self, p):
         r = min(p.corner_radius, p.width / 2, p.height / 2)
+        area = p.width * p.height - (4 - math.pi) * r * r
         return {"center": _xy(p.pos), "width": p.width, "height": p.height,
-                "corner_radius": r, "area": round(p.width * p.height - (4 - math.pi) * r * r, 4)}  # fmt: skip
+                "corner_radius": r, "area": round(area, 4)}  # fmt: skip
 
     def shape_features(self, p):
         t = math.radians(p.rotation)

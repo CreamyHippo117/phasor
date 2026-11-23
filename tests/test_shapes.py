@@ -202,7 +202,9 @@ def _draw(e, oid, t=0.0):
 
 
 def _sem(e, oid, t=0.0):
-    return e.inspect(t, id=oid)["objects"][0]["semantic"]
+    """An object's semantics; a composite's part too (``inspect`` takes document ids)."""
+    (seen,) = [o for o in e.inspect(t)["objects"] if o["id"] == oid]
+    return seen["semantic"]
 
 
 def test_every_shape_says_what_it_is():
@@ -285,7 +287,10 @@ def test_dashes_do_not_crawl_as_a_path_is_traced():
     s.add(shapes.Circle(id="dotted", r=1, pos=(0, 2), style={"dash": "dotted"}))
     (dots,) = _draw(s.engine, "dotted")
     st = s.engine.state_at(0)
-    period = s.enginload_theme(e.document.meta.theme).values["dash"]["dotted"] * st.camera.units_per_height()
+    period = (
+        load_theme(s.engine.document.meta.theme).values["dash"]["dotted"]
+        * st.camera.units_per_height()
+    )
     assert dots["n"] == pytest.approx(13 * (2 * math.pi) / period, rel=0.1)  # 13 vertices a dot
 
 
@@ -334,3 +339,169 @@ def test_boolean_operations_make_plain_paths():
     assert _sem(s.engine, "exclusion")["subpaths"] == 2
     with pytest.raises(TypeError, match="shapes or paths"):
         shapes.union(a, object(), id="nope")  # type: ignore[arg-type]
+
+
+def test_a_boolean_without_shapely_says_how_to_install_it(monkeypatch):
+    import sys
+
+    monkeypatch.setitem(sys.modules, "shapely", None)
+    with pytest.raises(pm.MissingExtra, match="--extra boolean"):
+        shapes.union(shapes.Circle(id="a"), shapes.Circle(id="b", pos=(1, 0)), id="u")
+
+
+# ---------------------------------------------------------------- 3. lint and layout
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_a_filled_path_whose_edges_cross_is_fill_crossing(passes):
+    s = Scene("bow", passes=passes)
+    bow = [(-2, -1), (2, 1), (2, -1), (-2, 1)]
+    s.add(shapes.Path.through("bow", bow, closed=True, style={"fill": "soft"}))
+    (issue,) = [i for i in s.engine.lint() if i.code == "fill_crossing"]
+    assert issue.severity == "warning" and issue.ids == ("bow",) and issue.times
+    assert issue.fix == ()  # no certain fix
+    # the same outline unfilled, or a clean fill: nothing to say
+    s2 = Scene("ok", passes=passes)
+    s2.add(shapes.Path.through("bow", bow, closed=True))
+    s2.add(shapes.Circle(id="disc", pos=(0, 2), style={"fill": "soft"}))
+    assert s2.engine.lint() == []
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_an_svg_without_its_extra_or_its_file_draws_nothing_and_lint_says_why(
+    passes, monkeypatch, tmp_path
+):
+    import sys
+
+    (tmp_path / "logo.svg").write_text(SVG_TEXT, encoding="utf-8")
+    s = Scene("svg", passes=passes, base_dir=tmp_path)
+    s.add(shapes.SVG(id="logo", path="logo.svg"))
+    s.add(shapes.SVG(id="gone", path="gone.svg", pos=(3, 0)))
+    issues = {i.code: i for i in s.engine.lint()}
+    # an empty drawing never appears, so it is an orphan too
+    assert set(issues) == {"missing_file", "orphan"} and issues["missing_file"].ids == ("gone",)
+    assert issues["orphan"].ids == ("gone",)
+    assert _sem(s.engine, "gone")["missing_file"] == "gone.svg"
+    monkeypatch.setitem(sys.modules, "svgelements", None)
+    s2 = Scene("svg2", passes=passes, base_dir=tmp_path)
+    s2.add(shapes.SVG(id="logo", path="logo.svg"))
+    issues = {i.code: i for i in s2.engine.lint()}
+    assert set(issues) == {"missing_extra", "orphan"}
+    issue = issues["missing_extra"]
+    assert issue.ids == ("logo",) and issue.severity == "warning"
+    assert "--extra svg" in issue.fix_hint
+    assert _sem(s2.engine, "logo") == {"kind": "svg", "file": "logo.svg", "parts": [],
+                                       "missing_extra": "svg"}  # fmt: skip
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_a_label_beside_a_filled_disc_is_not_overlapping_it(passes):
+    """Without OpenGL a filled path is judged by its outline (feature ``region``), not its
+    box, so both modes agree that a label in the box's corner is clear of the disc."""
+    s = Scene("near", passes=passes)
+    s.add(shapes.Circle(id="disc", r=1.5, style={"fill": "solid"}, tags=["key"]))
+    s.add(shapes.Circle(id="mark", pos=(1.35, 1.35), r=0.1, style={"fill": "solid"},
+                        tags=["key"]))  # fmt: skip
+    assert [i for i in s.engine.lint() if i.code == "overlap"] == []
+    s.add(shapes.Circle(id="edge", pos=(1.06, 1.06), r=0.15, style={"fill": "solid"},
+                        tags=["key"]))  # fmt: skip
+    assert [i.ids for i in s.engine.lint() if i.code == "overlap"] == [("disc", "edge")]
+
+
+# ---------------------------------------------------------------- 4. SVG
+
+SVG_TEXT = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 50">
+  <circle id="Sun-1" cx="20" cy="20" r="10" fill="red"/>
+  <path id="frame" fill-rule="evenodd" d="M50 5 H90 V45 H50 Z M60 15 H80 V35 H60 Z"/>
+  <g transform="translate(10 0)"><path d="M0 45 L20 45" fill="none" stroke="blue"/></g>
+  <rect x="0" y="0" width="4" height="4"/>
+  <rect id="1st" x="0" y="0" width="4" height="4"/>
+  <image href="../outside.png" x="0" y="0" width="5" height="5"/>
+</svg>"""
+
+
+def test_an_svg_becomes_path_parts_named_from_its_ids(tmp_path):
+    pytest.importorskip("svgelements")
+    (tmp_path / "logo.svg").write_text(SVG_TEXT, encoding="utf-8")
+    s = Scene("svg", passes=None, base_dir=tmp_path)
+    s.add(shapes.SVG(id="logo", path="logo.svg", height=5.0, pos=(1, 1)))
+    e = s.engine
+    sem = _sem(e, "logo")
+    assert sem["parts"] == ["sun_1", "frame", "path", "rect", "rect_1st"]
+    st = e.state_at(0)
+    assert [o.type for o in st.objects if o.parent == "logo"] == ["path"] * 5
+    # 0.1 world units per SVG unit, the view box centered on pos, y up
+    sun = st["logo.sun_1"].impl.features(st)
+    assert np.allclose(sun["center"][:2], [1 + (20 - 50) * 0.1, 1 - (20 - 25) * 0.1], atol=0.02)
+    frame = _sem(e, "logo.frame")
+    assert frame["rule"] == "evenodd" and frame["area"] == pytest.approx(16 - 4, rel=1e-6)
+    line = _sem(e, "logo.path")  # the moved group's line: stroked, not filled
+    assert line["closed"] is False and line["length"] == pytest.approx(2.0)
+    assert st["logo.path"].params.fill_opacity == 0 and st["logo.path"].params.stroke_opacity == 1
+    assert st["logo.sun_1"].params.stroke_opacity == 0
+    assert st["logo.frame"].roles["fill"] == "solid"  # the SVG's style roles
+    assert e.lint() == []
+
+
+def test_an_svg_is_read_again_when_its_file_changes(tmp_path):
+    """Contract 3: the state follows the file. A composite builds its parts from it, so the
+    engine forgets the states it made from the old file."""
+    import os
+
+    pytest.importorskip("svgelements")
+    f = tmp_path / "logo.svg"
+    f.write_text(SVG_TEXT, encoding="utf-8")
+    s = Scene("svg", passes=None, base_dir=tmp_path)
+    s.add(shapes.SVG(id="logo", path="logo.svg"))
+    e = s.engine
+    assert len(_sem(e, "logo")["parts"]) == 5
+    before = e.state_at(0)["logo"].impl.world_bounds(e.state_at(0))
+    f.write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">'
+                 '<circle id="dot" cx="5" cy="5" r="1"/></svg>', encoding="utf-8")  # fmt: skip
+    st = os.stat(f)
+    os.utime(f, ns=(st.st_atime_ns, st.st_mtime_ns + 10**9))  # a clock that did not tick
+    assert _sem(e, "logo")["parts"] == ["dot"]
+    st = e.state_at(0)
+    assert st["logo"].impl.world_bounds(st) != before
+    assert [o.id for o in st.objects if o.parent == "logo"] == ["logo.dot"]
+
+
+def test_an_svg_reads_only_inside_the_scene_folder(tmp_path):
+    s = Scene("svg", passes=None, base_dir=tmp_path)
+    with pytest.raises(DocumentError, match="leaves the scene's folder"):
+        s.add(shapes.SVG(id="logo", path="../logo.svg"))
+    with pytest.raises(DocumentError, match="absolute"):
+        s.add(shapes.SVG(id="logo", path=str(tmp_path / "logo.svg")))
+
+
+def test_svg_part_names_are_valid_unique_and_stable():
+    from phasor.core.ids import is_valid_name
+    from phasor.domains.svg import part_names
+
+    shapes_ = [pm.SvgShape(i, t, (), "nonzero", True, False)
+               for i, t in [("A-b", "path"), ("a_b", "path"), ("", "circle"), ("", "circle"),
+                            ("9lives", "rect"), ("é", "path")]]  # fmt: skip
+    names = part_names(shapes_)
+    assert names == ["a_b", "a_b_2", "circle", "circle_2", "rect_9lives", "path"]
+    assert all(is_valid_name(n) for n in names) and names == part_names(shapes_)
+
+
+# ---------------------------------------------------------------- 5. pixels
+
+
+@pytest.mark.gl
+@pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
+def test_a_solid_fill_below_the_knee_comes_out_exactly_as_its_color():
+    """Bloom only from the emission target: a fill is plain paint, and a role below the
+    theme's knee tone-maps unchanged (CLAUDE.md beauty rules)."""
+    s = Scene("paint", look="none")
+    s.set("camera.height", 4)
+    s.add(shapes.Rectangle(id="card", width=6, height=3, stroke_opacity=0,
+                           style={"fill": "solid", "fill_color": "muted", "glow": "strong"}))  # fmt: skip
+    img = s.engine.still(0.0, (320, 180))
+    theme = load_theme(s.engine.document.meta.theme)
+    lin = np.asarray(theme.values["emphasis"]["muted"][:3])
+    assert lin.max() < theme.bloom["knee"]
+    srgb = np.where(lin <= 0.0031308, 12.92 * lin, 1.055 * lin ** (1 / 2.4) - 0.055)
+    centre = img[80:100, 150:170].reshape(-1, 3).astype(float)
+    assert np.abs(centre - srgb * 255).max() <= 1.5

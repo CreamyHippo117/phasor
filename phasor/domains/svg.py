@@ -115,8 +115,8 @@ class SVG(ObjectBase):
 
         me = self.me(state)
         p = me.params
-        out: dict[str, Any] = {"kind": "svg", "file": p.path,
-                               "parts": [o.id[len(self.id) + 1 :] for o in parts(state, self.id)]}  # fmt: skip
+        names = [o.id[len(self.id) + 1 :] for o in parts(state, self.id)]
+        out: dict[str, Any] = {"kind": "svg", "file": p.path, "parts": names}
         if not pm.extra_available("svgelements"):
             out["missing_extra"] = "svg"
         elif self.drawing(state) is None:

@@ -193,7 +193,6 @@ class PathBase(ObjectBase):
         subs = self.subpaths(p)
         if not subs:
             return
-        cam = state.camera_for(me)
         tol = self._tol(state)
         polys = self.flat(p, tol)
         alpha = self._fill_alpha(me)
