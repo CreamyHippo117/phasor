@@ -183,8 +183,8 @@ def _wav_header(path: str, mtime_ns: int, size: int):
 
     try:
         return wav_info(path)
-    except ValueError as e:
-        return str(e)
+    except Exception as e:  # a hostile file is lint bad_file, never a crash
+        return str(e) or type(e).__name__
 
 
 @register

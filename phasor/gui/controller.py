@@ -181,16 +181,18 @@ class Editor:
     def waveform(self, audio: str, bins: int = 200) -> list[float]:
         """Loudness of a narration audio file in ``bins`` steps (0 to 1, of full scale); an
         empty list when the file is missing or not 16-bit WAV."""
-        import wave
+        from phasor.time.narration import parse_wav
 
         path = Path(self.engine.base_dir) / audio
-        try:
-            with wave.open(str(path), "rb") as f:
-                if f.getsampwidth() != 2:
-                    return []
-                ch = f.getnchannels()
-                data = np.frombuffer(f.readframes(f.getnframes()), dtype="<i2")
-        except (OSError, wave.Error, EOFError):
+        try:  # the one WAV header walk: a hostile file is an empty list, never a crash
+            info = parse_wav(path)
+            if info.width != 2:
+                return []
+            ch = info.channels
+            with open(path, "rb") as f:
+                f.seek(info.offset)
+                data = np.frombuffer(f.read(info.frames * ch * 2), dtype="<i2")
+        except (OSError, ValueError):
             return []
         if ch > 1:
             data = data[::ch]

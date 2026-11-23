@@ -226,3 +226,118 @@ def test_only_the_rendered_window_is_mixed(tmp_path):
     assert np.abs(part.astype(int) - whole[int(1.5 * rate) : int(2.5 * rate)]).max() <= 1
     assert nar.mix_track(None, tmp_path, 3600.0, [nar.Clip("a.wav", 1.0)], start=10,
                          end=11) is None  # fmt: skip
+
+
+# ---------------------------------------------------------------- hostile headers (M20 audit)
+
+
+def riff(fmt_size: int, riff_len: int | None, data_len: int, data: bytes = b"",
+         rate: int = 48000) -> bytes:  # fmt: skip
+    """A hand-made 16-bit mono WAV whose sizes may lie."""
+    fmt = struct.pack("<HHIIHH", 1, 1, rate, rate * 2, 2, 16)
+    body = (b"WAVE" + b"fmt " + struct.pack("<I", fmt_size) + fmt + b"data"
+            + struct.pack("<I", data_len) + data)  # fmt: skip
+    return b"RIFF" + struct.pack("<I", len(body) if riff_len is None else riff_len) + body
+
+
+HOSTILE = {
+    "fmt_lie.wav": riff(0xFFFFFFF0, None, 200, b"\0" * 100),  # a fmt chunk past the file
+    "riff_short.wav": riff(16, 36, 192000, b"\x10\x00" * 96000),  # RIFF smaller than data
+    "no_data.wav": riff(16, None, 0)[:36],
+    "zero_rate.wav": riff(16, None, 4, b"\0" * 4, rate=0),
+}
+
+
+@pytest.mark.parametrize("name", sorted(HOSTILE))
+def test_a_hostile_header_is_bad_file_in_lint_inspect_and_every_mix(tmp_path, name):
+    """Blocker A: Python's ``wave`` raised a bare RuntimeError (a chunk seek) out of lint,
+    inspect and the mix; a RIFF size smaller than the data was dropped silently."""
+    (tmp_path / name).write_bytes(HOSTILE[name])
+    s = scene(tmp_path, length=3.0)
+    s.add(Sound(id="clip", path=name))
+    assert [i.code for i in s.engine.lint() if "clip" in i.ids] == ["bad_file"]
+    sem = s.engine.inspect(0.0, id="clip")["objects"][0]["semantic"]
+    assert sem["unreadable"] and "seconds" not in sem
+    for window in ((0.0, 3.0), (0.5, 1.5)):  # a whole render and ``--start 0.5``
+        problems: list[str] = []
+        assert s.engine.audio_track(problems, *window) is None
+        assert len(problems) == 1 and name in problems[0]
+    with pytest.raises(ValueError):
+        nar.read_wav(tmp_path / name)  # narration: a ValueError that says why
+
+
+def test_semantics_report_what_the_file_really_holds(tmp_path):
+    """A data chunk that claims 10416 s of a 500-frame file: the semantics say 500 frames."""
+    (tmp_path / "short.wav").write_bytes(riff(16, 0xFFFFFFFF, 0x7FFFFFF0, b"\x10\x00" * 500))
+    s = scene(tmp_path)
+    s.add(Sound(id="clip", path="short.wav"))
+    sem = s.engine.inspect(0.0, id="clip")["objects"][0]["semantic"]
+    assert sem["seconds"] == round(500 / 48000, 6)
+    assert s.engine.lint() == []
+
+
+def _stdlib(path: Path) -> tuple[np.ndarray, int]:
+    with wave.open(str(path), "rb") as w:
+        data = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16)
+        if w.getnchannels() > 1:
+            data = data.reshape(-1, w.getnchannels()).mean(axis=1).astype(np.int16)
+        return data, w.getframerate()
+
+
+def test_narration_reads_wavs_exactly_as_the_stdlib_did(tmp_path):
+    """The narration reader shares the header walk; its samples are the same as before."""
+    rng = np.random.default_rng(1)
+    mono = wav(tmp_path / "mono.wav", rng.integers(-32768, 32767, 999), rate=22050)
+    wav(tmp_path / "stereo.wav", rng.integers(-32768, 32767, (777, 2)), rate=4000, channels=2)
+    # an odd-sized LIST chunk (padded) before the data
+    raw = mono.read_bytes()
+    listed = raw[:36] + b"LIST" + struct.pack("<I", 5) + b"INFOx\0" + raw[36:]
+    listed = listed[:4] + struct.pack("<I", len(listed) - 8) + listed[8:]
+    (tmp_path / "list.wav").write_bytes(listed)
+    # WAVE_FORMAT_EXTENSIBLE with the PCM sub-format
+    ext = struct.pack("<HHIIHHHHI16s", 0xFFFE, 1, 22050, 44100, 2, 16, 22, 16, 4,
+                      b"\x01\x00\x00\x00\x00\x00\x10\x00\x80\x00\x00\xaa\x008\x9bq")  # fmt: skip
+    body = b"WAVEfmt " + struct.pack("<I", len(ext)) + ext + raw[36:]
+    (tmp_path / "ext.wav").write_bytes(b"RIFF" + struct.pack("<I", len(body)) + body)
+    for name in ("mono.wav", "stereo.wav", "list.wav", "ext.wav"):
+        mine, rate = nar.read_wav(tmp_path / name)
+        theirs, their_rate = _stdlib(tmp_path / name)
+        assert rate == their_rate and mine.dtype == np.int16
+        assert np.array_equal(mine, theirs), name
+
+
+def test_a_render_mixes_the_sound_before_any_frame(tmp_path, monkeypatch):
+    """A clip that cannot be mixed is said before the frames render, never after them."""
+    from types import SimpleNamespace
+
+    from phasor.render import job
+
+    order: list[str] = []
+
+    class Writer:
+        path, encoder = str(tmp_path / "v.mp4"), "test"
+
+        def write(self, frame):
+            order.append("frame")
+
+        def close(self):
+            pass
+
+    class FakeEngine:
+        document = SimpleNamespace(meta=SimpleNamespace(width=8, height=8, fps=10))
+        duration = 0.3  # three frames at 10 a second
+
+        def frame(self, t, size, output):
+            order.append("render")
+            return np.zeros((8, 8, 3), np.uint8)
+
+        def audio_track(self, problems, start, end):
+            order.append("sound")
+            problems.append("sound 'x.wav' left out: a test")
+            return None
+
+    monkeypatch.setattr(job, "run_doctor", lambda: SimpleNamespace(tier="A"))
+    monkeypatch.setattr(job, "open_writer", lambda *a, **k: Writer())
+    out = job.render_file(FakeEngine(), tmp_path / "v.mp4", preset="preview", fps=10)
+    assert order[0] == "sound" and order.count("render") == 3
+    assert "sound 'x.wav' left out: a test" in out["warnings"]

@@ -22,7 +22,6 @@ import wave
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from struct import error as struct_error
 
 import numpy as np
 
@@ -200,14 +199,18 @@ def block_of(narration: Narration, t: float) -> int | None:
 
 
 def read_wav(path: str | Path) -> tuple[np.ndarray, int]:
-    """Mono int16 samples and the sample rate. Stereo is mixed down."""
-    with wave.open(str(path), "rb") as w:
-        if w.getsampwidth() != 2:
-            raise ValueError(f"{path}: only 16-bit WAV is supported")
-        data = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16)
-        if w.getnchannels() > 1:
-            data = data.reshape(-1, w.getnchannels()).mean(axis=1).astype(np.int16)
-        return data, w.getframerate()
+    """Mono int16 samples and the sample rate (narration: any rate). Stereo is mixed down.
+    ``ValueError`` for a file that is not 16-bit PCM WAV (``parse_wav`` says why)."""
+    info = parse_wav(path)
+    if info.width != 2:
+        raise ValueError(f"{path}: only 16-bit WAV is supported")
+    with open(path, "rb") as f:
+        f.seek(info.offset)
+        raw = f.read(info.frames * info.channels * 2)
+    data = np.frombuffer(raw, dtype="<i2").astype(np.int16)
+    if info.channels > 1:
+        data = data.reshape(-1, info.channels).mean(axis=1).astype(np.int16)
+    return data, info.rate
 
 
 def write_wav(path: str | Path, samples: np.ndarray, rate: int) -> None:
@@ -234,22 +237,96 @@ class WavInfo:
     rate: int
     channels: int
     width: int  # bytes per sample: 1 (unsigned), 2, 3 or 4 (signed PCM)
-    frames: int
+    frames: int  # the frames the file really holds (never more than its header says)
+    offset: int = 0  # where the sample data starts in the file
 
     @property
     def seconds(self) -> float:
         return self.frames / self.rate
 
 
-def wav_info(path: str | Path) -> WavInfo:
-    """A WAV file's header, checked against the bounds above. ``ValueError`` (with the
-    reason) for anything that is not PCM WAV phasor can mix: not a WAV, compressed, a sample
-    rate, channel count or sample width out of range."""
+_WAVE_PCM, _WAVE_EXTENSIBLE = 1, 0xFFFE
+_PCM_GUID = b"\x01\x00\x00\x00\x00\x00\x10\x00\x80\x00\x00\xaa\x008\x9bq"
+_MAX_CHUNKS = 1024  # chunks walked before giving up on finding the data
+
+
+def parse_wav(path: str | Path) -> WavInfo:
+    """The one WAV reader's header walk (narration's ``read_wav`` and sound clips'
+    ``wav_info``/``read_sound`` share it): PCM (or extensible PCM, as Python's ``wave``)
+    format, any rate. Every size is checked against the file before anything is read, so a
+    lying or hostile header is a ``ValueError`` with the reason, never another exception and
+    never a large read. ``frames`` is what the file really holds. A RIFF size smaller than the
+    data it holds is refused (it could be cut anywhere); 0 and 0xFFFFFFFF (a stream whose
+    writer never came back to fill it in) mean "to the end of the file"."""
     try:
-        with wave.open(str(path), "rb") as w:
-            info = WavInfo(w.getframerate(), w.getnchannels(), w.getsampwidth(), w.getnframes())
-    except (wave.Error, EOFError, OSError, struct_error, ValueError) as e:
-        raise ValueError(f"not a PCM WAV file ({e or type(e).__name__})") from None
+        return _parse_wav(Path(path))
+    except ValueError:
+        raise
+    except Exception as e:  # anything else a hostile file provokes: said, not raised
+        raise ValueError(f"{type(e).__name__}: {e}") from None
+
+
+def _parse_wav(path: Path) -> WavInfo:
+    import os
+    import struct
+
+    with open(path, "rb") as f:
+        size = os.fstat(f.fileno()).st_size
+        head = f.read(12)
+        if len(head) < 12 or head[:4] != b"RIFF" or head[8:] != b"WAVE":
+            raise ValueError("not a RIFF WAVE file")
+        (riff,) = struct.unpack("<I", head[4:8])
+        known = riff not in (0, 0xFFFFFFFF)
+        fmt: tuple[int, int, int] | None = None
+        pos = 12
+        for _ in range(_MAX_CHUNKS):
+            if pos + 8 > size:
+                break
+            f.seek(pos)
+            name, n = struct.unpack("<4sI", f.read(8))
+            body = pos + 8
+            if name == b"fmt ":
+                if n < 16 or body + n > size:
+                    raise ValueError(f"its fmt chunk says {n} bytes; the file has "
+                                     f"{size - body} after it")  # fmt: skip
+                fmt = _fmt_chunk(f.read(min(n, 40)))
+            elif name == b"data":
+                if fmt is None:
+                    raise ValueError("a data chunk before the fmt chunk")
+                rate, channels, width = fmt
+                held = size - body if n == 0xFFFFFFFF else min(n, size - body)
+                if known and body + held > riff + 8 + 1:  # (+1: a pad byte miscounted)
+                    raise ValueError(f"its RIFF header says the file is {riff + 8} bytes, but "
+                                     f"its data runs to byte {body + held}")  # fmt: skip
+                return WavInfo(rate, channels, width, held // (width * channels), body)
+            pos = body + n + (n & 1)  # chunks are padded to an even size
+        raise ValueError("no fmt chunk and data chunk" if fmt is None else "no data chunk")
+
+
+def _fmt_chunk(raw: bytes) -> tuple[int, int, int]:
+    """(rate, channels, bytes per sample) of a ``fmt `` chunk; PCM only."""
+    import struct
+
+    tag, channels, rate, _, _, bits = struct.unpack("<HHIIHH", raw[:16])
+    if tag == _WAVE_EXTENSIBLE:
+        if len(raw) < 40 or raw[24:40] != _PCM_GUID:
+            raise ValueError("an extensible format that is not PCM")
+    elif tag != _WAVE_PCM:
+        raise ValueError(f"format {tag} (compressed): only PCM is read")
+    width = (bits + 7) // 8
+    if not width or not channels or not rate:
+        raise ValueError(f"{channels} channels of {bits}-bit samples at {rate} Hz")
+    return rate, channels, width
+
+
+def wav_info(path: str | Path) -> WavInfo:
+    """A WAV file's header (``parse_wav``), checked against the bounds above. ``ValueError``
+    (with the reason) for anything that is not PCM WAV phasor can mix: not a WAV, compressed,
+    a lying header, a sample rate, channel count or sample width out of range."""
+    try:
+        info = parse_wav(path)
+    except ValueError as e:
+        raise ValueError(f"not a PCM WAV file ({e})") from None
     if not SOUND_RATES[0] <= info.rate <= SOUND_RATES[1]:
         raise ValueError(f"a sample rate of {info.rate} Hz (from {SOUND_RATES[0]} to "
                          f"{SOUND_RATES[1]})")  # fmt: skip
@@ -262,34 +339,37 @@ def wav_info(path: str | Path) -> WavInfo:
 
 def read_sound(path: str | Path, max_frames: int = MAX_CLIP_FRAMES,
                skip: int = 0) -> tuple[np.ndarray, int]:  # fmt: skip
-    """A WAV clip as mono float32 in -1..1 and its rate: at most ``max_frames`` frames (and
-    never more than ``MAX_CLIP_FRAMES``) after the first ``skip``, read a chunk at a time and
-    never more than the file holds, so a lying header or a huge file costs no more than what
-    is mixed. ``ValueError`` for a file it cannot read."""
-    import os
-
+    """A WAV clip as mono float32 in -1..1 and its rate: at most ``max_frames`` frames of the
+    first ``MAX_CLIP_FRAMES`` after the first ``skip``, read a chunk at a time and never more
+    than the file holds, so a lying header or a huge file costs no more than what is read.
+    ``ValueError`` for a file it cannot read."""
     info = wav_info(path)
+    return _frames(path, info, max(0, int(skip)), max(0, int(max_frames))), info.rate
+
+
+def _frames(path: str | Path, info: WavInfo, skip: int, count: int) -> np.ndarray:
+    """Frames ``skip`` to ``skip + count`` of the clip (cut at ``MAX_CLIP_FRAMES`` and at what
+    the file holds) as mono float32."""
+    want = max(0, min(count, info.frames - skip, MAX_CLIP_FRAMES - skip))
     frame = info.width * info.channels
-    held = os.path.getsize(path) // frame  # what the file can hold, whatever its header says
-    skip = max(0, int(skip))
-    want = max(0, min(int(max_frames), info.frames - skip, held - skip, MAX_CLIP_FRAMES))
     chunks: list[np.ndarray] = []
-    got = 0
     try:
-        with wave.open(str(path), "rb") as w:
-            if want and skip:
-                w.setpos(skip)
+        with open(path, "rb") as f:
+            f.seek(info.offset + skip * frame)
+            got = 0
             while got < want:
-                raw = w.readframes(min(_CHUNK, want - got))
+                raw = f.read(min(_CHUNK, want - got) * frame)
                 n = len(raw) // frame
                 if n == 0:
                     break
                 chunks.append(_pcm(raw[: n * frame], info))
                 got += n
-    except (wave.Error, EOFError, OSError, struct_error) as e:
-        raise ValueError(f"not a PCM WAV file ({e or type(e).__name__})") from None
-    out = np.concatenate(chunks) if chunks else np.zeros(0, np.float32)
-    return out.astype(np.float32, copy=False), info.rate
+    except OSError as e:
+        raise ValueError(f"cannot be read ({e})") from None
+    if not chunks:
+        return np.zeros(0, np.float32)
+    out = np.concatenate(chunks) if len(chunks) > 1 else chunks[0]
+    return out.astype(np.float32, copy=False)
 
 
 def _pcm(raw: bytes, info: WavInfo) -> np.ndarray:
@@ -374,7 +454,7 @@ def mix_track(
             skip = int((max(lo - c.start, 0.0)) * info.rate)
             span = clip_end - max(c.start, lo)
             x, r = read_sound(file, int(np.ceil(span * info.rate)) + 1, skip)
-        except ValueError as e:
+        except Exception as e:  # whatever a hostile file provokes: left out, said
             if problems is not None:
                 problems.append(f"sound {c.path!r} left out: {e}")
             continue

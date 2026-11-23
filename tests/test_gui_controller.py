@@ -320,6 +320,11 @@ def test_the_timeline_has_narration_blocks_and_a_waveform(tmp_path):
         len(wf) == 50 and max(wf) == pytest.approx(32000 / 32768, abs=0.01) and wf[0] < wf[-1]
     )  # it swells
     assert e.waveform("missing.wav", 10) == []
+    # a fmt chunk that claims 4 GB (Python's wave raised RuntimeError): no waveform, no crash
+    from tests.test_sound import HOSTILE
+
+    (tmp_path / "liar.wav").write_bytes(HOSTILE["fmt_lie.wav"])
+    assert e.waveform("liar.wav", 10) == []
 
 
 def test_ai_and_your_edits_are_one_activity_feed(ed, tmp_path):

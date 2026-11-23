@@ -89,9 +89,15 @@ def render_file(
     start = start or 0.0
     end = engine.duration if end is None else end
     count = max(1, round((end - start) * fps))
+    times = [start + k / fps for k in range(count)]
+    # The sound first: a clip that cannot be mixed is said before any frame is rendered,
+    # never after the last one.
+    problems: list[str] = []
+    sound = out.suffix in (".mp4", ".mov")
+    track = engine.audio_track(problems, start, start + count / fps) if sound else None
+    warnings.extend(problems)
     # The encoder runs on its own thread: frame k is encoded while frame k+1 renders.
     # "encode" then times only the hand-over (and any wait for a slow encoder).
-    times = [start + k / fps for k in range(count)]
     if frame_source is None:
         frames = (render_frame(engine, t, fps, size, shutter, blur_samples) for t in times)
     else:
@@ -110,10 +116,6 @@ def render_file(
         frames.close()  # a frame source stops its workers
     with stage("encode"):  # the frames still queued
         writer.close()
-    problems: list[str] = []
-    sound = out.suffix in (".mp4", ".mov")
-    track = engine.audio_track(problems, start, start + count / fps) if sound else None
-    warnings.extend(problems)
     sound = track is not None
     if sound:
         samples, rate = track
