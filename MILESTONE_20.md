@@ -7,6 +7,8 @@ ValueTracker and an updater, `always_redraw`, `add_sound`, a morph, a color anim
 number line, imports with no warning, and real Manim CE agrees on its clock, places, colors
 and camera** (`tests/manim_real`, row `manim_camera_tour` below).
 
+**Gate (2026-11-23): MILESTONE 20: DONE** on Linux, after an independent audit (2 blockers, 5 should-fix items, all fixed with tests; real Manim 0.22.1: 11 of 11 scenes pass). Windows CI on the Milestone 20 head: only the 4 known failures (1778 passed). Open and not claimed: the Windows and macOS full passes (`pc_tasks/10_manim_real.md`, `11_platforms_after_20.md`), CUDA, listening to the audio, Ubuntu CI on the final tree, and the owner's text-size decision.
+
 Status: **built; independent audit done 2026-11-23, its findings fixed (see "Audit");
 focused gates green on Linux; real Manim compared here.** Windows, macOS and CUDA untested
 (`pc_tasks/10_manim_real.md`, `pc_tasks/11_platforms_after_20.md`).
