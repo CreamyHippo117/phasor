@@ -377,7 +377,7 @@ The AI handles structure, math and timing; the engine and your gallery hold the 
 **Themes (`style/themes/*.toml`)**
 
 - A theme defines everything visual: palette, background, type scale, stroke weights, glow levels, spacing unit, easing defaults, lighting rig, post-processing.
-- Scenes and AI patches name style roles by default. Explicit values are allowed beside them (owner, 2026-11-23, Milestone 18; amends an earlier "roles only, `raw_style` lint error" rule that was never built): a color key may hold `"#rrggbb"` (sRGB, decoded to linear once) or linear RGBA, a text size or stroke width a size in world units, and `meta.background` a scene's own background. Glow, surface and colormap keys take roles only. The document stores a role or a value at each key (schema 9); taste stays checked by the aesthetic rules `off_palette` and `off_scale`, and `polish(snap=True)` snaps a value to the nearest role, only when asked.
+- Scenes and AI patches name style roles by default. Explicit values are allowed beside them (owner, 2026-11-23, Milestone 18; amends an earlier "roles only, `raw_style` lint error" rule that was never built): a color key may hold `"#rrggbb"` (sRGB, decoded to linear once) or linear RGBA, a text size or stroke width a size in world units (positive, at most 1e6), and `meta.background` a scene's own opaque background. Glow, surface and colormap keys take roles only. The document stores a role or a value at each key (schema 9); taste stays checked by the aesthetic rules `off_palette` and `off_scale`, and `polish(snap=True)` snaps a value to the nearest role, only when asked.
 
 | Role group | Roles |
 | --- | --- |

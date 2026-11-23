@@ -15,7 +15,7 @@ fixed** (see "Audit" below).
 
 | Area | Where | What |
 | --- | --- | --- |
-| Document | `core/schema.py`, `core/migrate.py`, `core/patch.py` | schema 9. A style value is a role name, or an explicit value: a color (`"#rrggbb"`, `"#rgb"`, `"#rrggbbaa"`, stored upper case; or linear RGBA, 3 or 4 numbers in 0..1, stored as 4) or a size (a positive number of world units, stored as float). Bools, NaN, infinities, out-of-range colors and bad hex are refused. `meta.background` (a color or None: the theme's). `ObjectSpec.style`, `Overrides.styles` and `SetStyle.role` take the wider value. Migration 8 to 9 adds `meta.background: None`; an old document reads the same |
+| Document | `core/schema.py`, `core/migrate.py`, `core/patch.py` | schema 9. A style value is a role name, or an explicit value: a color (`"#rrggbb"`, `"#rgb"`, `"#rrggbbaa"`, stored upper case; or linear RGBA, 3 or 4 numbers in 0..1, stored as 4) or a size (a positive number of world units, at most `MAX_SIZE` = 1e6, stored as float). Bools, NaN, infinities, ints too large for a float, out-of-range colors and bad hex are refused. `meta.background` (an opaque color, alpha 1, or None: the theme's). `ObjectSpec.style`, `Overrides.styles` and `SetStyle.role` take the wider value. Migration 8 to 9 adds `meta.background: None`; an old document reads the same |
 | Resolution | `style/explicit.py`, `time/compile.py` | which groups take which explicit value (`emphasis`: color; `text`, `stroke`: size; glow, surface, colormap: roles only, `bad_role` otherwise). A hex color is sRGB-decoded to linear once, when the document compiles (contract 4); a tuple is linear already. A world size is turned into the share of the frame height that every `draw` already multiplies back by `units_per_height`, in `evaluate` (pure: document and t), through the camera of the object's layer at its `pos`; composite parts the same way. `roles[key]` holds the value the scene typed, for lint and the UI. No draw code changed |
 | Background | `time/compile.py`, `render/passes.py` | `SceneState.background` is the scene's or the theme's. The field cache key now includes the background (Fractal, cloud and image fields fill empty parts with it; the renderer is shared between scenes) |
 | Looks | `style/looks.py` | a typed color wins over the look: `Look.fill` adds no `hue_along` or colormap to an object whose color is explicit (in the prism look a typed red line was drawn as a white-hot spectrum before this). Roles get the look as before (prism_primes golden unchanged) |
@@ -30,7 +30,7 @@ fixed** (see "Audit" below).
 
 ## Verification (2026-11-23, Linux, llvmpipe, no CUDA)
 
-- `tests/test_style_freedom.py` (25 tests, written before or with the code): canonical
+- `tests/test_style_freedom.py` (25 tests at first, plus 5 test functions from the audit; written before or with the code): canonical
   storage and refusals; migration 8 to 9 (an old document reads the same, roles and
   background); save/load byte-identical with explicit values; hex decoded to linear once,
   tuple kept; world sizes at two zooms and in 3D at `pos`; roles-only groups refused;
@@ -56,8 +56,9 @@ fixed** (see "Audit" below).
    by one `setdefault`.
 2. **`Overrides` stays version 1.** Its `styles` values widened; no field was added, so an
    old overrides file reads the same. An older phasor reading a new overrides file with a
-   hex color fails with `bad_role` (its schema took any string as a role name), not with a
-   validation error or a version message.
+   hex color fails with `bad_role` (its schema took any string as a role name; what the
+   audit observed); a size or a linear tuple most likely fails its str-only schema with a
+   validation error. Neither is a version message.
 3. **`set_style` keeps its field name `role`** for an explicit value too (one op, one field;
    the document's `style` mixes them the same way). A separate `value` field would have been
    a second way to do one thing.
@@ -105,9 +106,10 @@ fixed** (see "Audit" below).
 | 6 stale AI-facing text | `mcp/server.py` INSTRUCTIONS and `docs/ai/PITFALLS.md` (`bad_role`); the skill copy and `kit/CLAUDE.md` were already current; `llms.txt` regenerated (unchanged: it does not carry the instructions) | `test_mcp.py`, `test_docs.py` |
 | notes | Deviation 2 reworded; Deviation 13 (overlay units); `style_color` reuses the schema's `check_color`; the inspector uses `explicit.is_role`; `Workspace.polish` requires a real bool for `snap`; a direct palette test for the importer (the reverb golden does not guard colors) | `test_the_polish_tool_takes_snap_only_as_a_real_bool`, `test_manim_colors_import_as_these_values` |
 
-The audit's repro scripts were the failing evidence for findings 1-5; the importer and GUI
-tests were run red before their fixes, the schema tests for 2, 3 and 5 were written in the
-same session as the fix, just after it.
+Tests-first, exactly: the first importer case (`font_size_0`, run with `-x`) and the GUI
+test were seen failing before their fixes. The other importer tests (flip, alpha, the guard,
+the command) and the schema tests for 2, 3 and 5 were written alongside their fixes; the
+auditor's repro scripts (`/tmp/claude-0/audit18/`) were the failing evidence for those.
 
 ## Deferred
 
@@ -150,6 +152,10 @@ Windows, macOS and CUDA: not run. GPU goldens from the owner's PC: none yet for
 | exit demo | pass (Linux) | `examples/own_colors.py`: renders (golden looked at; exact pixels for hex, linear and background); `off_palette` x2 and `off_scale` x1 warn; critique offers the snaps; `polish()` and `autofix` change no typed value; `polish(snap=True)` snaps; a version 8 document migrates and reads the same |
 | contract audit | done, **not independent** | by the authoring model (no subagent available). Every write goes through `Engine.apply`; `state_at` stays a function of (document, t) (world sizes go through the camera evaluated at t); hex decoded to linear once, linear to the end; `style/explicit.py` imports only core and style; no new object members; one way to set a style value (`set_style`). No contract text changed |
 | docs and artifacts | pass | API.md section with a running block, MCP.md, llms.txt regenerated, example + catalog entry, golden, this file |
+
+An independent robustness audit followed (2026-11-23, see "Audit"); its findings are fixed
+and the focused suites rerun green (376 passed, 2 skipped, plus test_mcp, test_docs,
+test_core, test_time, test_pycode). It was not an independent contract audit.
 
 **MILESTONE 18: NOT DONE: the full suite was not run, and the contract audit was not
 independent.** On Linux, the exit conditions are met.
