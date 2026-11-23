@@ -66,9 +66,9 @@ all. Type names are lower case: `dot`, `line`, `text`, `domain_coloring`, `fract
 - `pos` is world space: x = Re, y = Im, z up; `[x, y]` means z = 0.
 - `style` takes role names from `object_types().roles`. A color key (group `emphasis`), a
   text size (`text`) or a stroke width (`stroke`) may instead hold an explicit value:
-  `"#58C4DD"` (sRGB), linear `[r, g, b, a]` (0..1), or a size in world units. Glow, surface
-  and colormap keys take roles only. Prefer roles; `set_meta` `background` sets the
-  scene's own background color.
+  `"#58C4DD"` (sRGB), linear `[r, g, b, a]` (0..1), or a size in world units (positive, at
+  most 1e6; frame heights on an overlay). Glow, surface and colormap keys take roles only.
+  Prefer roles; `set_meta` `background` sets the scene's own background color (opaque).
 - Never reuse the id of a removed object (`id_retired`); pick a new meaningful name.
 
 Constraints say where things go; the layout solver does the arithmetic:

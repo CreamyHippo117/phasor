@@ -335,3 +335,101 @@ def test_exit_demo_golden_storyboard():
     e = _own_colors()
     sheet = e.storyboard([1.0, 1.8, 2.6, 3.4], size=(320, 180))["image"]
     _golden("own_colors", sheet, e.pass_runner().renderer_class())
+
+
+# ---------------------------------------------------------------- audit (2026-11-23)
+
+
+def _paths(key: str, value, tmp_path):
+    """Every way a style value reaches a document: name -> call; a call returns True when
+    the value was accepted, and returns False or raises a ValueError when it was refused."""
+    from phasor.workspace.tools import Workspace
+
+    typ = {"color": "dot", "stroke": "line", "size": "text"}[key]
+    params = {"line": {"points": [[0, 0], [1, 0]]}, "text": {"text": "hi"}, "dot": {}}[typ]
+    obj = {"id": "a", "type": typ, "params": params, "style": {key: value}}
+
+    def spec():
+        ObjectSpec.model_validate(obj)
+        return True
+
+    def apply():
+        return _scene().engine.apply({"op": "add_object", "object": obj}).ok
+
+    def set_style():
+        s = _scene()
+        s.engine.apply({"op": "add_object", "object": {**obj, "style": {}}}).raise_for_errors()
+        return s.engine.apply({"op": "set_style", "id": "a", "key": key, "role": value}).ok
+
+    def mcp():
+        w = Workspace(tmp_path)
+        w.scene_new(title="x", look="none")
+        return w.scene_edit({"op": "add_object", "object": obj})["ok"]
+
+    return {"spec": spec, "apply": apply, "set_style": set_style, "mcp": mcp}
+
+
+def _refused(call) -> bool:
+    try:
+        return not call()
+    except ValueError:  # ValidationError, DocumentError and ToolError are ValueErrors
+        return True
+
+
+@pytest.mark.parametrize("key", ["color", "stroke", "size"])
+@pytest.mark.parametrize("value", [10**400, [10**400, 0, 0], 1e308, 1e7], ids=str)
+def test_huge_numbers_are_refused_cleanly_on_every_path(key, value, tmp_path):
+    """An int too large for a float escaped as OverflowError (pydantic wraps only
+    ValueError); a size of 1e308 was accepted and crashed the renderer (round(inf))."""
+    for name, call in _paths(key, value, tmp_path).items():
+        assert _refused(call), name
+
+
+def test_the_size_bound_is_finite_and_sizes_up_to_it_are_taken():
+    from phasor.core.schema import MAX_SIZE
+    from phasor.style import explicit
+
+    assert math.isfinite(MAX_SIZE) and explicit.MAX_SIZE == MAX_SIZE
+    assert ObjectSpec(id="t", type="text", style={"size": MAX_SIZE}).style["size"] == MAX_SIZE
+    with pytest.raises(ValueError, match="at most"):
+        ObjectSpec(id="t", type="text", style={"size": MAX_SIZE * 1.001})
+
+
+def test_huge_numbers_in_a_background_or_a_file_on_disk_are_validation_errors(tmp_path):
+    from phasor.core import io
+
+    with pytest.raises(ValueError):
+        Meta(title="x", background=[10**400, 0, 0])
+    big = "1" + "0" * 400
+    for style in (f'{{"size": {big}}}', f'{{"color": [{big}, 0, 0]}}', '{"size": 1e308}'):
+        p = tmp_path / "big.phasor.json"
+        obj = f'{{"id": "t", "type": "text", "params": {{"text": "hi"}}, "style": {style}}}'
+        p.write_text(f'{{"schema_version": 9, "meta": {{"title": "x"}}, "objects": [{obj}]}}',
+                     encoding="utf-8")  # fmt: skip
+        with pytest.raises(DocumentError):
+            io.load_document(p)
+    p.write_text(f'{{"schema_version": 9, "meta": {{"title": "x", "background": [{big}, 0, 0]}}'
+                 "}", encoding="utf-8")  # fmt: skip
+    with pytest.raises(DocumentError):
+        io.load_document(p)
+
+
+def test_a_background_is_opaque_and_alpha_below_one_is_refused(tmp_path):
+    from phasor.workspace.tools import Workspace
+
+    assert Meta(title="x", background="#101820FF").background == "#101820FF"
+    assert Meta(title="x", background=(0.1, 0.2, 0.3, 1.0)).background == (0.1, 0.2, 0.3, 1.0)
+    w = Workspace(tmp_path)
+    w.scene_new(title="x", look="none")
+    for bad in ("#00000000", "#FFFFFF80", "#FF000000", (0.1, 0.2, 0.3, 0.5)):
+        with pytest.raises(ValueError, match="opaque"):
+            Meta(title="x", background=bad)
+        with pytest.raises(ValueError):
+            _scene(background=bad)
+        r = _scene().engine.apply({"op": "set_meta", "field": "background", "value": bad})
+        assert not r.ok
+        r = w.scene_edit({"op": "set_meta", "field": "background", "value": bad})
+        assert not r["ok"] and w.engine.document.meta.background is None
+    # an object's color keeps its alpha (it is drawn over something)
+    assert ObjectSpec(id="a", type="dot", style={"color": "#FFFFFF80"}).style["color"] == (
+        "#FFFFFF80")  # fmt: skip

@@ -844,13 +844,14 @@ explicit value; roles stay the default and the AI-friendly path.
 | style key group | explicit value |
 | --- | --- |
 | `emphasis` (`color`, `accent`, ...) | `"#58C4DD"` (sRGB, decoded to linear once) or linear `(r, g, b, a)` in 0..1 |
-| `text` (`size`) | text height in world units |
-| `stroke` (`stroke`, `leader`) | stroke width in world units |
+| `text` (`size`) | text height in world units (positive, at most 1e6) |
+| `stroke` (`stroke`, `leader`) | stroke width in world units (positive, at most 1e6) |
 | `glow`, `surface`, `colormap` | roles only (`bad_role` otherwise) |
 
 `Scene(..., background="#101820")` (or `set_meta` `background`) gives the scene its own
-background; None is the theme's. A world size is exact in 2D at any zoom; in 3D it is exact at
-the object's `pos`. Taste stays checked: `lint(aesthetic=True)` warns with `off_palette`
+background; None is the theme's. A background is opaque: a color with alpha below 1 is
+refused. A world size is exact in 2D at any zoom; in 3D it is exact at the object's `pos`; on
+an overlay-layer object its units are frame heights (the overlay's units). Taste stays checked: `lint(aesthetic=True)` warns with `off_palette`
 when an explicit color is farther than the theme's `[lint] off_palette` (an OKLab distance)
 from every palette role, or a background from the theme's, and with `off_scale` when a size
 is more than `[lint] off_scale` times off the nearest text or stroke role. Neither has a
@@ -1318,11 +1319,11 @@ render. It runs your code: only import scripts you trust.
 | --- | --- |
 | `Scene`, `MovingCameraScene`, `ThreeDScene` (`set_camera_orientation`, ambient rotation) | `construct` runs; 3D uses the orbit camera |
 | `Dot`, `Circle`, `Square`, `Rectangle`, `Triangle`, `Polygon`, `RegularPolygon`, `Line`, `Arrow`, `Vector`, `ParametricFunction` | `dot`, `line` (closed outlines), `arrow` |
-| `Text`, `Tex`, `MathTex` | `text`; math is typeset (`$...$`); a `font_size` the script sets is an explicit size (48 is the `math` role's height), and `scale` scales it |
+| `Text`, `Tex`, `MathTex` | `text`; math is typeset (`$...$`); a `font_size` the script sets is an explicit size (48 is the `math` role's height), and `scale` scales it (a negative factor is a flip) |
 | `Axes`, `NumberPlane`, `axes.plot`, `c2p` | `axes` and a sampled `line` |
 | `VGroup` and `shift`, `move_to`, `next_to`, `to_edge`, `to_corner`, `scale`, `rotate`, `arrange`, `align_to` | positions are computed as Manim would |
 | `Create`, `Uncreate`, `Write`, `FadeIn`, `FadeOut`, `GrowFromCenter`, `Transform`, `ReplacementTransform`, `Rotate`, `Indicate`, `MoveToTarget`, `AnimationGroup`, `LaggedStart`, `Succession`, `.animate` | tracks on `progress`, `opacity`, `pos`, `r`, `points` |
-| Colors the script sets (`RED`, `"#58C4DD"`), `stroke_width` / `set_stroke(width=)`, `camera.background_color` | explicit style values (a hex color; a width in world units, 4 is the `regular` role's); a class's own default color is the nearest role. `lint(aesthetic=True)` says which are off the theme (`off_palette`, `off_scale`) |
+| Colors the script sets (`RED`, `"#58C4DD"`), `stroke_width` / `set_stroke(width=)`, `camera.background_color` | explicit style values (a hex color; a width in world units, 4 is the `regular` role's); a class's own default color is the nearest role. A width or font size of 0 or less (`stroke_width=0` on a filled shape), or one too large, keeps the role, with a warning; a background's alpha is dropped, with a warning (a background is opaque). `lint(aesthetic=True)` says which are off the theme (`off_palette`, `off_scale`) |
 
 What does not: fills (drawn as outlines), updaters and `always_redraw` (baked at their first
 look), `ValueTracker` animations, color changes during an animation (instant), `Transform`

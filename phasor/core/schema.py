@@ -82,9 +82,24 @@ def _check_updater(ref: str) -> str:
     return f"{_check_module(module)}:{name}"
 
 
-def _check_color(v: Any) -> str | tuple[float, float, float, float]:
+# The largest explicit size (text height, stroke width) a document takes, in world units. Any
+# finite bound keeps the drawing code's pixel arithmetic finite (1e308 made it round(inf));
+# this one is far above any frame a scene uses (the default frame is 8 units high).
+MAX_SIZE = 1e6
+
+
+def _float(x: Any) -> float:
+    """``float(x)`` for a validator: an int too large for a float is a ValueError (pydantic
+    reports it), not the OverflowError ``float`` raises."""
+    try:
+        return float(x)
+    except OverflowError:
+        raise ValueError(f"{str(x)[:20]}... is too large a number") from None
+
+
+def check_color(v: Any) -> str | tuple[float, float, float, float]:
     """An explicit color: ``"#rrggbb"`` / ``"#rgb"`` / ``"#rrggbbaa"`` (sRGB, stored upper
-    case) or linear RGBA (3 or 4 numbers in 0..1, stored as 4)."""
+    case) or linear RGBA (3 or 4 numbers in 0..1, stored as 4). Raises ``ValueError``."""
     if isinstance(v, str):
         h = v[1:] if v.startswith("#") else ""
         if len(h) == 3:
@@ -94,30 +109,49 @@ def _check_color(v: Any) -> str | tuple[float, float, float, float]:
         return "#" + h.upper()
     numbers = isinstance(v, list | tuple) and len(v) in (3, 4)
     if numbers and all(isinstance(x, int | float) and not isinstance(x, bool) for x in v):
-        rgba = tuple(float(x) for x in (*v, 1.0)[:4])
+        rgba = tuple(_float(x) for x in (*v, 1.0)[:4])
         if all(math.isfinite(x) and 0.0 <= x <= 1.0 for x in rgba):
             return rgba  # type: ignore[return-value]
     raise ValueError(f"bad color {v!r}: linear RGBA takes 3 or 4 numbers in 0..1 (paint; "
                      "light comes from the glow roles)")  # fmt: skip
 
 
+def color_alpha(c: str | tuple[float, ...]) -> float:
+    """The alpha of a color ``check_color`` returned."""
+    if isinstance(c, str):
+        return int(c[7:9], 16) / 255 if len(c) == 9 else 1.0
+    return float(c[3])
+
+
+def _check_background(v: Any) -> str | tuple[float, float, float, float]:
+    """A scene background: a color (``check_color``) that is opaque. Nothing is behind the
+    background, so an alpha below 1 would be dropped silently: it is refused instead."""
+    c = check_color(v)
+    if color_alpha(c) < 1.0:
+        raise ValueError(f"bad background {v!r}: a background is opaque (alpha 1); write "
+                         "'#rrggbb' or linear (r, g, b)")  # fmt: skip
+    return c
+
+
 def _check_style_value(v: Any) -> str | float | tuple[float, ...]:
     """A style value: a role name (the default, AI-friendly path), or an explicit value
-    (M18): a color (see ``_check_color``) or a size in world units (a positive number).
-    Which keys take which is checked against the theme's role groups when compiling."""
+    (M18): a color (see ``check_color``) or a size in world units (a positive number, at
+    most ``MAX_SIZE``). Which keys take which is checked against the theme's role groups
+    when compiling."""
     if isinstance(v, str) and not v.startswith("#"):
         return v
     if isinstance(v, int | float) and not isinstance(v, bool):
-        f = float(v)
-        if not (math.isfinite(f) and f > 0):
-            raise ValueError(f"bad size {v!r}: a size is a positive number of world units")
+        f = _float(v)
+        if not (math.isfinite(f) and 0 < f <= MAX_SIZE):
+            raise ValueError(f"bad size {v!r}: a size is a positive number of world units, "
+                             f"at most {MAX_SIZE:g}")  # fmt: skip
         return f
-    return _check_color(v)
+    return check_color(v)
 
 
 # A style value: a role name or an explicit value (hex or linear RGBA color, world size).
 StyleValue = Annotated[Any, PlainValidator(_check_style_value)]
-ColorValue = Annotated[Any, PlainValidator(_check_color)]
+BackgroundValue = Annotated[Any, PlainValidator(_check_background)]
 
 
 class ObjectSpec(Model):
@@ -222,9 +256,9 @@ class Meta(Model):
     # The colors run along strokes (a colormap role: "spectrum", the prism rainbow, or
     # "moonlight", "gold", "glacier", "borealis", "rose"); None: the theme's own.
     palette: str | None = None
-    # A background color of the scene's own (hex sRGB or linear RGBA, M18); None: the
-    # theme's. Lint ``off_palette`` (aesthetic) says when it is far from the theme's.
-    background: ColorValue | None = None
+    # A background color of the scene's own (hex sRGB or linear RGBA, opaque, M18); None:
+    # the theme's. Lint ``off_palette`` (aesthetic) says when it is far from the theme's.
+    background: BackgroundValue | None = None
     # Code the scene needs (ADR 0005): the scene script or ``*.types.py`` files in its folder
     # that define its own object types and updaters. Loaded only where scripts may run.
     modules: tuple[Annotated[str, PlainValidator(_check_module)], ...] = ()
