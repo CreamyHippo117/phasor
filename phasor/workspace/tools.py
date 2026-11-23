@@ -19,7 +19,7 @@ from phasor.core import io
 from phasor.core.diff import diff_documents
 from phasor.core.ids import file_stem
 from phasor.core.issues import DocumentError, Issue
-from phasor.core.objects import get_type, registered_types
+from phasor.core.objects import get_type, is_builtin, registered_types
 from phasor.core.schema import Document, Meta
 from phasor.engine import Engine
 from phasor.scene import Scene, load
@@ -212,7 +212,7 @@ class Workspace:
             self.path = p.with_suffix(io.DOC_SUFFIX)
             self.import_notes = result.warnings
             return {**self.summary(), "imported_from": "manim", "notes": result.warnings}
-        self._engine = self._guard(lambda: load(p))
+        self._engine = self._guard(lambda: load(p, allow_scripts=self.allow_scripts))
         self.path = p
         return self.summary()
 
@@ -421,7 +421,8 @@ class Workspace:
             if path is None or not path.exists():
                 raise ToolError("nothing saved yet")
             # The saved document as it takes effect: base plus its overrides, like "current".
-            return self._guard(lambda: Engine.open(path, passes=None).document)
+            allow = self.allow_scripts
+            return self._guard(lambda: Engine.open(path, passes=None, allow_scripts=allow).document)
         if ref in self.engine.checkpoints():
             return self.engine.checkpoint_document(ref)
         raise ToolError(
@@ -672,6 +673,8 @@ class Workspace:
             }
             out[name] = {"params": _jsonable(params), "style": style,
                          "presets": sorted(getattr(cls, "Presets", {}))}  # fmt: skip
+            if not is_builtin(cls):  # defined by a scene or a package, not shipped (ADR 0005)
+                out[name]["scene_local"] = True
         return {
             "types": out,
             "roles": {g: list(r) for g, r in ROLE_GROUPS.items()},

@@ -78,11 +78,8 @@ def _rect(p) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
 
 class _Plane(ObjectBase):
-    """What both kernel-drawn rectangles share."""
-
-    def world_bounds(self, state: SceneState) -> Bounds:
-        corner, r, u = _rect(self.me(state).params)
-        return Bounds.of_points([corner, corner + r + u])
+    """What both kernel-drawn rectangles share. Their bounds are the box of the one ``field``
+    quad they draw, derived from the recorded draw (ADR 0005, ``core/record.py``)."""
 
     def _inside(self, state: SceneState, points: tuple[complex, ...]) -> np.ndarray:
         p = self.me(state).params
@@ -191,7 +188,7 @@ class DomainColoring(_Plane):
             "poles": [[round(float(x), 6), round(float(y), 6)] for x, y, _ in feats["poles"]],
         }
 
-    def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
+    def draw(self, ctx: DrawContext, state: SceneState) -> None:
         me = self.me(state)
         p = me.params
         corner, r, u = _rect(p)
@@ -343,7 +340,7 @@ class Fractal(_Plane):
             out["precision"] = _precision(p.kind, p.size[1] * k, 1080)
         return out
 
-    def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
+    def draw(self, ctx: DrawContext, state: SceneState) -> None:
         me = self.me(state)
         p = me.params
         corner, r, u = _rect(p)

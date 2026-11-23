@@ -235,3 +235,9 @@ over, on a server started with `--allow-scripts`.
 - **A second `reveal` of the same object is refused** (`bad_segment`): its fade already
   exists. Change the first one's marker instead, or `undo`.
 - **`.py` scenes are code.** The server refuses them unless started with `--allow-scripts`.
+- **A scene may bring its own types** (ADR 0005: `meta.modules`, a scene script or
+  `*.types.py` next to it). `object_types` marks those `"scene_local": true`. On a server
+  without `--allow-scripts` their code does not run: lint `missing_type`, the object draws as
+  a placeholder box, and its parameters and overrides stay as they are. Edit its parameters
+  as usual; do not remove it to make the issue go away. A `value` object is a number with
+  nothing to draw: animate its `value` and read it with `{"expr": "speed.value"}`.

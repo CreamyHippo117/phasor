@@ -37,6 +37,7 @@ s.set("camera.height", 6)  # world units visible top to bottom
 | `cx.RiemannSurface` | `kind` (`sqrt`/`cbrt`/`log`), `pos` (branch point), `radius`, `height` (`re`/`im`), `scale`, `rings`, `segments` | `colormap` (colormap, phase), `material` (surface, solid) |
 | `cloud.PointCloud` | `source` (`roots`/`attractor`/`buddhabrot`/`points`), `degree` and `coefficients` (roots), `kind` (`clifford`/`dejong`/`lorenz`) and `constants` (attractor), `max_iter` (buddhabrot), `points` and `values` (given directly), `count` (at most), `seed`, `pos` (centre and origin of the points), `size` (the rectangle it is seen in), `scale`, `point_size` (splat radius, px), `exposure`, `hue`, `color_by` (`source`/`phase`), `twist` (roots: turns of the last coefficient, animatable), `twinkle` (0-1, life), `white` (0-1, white-hot dense parts) | `colormap` (colormap, spectrum), `glow` (glow, none) |
 
+| `Value` | `value` (a named number to animate; nothing is drawn: see "Your own types") | none |
 | `Image` | `path` (a PNG/JPEG/WebP file, relative to the scene's folder), `pos` (centre), `width`, `height` (0: keep the picture's shape), `frame` (an outline of light) | `glow` (glow, none: bright parts shine), `frame` (emphasis, muted), `stroke` (stroke, hairline). Presets `plain`, `framed`, `luminous`. A missing file is issue `missing_file`; transparent parts show the background; an AI may only name files inside its folder |
 | `Text` | `text` (`$...$` is typeset math), `pos`, `anchor` (`center`/`left`/`right`), `leader`, `leader_on` (set by layout) | `color` (emphasis, primary), `size` (text, label), `leader` (stroke, hairline) |
 | `Equation` | `parts` (math or text, set on one baseline), `colors` (an emphasis role per part), `pos` | `color` (emphasis, primary), `size` (text, math), `glow` (glow, none) |
@@ -108,6 +109,122 @@ final look blooms it. Plain paint (`glow: none`) never blooms, and colors below 
 Operators `+ - * / ** %`, indexing `dot.pos[0]`, constants `pi tau e`, functions
 `sin cos tan exp log sqrt floor ceil abs min max clamp lerp vec length normalize dot midpoint`.
 Scalars broadcast over vectors. A cycle is an error.
+
+## Your own types, composites and updaters (ADR 0005)
+
+A type needs two members: `Params` and `draw(ctx, state)`. Its `world_bounds`, `features`
+and `semantics` are worked out from what `draw` emits (`core/record.py`), so the inspector,
+layout and lint know it like any shipped type:
+
+```python
+import numpy as np
+from typing import ClassVar
+
+from phasor import Dot, Line, Scene, Text, Value
+from phasor.core.objects import ObjectBase, ParamsBase, register
+from phasor.core.values import Vec3
+
+
+@register
+class Kite(ObjectBase):
+    type: ClassVar[str] = "doc_kite"
+    Style: ClassVar = {"color": ("emphasis", "highlight")}
+
+    class Params(ParamsBase):
+        pos: Vec3 = (0.0, 0.0, 0.0)
+        r: float = 0.4
+
+    def draw(self, ctx, state):
+        (x, y, z), r = self.me(state).params.pos, self.me(state).params.r
+        pts = np.array([[x, y + r, z], [x + r / 2, y, z], [x, y - r, z], [x - r / 2, y, z]])
+        ctx.triangles(pts, np.array([[0, 1, 2], [0, 2, 3]]), color=self.me(state).style["color"])
+
+
+k = Scene("kites")
+k.add(Kite(id="kite", pos=(1, 0)))
+seen = k.engine.inspect(0.0, id="kite", detail="full")["objects"][0]
+assert seen["semantic"]["type"] == "doc_kite" and "top" in seen["features"]
+```
+
+- Derived `world_bounds`: the box of everything drawn (a `field`'s quad corners; its pixels
+  are never computed). Derived `features`: `center` and the box's compass points (`top`,
+  `top_right`, ...), plus `start`, `end` and `curve` when the object draws one stroke through
+  `domains/strokes.py`. Derived `semantics`: `{"type", "params"}`.
+- Write any of the three yourself when you know more (a pole, a tip, `"kind": "point"`);
+  yours wins. `draw(self, ctx, state, pass_)` still works: the pass is optional.
+- A recording is cached per (type, id, parameters, style, camera); `draw` may read other
+  objects (`state["other"]`), and the recording is made again when they change.
+
+**Composites.** `build(self, state)` instead of `draw` returns other objects. Each part
+gets the id `<composite>.<name>`, is drawn and inspected as itself (`"part_of"` in the
+inspector), fades with its composite and may not reuse a retired id. The composite's bounds
+are the union of its parts', its features are the box's plus each part's as `<part>.<name>`:
+
+```python
+@register
+class Signpost(ObjectBase):
+    type: ClassVar[str] = "doc_signpost"
+
+    class Params(ParamsBase):
+        pos: Vec3 = (0.0, 0.0, 0.0)
+
+    def build(self, state):
+        x, y, z = self.me(state).params.pos
+        return [
+            Line(id="post", points=[(x, y, z), (x, y + 1.2, z)]),
+            Kite(id="sign", pos=(x, y + 1.2, z), r=0.3),
+        ]
+
+
+k.add(Signpost(id="post", pos=(-2, -1)))
+state = k.engine.state_at(0.0)
+assert [o.id for o in state.objects if o.parent == "post"] == ["post.post", "post.sign"]
+```
+
+Constraints name document objects; a part is placed through its composite.
+
+**Updaters.** `obj.always(fn)` with `fn(t, look) -> {param: value}` keeps parameters set
+from time and other objects. `look("id")` gives that object's parameters at `t`
+(`look("dot").pos`); each one read is an edge in the parameter graph, so a cycle is an
+error, and a read the updater did not make at t = 0 is an error too (read the same things at
+every t). It must be pure: `lint(strict=True)` calls every updater again, in another order,
+and reports `impure_updater` when answers differ (threshold: the theme's `[lint] impure`).
+Something that needs the previous frame is a `Simulation`. `look` sees parameters before
+living motion: tag an object `exact` when something must sit on it exactly.
+
+**`Value`** is a named number to animate with no drawing (Manim's `ValueTracker`): read
+it in an expression (`expr("speed.value")`), in an updater, or show it with a `Counter`.
+
+```python no-run
+# no-run: an updater must be defined in a file in the scene's folder (the document names
+# it), and this page's text is not one. examples/open_contract.py runs the same thing, and
+# tests/test_open_contract.py checks it.
+def above(t, look):
+    x, y, z = look("ball").pos
+    return {"pos": (x, y + 0.5, z)}
+
+
+def roll(t, look):
+    return {"pos": (look("speed").value * t, 0.0, 0.0)}
+
+
+k.add(Value(id="speed", value=0.5))
+k.add(Dot(id="ball", r=0.15, tags=["exact"]).always(roll))
+k.add(Text(id="ball.label", text="ball").always(above))
+assert k.engine.state_at(2.0)["ball.label"].params.pos == (1.0, 0.5, 0.0)
+assert not [i for i in k.engine.lint(strict=True) if i.code == "impure_updater"]
+```
+
+**Where the code lives.** A type or updater defined in the scene script, or in a
+`*.types.py` file next to it, is named by the document: `meta.modules` lists the file and
+`always` lists `"<file>:<function>"`. Opening the document loads those modules only where
+scripts may run (`phasor.load("scene.py")`, `Engine(..., allow_scripts=True)`, the MCP
+server's `--allow-scripts`, and `--allow-scripts` on `phasor inspect`, `lint`, `storyboard`,
+`render`, `web`, `bench --frames` and `sketch`; render workers inherit it), only from inside the scene's folder. A missing, refused or
+broken module is lint `missing_type`: the object draws as a placeholder box and keeps its
+parameters and overrides (saving it changes nothing). An updater defined anywhere else (a
+notebook cell, a prompt) is refused: the document could not find it again. Types shipped in phasor still get an entry here, an
+example and a storyboard test; scene-local types do not need them.
 
 ## Narrate: words drive time
 
@@ -465,8 +582,26 @@ assert field.shape == (90, 160) and (field == -1).any()  # -1 marks points in th
 - `gpu.render(name, width, height_px, supersample=1, backend="auto", **params)` runs tile by
   tile within the VRAM budget and returns a NumPy array. `gpu.run(name, tile, **params)`
   runs one tile and returns a CuPy array on CUDA.
-- With no CUDA the NumPy reference runs instead: same result, slower. `backend="cuda"`
-  demands the GPU; `backend="reference"` forces NumPy.
+- With no CUDA (tier B) the same CUDA source is compiled for the CPU by g++ or clang++
+  (found at run time, cached in the user cache) and runs on every core; with no compiler
+  either, the NumPy reference runs: same picture, slower. `backend="cuda"` demands the GPU,
+  `backend="cpu"` the CPU backend, `backend="reference"` forces NumPy. `gpu.run(...,
+  threads=n)`, `phasor.render.cpu.set_threads(n)` or `PHASOR_THREADS` set the CPU threads
+  (default: every core); results are the same bits at any thread count.
+
+```python
+import numpy as np
+
+from phasor.render import cpu, gpu
+from phasor.render.gpu.registry import active_backend
+
+print(active_backend(), cpu.threads(), cpu.find_compiler())  # e.g. "cpu", 4, g++ 13.3
+if cpu.find_compiler() is not None:
+    lit = np.ones((4, 8, 4), dtype=np.float32)
+    one = gpu.run("vignette", gpu.Tile.full(8, 4), image=lit, backend="cpu", threads=1)
+    all_cores = gpu.run("vignette", gpu.Tile.full(8, 4), image=lit, backend="cpu")
+    assert np.array_equal(one, all_cores)  # the thread count never changes a result
+```
 - `escape` picks float64 by itself once `height` is under 1e-5.
 - Formulas may use `z`, `i`, `pi`, `e`, numbers, `+ - * / **` and
   `exp log sqrt sin cos tan sinh cosh tanh conj abs`. Anything else is a `FunctionError`.
@@ -1436,21 +1571,24 @@ Example: `examples/strange_attractor.py`.
 
 | Command | Status | Purpose |
 | --- | --- | --- |
-| `phasor doctor [--json] [--require A\|B\|C]` | M0 | Prove CUDA, NVRTC, OpenGL 4.3, encoders; print tier |
-| `phasor inspect SCENE [--t T] [--id ID] [--detail brief\|standard\|full]` | M1 | What is on screen at time t |
-| `phasor lint SCENE [--fix] [--strict] [--json] [--step S]` | M2 | Lint; exit 1 on errors (`--strict`: on warnings too). `--fix` applies suggested fixes and saves them |
-| `phasor storyboard SCENE [-o PNG] [--t T]... [--marks] [--json]` | M2 | Keyframe contact sheet plus what the inspector sees |
-| `phasor render SCENE [-o OUT] [--preset preview\|final\|4k] [--fps F] [--start S] [--end E] [--frame T] [--workers N]` | M3 | Video (`.mp4`; `.mov` is ProRes; a folder or `%05d.png` is a PNG sequence) or one PNG with `--frame`. `--workers`: render processes (default a quarter of the CPU threads, 1 to 4); the result is the same file as one process makes |
+| `phasor doctor [--json] [--require A\|B\|C]` | M0 | Prove CUDA, NVRTC, OpenGL 4.3, encoders and, without CUDA, the C++ compiler for CPU kernels (name, version, threads); print tier |
+| `phasor inspect SCENE [--t T] [--id ID] [--detail brief\|standard\|full] [--allow-scripts]` | M1 | What is on screen at time t |
+| `phasor lint SCENE [--fix] [--strict] [--json] [--step S] [--allow-scripts]` | M2 | Lint; exit 1 on errors (`--strict`: on warnings too). `--fix` applies suggested fixes and saves them |
+| `phasor storyboard SCENE [-o PNG] [--t T]... [--marks] [--json] [--allow-scripts]` | M2 | Keyframe contact sheet plus what the inspector sees |
+| `phasor render SCENE [-o OUT] [--preset preview\|final\|4k] [--fps F] [--start S] [--end E] [--frame T] [--workers N] [--threads T] [--allow-scripts]` | M3 | Video (`.mp4`; `.mov` is ProRes; a folder or `%05d.png` is a PNG sequence) or one PNG with `--frame`. `--workers`: render processes (default a quarter of the CPU threads, 1 to 4); the result is the same file as one process makes. `--threads`: CPU kernel threads per process without CUDA (default: the cores shared out, workers x threads <= cores) |
 | `phasor kit [FOLDER]` | kit | Set up or update a folder where an AI writes scenes (default `Documents/phasor`): `CLAUDE.md`, the AI docs, the examples sorted by kind, the `/scene` command, `TASTE.md`, and the phasor tools in `.mcp.json`. Your `TASTE.md`, `WISHLIST.md` and `scenes/` are never replaced |
 | `phasor bench [--width W] [--height H]` | M3 | ms per frame per kernel and peak VRAM; saved in `benchmarks/` |
-| `phasor bench --frames SCENE [--count N] [--preset P]` | GPU_SPEED.md | ms per final frame per stage (state, simulation, draw, gpu draw, readback, widen, blur sum, post, srgb, encode); saved in `benchmarks/` |
+| `phasor bench --frames SCENE [--count N] [--preset P] [--allow-scripts]` | GPU_SPEED.md | ms per final frame per stage (state, simulation, draw, gpu draw, readback, widen, blur sum, post, srgb, encode); saved in `benchmarks/` |
 | `phasor mcp [--root DIR] [--allow-scripts] [--attach]` | M5, M10 | MCP server; `--attach` edits the scene open in a running `phasor gui` |
 | `phasor gui [SCENE] [--root DIR] [--no-ai] [--install-shortcut]` | M10 | The desktop app (needs `uv sync --extra gui`): a start screen, or the editor on SCENE; also `phasor-gui`; a Manim script opens too |
-| `phasor web SCENE [-o PAGE.html] [--steps N]` | M12 | Bake a self-contained interactive web page from the scene's sliders |
+| `phasor web SCENE [-o PAGE.html] [--steps N] [--allow-scripts]` | M12 | Bake a self-contained interactive web page from the scene's sliders |
 | `phasor manim SCRIPT [--scene NAME] [-o OUT] [--code]` | M13 | Import a Manim Community scene as a phasor scene |
 | `phasor sketch SCENE STROKES.json [--t T] [--accept [K ...]] [--text K=TEXT]` | M11 | Turn drawn strokes into proposals; `--accept` applies them |
 
 `SCENE` is a `.phasor.json` document or a `.py` script that defines exactly one `Scene`.
+`--allow-scripts` (off by default) runs the Python modules a saved document names in
+`meta.modules` (its own object types and updaters); without it those objects are
+`missing_type` placeholder boxes. A `.py` scene is code you ran, so it needs no flag.
 
 ## The desktop app (`phasor-gui`)
 

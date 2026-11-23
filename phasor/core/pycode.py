@@ -2,16 +2,18 @@
 
 ``document_to_python(doc)`` writes a script that, run, builds the same scene: objects with
 their parameters, style roles and tags, the camera, markers, animations (as ``at(...).to``),
-constraints and controls. Narration blocks are not reproduced (their audio belongs to the
-voice module): a comment says so. Running the result and diffing it with the document gives
-no differences except narration (``tests/test_pycode.py``).
+constraints and controls. An object of a type defined in the scene's folder, or with
+updaters, is written as the document's own ``add_object`` op (ADR 0005). Narration blocks
+are not reproduced (their audio belongs to the voice module): a comment says so. Running the
+result and diffing it with the document gives no differences except narration
+(``tests/test_pycode.py``).
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from phasor.core.objects import registered_types
+from phasor.core.objects import is_builtin, registered_types
 from phasor.core.schema import Document, ExprSpec, MarkerRef
 
 # class module -> how the generated script reaches it
@@ -60,6 +62,11 @@ def _class_ref(type_name: str, uses: set[str]) -> str:
     return f"{alias}.{cls.__name__}"
 
 
+def _op(name: str, **fields: Any) -> str:
+    """A patch op as a Python literal (from its JSON form: lists, True, None)."""
+    return repr({"op": name, **fields})
+
+
 def _time(t: float | MarkerRef) -> tuple[str, float]:
     """(when, offset) arguments for ``s.at``."""
     if isinstance(t, MarkerRef):
@@ -92,7 +99,16 @@ def document_to_python(doc: Document) -> str:
         for k, v in cam.params.items():
             lines.append(f"s.set('{cam.id}.{k}', {_lit(v)})")
     lines.append("")
+    if m.modules:  # code in the scene's folder (ADR 0005): its types and updaters
+        modules = _op("set_meta", field="modules", value=list(m.modules))
+        lines.append(f"s.engine.apply({modules}, origin='script')")
     for o in doc.objects:
+        cls = registered_types().get(o.type)
+        if o.always or cls is None or not is_builtin(cls):
+            # A scene-local type or an updater has no import: the document's own op says it.
+            obj = o.model_dump(mode="json")
+            lines.append(f"s.engine.apply({_op('add_object', object=obj)}, origin='script')")
+            continue
         ref = _class_ref(o.type, uses)
         parts = [f"id={o.id!r}"] + [f"{k}={_lit(v)}" for k, v in o.params.items()]
         if o.style:

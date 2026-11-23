@@ -26,6 +26,8 @@ class ObjectState:
     tags: tuple[str, ...]
     layer: str
     impl: SceneObject = field(repr=False, compare=False)  # stateless behavior for this object
+    # The composite that built this object (ADR 0005), or None for an object of the document.
+    parent: str | None = None
 
 
 @dataclass(frozen=True)

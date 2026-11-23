@@ -55,6 +55,14 @@ def render_frame(engine: Any, t: float, fps: float, size: tuple[int, int], shutt
     return engine.frame(t, size, output="srgb8", **cut)
 
 
+def _tier_b_warning(report: Any) -> str:
+    cpu = report.get("cpu_kernels")
+    if cpu is not None and cpu.ok:
+        return (f"no CUDA device (tier B): kernels run on the CPU "
+                f"({cpu.data['threads']} threads), slower than on a card")  # fmt: skip
+    return "no CUDA device (tier B) and no C++ compiler: kernels run on NumPy, so this is slow"
+
+
 def render_file(
     engine: Any,
     out: str | Path,
@@ -78,12 +86,11 @@ def render_file(
     size = (w or meta.width, h or meta.height)
     fps = fps or preset_fps or meta.fps
     with stage("setup"):  # once per render, not per frame
-        tier = cached_report().tier
+        report = cached_report()
+        tier = report.tier
     if tier == "C":
         raise RuntimeError("no OpenGL here (tier C); nothing can be rendered")
-    warnings = (
-        ["no CUDA device (tier B): kernels run on NumPy, so this is slow"] if tier == "B" else []
-    )
+    warnings = [_tier_b_warning(report)] if tier == "B" else []
     out = Path(out)
     p_shutter, p_samples = BLUR[preset]
     field_scale = FIELD_SCALE.get(preset, 1.0)

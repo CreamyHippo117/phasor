@@ -14,7 +14,7 @@ import pytest
 import phasor
 from phasor import Scene
 from phasor.core.diff import diff_documents
-from phasor.core.objects import registered_types
+from phasor.core.objects import is_builtin, registered_types
 from phasor.core.texconv import split_math, to_latex, to_mathtext
 from tests.conftest import gl_available
 
@@ -23,7 +23,9 @@ gl = [pytest.mark.gl, pytest.mark.skipif(not gl_available(), reason="needs OpenG
 
 for _m in phasor._MODULES:  # register every domain's types
     getattr(phasor, _m)
-TYPES = sorted(registered_types())
+TYPES = sorted(n for n, c in registered_types().items() if is_builtin(c))  # not test types
+# Types with nothing to draw and so no style roles (ADR 0005): a named number.
+DRAWLESS = {"value"}
 # The fewest parameters each type needs (the rest have defaults).
 REQUIRED = {
     "domain_coloring": {"function": "1/(z**2+1)"},
@@ -94,13 +96,13 @@ def _examples(include_slow: bool = False):
 
 
 def test_every_type_keeps_the_object_contract_and_has_docs():
-    from phasor.core.objects import REQUIRED_MEMBERS
+    from phasor.core.objects import CONTRACT_MEMBERS
 
     api = (ROOT / "docs" / "ai" / "API.md").read_text(encoding="utf-8")
     for name in TYPES:
         cls = registered_types()[name]
-        assert all(hasattr(cls, m) for m in REQUIRED_MEMBERS), name
-        assert cls.Style, f"{name}: no style roles"
+        assert all(hasattr(cls, m) for m in CONTRACT_MEMBERS), name
+        assert cls.Style or name in DRAWLESS, f"{name}: no style roles"
         assert cls.__name__ in api, f"{name} ({cls.__name__}) is not in docs/ai/API.md"
 
 
@@ -127,6 +129,8 @@ def test_every_type_draws_something_in_2d_and_3d(name, camera, request):
         request.node.add_marker(m)
     if not gl_available():
         pytest.skip("needs OpenGL")
+    if name in DRAWLESS:
+        pytest.skip(f"{name} has nothing to draw")
     e = _one(name, camera)
     # Hairlines are a fraction of a pixel in a tiny frame and vanish (see MILESTONE_11.md),
     # so judge at a size where a "hairline" is a line.

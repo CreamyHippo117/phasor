@@ -278,7 +278,7 @@ Not done, and why:
   unbaked state would change what contract 7 says reads the bake; needs the owner. An
   incremental bake is the real fix (most verbs touch few objects).
 - Worker start overlapping the parent's setup, and fewer workers for short renders: measure on
-  the PC first (`pc_tasks/09_render_speed.md`, section 2).
+  the PC first (`pc_tasks/10_render_speed.md`, section 2).
 - Step 5 (GL-CUDA interop, PyNvVideoCodec) and step 6 (simulations on the card): need the card
   and, for step 5, owner approval of the dependency.
 

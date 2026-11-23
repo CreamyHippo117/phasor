@@ -336,11 +336,11 @@ def test_switching_palette_on_an_open_scene_is_one_undo_step(tmp_path):
 
 def test_a_version_6_document_opens_with_the_themes_palette():
     from phasor.core.migrate import migrate
-    from phasor.core.schema import Document
+    from phasor.core.schema import SCHEMA_VERSION, Document
 
     raw = {"schema_version": 6, "meta": {"title": "old"}, "objects": []}
     doc = Document.model_validate(migrate(raw))
-    assert doc.schema_version == 7 and doc.meta.palette is None
+    assert doc.schema_version == SCHEMA_VERSION and doc.meta.palette is None
 
 
 @pytest.mark.gl

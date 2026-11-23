@@ -82,6 +82,10 @@ def polylines(ctx: DrawContext, cam: Camera, pts, width, *, color, glow: float =
     count, n = pts.shape[0], pts.shape[1]
     if count == 0 or n < 2:
         return
+    note = getattr(ctx, "note_path", None)  # the recorder (core/record.py) keeps center lines
+    if note is not None:
+        for p in pts:
+            note(p)
     theme_hue = getattr(ctx, "stroke_hue", None)
     if colors is None and theme_hue is not None and glow > 1.0:
         lut, cycles, shift = theme_hue

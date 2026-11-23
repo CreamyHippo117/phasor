@@ -203,6 +203,6 @@ def test_a_render_worker_passes_the_field_cut_to_render_frame(monkeypatch):
     monkeypatch.setattr(Engine, "from_payload", classmethod(lambda cls, payload: object()))
     monkeypatch.setattr(job, "render_frame", lambda *a: seen.append(a[-1]) or b"frame")
     q = queue.Queue()
-    scene._render_worker({}, [(0, 2)], [0.0, 0.1], (8, 8), 10.0, 0.0, 1, q, 1.0, None, 0.0, 0.5)
+    scene._render_worker({}, [(0, 2)], [0.0, 0.1], (8, 8), 10.0, 0.0, 1, q, 1.0, 1, None, 0.0, 0.5)
     assert seen == [0.5, 0.5]
     assert [q.get()[0] for _ in range(2)] == ["frame", "frame"]
