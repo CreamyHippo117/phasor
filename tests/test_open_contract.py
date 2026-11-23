@@ -143,6 +143,17 @@ def test_an_object_that_draws_one_stroke_has_a_start_and_an_end():
     assert b.lo[0] < 0 and b.hi[0] > 2
 
 
+def test_a_recording_follows_the_camera():
+    """A stroke's width is a share of the frame: zooming out widens its box."""
+    s = _scene(Stroke(id="st"))
+    state = s.engine.state_at(0)
+    near = state["st"].impl.world_bounds(state)
+    s.set("camera.height", 16)
+    state = s.engine.state_at(0)
+    far = state["st"].impl.world_bounds(state)
+    assert far.lo[1] < near.lo[1] and far.hi[1] > near.hi[1]
+
+
 def test_a_recording_is_cached_until_the_params_change():
     Everything.draws = 0
     s = _scene(Everything(id="cached"))
@@ -501,6 +512,27 @@ def test_a_render_worker_loads_the_scene_code_its_parent_ran(star_scene):
     unregister(name)  # a parent that may not run the code sends no permission on
     refused = Engine.open(path, passes=None).worker_payload()
     assert refused["allow_scripts"] is False
+
+
+@pytest.mark.gl
+@pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
+def test_spawned_render_workers_draw_the_scene_type_not_a_placeholder(star_scene, tmp_path):
+    from phasor.engine import Engine
+    from phasor.render.job import render_file
+    from phasor.scene import parallel_frames
+
+    path, _ = star_scene
+    e = Engine.open(path, allow_scripts=True)
+    e.apply([{"op": "set_marker", "name": "end", "t": 0.5},
+             {"op": "add_segment", "path": "star.pos", "segment": {
+                 "t0": 0.0, "t1": 0.5, "to": [-1, 0, 0]}}]).raise_for_errors()  # fmt: skip
+    kw = {"preset": "preview", "fps": 12.0}
+    serial = render_file(e, tmp_path / "serial", **kw)
+    many = render_file(e, tmp_path / "many", frame_source=parallel_frames(e, 2, chunk=2), **kw)
+    a = [p.read_bytes() for p in sorted((tmp_path / "serial").glob("frame_*.png"))]
+    b = [p.read_bytes() for p in sorted((tmp_path / "many").glob("frame_*.png"))]
+    assert serial["frames"] == many["frames"] == len(a) == len(b) > 2
+    assert a == b  # the workers loaded shapes.types.py: no placeholder boxes
 
 
 def test_a_missing_module_and_a_broken_one(star_scene, tmp_path):
