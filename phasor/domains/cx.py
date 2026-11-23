@@ -18,15 +18,17 @@ from fractions import Fraction
 from typing import Any, ClassVar, Literal
 
 import numpy as np
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from phasor.core.objects import Bounds, DrawContext, ObjectBase, ParamsBase, Pass, register
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
+from phasor.domains import cloud
 from phasor.domains import fractal_math as fm
 
 F64_BELOW = 1e-4  # view heights under this render domain coloring in float64
 SUPERSAMPLE = 2  # kernel pixels per output pixel, per side, for clean contour edges
+BUDDHA_MAX_ITER = 5000  # the cloud mode keeps whole orbits in memory: this many steps at most
 
 
 @functools.cache
@@ -284,6 +286,16 @@ class Fractal(_Plane):
     (of the rectangle as drawn, so the glow keeps its size on screen through a dive), and
     ``ambient`` light far from it; the ``glow`` style role sets how bright the light is and
     how much it blooms.
+
+    ``kind="buddhabrot"`` is the cloud mode: not the escape time of each pixel but the orbits
+    themselves. ``count`` points of the orbits z -> z^2 + c (from z = 0) of random c that
+    escape within ``max_iter`` steps (at most 5000), every point of every such orbit, are
+    splatted as light (the ``splat`` kernel, as ``cloud.PointCloud``): where orbits crowd,
+    light builds up. Colour is the ``colormap`` at log(escape time) / log(max_iter), turned
+    by ``hue`` (short and long orbits apart, the "nebulabrot"); ``exposure``, ``point_size``
+    and ``white`` as in ``PointCloud``; the ``glow`` role makes it shine. The orbits come
+    from ``rng(id, seed)`` and are kept per (id, seed, max_iter, count), so the same scene
+    draws the same cloud; ``center`` and ``zoom`` move the view as for the other kinds.
     """
 
     type: ClassVar[str] = "fractal"
@@ -294,11 +306,12 @@ class Fractal(_Plane):
         "ember": {"style": {"colormap": "ember"}, "params": {"density": 0.3}},
         "ocean": {"style": {"colormap": "ocean"}, "params": {"density": 0.3}},
         # the set dark, its edge glowing with haze (the look of the prism strokes)
-        "prism": {"params": {"radius": 0.01, "ambient": 0.03}, "style": {"glow": "soft"}},
+        "prism": {"params": {"radius": 0.01, "ambient": 0.03, "exposure": 0.06, "white": 0.8},
+                  "style": {"glow": "soft"}},
     }  # fmt: skip
 
     class Params(ParamsBase):
-        kind: Literal["mandelbrot", "julia"] = "mandelbrot"
+        kind: Literal["mandelbrot", "julia", "buddhabrot"] = "mandelbrot"
         c: tuple[float, float] = (-0.8, 0.156)  # the Julia constant (unused for mandelbrot)
         pos: Vec3 = (-0.6, 0.0, 0.0)
         size: tuple[float, float] = (3.2, 1.8)
@@ -312,6 +325,12 @@ class Fractal(_Plane):
         steady: bool = False
         radius: float = Field(0.0, ge=0)  # > 0: the prism look, the edge lit this far
         ambient: float = Field(0.05, ge=0, le=1)  # prism look: light far from the edge
+        # buddhabrot (the cloud mode): how many orbit points, their seed and their light
+        count: int = Field(1_000_000, ge=1, le=20_000_000)
+        seed: int = 0
+        exposure: float = Field(0.15, gt=0)  # light per point, against the mean density
+        point_size: float = Field(0.9, ge=0.4, le=2.5)  # splat radius (sigma), pixels
+        white: float = Field(0.0, ge=0, le=1)  # how white the densest parts run
 
         @field_validator("center")
         @classmethod
@@ -319,6 +338,12 @@ class Fractal(_Plane):
             if v.strip():
                 fm.parse_point(v)  # ValueError names the format
             return v
+
+        @model_validator(mode="after")
+        def _orbits(self):
+            if self.kind == "buddhabrot" and self.max_iter > BUDDHA_MAX_ITER:
+                raise ValueError(f"a buddhabrot takes max_iter up to {BUDDHA_MAX_ITER}")
+            return self
 
     def _view(self, p) -> tuple[fm.Point, float]:
         """(the exact plane point at the rectangle's middle, plane units per world unit)."""
@@ -328,11 +353,29 @@ class Fractal(_Plane):
     def features(self, state: SceneState) -> dict[str, np.ndarray]:
         return {"center": np.asarray(self.me(state).params.pos)}
 
+    def orbits(self, state: SceneState) -> tuple[np.ndarray, np.ndarray]:
+        """Buddhabrot: (orbit points (n, 2) in the rectangle's coordinates, lower-left corner
+        at 0, only those inside it; value (n,) 0-1, the colour), from the cache."""
+        p = self.me(state).params
+        pts, v = cloud.source_points(self.id, p.seed, "buddhabrot", (p.max_iter, p.count))
+        c, k = self._view(p)
+        w, h = p.size
+        q = (pts - np.array([float(c[0]), float(c[1])])) / k + np.array([w / 2, h / 2])
+        inside = (q[:, 0] >= 0) & (q[:, 0] <= w) & (q[:, 1] >= 0) & (q[:, 1] <= h)
+        return q[inside], v[inside]
+
     def semantics(self, state: SceneState) -> dict[str, Any]:
         p = self.me(state).params
         c, k = self._view(p)
         out: dict[str, Any] = {"kind": "fractal", "backdrop": True, "set": p.kind,
                                "max_iter": p.max_iter}  # fmt: skip
+        if p.kind == "buddhabrot":
+            out["points"] = len(cloud.source_points(self.id, p.seed, "buddhabrot",
+                                                    (p.max_iter, p.count))[0])  # fmt: skip
+            out["in_rectangle"] = len(self.orbits(state)[0])
+            if p.center.strip() or p.zoom:
+                out.update(center=fm.format_point(c), zoom=p.zoom, view_height=p.size[1] * k)
+            return out
         if p.kind == "julia":
             out["c"] = list(p.c)
         if p.center.strip() or p.zoom:
@@ -351,6 +394,19 @@ class Fractal(_Plane):
         inside = tuple(state.background[:3])
 
         c, k = self._view(p)
+        if p.kind == "buddhabrot":  # the cloud mode: orbits splatted as light
+            bg = np.asarray(inside, dtype=np.float32)
+
+            def cloud_pixels(pw: int, ph: int, center: tuple[float, float],
+                             height: float) -> np.ndarray:  # fmt: skip
+                pts, v = self.orbits(state)
+                return cloud.splat_pixels(pts, v, lut, bg, pw, ph, center, height, size=p.size,
+                                          hue=p.hue, point_size=p.point_size,
+                                          exposure=p.exposure, white=p.white)  # fmt: skip
+
+            ctx.field(corner, r, u, pixels=cloud_pixels, opacity=p.opacity,
+                      glow=float(me.style.get("glow", 1.0)))  # fmt: skip
+            return
 
         def pixels(pw: int, ph: int, center: tuple[float, float], height: float) -> np.ndarray:
             from phasor.render import gpu

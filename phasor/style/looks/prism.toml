@@ -33,6 +33,8 @@ glow = "strong"
 [defaults.fractal.params]  # the prism preset: the set dark, its edge glowing (BEAUTY.md item 4)
 radius = 0.01
 ambient = 0.03
+exposure = 0.06  # buddhabrot (the cloud mode): light per orbit point
+white = 0.8     # buddhabrot: the densest orbits run white-hot
 
 [defaults.fractal.style]
 colormap = "ocean"

@@ -58,7 +58,7 @@
 - `fixed_points`: flash, f, g, constants, pos, extent, rays, labels, ray_length, reveal, grid
 - `flow_lines`: flash, fp, fq, fr, pos, extent, seeds, steps, length, both, progress
 - `flow_particles`: flash, fp, fq, fr, pos, extent, count, speed, lifetime, tail, seed
-- `fractal`: flash, kind, c, pos, size, max_iter, density, hue, center, zoom, steady, radius, ambient
+- `fractal`: flash, kind, c, pos, size, max_iter, density, hue, center, zoom, steady, radius, ambient, count, seed, exposure, point_size, white
 - `frequency_response`: flash, kind, order, cutoff, cutoff2, fs, radius, zeros, poles, gain, pos, extent, plot, scale, floor_db, reveal
 - `galois_diagram`: flash, primes, pos, width, height, gap
 - `graph`: flash, function, xmin, xmax, pos
