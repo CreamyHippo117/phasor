@@ -10,6 +10,7 @@ fast renders), so they are done on the PC. Each has its own instruction file her
 | `04_prism_fractals.md` | 4. Fractals in the prism look | `beauty/prism-fractals` | `C:\Users\Atlas\phasor-fractals` |
 | `07_acoustics_3d.md` | 7. A 3D room with sound bouncing in it | `beauty/acoustics-3d` | `C:\Users\Atlas\phasor-room` |
 | `08_wave_fields.md` | Interference, beamforming, bifurcation (`ANIMATIONS.md`); after 3 and 4 | `anim/wave-fields` | `C:\Users\Atlas\phasor-waves` |
+| `09_render_speed.md` | Render speed: measure before/after on the card (`GPU_SPEED.md` steps 7-8); measurements only, no code | `perf/measure` | `C:\Users\Atlas\phasor-speed` |
 
 ## Starting the three at once (PowerShell)
 
