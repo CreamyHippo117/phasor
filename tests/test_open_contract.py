@@ -590,3 +590,156 @@ def test_a_type_in_the_scene_script_is_named_by_the_document(tmp_path):
         assert state["tri"].impl.world_bounds(state).hi[:2] == (2.0, 2.0)
     finally:
         unregister("m15_script_tri")
+
+
+# ---------------------------------------------------------------- 5. updaters and Value
+
+
+def follow_dot(t, look):
+    """Keep a label just above the dot."""
+    x, y, z = look("dot").pos
+    return {"pos": (x, y + 0.6, z)}
+
+
+def circle_dot(t, look):
+    return {"pos": (2 * np.cos(t), 2 * np.sin(t), 0.0)}
+
+
+def _follow_scene(passes=None, dot_moves_by="track"):
+    from phasor import Text
+
+    dot = Dot(id="dot", pos=(-2, 0), r=0.15)
+    if dot_moves_by == "updater":
+        dot.always(circle_dot)
+    s = _scene(dot, passes=passes)
+    s.add(Text(id="dot.label", text="z", pos=(0, 0)).always(follow_dot))
+    if dot_moves_by == "track":
+        s.at(0).to("dot.pos", (2, 1, 0), duration=2)
+    return s
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_an_updater_keeps_a_label_on_a_moving_dot(passes):
+    s = _follow_scene(passes)
+    doc = s.engine.document
+    assert doc.object("dot.label").always == ("test_open_contract.py:follow_dot",)
+    assert "test_open_contract.py" in doc.meta.modules
+    for t in (0.0, 1.0, 2.0):
+        state = s.engine.state_at(t)
+        x, y, z = state["dot"].params.pos
+        assert state["dot.label"].params.pos == pytest.approx((x, y + 0.6, z))
+    assert state.values["dot.label.pos"] == state["dot.label"].params.pos
+    assert not any(k.startswith("#") for k in state.values)  # no working notes left behind
+    assert s.engine.lint() == [] and s.engine.lint(strict=True) == [
+        i for i in s.engine.lint(strict=True) if i.code == "raw_motion"]  # fmt: skip
+
+
+def test_an_updater_can_read_another_updaters_output():
+    s = _follow_scene(dot_moves_by="updater")
+    state = s.engine.state_at(np.pi / 2)
+    assert state["dot"].params.pos == pytest.approx((0, 2, 0), abs=1e-12)
+    assert state["dot.label"].params.pos == pytest.approx((0, 2.6, 0), abs=1e-12)
+    assert [i for i in s.engine.lint(strict=True) if i.code == "impure_updater"] == []
+
+
+def reads_q(t, look):
+    return {"r": look("q").r}
+
+
+def reads_p(t, look):
+    return {"r": look("p").r}
+
+
+def reads_late(t, look):
+    return {"r": look("a").r if t > 1 else 0.1}
+
+
+def sets_nothing_real(t, look):
+    return {"radius": 1.0}
+
+
+def test_updater_reads_are_edges_and_a_cycle_is_an_error():
+    from phasor.core.issues import DocumentError
+
+    s = _scene(Dot(id="a"))
+    here = s.engine.base_dir
+    pair = [{"op": "add_object", "object": Dot(id=i).always(f).to_spec(here).model_dump()}
+            for i, f in (("p", reads_q), ("q", reads_p))]  # fmt: skip
+    names = {"op": "set_meta", "field": "modules", "value": ["test_open_contract.py"]}
+    r = s.engine.apply([names, *pair], origin="script")
+    assert not r.ok and r.errors[0].code == "cycle" and r.errors[0].ids == ("p", "q")
+    with pytest.raises(DocumentError, match="no parameter"):
+        s.add(Dot(id="c").always(sets_nothing_real))
+    s.add(Dot(id="late").always(reads_late))  # reads a only after t = 1: not an edge it knew
+    with pytest.raises(DocumentError, match="did not read when the scene was compiled"):
+        s.engine.state_at(2.0)
+
+
+_calls = {"n": 0}
+
+
+def counting(t, look):
+    _calls["n"] += 1
+    return {"r": 0.1 + 0.001 * _calls["n"]}
+
+
+_shared = {"x": 0.0}
+
+
+def writer(t, look):
+    _shared["x"] = t
+    return {"r": 0.2}
+
+
+def reader(t, look):
+    return {"r": 0.1 + 0.01 * _shared["x"]}
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_impure_updaters_are_caught_by_strict_lint(passes):
+    s = _scene(Dot(id="tick", pos=(-2, 0)).always(counting), passes=passes)
+    s.add(Dot(id="w", pos=(0, 2)).always(writer))
+    s.add(Dot(id="reads", pos=(2, 0)).always(reader))
+    s.marker("end", 2.0)
+    assert [i.code for i in s.engine.lint()] == []  # only the strict lint checks purity
+    found = {i.ids[0]: i for i in s.engine.lint(strict=True) if i.code == "impure_updater"}
+    assert sorted(found) == ["reads", "tick"]  # the writer itself is pure
+    issue = found["tick"]
+    assert issue.severity == "error" and issue.fix == () and issue.times[0] == 0.0
+    assert "Simulation" in issue.fix_hint
+
+
+def test_a_value_is_a_named_number_with_no_drawing():
+    from phasor import Counter, Value, expr
+
+    s = _scene(Value(id="speed", value=0.0))
+    s.add(Counter(id="speed_readout", value=expr("speed.value"), pos=(0, 2)))
+    s.add(Dot(id="runner").always(lambda t, look: {"pos": (look("speed").value, 0, 0)}))
+    s.at(0).to("speed.value", 3.0, duration=2)
+    state = s.engine.state_at(2.0)
+    assert state["runner"].params.pos == (3.0, 0.0, 0.0)
+    assert state["speed_readout"].params.value == 3.0
+    entry = s.engine.inspect(2.0, "speed")["objects"][0]
+    assert entry["semantic"] == {"kind": "value", "value": 3.0, "drawn": 0.0}
+    assert s.engine.lint() == [] and s.engine.lint(aesthetic=True) == [
+        i for i in s.engine.lint(aesthetic=True) if "speed" not in i.ids]  # fmt: skip
+    (ref,) = s.engine.document.object("runner").always
+    assert ref.startswith("test_open_contract.py:") and "<lambda>@" in ref
+
+
+def test_an_updater_that_is_not_here_is_missing_type_and_the_object_keeps_its_value(tmp_path):
+    from phasor.core import objects
+    from phasor.engine import Engine
+
+    s = _follow_scene()
+    path = tmp_path / "follow.phasor.json"
+    s.engine.save(path)
+    saved = objects._UPDATERS.pop("test_open_contract.py:follow_dot")
+    try:
+        # The module is the test file, outside this folder: not there, so nothing runs.
+        e = Engine.open(path, passes=None, allow_scripts=True)
+        (issue,) = [i for i in e.lint() if i.code == "missing_type"]
+        assert "follow_dot" in issue.message and "missing" in issue.message
+        assert e.state_at(1.0)["dot.label"].params.pos == (0.0, 0.0, 0.0)  # its own value
+    finally:
+        objects._UPDATERS["test_open_contract.py:follow_dot"] = saved

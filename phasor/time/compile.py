@@ -20,7 +20,7 @@ from pydantic import BaseModel, TypeAdapter, ValidationError
 from phasor.core import life
 from phasor.core.ids import is_valid_id
 from phasor.core.issues import DocumentError, Issue
-from phasor.core.objects import Placeholder, SceneObject, get_type, registered_types
+from phasor.core.objects import Placeholder, SceneObject, get_type, get_updater, registered_types
 from phasor.core.schema import Document, ExprSpec
 from phasor.core.spatial import (
     OrbitCameraParams,
@@ -35,6 +35,7 @@ from phasor.style.theme import PALETTES, Theme, ThemeError, load_theme
 from phasor.time.easing import EASINGS
 from phasor.time.expr import CompiledExpr, ExprError, compile_expr
 from phasor.time.tracks import ResolvedSegment, ResolvedTrack, TimeMap
+from phasor.time.updaters import MEMO, Updater, UpdaterOut
 
 CAMERA_PARAMS = {"ortho": OrthoCameraParams, "orbit": OrbitCameraParams}
 
@@ -262,6 +263,9 @@ def compile_document(
             duration = max(duration, t1)
         nodes[path] = ResolvedTrack(node.value, tuple(resolved))
 
+    if any(o.always for o in doc.objects) and not issues:
+        _attach_updaters(doc, nodes, objects, placeholders, modules, missing, add)
+
     for path, node in nodes.items():
         if isinstance(node, CompiledExpr):
             for dep in sorted(node.deps - nodes.keys()):
@@ -283,6 +287,69 @@ def compile_document(
                         duration, str(base_dir), tuple(missing))  # fmt: skip
     evaluate(compiled, 0.0)  # surfaces type errors from expressions before anything is saved
     return compiled
+
+
+def _env(nodes: Mapping[str, Node], order: tuple[str, ...], t: float,
+         replace: Mapping[str, Any] | None = None) -> dict[str, Any]:  # fmt: skip
+    """Every parameter's value at ``t``, in graph order (``replace`` stands in for some)."""
+    env: dict[str, Any] = {}
+    replace = replace or {}
+    for path in order:
+        node = nodes[path]
+        try:
+            if path in replace:
+                env[path] = replace[path]
+            elif isinstance(node, Const):
+                env[path] = node.value
+            elif isinstance(node, ResolvedTrack):
+                env[path] = node.value_at(t)
+            else:
+                env[path] = normalize(node(env, t))
+        except (ExprError, ValueError) as e:
+            raise DocumentError(Issue("bad_expr", f"{path} at t={t:g}: {e}", path=path)) from e
+    for key in [k for k in env if k.startswith(MEMO)]:
+        del env[key]
+    return env
+
+
+def _attach_updaters(doc, nodes, objects, placeholders, modules, missing, add) -> None:
+    """Make each object's updaters (``ObjectSpec.always``) nodes of the parameter graph. Each
+    is run once at t = 0 to find what it reads (its edges) and what it sets."""
+    models = {o.id: o.params_model for o in objects}
+    order, cycle = _toposort(nodes)
+    if cycle:
+        return  # reported as a cycle below
+    try:
+        env0 = _env(nodes, order, 0.0)
+    except DocumentError:
+        return  # the same error surfaces when the document is evaluated
+    for spec in doc.objects:
+        if not spec.always or spec.id in placeholders:
+            continue
+        model = models[spec.id]
+        for ref in spec.always:
+            fn = get_updater(ref)
+            if fn is None:
+                missing.append((spec.id, f"updater {ref!r} is not available "
+                                f"({_why(doc, modules)})"))  # fmt: skip
+                continue
+            probe = Updater(ref, spec.id, fn, frozenset(model.model_fields))
+            reads: set[str] = set()
+            try:
+                sets = probe.call(env0, 0.0, reads)
+                for name, value in sets.items():
+                    _coerce(model, name, value)
+            except (ExprError, ValueError) as e:
+                msg = _first_error(e) if isinstance(e, ValidationError) else str(e)
+                add(Issue("bad_updater", f"{spec.id}: {msg}", ids=(spec.id,)))
+                continue
+            up = Updater(ref, spec.id, fn, probe.params, frozenset(reads))
+            for name in sets:
+                path = f"{spec.id}.{name}"
+                base = nodes[path]
+                deps = up.reads | (base.deps if isinstance(base, CompiledExpr) else frozenset())
+                nodes[path] = UpdaterOut(f"updater {ref}", frozenset(deps), True, None, up, name,
+                                         base, model, _coerce)  # fmt: skip
 
 
 def sway(theme: Theme, params: OrbitCameraParams, t: float) -> float:
@@ -315,21 +382,7 @@ def evaluate(c: Compiled, t: float, replace: Mapping[str, Any] | None = None) ->
     parameters see the solved values.
     """
     t = float(t)
-    env: dict[str, Any] = {}
-    replace = replace or {}
-    for path in c.order:
-        node = c.nodes[path]
-        try:
-            if path in replace:
-                env[path] = replace[path]
-            elif isinstance(node, Const):
-                env[path] = node.value
-            elif isinstance(node, ResolvedTrack):
-                env[path] = node.value_at(t)
-            else:
-                env[path] = normalize(node(env, t))
-        except (ExprError, ValueError) as e:
-            raise DocumentError(Issue("bad_expr", f"{path} at t={t:g}: {e}", path=path)) from e
+    env = _env(c.nodes, c.order, t, replace)
 
     meta = c.doc.meta
     life_amp = life.scale(meta.life, c.theme.life)

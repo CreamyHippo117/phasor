@@ -24,6 +24,7 @@ _LAZY = {
     "Image": "phasor.domains.media",
     "Callout": "phasor.domains.basic",
     "Counter": "phasor.domains.basic",
+    "Value": "phasor.domains.basic",
     "to_latex": "phasor.core.texconv",
     "to_mathtext": "phasor.core.texconv",
 }

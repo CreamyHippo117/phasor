@@ -74,6 +74,7 @@ _TABLES = {
         "rhythm",
         "margin",
         "stroke_mix",
+        "impure",
     ),
     "life": (
         "glow",
