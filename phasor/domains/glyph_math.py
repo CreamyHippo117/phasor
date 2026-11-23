@@ -15,7 +15,9 @@ corner of the box, x to the right and y up; the caller places them with the came
 ``right`` and ``up``. TrueType quadratic curves become cubics exactly.
 
 A text keeps at most ``MAX_GLYPHS`` glyphs as shapes (the rest are left out; lint
-``glyph_limit`` says so). Results are cached per text (the fonts never change in a process).
+``glyph_limit`` says so). A math text mathtext cannot read (TeX can, with the ``latex``
+engine) has no outline: ``Outline.error`` says why. Results are cached per text (the fonts
+never change in a process). Works with matplotlib 3.8 and later (``_ft_flags``).
 """
 
 from __future__ import annotations
@@ -52,6 +54,7 @@ class Glyph:
 class Outline:
     glyphs: tuple[Glyph, ...]
     total: int  # glyphs the text has (more than ``len(glyphs)`` when capped)
+    error: str = ""  # why the text has no outline (mathtext cannot read it); "" when it has
 
 
 def glyph_name(ch: str) -> str:
@@ -219,9 +222,13 @@ def _math(text: str) -> Outline:
     from matplotlib.mathtext import MathTextParser
 
     no_hinting, _ = _ft_flags()
-    with rc_context({"mathtext.fontset": "cm"}):
-        parsed = MathTextParser("path").parse(to_mathtext(text), dpi=72,
-                                              prop=FontProperties(size=FONT_SCALE))  # fmt: skip
+    try:  # with the latex engine a text may typeset in TeX yet not in mathtext
+        with rc_context({"mathtext.fontset": "cm"}):
+            parsed = MathTextParser("path").parse(to_mathtext(text), dpi=72,
+                                                  prop=FontProperties(size=FONT_SCALE))  # fmt: skip
+    except ValueError as e:
+        why = (str(e).strip().splitlines() or ["no reason given"])[-1]
+        return Outline((), 0, f"mathtext cannot read it ({why})")
     em = text_metrics.MATH_EM  # line heights per em
     lift = float(parsed.depth) / FONT_SCALE  # depth below the baseline, in ems (mathtext)
     found: list[tuple[float, str, str, list[np.ndarray]]] = []

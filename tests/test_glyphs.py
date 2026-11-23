@@ -361,6 +361,65 @@ def test_a_composite_part_with_explicit_values_is_judged_but_a_glyph_is_not(pass
     assert not [ids for _, ids in found if ids and ids[0].startswith("word.")]
 
 
+@pytest.fixture
+def tex_accepts_anything(monkeypatch):
+    """The ``latex`` engine as far as pictures go (no TeX here): every math string
+    typesets, so ``\\begin{pmatrix}`` passes ``check_math``; outlines still come from
+    mathtext, which cannot read it. The caches it touches are cleared both ways."""
+
+    def caches():
+        text_metrics.math_box.cache_clear()
+        text_metrics.aspect.cache_clear()
+        text_metrics.rasterize.cache_clear()
+        gm.outline.cache_clear()
+
+    caches()
+    monkeypatch.setattr(text_metrics, "_math", lambda text, em_px, engine=None: (
+        np.full((em_px, 3 * em_px), 255, np.uint8), em_px * 0.2))  # fmt: skip
+    yield r"$\begin{pmatrix}1\\2\end{pmatrix}$"
+    monkeypatch.undo()
+    caches()
+
+
+def test_a_text_mathtext_cannot_outline_is_morph_missing_and_never_raises(tex_accepts_anything):
+    """Audit 17 #5: with the latex engine a text mathtext cannot read passed the verb and
+    then ``inspect``/``lint`` raised ValueError from the outline. It has no outline: a
+    morph from it is ``morph_missing`` (the target draws itself); as shapes it is refused
+    when added, saying why."""
+    from phasor.core.issues import DocumentError
+
+    tex = tex_accepts_anything
+    o = gm.outline(tex)
+    assert o.glyphs == () and "mathtext" in o.error
+    assert gm.outline("   ").error == ""  # an empty outline is not a failure
+    s = _scene()
+    s.marker("go", 1.0)
+    s.add(Text(id="w", text=tex))
+    s.add(shapes.Circle(id="c", r=1))
+    s.at("go").transform("w", "c")
+    s.engine.state_at(1.3)
+    s.engine.inspect(1.3, detail="full")
+    assert "morph_missing" in {i.code for i in s.engine.lint()}
+    assert len(_points_of(s.engine, "c", 1.3)) > 0  # it draws itself
+    # the other way round: a circle into the text, which draws its picture
+    s2 = _scene()
+    s2.marker("go", 1.0)
+    s2.add(shapes.Circle(id="c", r=1))
+    s2.add(Text(id="w", text=tex))
+    s2.at("go").transform("c", "w")
+    s2.engine.inspect(1.3, detail="full")
+    s2.engine.lint()
+    st = s2.engine.state_at(1.3)
+    assert "text" in record(st["w"].impl, st).kinds
+    with pytest.raises(DocumentError, match="cannot be drawn as shapes"):
+        _scene().add(Text(id="w", text=tex, as_shapes=True))
+
+
+def _points_of(e, oid, t):
+    st = e.state_at(t)
+    return np.asarray(record(st[oid].impl, st).points)
+
+
 def test_outlines_read_matplotlib_before_and_after_3_10(monkeypatch):
     """Audit 17 #4: ``LoadFlags``/``Kerning`` and the 6-entry mathtext glyphs are new in
     matplotlib 3.10; 3.8 and 3.9 (allowed by the pyproject floor) have module constants

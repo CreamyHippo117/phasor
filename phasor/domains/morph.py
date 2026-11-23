@@ -395,8 +395,10 @@ def facts(state: SceneState, me: ObjectState) -> dict[str, object]:
     if src is None:
         out["morph_missing"] = True
         return out
+    dst = me.impl.morph_shape(state)
+    if dst is None:  # it has no outline itself (it draws itself)
+        return out
     if p.morph_kind == "whole":
-        dst = me.impl.morph_shape(state)
         plan = _plan(src.subpaths, dst.subpaths, src.closed, dst.closed)
         if plan.gone or plan.new:
             out["morph_limit"] = len(plan.gone) + len(plan.new)
