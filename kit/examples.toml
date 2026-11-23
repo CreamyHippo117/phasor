@@ -92,6 +92,11 @@ kind = "basics"
 tier = "technique"
 teaches = "A scene's own types: a new shape from Params and draw, a composite, a Value, and updaters that keep a label on a moving dot"
 
+[examples.own_colors]
+kind = "basics"
+tier = "technique"
+teaches = "Explicit colors, a stroke width and a background beside roles, and the taste lint that checks them (off_palette, off_scale; polish snaps only when asked)"
+
 [examples.prism_domain]
 kind = "complex"
 tier = "technique"

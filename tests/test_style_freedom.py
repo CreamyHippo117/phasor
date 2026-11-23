@@ -271,3 +271,50 @@ def test_polish_snaps_a_documents_background_when_asked():
     assert e.document.meta.background == "#3A2A10"
     e.polish(snap=True)
     assert e.document.meta.background is None
+
+
+# ---------------------------------------------------------------- 5. it renders, the exit demo
+
+
+@pytest.mark.gl
+@pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
+def test_explicit_colors_and_background_reach_the_pixels_exactly():
+    """Paint below the knee leaves the tone map unchanged: a typed hex color comes out as
+    itself, linear RGBA is sRGB-encoded once, and the background is the scene's."""
+    s = Scene("px", look="none", background="#101820")
+    s.set("camera.height", 8)
+    s.add(Dot(id="a", pos=(-2, 0), r=1.0, style={"color": "#58C4DD"}))
+    s.add(Dot(id="b", pos=(2, 0), r=1.0, style={"color": (0.2, 0.05, 0.4, 1.0)}))
+    img = s.engine.still(0.0, (480, 270)).astype(int)
+    assert abs(img[135, 180] - (0x58, 0xC4, 0xDD)).max() <= 1
+    assert abs(img[135, 300] - (124, 63, 170)).max() <= 1
+    assert abs(img[5, 5] - (0x10, 0x18, 0x20)).max() <= 1
+
+
+def _own_colors():
+    import runpy
+    from pathlib import Path
+
+    path = Path(__file__).parent.parent / "examples" / "own_colors.py"
+    return runpy.run_path(str(path), run_name="example")["s"].engine
+
+
+def test_exit_demo_warns_where_it_should_and_offers_the_snaps():
+    e = _own_colors()
+    assert not [i for i in e.lint() if i.severity == "error"]
+    found = {(i.code, i.path) for i in e.lint(aesthetic=True) if i.code.startswith("off_")}
+    assert found == {("off_palette", "outer.color"), ("off_palette", "outer.label.color"),
+                     ("off_scale", "orbit.stroke")}  # fmt: skip
+    offered = [op for i in e.critique()["issues"] for op in i["snap"]]
+    assert {"op": "set_style", "id": "orbit", "key": "stroke", "role": "bold"} in offered
+    assert e.document.object("inner").style["color"] == "#58C4DD"  # near the palette: quiet
+
+
+@pytest.mark.gl
+@pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
+def test_exit_demo_golden_storyboard():
+    from tests.test_beauty import _golden
+
+    e = _own_colors()
+    sheet = e.storyboard([1.0, 1.8, 2.6, 3.4], size=(320, 180))["image"]
+    _golden("own_colors", sheet, e.pass_runner().renderer_class())
