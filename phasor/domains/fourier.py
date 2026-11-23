@@ -28,7 +28,7 @@ from phasor.core.state import SceneState
 from phasor.core.values import Vec3
 from phasor.domains import fourier_math as fm
 from phasor.domains.heatmap import heat_pixels, lut_colour
-from phasor.domains.strokes import circle, disc, polyline, with_alpha
+from phasor.domains.strokes import circle, disc, hue_colors, polyline, with_alpha
 from phasor.time.compile import resolve_file
 
 
@@ -308,6 +308,159 @@ class Spectrum(ObjectBase):
                 continue
             polyline(ctx, cam, [(cx_, y, z), (cx_, y + height, z)], bar,
                      color=accent if k in tones else base, glow=me.style["glow"])  # fmt: skip
+
+
+# ---------------------------------------------------------------- Winding
+
+
+@functools.lru_cache(maxsize=8)
+def _winding_grid(frequencies, amplitudes, samples, fs, limit):
+    signal = fm.sinusoids(frequencies, amplitudes, samples, fs)
+    # Sample at least eight times per DFT bin so the connecting stroke resolves each peak.
+    count = max(128, math.ceil(8 * limit * samples / fs))
+    grid = np.linspace(0, limit, count + 1)
+    # Keep the temporary frequency-by-time matrix bounded for long signals.
+    mean = np.concatenate(
+        [fm.winding_mean(signal, block, fs) for block in np.array_split(grid, count // 64 + 1)]
+    )
+    return signal, grid, np.abs(mean)
+
+
+@register
+class Winding(ObjectBase):
+    """A signal wound clockwise, its centroid, and the spectrum up to the test frequency."""
+
+    type: ClassVar[str] = "winding"
+    Style: ClassVar = {
+        "color": ("emphasis", "primary"),
+        "accent": ("emphasis", "highlight"),
+        "guide": ("emphasis", "muted"),
+        "stroke": ("stroke", "regular"),
+        "glow": ("glow", "none"),
+        "colormap": ("colormap", "phase"),
+    }
+
+    class Params(ParamsBase):
+        frequencies: tuple[float, ...] = (3.0, 6.0)
+        amplitudes: tuple[float, ...] = (1.0, 0.55)
+        fs: float = Field(32.0, gt=0, allow_inf_nan=False)
+        samples: int = Field(128, ge=16, le=2048)
+        freq: float = Field(0.0, ge=0, allow_inf_nan=False)
+        max_freq: float = Field(8.0, gt=0, allow_inf_nan=False)
+        progress: float = Field(1.0, ge=0, le=1)
+        size: float = Field(2.0, gt=0, allow_inf_nan=False)
+        pos: Vec3 = (0.0, 0.0, 0.0)  # centre of the winding diagram
+        hue_along: float = Field(0.0, ge=0, allow_inf_nan=False)
+        spectrum_guide: bool = True
+
+        @model_validator(mode="after")
+        def _signal(self):
+            if not self.frequencies or len(self.frequencies) != len(self.amplitudes):
+                raise ValueError("provide one amplitude per tone")
+            if any(not 0 < f < self.fs / 2 for f in self.frequencies):
+                raise ValueError("tone frequencies must be between DC and Nyquist")
+            if not math.isfinite(sum(map(abs, self.amplitudes))):
+                raise ValueError("amplitudes must have a finite sum of magnitudes")
+            if not self.freq <= self.max_freq <= self.fs / 2:
+                raise ValueError("freq must be at most max_freq, which cannot exceed Nyquist")
+            return self
+
+    def _data(self, p):
+        signal, grid, magnitude = _winding_grid(
+            p.frequencies, p.amplitudes, p.samples, p.fs, p.max_freq
+        )
+        wound = fm.wound_signal(signal, p.freq, p.fs)
+        return wound, wound.mean(), grid, magnitude
+
+    def _winding_points(self, p, ydir, values):
+        x, y, z = p.pos
+        scale = p.size / (sum(map(abs, p.amplitudes)) or 1.0)
+        return np.stack(
+            np.broadcast_arrays(x + values.real * scale, y + ydir * values.imag * scale, z),
+            axis=-1,
+        )
+
+    def _spectrum_points(self, p, ydir, freq, magnitude):
+        x, y, z = p.pos
+        scale = p.size / (sum(map(abs, p.amplitudes)) or 1.0)
+        return np.stack(
+            np.broadcast_arrays(
+                x + p.size * (1.5 + 3 * freq / p.max_freq),
+                y + ydir * (-p.size + 2 * magnitude * scale),
+                z,
+            ),
+            axis=-1,
+        )
+
+    def world_bounds(self, state: SceneState) -> Bounds:
+        p = self.me(state).params
+        x, y, z = p.pos
+        return Bounds((x - p.size, y - p.size, z), (x + 4.5 * p.size, y + p.size, z))
+
+    def features(self, state: SceneState) -> dict[str, np.ndarray]:
+        me = self.me(state)
+        p = me.params
+        _, mean, _, _ = self._data(p)
+        ydir = _ydir(me, state)
+        return {
+            "centroid": self._winding_points(p, ydir, mean),
+            "spectrum_tip": self._spectrum_points(p, ydir, p.freq, abs(mean)),
+        }
+
+    def semantics(self, state: SceneState) -> dict[str, Any]:
+        p = self.me(state).params
+        _, mean, _, _ = self._data(p)
+        return {
+            "kind": "winding",
+            "frequency_hz": p.freq,
+            "centroid": (float(mean.real), float(mean.imag)),
+            "magnitude": float(abs(mean)),
+            "bin_width_hz": p.fs / p.samples,
+        }
+
+    def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
+        me = self.me(state)
+        p = me.params
+        cam = state.camera_for(me)
+        ydir = _ydir(me, state)
+        wound, mean, grid, magnitude = self._data(p)
+        style = me.style
+        guide = with_alpha(style["guide"], p.opacity)
+        color = with_alpha(style["color"], p.opacity)
+        accent = with_alpha(style["accent"], p.opacity)
+        width = style["stroke"] * float(cam.units_per_height())
+        glow = style["glow"]
+
+        circle(ctx, cam, p.pos, p.size, width, color=guide)
+        x, y, z = p.pos
+        if p.spectrum_guide:
+            origin = self._spectrum_points(p, ydir, 0.0, 0.0)
+            end = self._spectrum_points(p, ydir, p.max_freq, 0.0)
+            polyline(ctx, cam, [end, origin, (origin[0], y + ydir * p.size, z)], width, color=guide)
+        disc(ctx, cam, (x, y, z), width, color=guide)
+
+        if p.progress > 0:
+            points = self._winding_points(p, ydir, wound)
+            index = p.progress * (len(points) - 1)
+            whole = int(index)
+            visible = points[: whole + 1]
+            if index > whole:
+                endpoint = points[whole] + (index - whole) * (points[whole + 1] - points[whole])
+                visible = np.vstack((visible, endpoint))
+            colors = None
+            if p.hue_along and pass_ == "color":
+                length = np.linalg.norm(np.diff(points, axis=0), axis=1).sum()
+                colors = hue_colors(visible, style["colormap"], p.hue_along, total=length)
+                colors[:, 3] *= p.opacity
+            polyline(ctx, cam, visible, width, color=color, colors=colors, glow=glow)
+
+        stop = np.searchsorted(grid, p.freq)
+        traced = self._spectrum_points(
+            p, ydir, np.r_[grid[:stop], p.freq], np.r_[magnitude[:stop], abs(mean)]
+        )
+        polyline(ctx, cam, traced, width, color=color, glow=glow)
+        disc(ctx, cam, traced[-1], 2 * width, color=color, glow=glow)
+        disc(ctx, cam, self._winding_points(p, ydir, mean), 3 * width, color=accent, glow=glow)
 
 
 # ---------------------------------------------------------------- Spectrogram

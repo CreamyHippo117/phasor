@@ -614,6 +614,27 @@ per bin; `leakage` in the semantics), `Spectrogram(...)` (any signal, backdrop; 
 `phasor.domains.fourier_math`: `epicycle_coefficients`, `series_partial_sum`, `window`,
 `spectrum`, `leakage`, `spectrogram`, `dominant_frequency`, `sampled`, `convolve`.
 
+`fourier.Winding` draws a sum of real sine tones wound clockwise at `freq` (Hz). Its
+centroid is the mean of the wound samples, equal to the complex DFT divided by the sample
+count at DFT bins. The spectrum stroke plots the centroid magnitude from zero to `freq`.
+`max_freq` sets the right edge of the spectrum and must be at or below Nyquist (`fs / 2`).
+`spectrum_guide=False` hides the spectrum axes while retaining the winding circle.
+`progress` traces the winding curve independently of the frequency sweep. `pos` sets the
+circle centre and `size` its radius. Inspector semantics expose the complex centroid as
+`(real, imag)`; the `centroid` and `spectrum_tip` features are world positions.
+
+```python
+from phasor import Scene, fourier
+
+s = Scene("winding_demo", look="prism", passes=None)
+s.add(fourier.Winding(id="wind", frequencies=(3.0,), amplitudes=(1.0,), pos=(-4, 0, 0)))
+s.marker("scan", 0.5)
+s.marker("end", 5.0)
+s.at("scan").sweep("wind.freq", 8.0, show=False)
+```
+
+See `examples/fourier_winding.py` for a two-tone sweep.
+
 **`linalg`**: `TransformGrid(matrix=((a, b), (c, d)))` (2x2: the grid, the unit square whose
 area is the determinant, the images of the basis vectors; 3x3: the unit cube), `EigenLines`,
 `Arrow(start=, end=)`, `Matrix(matrix=expr("grid.matrix"))` (entries stay linked). Semantics

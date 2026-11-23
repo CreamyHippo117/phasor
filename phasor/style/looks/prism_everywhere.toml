@@ -240,3 +240,8 @@ dim = 0.9  # a little see-through, like the other prism types
 
 [defaults.filtered_spectrum.style]
 glow = "soft"
+[defaults.winding.params]
+hue_along = 1.0
+
+[defaults.winding.style]
+glow = "strong"
