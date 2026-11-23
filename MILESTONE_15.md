@@ -229,7 +229,14 @@ Found by the independent audit (2026-11-23; repro scripts x1-x11), and how they 
   treat a module imported from the folder of a `__main__` script as that script's scene code
   (keyed by its file, reachable only through `meta.modules`), or leave imported code shared.
 - Desktop UX for trusting a scene's code (Deviation 17): `Editor.trust_scene_code()` exists
-  but no button or prompt calls it yet; the owner decides how it is offered.
+  but no button or prompt calls it yet; the owner decides how it is offered. Until then a
+  person who saved a scene with its own types as `.phasor.json` and reopens it in the app
+  sees placeholder boxes (open the `.py` instead). Two notes for that decision: the prompt
+  should show the module names and who opened the document (an attached AI may `scene_open`
+  a document in the folder that names `other.py`, then ask the person to trust it); and the
+  code panel's Run on a document (`Editor.code()` -> `document_to_python`) writes its
+  `meta.modules` into the code it runs, so Run runs those modules without the trust step
+  (the person's own action, as before).
 - An attached AI is refused any change to `meta.modules`, even one back to what the person
   had (it cannot tell); `undo`/`restore` may return to a state with modules the person set.
 - The registries are still process-wide dictionaries; reads of them are not locked (only
