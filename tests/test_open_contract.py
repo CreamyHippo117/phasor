@@ -1229,7 +1229,7 @@ def test_audit_x2_strict_lint_probes_updaters_beyond_t0(tmp_path, which):
     assert [i.code for i in e.lint()] == []
     (issue,) = [i for i in e.lint(strict=True) if i.code == "bad_updater"]
     assert issue.ids == ("d",) and issue.severity == "error" and issue.times
-    assert all(t > 1.0 for t in issue.times) and which in issue.message
+    assert all(t >= 1.0 for t in issue.times) and which in issue.message
 
 
 AUDIT_FILES = """

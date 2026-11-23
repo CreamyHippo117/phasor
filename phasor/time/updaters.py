@@ -4,7 +4,8 @@ An updater is a node of the parameter graph (SPEC contract 3), like an expressio
 parameter it sets is an ``UpdaterOut`` whose dependencies are the parameters it reads with
 ``look``. Those reads are found by running it once when the document is compiled, so a
 cycle is a validation error as for expressions, and at any other time it may read only what
-it read then: reading something new is an error, never a silent stale value. It is called
+it read then, and set only what it set then: anything new is an error, never a silent stale
+or dropped value. It is called
 once per evaluation; the parameters it does not return keep their own value.
 
 Purity is checked, not assumed: lint ``impure_updater`` (``inspect/lint.py``) calls every
@@ -64,10 +65,12 @@ class Updater:
     fn: Callable[..., Mapping[str, Any]]
     params: frozenset[str]  # what it may set: the object's parameters
     reads: frozenset[str] = frozenset()  # parameter paths it reads (its edges in the graph)
+    sets: frozenset[str] = frozenset()  # the parameters it returned when compiled
 
     def call(self, env: Mapping[str, Any], t: float, reads: set[str] | None = None) -> dict:
         """``fn(t, look)`` with ``look`` reading ``env``. ``reads``: collect every path read
-        (discovery); without it a read outside ``self.reads`` is an error."""
+        (discovery); without it a read outside ``self.reads`` is an error, and so is returning
+        a parameter outside ``self.sets`` (it has no node in the graph: it would be lost)."""
 
         def read(path: str) -> Any:
             if reads is not None:
@@ -90,6 +93,11 @@ class Updater:
         bad = sorted(set(out) - self.params)
         if bad:
             raise ExprError(f"updater {self.ref}: {self.object_id!r} has no parameter(s) {bad}")
+        late = sorted(set(out) - self.sets) if reads is None else []
+        if late:
+            raise ExprError(f"updater {self.ref} returned {', '.join(map(repr, late))} at "
+                            f"t={t:g}, which it did not return when the scene was compiled; "
+                            "return the same parameters at every t")  # fmt: skip
         return {k: _plain(v) for k, v in out.items()}
 
 

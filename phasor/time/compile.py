@@ -361,7 +361,7 @@ def _attach_updaters(doc, nodes, objects, placeholders, modules, missing, add, s
                 msg = _first_error(e) if isinstance(e, ValidationError) else str(e)
                 add(Issue("bad_updater", f"{spec.id}: {msg}", ids=(spec.id,)))
                 continue
-            up = Updater(ref, spec.id, fn, probe.params, frozenset(reads))
+            up = Updater(ref, spec.id, fn, probe.params, frozenset(reads), frozenset(sets))
             for name in sets:
                 path = f"{spec.id}.{name}"
                 base = nodes[path]

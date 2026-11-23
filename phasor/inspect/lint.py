@@ -33,7 +33,7 @@ from phasor.core import text as text_metrics
 from phasor.core.color import contrast_ratio, over
 from phasor.core.constraints import LABEL_SUFFIX
 from phasor.core.ids import parent_of
-from phasor.core.issues import Issue
+from phasor.core.issues import DocumentError, Issue
 from phasor.core.state import SceneState
 from phasor.inspect.passes import PassRunner, inspect_size
 from phasor.layout.geometry import footprint, view_of
@@ -42,6 +42,7 @@ from phasor.time.compile import Compiled, CompiledExpr
 from phasor.time.tracks import ResolvedTrack
 
 DEFAULT_STEP = 0.5  # seconds between lint samples
+PROBE_SPAN = 2.0  # seconds: strict lint calls updaters at least this far into a scene
 FAINT = 0.05  # objects at or below this opacity are treated as not shown
 CONTAINED = 0.98  # a label this much inside a shape is "on" it, not overlapping it
 MAX_TIMES = 12
@@ -327,22 +328,43 @@ def updater_rules(c: Compiled, step: float = DEFAULT_STEP) -> list[Issue]:
     if not ups:
         return []
     tol = c.theme.lint["impure"]
-    times = sample_times(c, step)
-    envs = {t: _env(c.nodes, c.order, t) for t in times}
+    # Every sample time, and a spread over at least the first PROBE_SPAN seconds: a scene
+    # with no markers has only t = 0 as a sample, and an updater may first fail later.
+    span = max(c.duration, PROBE_SPAN)
+    times = tuple(sorted({*sample_times(c, step), *(round(span * k / 8, 6) for k in range(9))}))
+    failed: dict[int, list[tuple[float, str]]] = {}  # updater -> (t, why) where it fails
+    envs = {}
+    for t in times:
+        try:
+            envs[t] = _env(c.nodes, c.order, t)
+        except DocumentError as e:  # the graph cannot be evaluated at t: whose updater?
+            why = "; ".join(i.message for i in e.issues)
+            for i, up in enumerate(ups):
+                if f"updater {up.ref}" in why:
+                    failed.setdefault(i, []).append((t, why))
 
     def call(i: int, t: float) -> Any:
         try:
             return ups[i].call(envs[t], t)
-        except ValueError as e:  # an updater that fails now and then is not pure either
+        except ValueError as e:
+            failed.setdefault(i, []).append((t, str(e)))
             return ("failed", str(e))
 
-    first = {(t, i): call(i, t) for t in times for i in range(len(ups))}
-    again = {(t, i): call(i, t) for t in reversed(times) for i in reversed(range(len(ups)))}
+    ok = [t for t in times if t in envs]
+    first = {(t, i): call(i, t) for t in ok for i in range(len(ups))}
+    again = {(t, i): call(i, t) for t in reversed(ok) for i in reversed(range(len(ups)))}
     bad: dict[int, list[float]] = {}
     for key, value in first.items():
         if _differ(value, again[key], tol):
             bad.setdefault(key[1], []).append(key[0])
-    return [
+    broken = [
+        Issue("bad_updater", f"{ups[i].object_id}: updater {ups[i].ref} fails "
+              f"{_when(sorted({t for t, _ in found}))}: {min(found)[1]}", severity="error",
+              ids=(ups[i].object_id,), times=tuple(sorted({t for t, _ in found})),
+              fix_hint="read the same parameters and return the same ones at every t")
+        for i, found in sorted(failed.items())
+    ]  # fmt: skip
+    return broken + [
         Issue("impure_updater", f"{ups[i].object_id}: updater {ups[i].ref} gives different "
               f"answers for the same t {_when(sorted(ts))}: it keeps state, or reads something "
               "other than t and look(...)", severity="error", ids=(ups[i].object_id,),
