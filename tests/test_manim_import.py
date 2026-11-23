@@ -34,12 +34,14 @@ def state(r, t, oid):
 def test_the_manim_reverb_scene_runs_unchanged_and_keeps_manims_clock():
     r = import_manim(ROOT / "examples" / "manim_reverb.py")
     assert r.name == "RoomReverb" and r.others == []
-    # the sum of every play run_time and wait in the script
+    # the sum of every play run_time and wait in the script (real Manim CE 0.22.1: 14.5 s;
+    # Write(title) is 1 s: its formula has 13 glyphs, under Manim's 15)
     expected = 1.5 + 1 + 1 + 3 * (1.2 + 0.3) + 1.5 + 2 + 1 + 1 + 1
     assert r.duration == pytest.approx(expected)
     doc = r.scene.engine.document
     kinds = [o.type for o in doc.objects]
-    assert kinds.count("line") == 5 and kinds.count("dot") == 2 and kinds.count("text") == 4
+    assert kinds.count("rectangle") == 1 and kinds.count("circle") == 3  # phasor's shapes (M20)
+    assert kinds.count("path") == 1 and kinds.count("dot") == 2 and kinds.count("text") == 4
     assert kinds.count("axes") == 1
     # the room draws itself over 1.5 s from t = 0, the waves expand one after another, and
     # the formula writes in at the end: nothing is on screen before Manim shows it
@@ -49,14 +51,8 @@ def test_the_manim_reverb_scene_runs_unchanged_and_keeps_manims_clock():
     assert state(r, 1.0, "dot_1").opacity == 0.0 and state(r, 3.5, "dot_1").opacity == 1.0
     assert state(r, 3.0, "circle_1").opacity == 0.0 and state(r, 4.5, "circle_1").opacity == 1.0
     assert state(r, 9.0, "mathtex_1").opacity == 0.0 and state(r, 14.0, "mathtex_1").opacity == 1.0
-    ring = [
-        np.linalg.norm(
-            np.asarray(state(r, t, "circle_1").points)[0]
-            - np.asarray(state(r, 4.0, "circle_1").points).mean(axis=0)
-        )
-        for t in (4.2, 5.0)
-    ]
-    assert ring[1] > ring[0]  # a growing circle
+    # a growing circle: linear, from 0.01 to 1.2 in 1.2 s
+    assert [state(r, t, "circle_1").r for t in (3.5, 4.1, 4.7)] == pytest.approx([0.01, 0.605, 1.2])
     assert r.warnings == []  # unequal x and y scales carry over (y_scale; M19 audit S5)
     axes = r.scene.engine.state_at(1.0)["axes_1"].params
     assert axes.y_scale > 0 and axes.y_scale != axes.scale
@@ -119,14 +115,13 @@ class S(Scene):
 """)  # fmt: skip
     r = import_manim(p)
     assert state(r, 0, "dot_1").pos == pytest.approx((-3.0, 2.0, 0.0))
-    sq = np.asarray(state(r, 0, "square_1").points)
-    assert sq[:, 0].min() == pytest.approx(3.0) and sq[:, 0].max() == pytest.approx(5.0)
-    assert sq[0] == pytest.approx(sq[-1])  # a closed outline
+    sq = state(r, 0, "square_1")  # a shapes.Rectangle (Milestone 20)
+    assert sq.pos == pytest.approx((4.0, 0.0, 0.0)) and (sq.width, sq.height) == (2.0, 2.0)
     # the label is 0.5 above the square's top edge (its box bottom is there)
     t = state(r, 0, "text_1").pos
     assert t[0] == pytest.approx(4.0) and t[1] > 1.0 + 0.5
-    ring = np.asarray(state(r, 0, "circle_1").points)
-    assert ring[:, 1].min() == pytest.approx(-4.0 + 0.5)  # 0.5 from the bottom of the 8-high frame
+    ring = state(r, 0, "circle_1")
+    assert ring.pos[1] - ring.r == pytest.approx(-4.0 + 0.5)  # 0.5 from the frame's bottom
     assert state(r, 0, "dot_1").opacity == 1.0  # added at t = 0: visible at once
 
 
@@ -148,8 +143,9 @@ class S(Scene):
     assert state(r, 0, "dot_1").pos == pytest.approx((-2.0, 0.0, 0.0))
     assert state(r, 1.0, "dot_1").pos[0] == pytest.approx(0.0, abs=0.2)  # halfway, smoothed
     assert state(r, 2.5, "dot_1").pos == pytest.approx((2.0, 0.0, 0.0))
-    # Transform morphs the first square into the second (same number of points) ...
-    assert np.ptp(np.asarray(state(r, 3.0, "square_1").points)[:, 0]) == pytest.approx(2.0)
+    # Transform moves the first square's parameters to the second's (the same kind) ...
+    assert state(r, 3.0, "square_1").width == pytest.approx(2.0)
+    assert state(r, 3.0, "square_1").pos == pytest.approx((3.0, 0.0, 0.0))
     assert "square_2" not in r.scene.engine.state_at(3.0)  # ... the target is never created
     # the VGroup is two objects, faded together
     assert state(r, 3.0, "dot_2").opacity == 1.0 and state(r, 4.0, "dot_3").opacity == 0.0
@@ -178,7 +174,8 @@ class S(Scene):
     style = {o.id: o.style for o in doc.objects}
     assert style["dot_1"]["color"] == "#83C167"
     assert style["circle_1"]["color"] == "danger"
-    assert style["line_1"] == {"color": "#FF8800", "stroke": pytest.approx(8 * STROKE_UNIT)}
+    assert style["line_1"]["color"] == "#FF8800"
+    assert style["line_1"]["stroke"] == pytest.approx(8 * STROKE_UNIT)
     assert style["text_1"]["size"] == pytest.approx(96 * FONT_UNIT)
     assert style["text_2"]["size"] == "math" and style["text_2"]["color"] == "primary"
     assert style["text_3"]["size"] == pytest.approx(48 * FONT_UNIT)  # scaled, not warned
@@ -227,7 +224,7 @@ class S(Scene):
         self.play(Create(ax), Create(g), Write(label))
 """)  # fmt: skip
     r = import_manim(p)
-    pts = np.asarray(state(r, 0, "path_1").points)
+    pts = np.asarray(state(r, 0, "graph_1").subpaths[0])  # a shapes.Path (M20)
     assert pts[0] == pytest.approx((-2.0, 2.0, 0.0), abs=1e-6)  # c2p: 1 unit = 1 world unit here
     assert pts[:, 1].min() == pytest.approx(0.0, abs=1e-3)
     assert state(r, 0, "axes_1").scale == pytest.approx(1.0)
@@ -273,6 +270,8 @@ class S(ThreeDScene):
 
 
 def test_what_phasor_cannot_express_is_said_not_hidden(tmp_path):
+    """What Milestone 13 warned about (updaters, fills, ValueTracker) carries over since
+    Milestone 20 (tests/test_manim_parity.py); what still cannot is said or refused."""
     p = script(tmp_path, """
 class S(Scene):
     def construct(self):
@@ -283,8 +282,16 @@ class S(Scene):
         self.play(t.animate.set_value(3))
 """)  # fmt: skip
     r = import_manim(p)
-    w = " ".join(r.warnings)
-    assert "always_redraw" in w and "filled shapes" in w and "ValueTracker" in w
+    assert r.warnings == []
+    assert state(r, 1.0, "dot_1").pos == pytest.approx((3.0, 0.0, 0.0))  # followed the tracker
+    assert state(r, 0.0, "square_1").fill_opacity == 0.5
+    rotated = script(tmp_path, """
+class S(Scene):
+    def construct(self):
+        self.add(Text("tilted").rotate(0.5))
+        self.wait(1)
+""", "rotated.py")  # fmt: skip
+    assert any("drawn level" in w for w in import_manim(rotated).warnings)
     bad = script(tmp_path, """
 class S(Scene):
     def construct(self):
@@ -386,8 +393,8 @@ def shutil_copy(src, dst):
 # Scripts that imported before Milestone 18 must still import: a size or width Manim accepts
 # but phasor's explicit values cannot hold (zero, negative, too large) is not carried over.
 ZERO_SIZES = {
-    "stroke_width_0": ("c = Circle(radius=1, stroke_width=0)", "circle_1", "stroke"),
-    "set_stroke_0": ("c = Square().set_stroke(width=0)", "square_1", "stroke"),
+    "stroke_width_negative": ("c = Circle(radius=1, stroke_width=-2)", "circle_1", "stroke"),
+    "set_stroke_negative": ("c = Square().set_stroke(width=-1)", "square_1", "stroke"),
     "font_size_0": ('c = Text("hi", font_size=0)', "text_1", "size"),
     "font_size_negative": ('c = Text("hi", font_size=-10)', "text_1", "size"),
     "scale_0": ('c = Text("hi").scale(0)', "text_1", "size"),
@@ -410,6 +417,23 @@ class S(Scene):
     assert key not in style or isinstance(style[key], str)  # the role, not a value
     assert any("not carried over" in w for w in r.warnings), r.warnings
     assert "manim" not in sys.modules
+
+
+@pytest.mark.parametrize("line", ["c = Circle(radius=1, stroke_width=0)",
+                                  "c = Circle(radius=1).set_stroke(width=0)"])  # fmt: skip
+def test_stroke_width_zero_is_a_shape_with_no_outline(tmp_path, line):
+    """Manim's "no outline" on a filled shape: since Milestone 20 the stroke's opacity is 0
+    (a phasor shape's ``stroke_opacity``), not a dropped size with a warning."""
+    p = script(tmp_path, f"""
+class S(Scene):
+    def construct(self):
+        {line}
+        self.add(c.set_fill(BLUE, opacity=1))
+        self.wait(1)
+""")  # fmt: skip
+    r = import_manim(p)
+    assert r.warnings == [] and state(r, 0.5, "circle_1").stroke_opacity == 0.0
+    assert "stroke" not in r.scene.engine.document.object("circle_1").style
 
 
 def test_a_negative_scale_is_a_flip_and_keeps_the_size_positive(tmp_path):
@@ -490,14 +514,15 @@ def test_manim_colors_import_as_these_values():
     colour changed, so it does not guard colours."""
     from phasor.importers.manim import _BLUE, _RED, _WHITE, style_color
 
+    # Manim CE 0.22.1's own values (YELLOW was #FFFF00 here until Milestone 20 checked them)
     assert [style_color(c) for c in ("BLUE", "YELLOW", "GREEN", "RED", "GREY", "WHITE")] == [
-        "#58C4DD", "#FFFF00", "#83C167", "#FC6255", "#888888", "#FFFFFF"]  # fmt: skip
+        "#58C4DD", "#F7D96F", "#83C167", "#FC6255", "#888888", "#FFFFFF"]  # fmt: skip
     assert style_color("#abc") == "#AABBCC" and style_color("#ff880080") == "#FF880080"
     assert [style_color(c) for c in (_WHITE, _RED, _BLUE)] == ["primary", "danger", "secondary"]
     r = import_manim(ROOT / "examples" / "manim_reverb.py")
     colors = {o.id: o.style.get("color") for o in r.scene.engine.document.objects}
     assert colors == {
-        "rectangle_1": "#58C4DD", "dot_1": "#FFFF00", "dot_2": "#83C167",
-        "circle_1": "#FFFF00", "circle_2": "#FFFF00", "circle_3": "#FFFF00",
-        "axes_1": "#888888", "path_1": "#FC6255", "text_1": "primary", "text_2": "primary",
+        "rectangle_1": "#58C4DD", "dot_1": "#F7D96F", "dot_2": "#83C167",
+        "circle_1": "#F7D96F", "circle_2": "#F7D96F", "circle_3": "#F7D96F",
+        "axes_1": "#888888", "graph_1": "#FC6255", "text_1": "primary", "text_2": "primary",
         "text_3": "primary", "mathtex_1": "primary"}  # fmt: skip

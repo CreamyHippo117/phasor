@@ -362,6 +362,9 @@ def control_rules(c: Compiled) -> list[Issue]:
     return out
 
 
+DRAWLESS = ("value", "sound")  # semantic kinds of types that draw nothing
+
+
 def file_rules(c: Compiled) -> list[Issue]:
     """``missing_file``: a parameter a type lists in ``Files`` (core/files.py) names a file
     that is not in the scene's folder. The object draws nothing until the file is there.
@@ -563,9 +566,10 @@ def run(
         height = state.height
         shown = [e for e in fr.entries.values() if _shown(e)]
         ever_shown.update(e["id"] for e in shown)
-        # A Value is a number with nothing to draw (ADR 0005): never "missing" from the frame.
+        # A Value (a number, ADR 0005) and a Sound (heard, M20) have nothing to draw: never
+        # "missing" from the frame.
         ever_shown.update(
-            e["id"] for e in fr.entries.values() if e["semantic"].get("kind") == "value"
+            e["id"] for e in fr.entries.values() if e["semantic"].get("kind") in DRAWLESS
         )
         labels = [e for e in shown if _is_label(e)]
         persp = state.camera.perspective
@@ -779,11 +783,19 @@ def run(
             what = (f"cannot be read: {info['why']}" if info["why"] else
                     f"has {info['skipped']} shape(s) skipped: points not finite or absurdly "
                     "far out")  # fmt: skip
-            svg = str(info["file"]).lower().endswith(".svg")
-            return Issue(code, f"{ids[0]!r}: the file {info['file']!r} {what}", "warning", ids,
-                         times=ts, fix_hint="export the file again (plain SVG), or point "
-                         "the object at another file" if svg else "save the file again as "
-                         "UTF-8 text, or point the object at another file")  # fmt: skip
+            ext = str(info["file"]).lower().rsplit(".", 1)[-1]
+            again = {"svg": "export the file again (plain SVG)",
+                     "wav": "save the file again as PCM WAV (16-bit, 48 kHz)",
+                     "wave": "save the file again as PCM WAV (16-bit, 48 kHz)"}.get(
+                ext, "save the file again as UTF-8 text")  # fmt: skip
+            return Issue(
+                code,
+                f"{ids[0]!r}: the file {info['file']!r} {what}",
+                "warning",
+                ids,
+                times=ts,
+                fix_hint=f"{again}, or point the object at another file",
+            )
         if code == "truncated":
             return Issue(code, f"{ids[0]!r}: the file {info['file']!r} is past a limit "
                          f"({info['why']}); only the first part is shown", "warning", ids,

@@ -22,6 +22,7 @@ _LAZY = {
     "Equation": "phasor.domains.basic",
     "Tracer": "phasor.domains.basic",
     "Image": "phasor.domains.media",
+    "Sound": "phasor.domains.media",
     "Callout": "phasor.domains.basic",
     "Counter": "phasor.domains.basic",
     "Value": "phasor.domains.basic",

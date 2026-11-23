@@ -22,6 +22,7 @@ import wave
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from struct import error as struct_error
 
 import numpy as np
 
@@ -218,29 +219,157 @@ def write_wav(path: str | Path, samples: np.ndarray, rate: int) -> None:
         w.writeframes(np.asarray(samples, dtype=np.int16).tobytes())
 
 
+# Bounds on sound clips (``media.Sound``): a clip read from a file the document names is
+# never allowed to exhaust memory or time, whatever its header says.
+SOUND_RATES = (8000, 192000)  # sample rates a clip may have
+MAX_CHANNELS = 16
+MAX_CLIP_FRAMES = 1 << 26  # frames of one clip that are read (23 minutes at 48 kHz)
+MAX_TRACK_SECONDS = 3 * 3600.0  # the mixed track never covers more than this
+SOUND_RATE = 48000  # the track's rate when only sound clips (no narration audio) play
+_CHUNK = 1 << 18  # frames converted at a time
+
+
+@dataclass(frozen=True)
+class WavInfo:
+    rate: int
+    channels: int
+    width: int  # bytes per sample: 1 (unsigned), 2, 3 or 4 (signed PCM)
+    frames: int
+
+    @property
+    def seconds(self) -> float:
+        return self.frames / self.rate
+
+
+def wav_info(path: str | Path) -> WavInfo:
+    """A WAV file's header, checked against the bounds above. ``ValueError`` (with the
+    reason) for anything that is not PCM WAV phasor can mix: not a WAV, compressed, a sample
+    rate, channel count or sample width out of range."""
+    try:
+        with wave.open(str(path), "rb") as w:
+            info = WavInfo(w.getframerate(), w.getnchannels(), w.getsampwidth(), w.getnframes())
+    except (wave.Error, EOFError, OSError, struct_error, ValueError) as e:
+        raise ValueError(f"not a PCM WAV file ({e or type(e).__name__})") from None
+    if not SOUND_RATES[0] <= info.rate <= SOUND_RATES[1]:
+        raise ValueError(f"a sample rate of {info.rate} Hz (from {SOUND_RATES[0]} to "
+                         f"{SOUND_RATES[1]})")  # fmt: skip
+    if not 1 <= info.channels <= MAX_CHANNELS:
+        raise ValueError(f"{info.channels} channels (1 to {MAX_CHANNELS})")
+    if info.width not in (1, 2, 3, 4):
+        raise ValueError(f"{info.width * 8}-bit samples (8, 16, 24 or 32-bit PCM)")
+    return info
+
+
+def read_sound(path: str | Path, max_frames: int = MAX_CLIP_FRAMES) -> tuple[np.ndarray, int]:
+    """A WAV clip as mono float32 in -1..1 and its rate: at most ``max_frames`` frames (and
+    never more than ``MAX_CLIP_FRAMES``), read a chunk at a time, so a lying header or a
+    huge file costs no more than that. ``ValueError`` for a file it cannot read."""
+    info = wav_info(path)
+    want = max(0, min(int(max_frames), info.frames, MAX_CLIP_FRAMES))
+    out = np.zeros(want, dtype=np.float32)
+    got = 0
+    try:
+        with wave.open(str(path), "rb") as w:
+            while got < want:
+                raw = w.readframes(min(_CHUNK, want - got))
+                n = len(raw) // (info.width * info.channels)
+                if n == 0:
+                    break
+                out[got : got + n] = _pcm(raw[: n * info.width * info.channels], info)
+                got += n
+    except (wave.Error, EOFError, OSError, struct_error) as e:
+        raise ValueError(f"not a PCM WAV file ({e or type(e).__name__})") from None
+    return out[:got], info.rate
+
+
+def _pcm(raw: bytes, info: WavInfo) -> np.ndarray:
+    """Interleaved PCM bytes as mono float32 in -1..1 (channels averaged)."""
+    if info.width == 1:
+        x = (np.frombuffer(raw, np.uint8).astype(np.float32) - 128.0) / 128.0
+    elif info.width == 2:
+        x = np.frombuffer(raw, "<i2").astype(np.float32) / 32768.0
+    elif info.width == 3:
+        b = np.frombuffer(raw, np.uint8).reshape(-1, 3).astype(np.int32)
+        v = b[:, 0] | (b[:, 1] << 8) | (b[:, 2] << 16)
+        x = (np.where(v >= 1 << 23, v - (1 << 24), v)).astype(np.float32) / float(1 << 23)
+    else:
+        x = np.frombuffer(raw, "<i4").astype(np.float32) / float(1 << 31)
+    return x.reshape(-1, info.channels).mean(axis=1)
+
+
+def resample(x: np.ndarray, rate: int, to: int) -> np.ndarray:
+    """``x`` at ``rate`` as samples at ``to`` (linear interpolation; enough for a sound
+    effect under narration)."""
+    if rate == to or not len(x):
+        return x
+    n = int(len(x) * to / rate)
+    return np.interp(np.arange(n) * (rate / to), np.arange(len(x)), x).astype(np.float32)
+
+
+@dataclass(frozen=True)
+class Clip:
+    """A sound clip to mix in (``media.Sound``): a WAV file in the scene's folder, from
+    ``start`` seconds, ``gain`` dB louder."""
+
+    path: str
+    start: float
+    gain: float = 0.0
+
+
 def mix_track(
-    narration: Narration, base_dir: str | Path, duration: float
+    narration: Narration | None,
+    base_dir: str | Path,
+    duration: float,
+    clips: Sequence[Clip] = (),
+    problems: list[str] | None = None,
 ) -> tuple[np.ndarray, int] | None:
-    """The whole narration as one mono int16 track ``duration`` seconds long, each block's
-    audio placed at its start. None when no block has audio (estimated timing)."""
+    """The narration and any sound clips as one mono int16 track ``duration`` seconds long
+    (at most ``MAX_TRACK_SECONDS``), each block's audio placed at its start, each clip at its
+    ``start`` and cut where the scene ends. None when nothing has audio. A clip that is
+    missing, outside the folder or unreadable is left out and said in ``problems`` (lint
+    names it too: ``missing_file``, ``bad_file``); narration audio that cannot be read
+    raises, as it always has."""
+    from phasor.core import files
+
     root = Path(base_dir).resolve()
-    clips = []
-    for b in narration.blocks:
+    spoken = []
+    for b in narration.blocks if narration is not None else ():
         if not b.audio:
             continue
         path = (root / b.audio).resolve()
         if root not in path.parents:  # a document must not read files outside its folder
             raise ValueError(f"narration audio {b.audio!r} is outside the scene's folder")
-        clips.append((b.start, read_wav(path)))
-    if not clips:
-        return None
-    rates = {rate for _, (_, rate) in clips}
-    if len(rates) != 1:
+        spoken.append((b.start, read_wav(path)))
+    rates = {rate for _, (_, rate) in spoken}
+    if len(rates) > 1:
         raise ValueError(f"narration clips have different sample rates: {sorted(rates)}")
-    rate = rates.pop()
-    end = max(duration, max(t + len(s) / rate for t, (s, _) in clips))
-    track = np.zeros(int(np.ceil(end * rate)), dtype=np.int32)
-    for t, (samples, _) in clips:
+    rate = rates.pop() if rates else SOUND_RATE
+    cap = min(max(float(duration), 0.0), MAX_TRACK_SECONDS)
+    end = max([cap] + [t + len(s) / rate for t, (s, _) in spoken])
+    end = min(end, MAX_TRACK_SECONDS)
+    sounds = []
+    for c in clips:
+        if not (0 <= c.start < cap):
+            continue
+        try:
+            file = files.regular_file(root, c.path)
+            info = wav_info(file)
+            need = int(np.ceil((cap - c.start) * info.rate)) + 1
+            x, r = read_sound(file, need)
+        except ValueError as e:
+            if problems is not None:
+                problems.append(f"sound {c.path!r} left out: {e}")
+            continue
+        sounds.append((c.start, resample(x, r, rate) * float(10 ** (c.gain / 20))))
+    if not spoken and not sounds:
+        return None
+    track = np.zeros(int(np.ceil(end * rate)), dtype=np.float32)
+    for t, (samples, _) in spoken:
         i = round(t * rate)
-        track[i : i + len(samples)] += samples
-    return np.clip(track, -32768, 32767).astype(np.int16), rate
+        seg = samples[: max(0, len(track) - i)]
+        track[i : i + len(seg)] += seg
+    for t, x in sounds:
+        i = round(t * rate)
+        seg = x[: max(0, int(np.ceil(cap * rate)) - i)] * 32768.0
+        track[i : i + len(seg)] += seg
+    return np.clip(np.round(track), -32768, 32767).astype(np.int16), rate

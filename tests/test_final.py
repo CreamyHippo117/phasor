@@ -26,7 +26,7 @@ for _m in phasor._MODULES:  # register every domain's types
     getattr(phasor, _m)
 TYPES = sorted(n for n, c in registered_types().items() if is_builtin(c))  # not test types
 # Types with nothing to draw and so no style roles (ADR 0005): a named number.
-DRAWLESS = {"value"}
+DRAWLESS = {"value", "sound"}
 # The fewest parameters each type needs (the rest have defaults).
 REQUIRED = {
     "domain_coloring": {"function": "1/(z**2+1)"},
@@ -44,6 +44,7 @@ REQUIRED = {
     "wavefront3d": {"time": 0.5},
     "path": {"subpaths": [[[0, 0, 0], [0.5, 1, 0], [1.5, 1, 0], [2, 0, 0]]]},
     "svg": {"path": "examples/assets/emblem.svg"},  # relative: tests run from the repo root
+    "sound": {"path": "examples/assets/chime.wav"},
     "table": {"cells": [["x", "$x^2$"], ["2", "4"]]},
     "code": {"code": "def f(x):\n    return x * x"},
     "code_line": {"text": "return x * x", "classes": "kkkkkkpppppp"},
@@ -55,7 +56,7 @@ IN_ROOM = {"sound_rays", "wavefront3d"}
 # Examples that build a Scene called ``s``: not domain_coloring (a script that renders the
 # kernel directly) or manim_reverb (a Manim script, run through the importer in its own test).
 EXAMPLES = sorted(p.stem for p in (ROOT / "examples").glob("*.py")
-                  if p.stem not in {"domain_coloring", "manim_reverb"})  # fmt: skip
+                  if p.stem not in {"domain_coloring"} and not p.stem.startswith("manim_"))  # fmt: skip
 # Types and examples that need an optional package (an extra): skipped without it.
 NEEDS = {"svg": ("svgelements",), "vector_toolkit": ("shapely", "svgelements")}
 # Slow to build (minutes for riemann_sqrt's labels through an orbit): checked by their own

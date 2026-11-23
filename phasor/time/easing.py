@@ -24,8 +24,16 @@ def _spring(u: float) -> float:
     return 1 - (1 - u) * math.exp(-4 * u) * math.cos(3 * math.pi * u)
 
 
+def _sigmoid(u: float, k: float = 10.0) -> float:
+    """A logistic S, rescaled to pass through 0 and 1: Manim's ``smooth`` (inflection 10), so
+    an imported Manim scene moves as it did there. Slower to start than ``smooth``."""
+    error = 1 / (1 + math.exp(k / 2))
+    return (1 / (1 + math.exp(-k * (u - 0.5))) - error) / (1 - 2 * error)
+
+
 EASINGS: dict[str, Callable[[float], float]] = {
     "linear": lambda u: u,
+    "sigmoid": _sigmoid,
     "smooth": lambda u: u * u * (3 - 2 * u),
     "smoother": lambda u: u * u * u * (u * (6 * u - 15) + 10),
     "in": lambda u: u * u * u,

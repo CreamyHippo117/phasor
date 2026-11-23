@@ -1,0 +1,47 @@
+"""Milestone 20: phasor's Manim import against REAL Manim Community, scene by scene.
+
+Skipped unless ``PHASOR_MANIM_PYTHON`` names a Python with Manim installed (see
+``pc_tasks/10_manim_real.md``); the comparison itself is ``compare.py``. What must hold,
+within the tolerances documented there: Manim's clock (every play's duration, run times and
+rate functions) exactly; every mobject on screen at every sample; shapes, dots, lines and
+the camera frame where Manim has them. Text is set in phasor's own fonts, so its boxes (and
+what is placed next to them) are compared with a wider tolerance; the differences that are
+by design are listed in ``MILESTONE_20.md``.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from tests.manim_real import compare
+
+pytestmark = [
+    pytest.mark.manim_real,
+    pytest.mark.skipif(compare.manim_python() is None,
+                       reason="needs PHASOR_MANIM_PYTHON (a Python with manim installed)"),
+]  # fmt: skip
+
+SCENES = sorted(p.stem for p in compare.SCENES.glob("*.py"))
+# Where phasor differs by design (MILESTONE_20.md, "Real Manim"): the measure is skipped.
+BY_DESIGN = {
+    "animate_timing": {"position", "size"},  # Create traces a square from another corner
+    "axes_plot": {"size"},  # Create's share of a curve: by arc length here, by Bezier in Manim
+    "shapes_layout": {"size"},  # Manim's arrow tip is wider
+    "fills_colors": {"size"},  # a dashed line's box ends at its last dash
+    "updaters": {"size"},  # phasor's box includes the stroke's width (a turned square)
+}
+
+
+@pytest.mark.parametrize("name", SCENES)
+def test_the_import_matches_real_manim(name):
+    f = compare.run_scene(compare.SCENES / f"{name}.py")
+    differed = " ".join(f.differed)
+    assert "duration" not in differed and "play " not in differed, f.differed
+    assert "never found" not in differed, f.differed
+    skip = BY_DESIGN.get(name, set())
+    if "position" not in skip:
+        assert f.worst["position"] <= compare.POS_TOL, f.details
+    if "size" not in skip:
+        assert f.worst["size"] <= compare.SIZE_TOL, f.details
+    assert f.worst["text"] <= compare.TEXT_POS_TOL, f.details
+    assert f.worst["frame"] in (0.0,) or f.worst["frame"] <= compare.POS_TOL, f.details

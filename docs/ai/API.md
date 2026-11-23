@@ -40,6 +40,7 @@ s.set("camera.height", 6)  # world units visible top to bottom
 | `cloud.PointCloud` | `source` (`roots`/`attractor`/`buddhabrot`/`points`), `degree` and `coefficients` (roots), `kind` (`clifford`/`dejong`/`lorenz`) and `constants` (attractor), `max_iter` (buddhabrot), `points` and `values` (given directly), `count` (at most), `seed`, `pos` (centre and origin of the points), `size` (the rectangle it is seen in), `scale`, `point_size` (splat radius, px), `exposure`, `hue`, `color_by` (`source`/`phase`), `twist` (roots: turns of the last coefficient, animatable), `twinkle` (0-1, life), `white` (0-1, white-hot dense parts) | `colormap` (colormap, spectrum), `glow` (glow, none) |
 
 | `Value` | `value` (a named number to animate; nothing is drawn: see "Your own types") | none |
+| `Sound` | `path` (a WAV file in the scene's folder), `start` (seconds into the scene), `gain` (dB, -60 to 24); nothing is drawn: `phasor render` mixes it in (see "Narrate") | none |
 | `Image` | `path` (a PNG/JPEG/WebP file, relative to the scene's folder), `pos` (centre), `width`, `height` (0: keep the picture's shape), `frame` (an outline of light) | `glow` (glow, none: bright parts shine), `frame` (emphasis, muted), `stroke` (stroke, hairline). Presets `plain`, `framed`, `luminous`. A missing file is issue `missing_file`; transparent parts show the background; an AI may only name files inside its folder |
 | `Text` | `text` (`$...$` is typeset math), `pos`, `anchor` (`center`/`left`/`right`), `leader`, `leader_on` (set by layout) | `color` (emphasis, primary), `size` (text, label), `leader` (stroke, hairline) |
 | `Equation` | `parts` (math or text, set on one baseline), `colors` (an emphasis role per part), `pos` | `color` (emphasis, primary), `size` (text, math), `glow` (glow, none) |
@@ -283,7 +284,34 @@ assert s4.engine.lint(strict=True) == []
   are cached in `<title>.narration/` beside the script. Your own recordings:
   `phasor.voice.from_recordings(script, wavs, aligner, base_dir, theme)` with
   `WhisperX()` or `TimingsFile()`.
-- `phasor render` muxes the narration into the video.
+- `phasor render` muxes the narration into the video, with any **sound clips**: a `Sound`
+  (Manim's `add_sound`) plays a WAV file in the scene's folder from `start` seconds, `gain`
+  dB louder, cut where the scene ends. PCM WAV only (8 to 32-bit, 8 to 192 kHz, 1 to 16
+  channels, mixed down to mono and resampled to the narration's rate, else 48 kHz); at most
+  `MAX_CLIP_FRAMES` (2^26) frames of a clip are read, and the track covers at most 3 hours.
+  A missing file is lint `missing_file`, one phasor cannot mix is `bad_file`; the render
+  leaves either out and lists it in its warnings.
+
+```python
+import tempfile
+import wave
+from pathlib import Path
+
+from phasor import Dot, Scene, Sound
+
+folder = Path(tempfile.mkdtemp())
+with wave.open(str(folder / "click.wav"), "wb") as w:  # 0.1 s of a quiet click
+    w.setnchannels(1), w.setsampwidth(2), w.setframerate(8000)
+    w.writeframes(b"\x00\x10" * 800)
+s5 = Scene("clicks", passes=None, base_dir=folder)
+s5.add(Dot(id="tick"))
+s5.add(Sound(id="click", path="click.wav", start=0.5, gain=-6.0))
+s5.marker("end", 2.0)
+track, rate = s5.engine.audio_track()
+assert rate == 48000 and len(track) == 2 * 48000  # the scene's length, no narration needed
+assert track[: 24000].max() == 0 and track[24000 : 24000 + 4800].max() > 0
+assert s5.engine.inspect(0.0, id="click")["objects"][0]["semantic"]["seconds"] == 0.1
+```
 
 ## Animate with verbs
 
@@ -404,8 +432,8 @@ Raw `to()` is allowed but lints as `raw_motion` with `engine.lint(strict=True)`:
 Any parameter is animatable by its path, cameras included (`camera.center`, `camera.height`).
 Times anchored to a marker move with it. Segments on one parameter must not overlap.
 A parameter set by `expr(...)` cannot also have a track; animate what it reads.
-Easings: `linear smooth smoother in out in_out`, and `back spring` (these overshoot: not for
-opacity). Custom easing functions are not supported: a document must mean the same
+Easings: `linear smooth smoother sigmoid in out in_out`, and `back spring` (these overshoot:
+not for opacity). `sigmoid` is Manim's `smooth` (slower to start; the Manim import uses it). Custom easing functions are not supported: a document must mean the same
 everywhere.
 
 ## Engine: state, patches, undo
@@ -1667,22 +1695,34 @@ assert s.engine.document.object("set").params["c"] == (-0.8, 0.156)  # the scene
 against a stand-in for the `manim` module and records the scene it builds: `self.add` and
 `self.play` become objects and transitions at Manim's own times (`run_time`, `wait`), in
 Manim's frame (8 units tall, y up). The result is a plain phasor scene you can edit, lint and
-render. It runs your code: only import scripts you trust.
+render. It runs your code: only import scripts you trust. The stand-in is checked against
+real Manim CE 0.22.1 (`tests/manim_real`): its clock, rate functions, default sizes and
+colors are Manim's own.
 
 | Carries over | How |
 | --- | --- |
-| `Scene`, `MovingCameraScene`, `ThreeDScene` (`set_camera_orientation`, ambient rotation) | `construct` runs; 3D uses the orbit camera |
-| `Dot`, `Circle`, `Square`, `Rectangle`, `Triangle`, `Polygon`, `RegularPolygon`, `Line`, `Arrow`, `Vector`, `ParametricFunction` | `dot`, `line` (closed outlines), `arrow` |
-| `Text`, `Tex`, `MathTex` | `text`; math is typeset (`$...$`); a `font_size` the script sets is an explicit size (48 is the `math` role's height), and `scale` scales it (a negative factor is a flip) |
-| `Axes`, `NumberPlane`, `axes.plot`, `c2p` | `axes` (unequal `x_length`/`y_length` as `scale`/`y_scale`; a step that makes more than 100 ticks is widened to a nice one, with a warning) and a sampled `line` |
-| `VGroup` and `shift`, `move_to`, `next_to`, `to_edge`, `to_corner`, `scale`, `rotate`, `arrange`, `align_to` | positions are computed as Manim would |
-| `Create`, `Uncreate`, `Write`, `FadeIn`, `FadeOut`, `GrowFromCenter`, `Transform`, `ReplacementTransform`, `Rotate`, `Indicate`, `MoveToTarget`, `AnimationGroup`, `LaggedStart`, `Succession`, `.animate` | tracks on `progress`, `opacity`, `pos`, `r`, `points` |
-| Colors the script sets (`RED`, `"#58C4DD"`), `stroke_width` / `set_stroke(width=)`, `camera.background_color` | explicit style values (a hex color; a width in world units, 4 is the `regular` role's); a class's own default color is the nearest role. A width or font size of 0 or less (`stroke_width=0` on a filled shape), or one too large, keeps the role, with a warning; a background's alpha is dropped, with a warning (a background is opaque). `lint(aesthetic=True)` says which are off the theme (`off_palette`, `off_scale`) |
+| `Scene`, `ThreeDScene` (`set_camera_orientation`, ambient rotation) | `construct` runs; 3D uses the orbit camera |
+| `MovingCameraScene`: `self.camera.frame` (`.animate.move_to`, `shift`, `scale`, `set(width=)`, `save_state` / `Restore`) | tracks on `camera.center` and `camera.height` (the frame's width is its height x 16/9) |
+| `Circle`, `Ellipse`, `Arc`, `ArcBetweenPoints`, `Sector`, `AnnularSector`, `Annulus`, `Polygon`, `RegularPolygon`, `Triangle`, `Rectangle`, `Square`, `RoundedRectangle`, `Brace` (`get_text`, `get_tex`, `get_tip`) | phasor's `shapes` (`circle`, `rectangle`, ...) with their fills (`fill_opacity`, `fill_color`, `set_fill`; `stroke_width=0` is `stroke_opacity` 0); stretched out of its kind (`stretch`, `apply_matrix`, a 3D turn) a shape is a `shapes.Path` |
+| `Line`, `DashedLine`, `DashedVMobject`, `VMobject.set_points_as_corners`, `ParametricFunction`, `axes.plot` | a `shapes.Path` (dashed: the `dash` style `dashed`); `Arrow`, `Vector`: `arrow` (Manim's `buff` of 0.25 at both ends kept); `Dot`: `dot` |
+| `SVGMobject("logo.svg")` | `shapes.SVG` (a file inside the scene's folder; one outside it is left out, with a warning) |
+| `Text`, `Tex`, `MathTex` | `text` (`Tex` is text mode with `$...$` maths, `MathTex` maths); `MathTex("a", "+", "b")` is an `equation` with a part each (`eq[1].set_color` colors that part by the nearest role); a `font_size` the script sets is an explicit size (48 is the `math` role's height), and `scale` scales it (a negative factor is a flip) |
+| `Axes` (`c2p`, `p2c`, `i2gp`, `get_axis_labels`, `add_coordinates`, `include_numbers`), `NumberPlane`, `ComplexPlane`, `NumberLine` (`n2p`), `BarChart`, `Table`, `MathTable`, `Matrix`, `Code` (`code_string` or a `code_file` in the scene's folder), `DecimalNumber`, `Integer` | `geo.Axes` (unequal scales; labels and numbers as its own), `dg.NumberPlane` (with its grid), `dg.NumberLine`, `dg.BarChart`, `dg.Table`, `dg.MatrixDisplay`, `dg.Code`, `Counter`; a step that makes more than 100 ticks is widened to a nice one, with a warning |
+| `VGroup` and `shift`, `move_to`, `next_to`, `to_edge`, `to_corner`, `scale`, `rotate`, `stretch`, `set_width`, `align_to`, `arrange`, `arrange_in_grid` | positions are computed as Manim would |
+| `Create`, `Uncreate`, `Write`, `Unwrite`, `DrawBorderThenFill`, `FadeIn`/`FadeOut` (`shift`, `scale`), `GrowFromCenter`, `GrowFromPoint`, `GrowArrow`, `ShrinkToCenter`, `Rotate`, `Indicate`, `Circumscribe`, `Flash`, `Wiggle`, `MoveToTarget`, `Restore`, `ApplyMethod`, `AnimationGroup`, `LaggedStart`, `Succession`, `.animate` (place, size and color: `set_color`, `set_fill`, `set_opacity`) | tracks with Manim's own run times and rate functions: `smooth` is the `sigmoid` easing, `linear`, `smoothstep` ... exactly; any other rate function (`there_and_back`, `double_smooth`, your own) is sampled into 16 straight pieces. Colors move as style tracks (mixed in linear light) |
+| `Transform`, `ReplacementTransform`, `TransformMatchingTex`, `TransformMatchingShapes`, `FadeTransform` | the same kind moves its parameters; different outlines (shapes, paths, text, equations) morph (`transform`, `transform_matching`; text becomes `as_shapes`), played in Manim's run time; the rest crossfade |
+| `ValueTracker` (`get_value`, `set_value`, `.animate.set_value`) | a `Value` with a track |
+| updaters (`add_updater`, with or without `dt`), `always_redraw`, `always`, `f_always` | run by the stand-in at Manim's frames (30 a second, `dt` 1/30, the first frame of a play with `dt` 0, as Manim does) with every animated mobject where Manim has it; what they change becomes tracks (keys a straight line between does not reproduce within 1e-4 are kept). A baked record: the document never runs the script again, so changing the `Value` later does not move what the updater drove. At most 20000 frames per import (then fewer a second, with a warning) |
+| `self.add_sound("click.wav", time_offset, gain)` | a `media.Sound` (a WAV file inside the scene's folder) mixed in when the scene renders |
+| Colors the script sets (`RED`, `"#58C4DD"`), `stroke_width` / `set_stroke(width=)`, `camera.background_color` | explicit style values (a hex color; a width in world units, 4 is the `regular` role's); a class's own default color is the nearest role. A negative or too large width or font size keeps the role, with a warning; a background's alpha is dropped, with a warning (a background is opaque). `lint(aesthetic=True)` says which are off the theme (`off_palette`, `off_scale`) |
 
-What does not: fills (drawn as outlines), updaters and `always_redraw` (baked at their first
-look), `ValueTracker` animations, color changes during an animation (instant), `Transform`
-between different shapes (a crossfade). Each is listed in `ManimImport.warnings` (printed by
-the command); a Manim name phasor lacks raises an error that says so.
+What does not carry over, with a warning in `ManimImport.warnings` (printed by the command):
+a turned or stretched text (drawn level), a turned camera frame, a part of a `MathTex` other
+than its color, an updater that turns a mobject into another kind of shape, `Axes.get_area`,
+a file outside the scene's folder, a color phasor cannot read. A shape phasor cannot draw as
+its own kind (a zero radius, a coordinate past 1e9) is drawn as a path or a line, with a
+warning. A Manim name phasor lacks raises an error that says so; an updater or rate function
+that fails is a `ManimImportError` naming it.
 
 ```python
 import tempfile
@@ -1693,19 +1733,23 @@ from phasor.importers import import_manim
 path = Path(tempfile.mkdtemp()) / "demo.py"
 path.write_text(
     "from manim import *\n"
-    "class Demo(Scene):\n"
+    "class Demo(MovingCameraScene):\n"
     "    def construct(self):\n"
-    "        c = Circle(radius=1, color=BLUE)\n"
+    "        c = Circle(radius=1, color=BLUE, fill_opacity=0.5)\n"
+    "        t = ValueTracker(0)\n"
+    "        d = Dot().add_updater(lambda m: m.move_to(c.point_at_angle(t.get_value())))\n"
     "        self.play(Create(c), run_time=2)\n"
-    "        self.play(c.animate.shift(RIGHT * 2), run_time=1)\n"
+    "        self.add(d)\n"
+    "        self.play(t.animate.set_value(PI), self.camera.frame.animate.scale(0.5), run_time=1)\n"
     "        self.wait(1)\n"
 )
 result = import_manim(path)
-assert result.duration == 4.0 and len(result.scene.engine.document.objects) == 1
+assert result.duration == 4.0 and result.warnings == []
 state = result.scene.engine.state_at
-assert state(0.0)["circle_1"].params.progress == 0.0
-assert state(2.0)["circle_1"].params.progress == 1.0
-assert abs(state(3.5)["circle_1"].params.points[0][0] - 3.0) < 1e-9  # moved 2 to the right
+assert state(0.0)["circle_1"].params.progress == 0.0 and state(2.0)["circle_1"].params.r == 1.0
+assert state(1.0)["circle_1"].params.fill_opacity == 0.5  # a filled shapes.Circle
+assert abs(state(3.0)["dot_1"].params.pos[0] + 1.0) < 1e-6  # the updater: half way round
+assert abs(state(3.5).values["camera.height"] - 4.0) < 1e-9  # the frame zoomed in
 ```
 
 ## Sketch: draw on the scene (Milestone 11)

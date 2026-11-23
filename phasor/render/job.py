@@ -110,7 +110,9 @@ def render_file(
         frames.close()  # a frame source stops its workers
     with stage("encode"):  # the frames still queued
         writer.close()
-    track = engine.audio_track()
+    problems: list[str] = []
+    track = engine.audio_track(problems)
+    warnings.extend(problems)
     sound = track is not None and out.suffix in (".mp4", ".mov")
     if sound:
         samples, rate = track

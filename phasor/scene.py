@@ -84,7 +84,9 @@ class At:
         """The moment everything started here has finished (plus ``gap`` seconds)."""
         return At(self._scene, self._when, self._offset + self._end + gap)
 
-    def _verb(self, name: str, *args: Any, **kwargs: Any) -> At:
+    def motion(self, name: str, *args: Any, **kwargs: Any) -> _verbs.Motion:
+        """What the verb ``name`` would do here (its patch ops and end), without applying it:
+        for a caller that retimes a verb (the Manim import plays it in Manim's run time)."""
         engine = self._scene.engine
         at = self._ref(0.0)
         compiled = engine._snap.compiled
@@ -93,7 +95,10 @@ class At:
         except KeyError as e:
             raise _verbs.VerbError(f"no marker {e.args[0]!r}; markers are "
                                    f"{sorted(compiled.time_map.markers)}") from None  # fmt: skip
-        motion = getattr(_verbs.Verbs(compiled, engine.state_at(t), at), name)(*args, **kwargs)
+        return getattr(_verbs.Verbs(compiled, engine.state_at(t), at), name)(*args, **kwargs)
+
+    def _verb(self, name: str, *args: Any, **kwargs: Any) -> At:
+        motion = self.motion(name, *args, **kwargs)
         if motion.ops:
             self._scene._apply(list(motion.ops))
         self._end = max(self._end, motion.end)
