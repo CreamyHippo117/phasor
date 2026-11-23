@@ -20,7 +20,10 @@ def normalize(v: Any) -> Value:
     if isinstance(v, bool | str):
         return v
     if isinstance(v, numbers.Real):
-        f = float(v)
+        try:
+            f = float(v)
+        except OverflowError:  # an int too large for a float: a ValueError, as for inf
+            raise ValueError(f"number too large: {str(v)[:20]}...") from None
         if not math.isfinite(f):
             raise ValueError(f"non-finite number: {v!r}")
         return f

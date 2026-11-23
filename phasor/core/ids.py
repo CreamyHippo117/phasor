@@ -35,6 +35,20 @@ def split_path(path: str) -> tuple[str, str]:
     return object_id, param
 
 
+STYLE = "style"  # ``<id>.style.<key>``: a track on a style key (a style transition)
+
+
+def split_style_path(path: str) -> tuple[str, str] | None:
+    """``dot.style.color`` -> (``dot``, ``color``); None for any other path. Whether it
+    names a style key or a parameter of a child object called ``dot.style`` is decided by
+    the document: a real object ``<id>.style`` keeps its own parameter paths."""
+    head, _, key = path.rpartition(".")
+    object_id, _, word = head.rpartition(".")
+    if word != STYLE or not object_id or not is_valid_id(object_id) or not is_valid_name(key):
+        return None
+    return object_id, key
+
+
 _UNSAFE = re.compile(r"[^A-Za-z0-9_.-]+")
 
 

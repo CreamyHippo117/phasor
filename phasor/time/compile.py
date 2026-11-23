@@ -73,6 +73,60 @@ def file_values(c: Compiled, path: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(v for v in values if isinstance(v, str) and v))
 
 
+# Role groups a style transition may animate (``<id>.style.<key>`` tracks): colors mix in
+# linear RGBA, the rest are numbers. Glow is life's; surfaces, colormaps and dashes do not mix.
+ANIMATED_STYLE = ("emphasis", "fill", "stroke", "text")
+
+
+@dataclass(frozen=True)
+class StyleEnd:
+    """One end of a style transition: the resolved value (or an explicit world size, turned
+    into a share of the frame height at t) and the role or value the scene typed."""
+
+    value: Any
+    world: float | None
+    typed: Any
+
+    def at(self, per: float) -> Any:
+        return explicit.to_share(self.world, per) if self.world is not None else self.value
+
+
+@dataclass(frozen=True)
+class StyleTrack:
+    """A style key's transitions: pure in t (contract 3), mixed in linear RGBA (contract 4)."""
+
+    initial: StyleEnd
+    segments: tuple[ResolvedSegment, ...]  # ``to`` is a StyleEnd
+
+    def at(self, t: float, per: float) -> tuple[Any, Any, dict[str, Any] | None]:
+        """(value, typed value in effect, the transition in progress or None) at ``t``.
+        The typed value is the nearer end: the start until half-way, then the target."""
+        cur = self.initial
+        for s in self.segments:
+            if t < s.t0:
+                break
+            if t >= s.t1:
+                cur = s.to
+                continue
+            share = (t - s.t0) / (s.t1 - s.t0)
+            value = _style_mix(cur.at(per), s.to.at(per), s.ease(share))
+            going = {"from": cur.typed, "to": s.to.typed, "progress": round(share, 4)}
+            return value, (cur.typed if share < 0.5 else s.to.typed), going
+        return cur.at(per), cur.typed, None
+
+
+def _style_mix(a: Any, b: Any, u: float) -> Any:
+    """``a`` to ``b`` by ``u`` (an easing may overshoot): a color keeps every channel at
+    least 0 and its alpha at most 1; a number stays at least 0, and between two opacities
+    (both within 0..1) at most 1."""
+    if isinstance(a, tuple):
+        mixed = [max(0.0, x + (y - x) * u) for x, y in zip(a, b, strict=True)]
+        mixed[3] = min(mixed[3], 1.0)
+        return tuple(mixed)
+    v = max(0.0, a + (b - a) * u)
+    return min(v, 1.0) if min(a, b) >= 0.0 and max(a, b) <= 1.0 else v
+
+
 @dataclass(frozen=True)
 class CompiledObject:
     id: str
@@ -87,6 +141,8 @@ class CompiledObject:
     # style key -> an explicit size in world units (M18); ``style`` holds None there until
     # ``evaluate`` turns it into a share of the frame height through the camera
     world: MappingProxyType = dataclasses.field(default_factory=lambda: MappingProxyType({}))
+    # style key -> its transitions (``<id>.style.<key>`` tracks)
+    style_tracks: MappingProxyType = dataclasses.field(default_factory=lambda: MappingProxyType({}))
 
 
 @dataclass(frozen=True)
@@ -260,10 +316,22 @@ def compile_document(
     duration = max(doc.timeline.markers.values(), default=0.0)
     if doc.narration is not None:
         duration = max(duration, doc.narration.end)  # the scene lasts as long as the voice
+    style_tracks: dict[str, dict[str, StyleTrack]] = {}
+    by_id = {o.id: o for o in objects}
     for path, segs in sorted(doc.timeline.tracks.items()):
         node = nodes.get(path)
         if path not in owner and path.rpartition(".")[0] in placeholders:
             continue  # kept in the document; it animates again once the type is back
+        styled = doc.style_track(path) if path not in owner else None
+        if styled is not None:
+            if styled[0] in placeholders:
+                continue
+            track = _style_track(theme, time_map, by_id.get(styled[0]), styled[1], path, segs,
+                                 add)  # fmt: skip
+            if track is not None:
+                style_tracks.setdefault(styled[0], {})[styled[1]] = track
+                duration = max(duration, track.segments[-1].t1 if track.segments else 0.0)
+            continue
         if path not in owner:
             add(Issue("unknown_param", f"track on unknown parameter {path!r}", path=path))
             continue
@@ -306,6 +374,8 @@ def compile_document(
             duration = max(duration, t1)
         nodes[path] = ResolvedTrack(node.value, tuple(resolved))
 
+    objects = [dataclasses.replace(o, style_tracks=MappingProxyType(style_tracks[o.id]))
+               if o.id in style_tracks else o for o in objects]  # fmt: skip
     if any(o.always for o in doc.objects) and not issues:
         _attach_updaters(doc, nodes, objects, placeholders, modules, missing, add, scope)
 
@@ -330,6 +400,53 @@ def compile_document(
                         duration, str(base_dir), tuple(missing), scope)  # fmt: skip
     evaluate(compiled, 0.0)  # surfaces type errors from expressions before anything is saved
     return compiled
+
+
+def _style_track(theme: Theme, time_map: TimeMap, obj: CompiledObject | None, key: str,
+                 path: str, segs, add) -> StyleTrack | None:  # fmt: skip
+    """A style key's transitions, each end resolved by the theme (or an explicit value)."""
+    if obj is None:  # an object the document has but that failed to compile: reported
+        return None
+    cls = type(obj.impl)
+    if key not in cls.Style:
+        add(Issue("unknown_style", f"{path}: {obj.type!r} has no style key {key!r}; it has "
+                  f"{sorted(cls.Style)}", ids=(obj.id,), path=path))  # fmt: skip
+        return None
+    group = cls.Style[key][0]
+    if group not in ANIMATED_STYLE:
+        add(Issue("bad_style_track", f"{path}: a {group} role cannot be animated; style "
+                  f"transitions move {', '.join(ANIMATED_STYLE)} keys", ids=(obj.id,),
+                  path=path, fix_hint="set the role with set_style instead"))  # fmt: skip
+        return None
+    if key not in obj.roles:  # its own role failed: reported as bad_role
+        return None
+    initial = StyleEnd(obj.style[key], obj.world.get(key), obj.roles[key])
+    resolved: list[ResolvedSegment] = []
+    prev_end = float("-inf")
+    for i, seg in enumerate(segs):
+        where = f"{path}[{i}]"
+        try:
+            t0, t1 = time_map.resolve(seg.t0), time_map.resolve(seg.t1)
+        except KeyError as e:
+            add(Issue("unknown_marker", f"{where}: no marker {e.args[0]!r}", path=path))
+            continue
+        if seg.ease not in EASINGS:
+            add(Issue("unknown_ease", f"{where}: no easing {seg.ease!r}; "
+                      f"available: {sorted(EASINGS)}", path=path))  # fmt: skip
+            continue
+        if t1 < t0 or t0 < prev_end:
+            add(Issue("bad_segment", f"{where}: spans {t0:g}-{t1:g} s but must not run "
+                      f"backwards or start before the previous segment ends ({prev_end:g} s)",
+                      path=path))  # fmt: skip
+            continue
+        try:
+            value, size = explicit.resolve(theme, group, seg.to)
+        except ThemeError as e:
+            add(Issue("bad_role", f"{where}: {e}", ids=(obj.id,), path=path))
+            continue
+        resolved.append(ResolvedSegment(t0, t1, StyleEnd(value, size, seg.to), EASINGS[seg.ease]))
+        prev_end = t1
+    return StyleTrack(initial, tuple(resolved))
 
 
 def _env(nodes: Mapping[str, Node], order: tuple[str, ...], t: float,
@@ -462,17 +579,35 @@ def evaluate(c: Compiled, t: float, replace: Mapping[str, Any] | None = None) ->
         camera = ortho_camera(cam_params, aspect)
     overlay = overlay_camera(aspect)
 
+    typed: dict[str, Mapping[str, Any]] = {}  # object id -> roles in effect at t
+    moving: dict[str, Mapping[str, Any]] = {}  # object id -> style transitions in progress
+
     def sized(o: CompiledObject) -> Mapping[str, Any]:
-        """Explicit world sizes as shares of the frame height, at the object's position."""
-        if not o.world:
+        """Explicit world sizes as shares of the frame height, at the object's position;
+        style transitions at ``t``."""
+        if not o.world and not o.style_tracks:
             return o.style
         cam = overlay if o.layer == "overlay" else camera
-        return world_sizes(o.style, o.world, cam, env.get(f"{o.id}.pos"))
+        pos = env.get(f"{o.id}.pos")
+        world = {k: w for k, w in o.world.items() if k not in o.style_tracks}
+        style = world_sizes(o.style, world, cam, pos) if world else dict(o.style)
+        if o.style_tracks:
+            per = _units_per_height(cam, pos)
+            roles, now = dict(o.roles), {}
+            for key, track in o.style_tracks.items():
+                style[key], roles[key], going = track.at(t, per)
+                if going is not None:
+                    now[key] = going
+            typed[o.id] = MappingProxyType(roles)
+            if now:
+                moving[o.id] = MappingProxyType(now)
+        return style
 
     objects = tuple(
         ObjectState(o.id, o.type, o.index, build(o.id, o.params_model, o.tags, sized(o),
                                                  _life_of(o.impl)),
-                    MappingProxyType(built[o.id]), o.roles, o.tags, o.layer, o.impl)
+                    MappingProxyType(built[o.id]), typed.get(o.id, o.roles), o.tags, o.layer,
+                    o.impl, restyling=moving.get(o.id, _EMPTY))
         for o in c.objects
     )  # fmt: skip
     background = c.theme.background
@@ -503,16 +638,24 @@ def evaluate(c: Compiled, t: float, replace: Mapping[str, Any] | None = None) ->
     return scene(objects)
 
 
+_EMPTY: MappingProxyType = MappingProxyType({})
+
+
+def _units_per_height(cam: Any, pos: Any) -> float:
+    """World units per frame height at ``pos`` (the camera's target when it has none)."""
+    ref = None
+    with contextlib.suppress(TypeError, ValueError):
+        p = np.asarray(pos, dtype=np.float64)
+        ref = p if p.shape == (3,) and np.isfinite(p).all() else None
+    return float(cam.units_per_height(ref))
+
+
 def world_sizes(style: Mapping[str, Any], world: Mapping[str, float], cam: Any,
                 pos: Any) -> dict[str, Any]:  # fmt: skip
     """``style`` with each explicit world size (M18) as the share of the frame height that
     the drawing code multiplies back by ``units_per_height``: exact for the 2D camera, and
     in 3D at ``pos`` (the object's position; the camera's target when it has none)."""
-    ref = None
-    with contextlib.suppress(TypeError, ValueError):
-        p = np.asarray(pos, dtype=np.float64)
-        ref = p if p.shape == (3,) and np.isfinite(p).all() else None
-    per = float(cam.units_per_height(ref))
+    per = _units_per_height(cam, pos)
     return {**style, **{k: explicit.to_share(w, per) for k, w in world.items()}}
 
 

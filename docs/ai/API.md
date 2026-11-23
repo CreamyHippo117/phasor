@@ -888,6 +888,33 @@ own.engine.polish(snap=True)  # asked: snapped to the nearest roles
 assert own.engine.document.object("orbit").style["stroke"] == "bold"
 ```
 
+**Style transitions.** A track on `<id>.style.<key>` moves a style key from the role (or
+explicit value) it holds to another: `s.at("go").morph("dot.style.color", "highlight")` (the
+theme's `morph` timing; strict-lint clean) or a raw `.to("dot.style.color", "#58C4DD",
+duration=1)`. Colors (`emphasis` keys: `color`, `fill_color`, ...) mix in linear RGBA; `fill`
+(the fill's opacity), `stroke` and text `size` move as numbers, and an explicit world size
+follows the camera at every t. Glow, surface, colormap and dash keys cannot be animated
+(`bad_style_track`). The document stores a role or a value at each key and in each segment
+(a hex target is stored upper case). `state.roles[key]` is the typed value nearer in time
+(the start until half-way, then the target); the inspector shows a transition in progress
+as `restyling: {key: {from, to, progress}}`; `off_palette` judges an explicit target where
+it is reached (its snap is left to the track). A child object named `<id>.style` keeps its
+own parameter paths. On a `Line` with `hue_along` the colors come from the colormap, so a
+color transition does not show on it.
+
+```python
+from phasor import Dot, Scene
+
+fade = Scene("restyle", passes=None, look="none")
+fade.marker("go", 1.0)
+fade.add(Dot(id="dot", pos=(0, 0), style={"color": "primary"}))
+fade.at("go").morph("dot.style.color", "highlight")
+st = fade.engine.state_at(1.5)
+assert st["dot"].restyling["color"]["to"] == "highlight"
+assert fade.engine.document.object("dot").style["color"] == "primary"  # still a role
+assert not [i for i in fade.engine.lint(strict=True) if i.code == "raw_motion"]
+```
+
 Finals render with motion blur (`phasor render --preset final`; `--motion-blur 0` turns it
 off): `engine.frame_blurred(t, fps)` averages sub-frames only where something moves.
 

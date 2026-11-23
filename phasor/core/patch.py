@@ -190,6 +190,17 @@ def parse_patch(patch: Any) -> Patch:
         ) from e
 
 
+_STYLE_VALUE: TypeAdapter = TypeAdapter(StyleValue)
+
+
+def _style_value(value: Any) -> Any:
+    """A style track's target in the form the document stores (as ``ObjectSpec.style``)."""
+    try:
+        return _STYLE_VALUE.validate_python(value)
+    except ValidationError as e:
+        raise ValueError(e.errors()[0]["msg"]) from None
+
+
 def _fail(code: str, message: str, **kw: Any) -> DocumentError:
     return DocumentError(Issue(code, message, **kw))
 
@@ -271,7 +282,8 @@ def _apply_op(doc: Document, op: Any, scope: CodeScope | None = None) -> Documen
         case RemoveObject():
             if doc.object(op.id) is None:
                 raise _fail("unknown_id", f"no object {op.id!r}", ids=(op.id,))
-            tracks = {p: s for p, s in tl.tracks.items() if split_path(p)[0] != op.id}
+            tracks = {p: s for p, s in tl.tracks.items() if split_path(p)[0] != op.id
+                      and (doc.style_track(p) or ("",))[0] != op.id}  # fmt: skip
             return doc.model_copy(
                 update={
                     "objects": tuple(o for o in doc.objects if o.id != op.id),
@@ -289,7 +301,13 @@ def _apply_op(doc: Document, op: Any, scope: CodeScope | None = None) -> Documen
         case SetTags():
             return _replace_object(doc, op.id, tags=op.tags)
         case AddSegment():
-            segs = (*tl.tracks.get(op.path, ()), op.segment)
+            seg = op.segment
+            if doc.style_track(op.path) is not None:  # a style transition: a role or a value
+                try:
+                    seg = seg.model_copy(update={"to": _style_value(seg.to)})
+                except ValueError as e:
+                    raise _fail("bad_role", f"{op.path}: {e}", path=op.path) from None
+            segs = (*tl.tracks.get(op.path, ()), seg)
             return doc.model_copy(
                 update={"timeline": tl.model_copy(update={"tracks": {**tl.tracks, op.path: segs}})}
             )

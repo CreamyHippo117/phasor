@@ -403,9 +403,11 @@ def strict_rules(c: Compiled) -> list[Issue]:
     see ``updater_rules``."""
     raw: dict[str, list[float]] = {}
     for path, segs in c.doc.timeline.tracks.items():
+        styled = c.doc.style_track(path)  # ``dot.style.color`` moves ``dot``
+        owner = styled[0] if styled is not None else path.rpartition(".")[0]
         for seg in segs:
             if seg.verb is None:
-                raw.setdefault(path.rpartition(".")[0], []).append(c.time_map.resolve(seg.t0))
+                raw.setdefault(owner, []).append(c.time_map.resolve(seg.t0))
     return [
         Issue(
             "raw_motion",

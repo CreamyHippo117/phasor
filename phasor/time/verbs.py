@@ -233,8 +233,10 @@ class Verbs:
     def morph(self, path: str, value: Any, until: str | None = None) -> Motion:
         """Change any parameter (points of a curve, a constant, a color stop) smoothly, in
         the theme's ``morph`` time, or slowly until the marker ``until`` (a long, calm change:
-        the constant of a function drifting while it is talked about)."""
-        target = path.rpartition(".")[0]
+        the constant of a function drifting while it is talked about). A style key moves too
+        (``"dot.style.color"`` to ``"highlight"``): its color mixes in linear light."""
+        styled = self.c.doc.style_track(path)
+        target = styled[0] if styled is not None else path.rpartition(".")[0]
         if self.c.doc.camera(target) is None:
             self._object(target)
         seg, done = self._segment(path, value, "morph", 0.0)
