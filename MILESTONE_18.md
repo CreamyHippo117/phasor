@@ -6,6 +6,8 @@ snapped by `polish()`. Exit demo: **a scene with an explicit color, size and bac
 renders correctly; `off_palette` and `off_scale` warn; `polish` offers the snap; nothing is
 applied silently; old documents load unchanged** (`examples/own_colors.py`).
 
+**Gate (2026-11-23): MILESTONE 18: DONE** on Linux, after an independent audit (1 blocker, 5 should-fix items, all fixed with tests). Windows CI on the Milestone 18 head: only the 4 known failures. Untested: macOS, CUDA, Qt on a real display, the GPU golden for `own_colors`.
+
 Status: **built; focused gates green on Linux (see Verification)**. The full suite was not
 run (over an hour here). Contract audit by the authoring model, **not independent**.
 Untested on Windows, macOS and CUDA. **Independent audit done 2026-11-23; its findings are

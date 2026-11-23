@@ -23,7 +23,7 @@ compounding. If this file and SPEC.md disagree, stop and ask.
   touches contract 2) accepted by the owner; phase 1 not started.
 - Manim parity, the whole CPU, and an open object contract: `MANIM_PARITY.md` (Milestones 14-20,
   owner 2026-11-23, answers recorded there); ADR 0005 accepted, plan approved, interleaved with
-  `BEAUTY.md`. **14 (CPU kernels) and 15 (open contract) are DONE** (gate 2026-11-23, after independent audits; `MILESTONE_14.md`, `MILESTONE_15.md`) on `claude/eloquent-mayer-jiqxs9`. 16-19 are unblocked (20 last). Windows, CUDA and macOS untested: **`pc_tasks/09_pc_checks_after_14_15.md`** lists what the owner's PC must run; owner decisions are in `MANIM_PARITY.md`.
+  `BEAUTY.md`. **14 (CPU kernels) and 15 (open contract) are DONE** (gate 2026-11-23, after independent audits; `MILESTONE_14.md`, `MILESTONE_15.md`) on `claude/eloquent-mayer-jiqxs9`. **16 (paths, fills, shapes) and 18 (explicit styles) are DONE** (audited; `MILESTONE_16.md`, `MILESTONE_18.md`); 17 and 19 are next, 20 last. Windows, CUDA and macOS untested: **`pc_tasks/09_pc_checks_after_14_15.md`** lists what the owner's PC must run; owner decisions are in `MANIM_PARITY.md`.
 - Render speed: `GPU_SPEED.md` (steps 1-4 done, workers included); resume at its "Next
   session"; measure with wall clock before and after each step.
 - One milestone per branch. No work on milestone N+1 until N's exit demo and tests pass.

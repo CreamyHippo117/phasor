@@ -284,4 +284,6 @@ too) and Windows machines whose driver lacks 4.3.
 | --- | --- |
 | 14 CPU | **done** 2026-11-23 (`MILESTONE_14.md`); Windows/CUDA/macOS on the PC |
 | 15 contract | **done** 2026-11-23 (`MILESTONE_15.md`), two audit rounds; owner decisions open |
-| 16-20 | 16-19 unblocked; 16 next |
+| 16 shapes | **done** 2026-11-23 (`MILESTONE_16.md`), audited |
+| 18 style | **done** 2026-11-23 (`MILESTONE_18.md`), audited |
+| 17, 19, 20 | 17 and 19 building; 20 last |

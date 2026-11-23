@@ -5,6 +5,8 @@ From `MANIM_PARITY.md` ("Milestone 16"), on the open object contract of Mileston
 correctly, and every type has inspector output, lint, docs, an example and a golden**
 (`examples/shapes.py`, `examples/vector_toolkit.py`).
 
+**Gate (2026-11-23): MILESTONE 16: DONE** on Linux, after an independent audit (4 blockers and 5 should-fix items found, all fixed with tests). Windows CI (4 known no-OpenGL/ACL failures only, 1376 passed on the combined Milestone 16+18 commit) passed; the full suite on Ubuntu CI is the final check. Untested: macOS, CUDA, GPU goldens, FIFO/symlink hostile-file tests on Windows.
+
 Status: **built on Linux (llvmpipe OpenGL, no CUDA); independent audit done 2026-11-23,
 its findings fixed (see "Independent audit"); a few items deferred.** Untested on Windows,
 macOS and CUDA.
