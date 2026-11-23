@@ -36,6 +36,7 @@ SCENES = [
     (
         "convolution",
         "live convolution: a kernel flipped and sliding, the overlap lit, the output traced",
+    ),
     (
         "filtering",
         "a low-pass filter: poles and zeros, gain and phase, a signal and its spectrum cut",
