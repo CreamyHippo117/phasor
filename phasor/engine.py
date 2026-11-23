@@ -518,6 +518,7 @@ class Engine:
     @property
     def layout(self) -> Bake:
         """The layout bake for the current document: key times, tracks, chosen label slots."""
+        self._snap.refresh()
         return self._bake(self._snap)
 
     def state_at(self, t: float) -> SceneState:

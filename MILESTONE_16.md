@@ -83,7 +83,13 @@ independently (see Verification).** Untested on Windows, macOS and CUDA.
     lint already rely on; `Arrow` is a vector (`components`). Making them paths would change
     saved scenes' pictures and semantics; they share the stroke and head helpers instead.
     `Path` is the one way to draw a filled or dashed outline.
-12. Shapes lie in the plane z = `pos.z`; a `Path` may lie in any plane (fills are
+12. `core/pycode.py` (the Code view) reaches the new types as `shapes.<Name>`. Found on the
+    way, not fixed (it is older than this milestone): a script regenerated from a document
+    whose verb staggers four objects can differ in the last float digit of a track's end
+    (`0.36 + 1.4` vs the stored `1.76`), which `tests/test_final.py`'s round trip flags;
+    `examples/vector_toolkit.py` traces two at a time so it does not hit it.
+13. `Engine.layout`, `state_at`, the inspector and lint all call `_Snapshot.refresh` first.
+14. Shapes lie in the plane z = `pos.z`; a `Path` may lie in any plane (fills are
     triangulated in the plane of its points).
 
 ## Deferred
@@ -98,10 +104,20 @@ independently (see Verification).** Untested on Windows, macOS and CUDA.
   mitered butt ends.
 - Path morphing (Milestone 17).
 
+- An `SVG` builds and validates its parts at every `state_at` (the file itself is parsed
+  once per change); the frame cost of a large drawing is not measured.
+
 ## Untested
 
 Windows, macOS and CUDA (no GPU goldens in `tests/golden/gpu/`). mapbox-earcut, shapely and
 svgelements publish Windows wheels; not installed on Windows here.
+
+## Setup lines
+
+README and TESTING.md install `--extra boolean --extra svg`; CI and packaging too. The
+Commands block in `CLAUDE.md` was left for the owner (it says `uv sync --extra gl --extra
+encode`); without the two extras the suite skips the tests that need them (named in the
+skip reason) instead of failing.
 
 ## Merge notes (Milestone 18 runs in parallel)
 
