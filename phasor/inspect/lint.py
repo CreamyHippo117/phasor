@@ -273,12 +273,11 @@ def file_rules(c: Compiled) -> list[Issue]:
     """``missing_file``: a parameter a type lists in ``Files`` (core/files.py) names a file
     that is not in the scene's folder. The object draws nothing until the file is there."""
     from phasor.core import files
-    from phasor.core.objects import get_type
     from phasor.time.compile import Const
 
     out = []
     for o in c.objects:
-        for name in getattr(get_type(o.type), "Files", ()):
+        for name in getattr(type(o.impl), "Files", ()):
             path = f"{o.id}.{name}"
             node = c.nodes.get(path)
             value = node.value if isinstance(node, Const) else None

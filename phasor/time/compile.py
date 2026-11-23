@@ -8,6 +8,7 @@ finds. ``evaluate`` is then a pure function of (compiled document, t).
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import functools
 import math
 from collections.abc import Mapping
@@ -20,7 +21,15 @@ from pydantic import BaseModel, TypeAdapter, ValidationError
 from phasor.core import life
 from phasor.core.ids import is_valid_id
 from phasor.core.issues import DocumentError, Issue
-from phasor.core.objects import Placeholder, SceneObject, get_type, get_updater, registered_types
+from phasor.core.objects import (
+    CodeScope,
+    Placeholder,
+    SceneObject,
+    get_type,
+    get_updater,
+    is_registered,
+    registered_types,
+)
 from phasor.core.schema import Document, ExprSpec
 from phasor.core.spatial import (
     OrbitCameraParams,
@@ -74,6 +83,8 @@ class Compiled:
     base_dir: str = ""
     # (object id, why) for each object whose code is not available (lint missing_type).
     missing: tuple[tuple[str, str], ...] = ()
+    # The scene code this document may use (its own modules, where scripts may run).
+    scope: CodeScope = dataclasses.field(default_factory=CodeScope)
 
 
 @functools.cache
@@ -120,14 +131,20 @@ def _why(doc: Document, modules: Mapping[str, str] | None) -> str:
 
 
 def compile_document(
-    doc: Document, base_dir: str = "", modules: Mapping[str, str] | None = None
+    doc: Document,
+    base_dir: str = "",
+    modules: Mapping[str, str] | None = None,
+    scope: CodeScope | None = None,
 ) -> Compiled:
     """Validate and resolve ``doc``. ``base_dir``: the scene's folder, which the files it
     names are relative to (``core/files.py``; a missing one is lint ``missing_file``).
     ``modules``: what became of each module in ``meta.modules`` (``"loaded"``, ``"missing"``,
     ``"refused"``, ``"failed: ..."``), from the Engine, which loads them (ADR 0005). An
     object whose type no loaded module defines draws as a placeholder (lint
-    ``missing_type``); without ``meta.modules`` an unknown type is an error."""
+    ``missing_type``); without ``meta.modules`` an unknown type is an error. ``scope``: the
+    scene code the document may use (``CodeScope``; the Engine's); without one, only types
+    that ship in phasor or come from imported code."""
+    scope = scope if scope is not None else CodeScope.of(doc.meta.modules, base_dir, False)
     issues: list[Issue] = []
     add = issues.append
     missing: list[tuple[str, str]] = []  # (object id, why): lint missing_type
@@ -175,10 +192,11 @@ def compile_document(
                 add(Issue("bad_param", f"{path}: {msg}", ids=(target,), path=path))
 
     for index, spec in enumerate(doc.objects, start=1):
-        cls = get_type(spec.type)
+        cls = get_type(spec.type, scope)
         if cls is None and not doc.meta.modules:
-            add(Issue("unknown_type", f"unknown object type {spec.type!r}; "
-                      f"registered: {sorted(registered_types())}", ids=(spec.id,)))  # fmt: skip
+            known = sorted(registered_types(scope))
+            add(Issue("unknown_type", f"unknown object type {spec.type!r}; registered: {known}",
+                      ids=(spec.id,)))  # fmt: skip
             continue
         if cls is None:
             # The document names code that would define this type, but it is not here (lint
@@ -264,7 +282,7 @@ def compile_document(
         nodes[path] = ResolvedTrack(node.value, tuple(resolved))
 
     if any(o.always for o in doc.objects) and not issues:
-        _attach_updaters(doc, nodes, objects, placeholders, modules, missing, add)
+        _attach_updaters(doc, nodes, objects, placeholders, modules, missing, add, scope)
 
     for path, node in nodes.items():
         if isinstance(node, CompiledExpr):
@@ -284,7 +302,7 @@ def compile_document(
     if doc.meta.duration is not None:
         duration = doc.meta.duration
     compiled = Compiled(doc, theme, time_map, MappingProxyType(nodes), order, tuple(objects),
-                        duration, str(base_dir), tuple(missing))  # fmt: skip
+                        duration, str(base_dir), tuple(missing), scope)  # fmt: skip
     evaluate(compiled, 0.0)  # surfaces type errors from expressions before anything is saved
     return compiled
 
@@ -312,7 +330,7 @@ def _env(nodes: Mapping[str, Node], order: tuple[str, ...], t: float,
     return env
 
 
-def _attach_updaters(doc, nodes, objects, placeholders, modules, missing, add) -> None:
+def _attach_updaters(doc, nodes, objects, placeholders, modules, missing, add, scope) -> None:
     """Make each object's updaters (``ObjectSpec.always``) nodes of the parameter graph. Each
     is run once at t = 0 to find what it reads (its edges) and what it sets."""
     models = {o.id: o.params_model for o in objects}
@@ -328,7 +346,7 @@ def _attach_updaters(doc, nodes, objects, placeholders, modules, missing, add) -
             continue
         model = models[spec.id]
         for ref in spec.always:
-            fn = get_updater(ref)
+            fn = get_updater(ref, scope)
             if fn is None:
                 why = _why(doc, modules)
                 missing.append((spec.id, f"updater {ref!r} is not available ({why})"))
@@ -419,7 +437,7 @@ def evaluate(c: Compiled, t: float, replace: Mapping[str, Any] | None = None) ->
         camera = ortho_camera(cam_params, aspect)
     objects = tuple(
         ObjectState(o.id, o.type, o.index, build(o.id, o.params_model, o.tags, o.style,
-                                                 getattr(get_type(o.type), "Life", frozenset())),
+                                                 _life_of(o.impl)),
                     MappingProxyType(built[o.id]), o.roles, o.tags, o.layer, o.impl)
         for o in c.objects
     )  # fmt: skip
@@ -442,6 +460,11 @@ def evaluate(c: Compiled, t: float, replace: Mapping[str, Any] | None = None) ->
     if any(callable(getattr(o.impl, "build", None)) for o in objects):
         objects = _expand(c, t, objects, scene)
     return scene(objects)
+
+
+def _life_of(impl: Any) -> frozenset[str]:
+    """How an object's type may live (``ObjectBase.Life``); a placeholder does not."""
+    return frozenset() if isinstance(impl, Placeholder) else type(impl).Life
 
 
 def _expand(c: Compiled, t: float, objects: tuple[ObjectState, ...], scene) -> tuple:
@@ -468,8 +491,14 @@ def _expand(c: Compiled, t: float, objects: tuple[ObjectState, ...], scene) -> t
             raise fail(parent.id, f"build failed: {type(e).__name__}: {e}") from e
         for part in made:
             cls = type(part)
-            if get_type(getattr(cls, "type", "")) is not cls or not isinstance(part.id, str):
+            if not is_registered(cls) or not isinstance(part.id, str):
                 raise fail(parent.id, f"build must return objects of registered types: {part!r}")
+            if getattr(part, "_always", None):
+                raise fail(
+                    parent.id,
+                    f"part {part.id!r} has an updater; a part has none (put "
+                    "the updater on the composite, or on an object of its own)",
+                )
             full = f"{parent.id}.{part.id}"
             if not is_valid_id(full):
                 raise fail(parent.id, f"part id {part.id!r} is not a valid name")

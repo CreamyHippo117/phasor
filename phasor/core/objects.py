@@ -218,11 +218,71 @@ class ObjectBase:
         return f"{type(self).__name__}(id={self.id!r})"
 
 
+# Imported code (phasor's own types, an installed package, a test module): one per name,
+# shared by the whole process.
 _REGISTRY: dict[str, type] = {}
+# Scene code (``script_of``): (resolved script file, type name) -> type. A document reaches
+# these only through its own ``meta.modules``, and only where scripts may run (``CodeScope``),
+# so two scenes never see or replace each other's types.
+_SCENE_TYPES: dict[tuple[str, str], type] = {}
+SCENE_MODULE_PREFIX = "phasor_scene_"  # the names the engine gives the modules it loads
 
 
 class RegistrationError(TypeError):
     pass
+
+
+def script_of(module_globals: Any) -> str | None:
+    """The script file code was run from (resolved), or None for imported code.
+
+    Scene code is a ``.py`` file run as a script: ``python scene.py``, ``phasor.load`` or
+    ``runpy``, or a module the engine loaded from a document's ``meta.modules``. It belongs to
+    that file. Imported code (phasor, an installed package, a test module) and code with no
+    file (a notebook cell, a prompt, an ``exec``'d block) is shared by the process."""
+    g = module_globals if isinstance(module_globals, dict) else {}
+    file, name = g.get("__file__"), str(g.get("__name__", ""))
+    if not isinstance(file, str) or not file.endswith(".py"):
+        return None
+    if g.get("__spec__") is not None and not name.startswith(SCENE_MODULE_PREFIX):
+        return None
+    return str(Path(file).resolve())
+
+
+def _script_of_class(cls: type) -> str | None:
+    """The script a class was defined by: its module's, or any of its own functions'."""
+    import sys
+
+    module = sys.modules.get(cls.__module__)
+    found = [script_of(vars(module)) if module is not None else None]
+    for value in vars(cls).values():
+        fn = getattr(value, "__func__", value)
+        found.append(script_of(getattr(fn, "__globals__", None)))
+    return next((f for f in found if f is not None), None)
+
+
+@dataclass(frozen=True)
+class CodeScope:
+    """The scene code one document may use (ADR 0005, contract 3): the files of its
+    ``meta.modules``, resolved inside its folder. ``files`` holds them only where scripts may
+    run (``allow_scripts``); otherwise the document gets only phasor's types and imported
+    code, never a script's, even one this process ran."""
+
+    folder: str = ""
+    named: tuple[str, ...] = ()  # every module the document names, resolved
+    files: tuple[str, ...] = ()  # those whose code it may use
+
+    @classmethod
+    def of(cls, modules: tuple[str, ...], base_dir: str | Path, allow: bool) -> CodeScope:
+        from phasor.core.files import resolve
+
+        named = []
+        for rel in modules:
+            try:
+                named.append(str(resolve(base_dir, rel)))
+            except ValueError:
+                continue
+        folder = str(Path(base_dir or ".").resolve())
+        return cls(folder, tuple(named), tuple(named) if allow else ())
 
 
 def _takes_pass(draw: Callable) -> bool:
@@ -300,8 +360,14 @@ def register(cls: type) -> type:
     if bad:
         raise RegistrationError(f"{cls.__name__}.Files names {bad}, which are not parameters")
     source = source_file(cls)
+    script = _script_of_class(cls)  # before ``draw`` is wrapped (the wrapper is phasor's)
     old = _REGISTRY.get(name)
-    if old is not None and old is not cls:
+    if script is not None:
+        # Scene code: its own file's, replaced only by that file (run again, or changed).
+        if old is not None and is_builtin(old):
+            raise RegistrationError(f"object type {name!r} is already registered (it ships "
+                                    "in phasor); give a scene's own type another name")  # fmt: skip
+    elif old is not None and old is not cls:
         same_file = source is not None and getattr(old, "_phasor_source", None) == source
         if is_builtin(old) or not same_file:
             raise RegistrationError(f"object type {name!r} is already registered")
@@ -313,34 +379,59 @@ def register(cls: type) -> type:
         if not hasattr(cls, m):
             setattr(cls, m, (record.COMPOSITE if composite else record.DERIVED)[m])
     cls._phasor_source = source
-    _REGISTRY[name] = cls
+    cls._phasor_script = script
+    cls._phasor_registered = cls  # this class itself (a subclass inherits the attribute)
+    if script is not None:
+        _SCENE_TYPES[(script, name)] = cls
+    else:
+        _REGISTRY[name] = cls
     return cls
 
 
+def is_registered(cls: type) -> bool:
+    """Whether ``cls`` itself went through ``register`` (not only a class it inherits from)."""
+    return getattr(cls, "_phasor_registered", None) is cls
+
+
 def unregister(name: str) -> None:
-    """Forget a type (a scene module that failed to load takes its types with it)."""
+    """Forget a type, imported or a scene's (every scene's of that name)."""
     _REGISTRY.pop(name, None)
+    for key in [k for k in _SCENE_TYPES if k[1] == name]:
+        del _SCENE_TYPES[key]
 
 
-def get_type(name: str) -> type | None:
-    return _REGISTRY.get(name)
+def get_type(name: str, scope: CodeScope | None = None) -> type | None:
+    """The type ``name`` as a document with ``scope`` sees it: a type that ships in phasor;
+    else one of the document's own modules defines (in their order), where scripts may run;
+    else imported code's. Without a scope, only shipped and imported types."""
+    cls = _REGISTRY.get(name)
+    if cls is not None and is_builtin(cls):
+        return cls
+    for file in scope.files if scope is not None else ():
+        hit = _SCENE_TYPES.get((file, name))
+        if hit is not None:
+            return hit
+    return cls
 
 
-def registered_types() -> dict[str, type]:
-    return dict(_REGISTRY)
+def registered_types(scope: CodeScope | None = None) -> dict[str, type]:
+    """Every type a document with ``scope`` may use (without one: shipped and imported)."""
+    out = dict(_REGISTRY)
+    names = {n for _, n in _SCENE_TYPES}
+    out.update({n: c for n in names if (c := get_type(n, scope)) is not None})
+    return out
 
 
-def registry_snapshot() -> tuple[dict[str, type], dict[str, Callable]]:
-    return dict(_REGISTRY), dict(_UPDATERS)
+def registry_snapshot() -> tuple[dict, dict, dict]:
+    return dict(_REGISTRY), dict(_SCENE_TYPES), dict(_UPDATERS)
 
 
-def restore_registry(snapshot: tuple[dict[str, type], dict[str, Callable]]) -> None:
+def restore_registry(snapshot: tuple[dict, dict, dict]) -> None:
     """Put the registries back as ``registry_snapshot`` found them (a module that failed to
     load leaves none of its types or updaters behind)."""
-    _REGISTRY.clear()
-    _REGISTRY.update(snapshot[0])
-    _UPDATERS.clear()
-    _UPDATERS.update(snapshot[1])
+    for live, kept in zip((_REGISTRY, _SCENE_TYPES, _UPDATERS), snapshot, strict=True):
+        live.clear()
+        live.update(kept)
 
 
 # ---------------------------------------------------------------- code in the scene's folder
@@ -366,7 +457,9 @@ def scene_module(thing: Any, base_dir: str | Path) -> str | None:
         return None
 
 
-_UPDATERS: dict[str, Callable] = {}  # "<module>:<name>" -> updater function
+# (resolved file, name in it) -> (updater function, whether it is scene code). A document
+# names ``"<module>:<name>"``; its folder says which file that is (``get_updater``).
+_UPDATERS: dict[tuple[str, str], tuple[Callable, bool]] = {}
 
 
 def updater_name(fn: Callable) -> str:
@@ -394,13 +487,32 @@ def register_updater(fn: Callable, base_dir: str | Path) -> str:
             f"({base_dir}); define it in the scene script or a *.types.py next to it, so the "
             "document can name it"
         )
-    ref = f"{module}:{updater_name(fn)}"
-    _UPDATERS[ref] = fn
-    return ref
+    name = updater_name(fn)
+    add_updater(source_file(fn) or "", name, fn, script_of(getattr(fn, "__globals__", None)))
+    return f"{module}:{name}"
 
 
-def get_updater(ref: str) -> Callable | None:
-    return _UPDATERS.get(ref)
+def add_updater(file: str, name: str, fn: Callable, script: bool | str | None) -> None:
+    """Remember updater ``name`` of the (resolved) ``file``; ``script``: it is scene code."""
+    _UPDATERS[(file, name)] = (fn, bool(script))
+
+
+def get_updater(ref: str, scope: CodeScope | None = None) -> Callable | None:
+    """The updater a document with ``scope`` names ``ref`` (``"<module>:<name>"``): from that
+    module of its own folder, which it lists; scene code only where scripts may run."""
+    if scope is None:
+        return None
+    from phasor.core.files import resolve
+
+    module, _, name = ref.rpartition(":")
+    try:
+        file = str(resolve(scope.folder, module))
+    except ValueError:
+        return None
+    hit = _UPDATERS.get((file, name))
+    if hit is None or file not in scope.named or (hit[1] and file not in scope.files):
+        return None
+    return hit[0]
 
 
 class Placeholder(ObjectBase):

@@ -417,6 +417,9 @@ from phasor.core.objects import ObjectBase, ParamsBase, register
 from phasor.core.values import Vec3
 from tests.conftest import gl_available
 
+with open(__file__[: -len(".types.py")] + ".ran", "a", encoding="utf-8") as f:
+    f.write("ran\\n")  # how a test knows the module ran
+
 
 @register
 class Star(ObjectBase):
@@ -457,6 +460,16 @@ def star_scene(tmp_path):
     unregister(name)
 
 
+def _star_ran(path):
+    return (path.parent / "shapes.ran").exists()
+
+
+def _star_type(engine):
+    """The class the engine draws ``star`` with (a placeholder when its code is not here)."""
+    state = engine.state_at(0)
+    return type(state["star"].impl)
+
+
 def _files(path):
     from phasor.core import io
 
@@ -471,7 +484,7 @@ def test_a_refused_module_is_missing_type_and_nothing_is_lost(star_scene, tmp_pa
     e = Engine.open(path, passes=None)  # scripts may not run: the module is refused
     (issue,) = [i for i in e.lint() if i.code == "missing_type"]
     assert issue.ids == ("star",) and "refused" in issue.message and issue.times == (0.0,)
-    assert get_type(name) is None  # nothing ran
+    assert not _star_ran(path)  # nothing ran
     state = e.state_at(0)
     assert (
         state["star"].type == name and state["star"].impl.semantics(state)["kind"] == "placeholder"
@@ -487,7 +500,8 @@ def test_a_module_loads_where_scripts_may_run(star_scene):
 
     path, name = star_scene
     e = Engine.open(path, passes=None, allow_scripts=True)
-    assert get_type(name) is not None
+    assert _star_ran(path) and _star_type(e).type == name and e.type_of(name) is _star_type(e)
+    assert get_type(name) is None  # the scene's own: the process does not share it
     assert [i.code for i in e.lint()] == []
     snap = e.inspect(0, "star", detail="full")["objects"][0]
     assert snap["semantic"]["type"] == name and snap["semantic"]["params"]["r"] == 0.8
@@ -508,7 +522,7 @@ def test_a_render_worker_loads_the_scene_code_its_parent_ran(star_scene):
     unregister(name)
     engine_mod._LOADED.clear()  # as in a new process
     worker = Engine.from_payload(payload, passes=None)
-    assert worker.lint() == [] and get_type(name) is not None
+    assert worker.lint() == [] and _star_type(worker).type == name
     unregister(name)  # a parent that may not run the code sends no permission on
     refused = Engine.open(path, passes=None).worker_payload()
     assert refused["allow_scripts"] is False
@@ -528,7 +542,7 @@ def test_the_cli_refuses_scene_code_unless_asked(star_scene, capsys):
     base = ["inspect", str(path), "--id", "star", "--detail", "full"]
     code, out = _cli_json(base, capsys)
     assert code == 0 and json.loads(out)["objects"][0]["semantic"]["kind"] == "placeholder"
-    assert get_type(name) is None  # nothing ran
+    assert not _star_ran(path)  # nothing ran
     code, out = _cli_json([*base, "--allow-scripts"], capsys)
     snap = json.loads(out)["objects"][0]
     assert code == 0 and snap["semantic"]["type"] == name
@@ -631,7 +645,10 @@ def test_a_missing_module_and_a_broken_one(star_scene, tmp_path):
     e = Engine.open(path, passes=None, allow_scripts=True)
     issue = next(i for i in e.lint() if i.code == "missing_type")
     assert "RuntimeError: half written" in issue.message
-    assert get_type(name) is None and set(sys.modules) == modules
+    assert e.type_of(name) is None and set(sys.modules) == modules
+    from phasor.core.objects import _SCENE_TYPES
+
+    assert not [k for k in _SCENE_TYPES if k[1] == name]  # rolled back
 
 
 def test_modules_stay_in_the_scene_folder_and_unknown_types_stay_errors():
@@ -699,7 +716,7 @@ def test_a_type_in_the_scene_script_is_named_by_the_document(tmp_path):
         e.save(tmp_path / "tri.phasor.json")
         unregister("m15_script_tri")
         opened = Engine.open(tmp_path / "tri.phasor.json", passes=None, allow_scripts=True)
-        assert opened.lint() == [] and get_type("m15_script_tri") is not None
+        assert opened.lint() == [] and opened.type_of("m15_script_tri") is not None
         state = opened.state_at(0)
         assert state["tri"].impl.world_bounds(state).hi[:2] == (2.0, 2.0)
     finally:
@@ -848,15 +865,12 @@ def test_an_updater_that_is_not_here_is_missing_type_and_the_object_keeps_its_va
     s = _follow_scene()
     path = tmp_path / "follow.phasor.json"
     s.engine.save(path)
-    saved = objects._UPDATERS.pop("test_open_contract.py:follow_dot")
-    try:
-        # The module is the test file, outside this folder: not there, so nothing runs.
-        e = Engine.open(path, passes=None, allow_scripts=True)
-        (issue,) = [i for i in e.lint() if i.code == "missing_type"]
-        assert "follow_dot" in issue.message and "missing" in issue.message
-        assert e.state_at(1.0)["dot.label"].params.pos == (0.0, 0.0, 0.0)  # its own value
-    finally:
-        objects._UPDATERS["test_open_contract.py:follow_dot"] = saved
+    assert any(k[1] == "follow_dot" for k in objects._UPDATERS)  # this process has it
+    # The module is the test file, outside this folder: not there, so nothing runs.
+    e = Engine.open(path, passes=None, allow_scripts=True)
+    (issue,) = [i for i in e.lint() if i.code == "missing_type"]
+    assert "follow_dot" in issue.message and "missing" in issue.message
+    assert e.state_at(1.0)["dot.label"].params.pos == (0.0, 0.0, 0.0)  # its own value
 
 
 def test_an_updater_from_outside_the_scene_folder_is_refused():
@@ -885,8 +899,9 @@ def _example(passes="auto"):
     if passes is None:
         from phasor.engine import Engine
 
-        e = s.engine
-        return Engine(e.base, overrides=e.overrides, base_dir=e.base_dir, passes=None)
+        e = s.engine  # the example is a script: its engine may run its own code, and so this
+        return Engine(e.base, overrides=e.overrides, base_dir=e.base_dir, passes=None,
+                      allow_scripts=e.allow_scripts)  # fmt: skip
     return s.engine
 
 

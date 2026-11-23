@@ -19,7 +19,7 @@ from phasor.core import io
 from phasor.core.diff import diff_documents
 from phasor.core.ids import file_stem
 from phasor.core.issues import DocumentError, Issue
-from phasor.core.objects import get_type, is_builtin, registered_types
+from phasor.core.objects import is_builtin, registered_types
 from phasor.core.schema import Document, Meta
 from phasor.engine import Engine
 from phasor.scene import Scene, load
@@ -187,7 +187,8 @@ class Workspace:
         for spec in e.document.objects:
             # Without a look, only lines that run a hue along themselves change.
             runs_hue = spec.type != "line" or look is not None or spec.params.get("hue_along", 0)
-            if spec.type in targets and "colormap" in _style_keys(spec.type) and runs_hue:
+            keys = getattr(e.type_of(spec.type), "Style", {})
+            if spec.type in targets and "colormap" in keys and runs_hue:
                 ops.append({"op": "set_style", "id": spec.id, "key": "colormap", "role": role})
         r = e.apply(ops, origin="tweak")
         return {**_slim_result(r.to_dict()), "palette": palette}
@@ -253,11 +254,10 @@ class Workspace:
         """Every file the scene names (a picture's ``path``) is inside the workspace folder:
         the AI may show only what is in its folder."""
         from phasor.core import files
-        from phasor.core.objects import get_type
 
         e = self.engine
         for spec in e.document.objects:
-            cls = get_type(spec.type)
+            cls = e.type_of(spec.type)  # a scene's own type too: its files are checked
             for name in getattr(cls, "Files", ()):
                 raw = spec.params.get(name)
                 if isinstance(raw, str) and raw:
@@ -280,7 +280,7 @@ class Workspace:
                 out.append(op)
                 continue
             spec = dict(op["object"])
-            cls = get_type(str(spec.get("type")))
+            cls = self.engine.type_of(str(spec.get("type")))
             preset = spec.pop("preset", None)
             params, style = dict(spec.get("params", {})), dict(spec.get("style", {}))
             if preset is not None:
@@ -661,7 +661,8 @@ class Workspace:
         parameters and defaults and style keys (role group, default role), the role names each
         group accepts (style takes roles, never raw colors), and the themes."""
         out: dict[str, Any] = {}
-        for name, cls in sorted(registered_types().items()):
+        scope = self._engine.code_scope if self._engine is not None else None
+        for name, cls in sorted(registered_types(scope).items()):
             params = {}
             for k, f in cls.Params.model_fields.items():
                 params[k] = (
@@ -745,10 +746,3 @@ def _resolve(doc: Document, snap: list[dict[str, Any]], query: str) -> list[dict
     scored.sort(key=lambda s: (-s[0], s[1]))
     return [{"id": i, "score": round(s, 2), "why": w, "region": by_id.get(i, {}).get("region")}
             for s, i, w in scored]  # fmt: skip
-
-
-def _style_keys(type_name: str) -> set[str]:
-    from phasor.core.objects import get_type
-
-    cls = get_type(type_name)
-    return set(getattr(cls, "Style", {})) if cls else set()

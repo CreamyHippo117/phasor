@@ -22,7 +22,7 @@ from typing import Any
 
 from phasor.core import io
 from phasor.core.ids import file_stem
-from phasor.core.objects import ObjectBase, scene_module
+from phasor.core.objects import ObjectBase, scene_module, script_of
 from phasor.core.patch import (
     AddConstraint,
     AddControl,
@@ -217,6 +217,12 @@ class Scene:
         meta = Meta(title=title, theme=theme, width=width, height=height, fps=fps, life=life,
                     seed=seed, look=look, palette=palette, source="script")  # fmt: skip
         engine_kwargs.setdefault("base_dir", _caller_dir())
+        # A scene script the person ran (``python scene.py``, ``load``, the engine running a
+        # module it may run) uses its own code; a Scene built by imported code (a test, a
+        # phasor importer inside a server) may not run scripts unless it says so. Only the
+        # immediate caller counts: a script further down the stack lends nothing.
+        caller = sys._getframe(1).f_globals
+        engine_kwargs.setdefault("allow_scripts", script_of(caller) is not None)
         self.engine = Engine(Document(meta=meta), **engine_kwargs)
 
     @classmethod

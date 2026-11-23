@@ -10,6 +10,7 @@ none can be created the inspector runs in analytic mode (tier C).
 
 from __future__ import annotations
 
+import threading
 from collections import OrderedDict
 from collections.abc import Callable
 from pathlib import Path
@@ -18,6 +19,7 @@ from typing import Any
 import phasor.domains  # noqa: F401  (registers the built-in object types)
 from phasor.core import io
 from phasor.core.issues import DocumentError, Issue
+from phasor.core.objects import SCENE_MODULE_PREFIX, CodeScope, get_type
 from phasor.core.patch import TWEAK_OPS, apply_ops, apply_overrides, parse_patch, record_tweaks
 from phasor.core.schema import Document, Meta, Overrides
 from phasor.core.state import SceneState
@@ -96,9 +98,11 @@ class _Snapshot:
                  allow_scripts: bool = False) -> None:  # fmt: skip
         self.base, self.overrides = base, overrides
         effective, orphans = apply_overrides(base, overrides)
-        need = needs_code(effective) or changed_modules(effective, base_dir)
-        modules = load_modules(effective, base_dir, allow_scripts) if need else {}
-        self.compiled: Compiled = compile_document(effective, base_dir, modules)
+        scope = CodeScope.of(effective.meta.modules, base_dir, allow_scripts)
+        with _CODE_LOCK:  # the registries and loaded modules are the process's
+            need = needs_code(effective, scope) or changed_modules(effective, base_dir)
+            modules = load_modules(effective, base_dir, allow_scripts) if need else {}
+            self.compiled: Compiled = compile_document(effective, base_dir, modules, scope)
         self.plan: Plan = compile_plan(self.compiled)
         self.orphans: tuple[Issue, ...] = tuple(orphans)
         self.bake: Bake | None = None
@@ -116,18 +120,23 @@ _build = _Snapshot
 # resolved path -> (modification time, status, the loaded module or None)
 _LOADED: dict[str, tuple[int, str, Any]] = {}
 _LOADING: set[str] = set()  # modules being run now (a scene script that builds its own Scene)
+# Held while a document's code is looked up, loaded and compiled: two threads (the GUI and
+# an attached MCP client) never see a half-loaded module. Re-entrant: a module the engine
+# runs may build its own Scene.
+_CODE_LOCK = threading.RLock()
 REFUSED = ("refused: scripts may not run here (open the scene with allow_scripts=True, or "
            "start the MCP server with --allow-scripts)")  # fmt: skip
 
 
-def needs_code(doc: Document) -> bool:
-    """Whether the document names code that is not here yet: a type nobody registered or an
-    updater nobody defined in this process."""
+def needs_code(doc: Document, scope: CodeScope) -> bool:
+    """Whether the document names code this document cannot reach yet: a type or an updater
+    that none of its own modules defined (with ``scope``: only where scripts may run)."""
     from phasor.core.objects import get_type, get_updater
 
     if not doc.meta.modules:
         return False
-    return any(get_type(o.type) is None or any(get_updater(r) is None for r in o.always)
+    return any(get_type(o.type, scope) is None
+               or any(get_updater(r, scope) is None for r in o.always)
                for o in doc.objects)  # fmt: skip
 
 
@@ -176,7 +185,7 @@ def load_modules(doc: Document, base_dir: str | Path, allow: bool) -> dict[str, 
         else:
             out[rel] = _run_module(path, Path(base_dir or ".").resolve(), mtime)
         if out[rel] == "loaded":
-            _adopt_updaters(doc, rel, _LOADED.get(key, (0, "", None))[2])
+            _adopt_updaters(doc, rel, key, _LOADED.get(key, (0, "", None))[2])
     return out
 
 
@@ -188,7 +197,7 @@ def _run_module(path: Path, folder: Path, mtime: int) -> str:
     from phasor.core.objects import registry_snapshot, restore_registry
 
     key = str(path)
-    name = "phasor_scene_" + hashlib.sha1(key.encode("utf-8")).hexdigest()[:12]
+    name = SCENE_MODULE_PREFIX + hashlib.sha1(key.encode("utf-8")).hexdigest()[:12]
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
         _LOADED[key] = (mtime, "failed: not a Python module", None)
@@ -215,23 +224,22 @@ def _run_module(path: Path, folder: Path, mtime: int) -> str:
     return "loaded"
 
 
-def _adopt_updaters(doc: Document, rel: str, module: Any) -> None:
-    """Updaters the document names in a loaded module that nothing registered yet (a plain
-    function in a ``*.types.py``): found by name and registered under their reference."""
-    from phasor.core.objects import _UPDATERS, get_updater
+def _adopt_updaters(doc: Document, rel: str, file: str, module: Any) -> None:
+    """Updaters the document names in a module it loaded (a plain function in a
+    ``*.types.py``): found by their plain name at the module's top level (never a dotted path
+    into something else) and remembered as that file's scene code."""
+    from phasor.core.objects import add_updater
 
     if module is None:
         return
     for o in doc.objects:
         for ref in o.always:
             mod, _, name = ref.rpartition(":")
-            if mod != rel or get_updater(ref) is not None or "<" in name:
+            if mod != rel or not name.isidentifier():
                 continue
-            target: Any = module
-            for part in name.split("."):
-                target = getattr(target, part, None)
+            target = vars(module).get(name)
             if callable(target):
-                _UPDATERS[ref] = target
+                add_updater(file, name, target, True)
 
 
 class Engine:
@@ -278,10 +286,21 @@ class Engine:
             "bake": self._bake(self._snap),
             "fingerprint": self.fingerprint(),
             "base_dir": str(self.base_dir),
-            # The scene's own code (ADR 0005) runs in a worker when it could run here: the
-            # parent was allowed to, or already had every type (the person ran the script).
-            "allow_scripts": self.allow_scripts or not self._snap.compiled.missing,
+            # The scene's own code (ADR 0005) runs in a worker exactly when it may run here:
+            # this engine's own permission, never raised by what the document or the
+            # process's registries hold.
+            "allow_scripts": self.allow_scripts,
         }
+
+    @property
+    def code_scope(self) -> CodeScope:
+        """The scene code this document may use (its own modules, where scripts may run)."""
+        return self._snap.compiled.scope
+
+    def type_of(self, name: str) -> type | None:
+        """The class of object type ``name`` as this document sees it: shipped in phasor,
+        imported, or (where scripts may run) defined in one of its own modules."""
+        return get_type(name, self.code_scope)
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any], **kwargs: Any) -> Engine:
@@ -333,10 +352,10 @@ class Engine:
         import shutil
 
         from phasor.core import files
-        from phasor.core.objects import get_type
 
+        kinds = {o.id: type(o.impl) for o in self._snap.compiled.objects}
         for spec in self.document.objects:
-            for name in getattr(get_type(spec.type), "Files", ()):
+            for name in getattr(kinds.get(spec.id), "Files", ()):
                 raw = spec.params.get(name)
                 if not isinstance(raw, str) or not raw:
                     continue
