@@ -8,6 +8,7 @@ license = { text = "MIT" }
 license-files = ["LICENSE"]
 dependencies = [
     "kiwisolver>=1.5.1",
+    "mapbox-earcut>=1.0",
     "matplotlib>=3.8",
     "numpy>=1.26",
     "pillow>=13.0.0",
@@ -24,7 +25,11 @@ gl = ["moderngl>=5.12"]
 gpu = ["cupy-cuda12x[ctk]>=13.3"]
 # Video encoding (NVENC when the driver supports it, libx264 otherwise).
 encode = ["av>=14"]
-all = ["phasor[gl,gpu,encode,mcp,gui,notebook]"]
+all = ["phasor[gl,gpu,encode,mcp,gui,notebook,boolean,svg]"]
+# Boolean operations on paths (`shapes.union`, ...): shapely (BSD).
+boolean = ["shapely>=2.0"]
+# `SVG` objects read .svg files with svgelements (MIT).
+svg = ["svgelements>=1.9"]
 # The MCP server an AI client connects to (`phasor mcp`).
 mcp = ["mcp>=2.0,<3"]
 # Jupyter widgets for interactive scenes (`phasor.interactive.notebook`).

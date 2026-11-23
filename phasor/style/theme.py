@@ -26,6 +26,11 @@ ROLE_GROUPS: dict[str, tuple[str, ...]] = {
     "glow": ("none", "soft", "strong"),
     "text": ("title", "label", "annotation", "math"),
     "surface": ("solid", "glass", "wire", "emissive"),
+    # How filled a closed path is: the value is the fill's opacity (none: an outline).
+    "fill": ("none", "soft", "solid"),
+    # How a path's stroke is cut: the value is the dash period, a share of the frame height
+    # (0: unbroken). Cut by arc length from each subpath's start (domains/path_math.py).
+    "dash": ("solid", "dashed", "dotted"),
     # Cyclic wheels (phase) and ramps (the rest). `phase` is the full wheel: use it where hue
     # means something (domain coloring). `soft_phase` is a restrained three-hue wheel,
     # `ember` and `ocean` are two-tone ramps for fractals and plain fields.
@@ -53,6 +58,8 @@ _SECTION = {
     "glow": "glow",
     "surface": "surface",
     "colormap": "colormap",
+    "fill": "fill",
+    "dash": "dash",
 }
 LUT_SIZE = 256
 
