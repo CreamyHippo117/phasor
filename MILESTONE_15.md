@@ -88,9 +88,10 @@ Status: **built; gates green on Linux (see Verification).** Untested on Windows 
    not document objects); a part is placed through its composite.
 8. **Updater reads are discovered at t = 0.** An updater must read the same parameters at
    every t (branches that read something new later are an error, not a silent edge).
-9. **No `--allow-scripts` on the CLI.** `phasor render scene.py` runs the script (and so its
-   types); a saved `.phasor.json` that names modules opens through the CLI with
-   `missing_type`. `cli.py` is shared with Milestone 14's work, so it was left alone.
+9. **No `--allow-scripts` on the CLI. Resolved (2026-11-23, commit below).** `phasor inspect`,
+   `lint`, `storyboard`, `render`, `web`, `bench --frames` and `sketch` take `--allow-scripts`
+   (default off; one helper, `cli._open`); the flag reaches render workers through the
+   engine's `worker_payload`. Tests: `tests/test_open_contract.py` (`test_the_cli_*`).
 10. `Value` has no style roles (it draws nothing); `tests/test_final.py` exempts it from
     "has style roles" and "draws something" (`DRAWLESS`), and lists only shipped types.
 
