@@ -143,14 +143,28 @@ class Coverage:
 def footprint(state: SceneState, obj: ObjectState, size: tuple[int, int]) -> np.ndarray:
     """(h, w) bool, row 0 = top: the pixels an object covers, worked out without a renderer.
 
-    An object that exposes a ``curve`` feature (a line) covers a thin stripe along it, a
-    ``point`` covers the disc inside its box, and anything else covers its bounding box.
+    An object that exposes a ``region`` feature (the outline of a filled path) covers the
+    inside of that outline, one with a ``curve`` feature (a line) a thin stripe along it, a
+    ``point`` the disc inside its box, and anything else its bounding box.
     Used when there is no OpenGL (tier C).
     """
     w, h = size
     mask = np.zeros((h, w), dtype=bool)
     cam = state.camera_for(obj)
-    curve = obj.impl.features(state).get("curve")
+    feats = obj.impl.features(state)
+    outline = feats.get("region")
+    if outline is not None and len(np.atleast_2d(outline)) >= 3:
+        from matplotlib.path import Path as Outline
+
+        px = cam.to_screen(np.atleast_2d(outline), w, h)
+        (x0, y0), (x1, y1) = np.floor(px.min(0)).astype(int), np.ceil(px.max(0)).astype(int)
+        x0, y0, x1, y1 = max(x0, 0), max(y0, 0), min(x1, w), min(y1, h)
+        if x1 > x0 and y1 > y0:
+            yy, xx = np.mgrid[y0:y1, x0:x1] + 0.5
+            inside = Outline(px).contains_points(np.c_[xx.ravel(), yy.ravel()])
+            mask[y0:y1, x0:x1] = inside.reshape(yy.shape)
+        return mask
+    curve = feats.get("curve")
     if curve is not None and len(np.atleast_2d(curve)) >= 2:
         px = cam.to_screen(np.atleast_2d(curve), w, h)
         for a, b in itertools.pairwise(px):

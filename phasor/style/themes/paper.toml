@@ -41,7 +41,7 @@ emissive = 1.0
 # (it never glows), so a color below the bloom `knee` shows exactly as written.
 [fill]
 none = 0.0
-soft = 0.22
+soft = 0.12
 solid = 1.0
 
 # Dashes along a path's stroke: the value is the period (one dash and its gap), a share of

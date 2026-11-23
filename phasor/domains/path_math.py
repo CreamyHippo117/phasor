@@ -291,24 +291,37 @@ def trim(polys: Sequence[np.ndarray], share: float) -> list[np.ndarray]:
     return out
 
 
-def dashes(poly: np.ndarray, period: float, on: float = 0.55, upto: float | None = None):
+def piece(poly: np.ndarray, a: float, b: float) -> np.ndarray:
+    """The part of a polyline between arc lengths ``a`` and ``b`` (clamped to it)."""
+    along = arc_lengths(poly)
+    a, b = max(a, 0.0), min(b, along[-1])
+    if a <= 0 and b >= along[-1]:
+        return poly
+    return _cut(poly, along, a, max(b, a))
+
+
+def dashes(poly: np.ndarray, period: float, on: float = 0.55, upto: float | None = None,
+           start: float = 0.0) -> list[np.ndarray]:  # fmt: skip
     """The dashes of a polyline: pieces ``on * period`` long every ``period``, measured by arc
-    length from its start, so a dash never moves when the polyline grows past it. ``upto``
-    cuts the pattern at that arc length (a path being traced)."""
+    length from its start, so a dash never moves when the polyline grows past it. Only what
+    lies between arc lengths ``start`` and ``upto`` is kept (a path being traced, the room
+    an arrow tip takes)."""
     along = arc_lengths(poly)
     end = along[-1] if upto is None else min(upto, along[-1])
-    if period <= 0 or end <= 0:
-        return [poly] if end > 0 else []
+    if period <= 0:
+        return [_cut(poly, along, start, end)] if end > start else []
     out = []
     for k in range(math.ceil(end / period)):
-        a, b = k * period, min(k * period + on * period, end)
+        a, b = max(k * period, start), min(k * period + on * period, end)
         if b > a + 1e-12:
             out.append(_cut(poly, along, a, b))
     return out
 
 
-def dots(poly: np.ndarray, period: float, upto: float | None = None) -> np.ndarray:
-    """(n, 3) points every ``period`` of arc length from the start (a dotted stroke)."""
+def dots(poly: np.ndarray, period: float, upto: float | None = None,
+         start: float = 0.0) -> np.ndarray:  # fmt: skip
+    """(n, 3) points every ``period`` of arc length from the start (a dotted stroke), those
+    between ``start`` and ``upto``."""
     along = arc_lengths(poly)
     end = along[-1] if upto is None else min(upto, along[-1])
     if period <= 0 or len(poly) < 2:
@@ -316,6 +329,7 @@ def dots(poly: np.ndarray, period: float, upto: float | None = None) -> np.ndarr
     s = np.arange(0.0, end + 1e-12, period)
     if is_closed(poly) and len(s) > 1 and along[-1] - s[-1] < 0.5 * period:
         s = s[:-1]  # a closed loop: no dot on top of the first one
+    s = s[s >= start - 1e-12]
     return np.stack([np.interp(s, along, poly[:, k]) for k in range(3)], axis=1)
 
 

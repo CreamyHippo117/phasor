@@ -171,3 +171,166 @@ def test_a_missing_extra_is_a_clear_error(monkeypatch):
     a, b = _two_discs()
     with pytest.raises(pm.MissingExtra, match="--extra boolean"):
         pm.boolean("union", a, b)
+
+
+# ---------------------------------------------------------------- 2. objects
+
+from phasor import Scene, shapes  # noqa: E402
+from phasor.core.issues import DocumentError  # noqa: E402
+from phasor.style.theme import load_theme  # noqa: E402
+from tests.conftest import gl_available  # noqa: E402
+
+MODES = [None, pytest.param("auto", marks=pytest.mark.gl)]
+
+
+class _Calls:
+    """A DrawContext that keeps every triangles call."""
+
+    def __init__(self):
+        self.calls = []
+
+    def triangles(self, positions, indices=None, *, color, glow=1.0, colors=None):
+        self.calls.append({"n": len(positions), "color": tuple(color), "glow": glow,
+                           "positions": np.asarray(positions)})  # fmt: skip
+
+
+def _draw(e, oid, t=0.0):
+    st = e.state_at(t)
+    ctx = _Calls()
+    st[oid].impl.draw(ctx, st, "color")
+    return ctx.calls
+
+
+def _sem(e, oid, t=0.0):
+    return e.inspect(t, id=oid)["objects"][0]["semantic"]
+
+
+def test_every_shape_says_what_it_is():
+    s = Scene("shapes", passes=None)
+    s.add(shapes.Circle(id="disc", pos=(1, 0), r=2))
+    s.add(shapes.Ellipse(id="oval", width=4, height=2))
+    s.add(shapes.Arc(id="swing", r=2, start=0, angle=90))
+    s.add(shapes.Sector(id="pie", r=2, angle=90))
+    s.add(shapes.Annulus(id="ring", outer=2, inner=1))
+    s.add(shapes.Polygon(id="tri", vertices=[(0, 0), (2, 0), (0, 2)]))
+    s.add(shapes.RegularPolygon(id="hexagon", n=6, r=1))
+    s.add(shapes.Rectangle(id="card", width=4, height=2, corner_radius=0.5))
+    s.add(shapes.Brace(id="under", start=(-1, -2), end=(1, -2), depth=0.4))
+    e = s.engine
+    want = {"disc": ("circle", math.pi * 4), "oval": ("ellipse", math.pi * 2),
+            "pie": ("sector", math.pi), "ring": ("annulus", 3 * math.pi), "tri": ("polygon", 2.0),
+            "hexagon": ("polygon", 3 * math.sqrt(3) / 2),
+            "card": ("rectangle", 8 - (4 - math.pi) * 0.25)}  # fmt: skip
+    for oid, (kind, area) in want.items():
+        sem = _sem(e, oid)
+        assert sem["kind"] == kind and sem["closed"] is True, oid
+        assert sem["area"] == pytest.approx(area, rel=1e-3), oid
+    arc = _sem(e, "swing")
+    assert arc["kind"] == "arc" and arc["closed"] is False and "area" not in arc
+    assert arc["length"] == pytest.approx(math.pi, rel=1e-4)
+    assert _sem(e, "under")["tip"] == pytest.approx([0.0, -2.4, 0.0])
+    st = e.state_at(0)
+    assert np.allclose(st["hexagon"].impl.features(st)["vertices"][0], [0, 1, 0])
+    assert np.allclose(st["disc"].impl.features(st)["center"], [1, 0, 0])
+    assert np.allclose(st["under"].impl.features(st)["tip"], [0, -2.4, 0])
+    b = st["disc"].impl.world_bounds(st)
+    assert b.lo[0] == pytest.approx(-1, abs=0.05) and b.hi[0] == pytest.approx(3, abs=0.05)
+
+
+def test_a_path_checks_its_subpaths_and_can_be_built_through_points():
+    s = Scene("paths", passes=None)
+    with pytest.raises(DocumentError, match="1 \\+ 3k"):
+        s.add(shapes.Path(id="bad", subpaths=[[(0, 0), (1, 0)]]))
+    s.add(shapes.Path.through("zig", [(0, 0), (1, 1), (2, 0)]))
+    sem = _sem(s.engine, "zig")
+    assert sem["kind"] == "path" and sem["closed"] is False
+    assert sem["length"] == pytest.approx(2 * math.sqrt(2), abs=1e-4)
+    s.add(shapes.Path.through("box", [(0, 0), (1, 0), (1, 1), (0, 1)], closed=True,
+                              style={"fill": "solid"}))  # fmt: skip
+    assert _sem(s.engine, "box")["area"] == pytest.approx(1.0)
+
+
+def test_the_fill_is_plain_paint_at_the_roles_opacity_and_fades_with_progress():
+    s = Scene("fill", passes=None)
+    s.add(shapes.Circle(id="disc", r=1, opacity=0.5,
+                        style={"fill": "soft", "glow": "strong", "fill_color": "secondary"}))  # fmt: skip
+    e = s.engine
+    me = e.state_at(0)["disc"]
+    fill, stroke = _draw(e, "disc")[0], _draw(e, "disc")[1]
+    theme = load_theme(e.document.meta.theme)
+    soft = theme.values["fill"]["soft"]
+    assert fill["glow"] == 1.0 and stroke["glow"] > 1.0  # the fill never glows
+    assert fill["color"][3] == pytest.approx(me.style["fill_color"][3] * soft * 0.5)
+    assert fill["color"][:3] == pytest.approx(tuple(theme.values["emphasis"]["secondary"][:3]))
+    s.at(0).to("disc.progress", 0.0, duration=0.001)
+    s.at(1).to("disc.progress", 0.5, duration=0.001)
+    calls = _draw(s.engine, "disc", 2.0)
+    assert calls[0]["color"][3] == pytest.approx(fill["color"][3] * 0.5)
+    assert _sem(s.engine, "disc", 2.0)["drawn"] == 0.5
+    assert _draw(s.engine, "disc", 0.5) == []  # nothing traced, nothing filled
+    s.add(shapes.Circle(id="outline", pos=(3, 0)))
+    assert len(_draw(s.engine, "outline")) == 1  # no fill: only the stroke
+    s.add(shapes.Circle(id="blob", pos=(-3, 0), stroke_opacity=0, style={"fill": "solid"}))
+    assert len(_draw(s.engine, "blob")) == 1  # no stroke: only the fill
+
+
+def test_dashes_do_not_crawl_as_a_path_is_traced():
+    s = Scene("dash", passes=None)
+    s.add(shapes.Path.through("road", [(-4, 0), (4, 0)], style={"dash": "dashed"}))
+    s.at(1).to("road.progress", 0.5, duration=0.001)
+    full, half = _draw(s.engine, "road", 0.0), _draw(s.engine, "road", 2.0)
+    assert len(full) > 4 and len(half) == pytest.approx(len(full) / 2, abs=1)
+    for a, b in zip(half[:-1], full, strict=False):  # every whole dash is where it was
+        assert np.allclose(a["positions"], b["positions"])
+    s.add(shapes.Circle(id="dotted", r=1, pos=(0, 2), style={"dash": "dotted"}))
+    (dots,) = _draw(s.engine, "dotted")
+    st = s.engine.state_at(0)
+    period = s.enginload_theme(e.document.meta.theme).values["dash"]["dotted"] * st.camera.units_per_height()
+    assert dots["n"] == pytest.approx(13 * (2 * math.pi) / period, rel=0.1)  # 13 vertices a dot
+
+
+def test_arrow_tips_sit_on_the_open_ends():
+    s = Scene("tips", passes=None)
+    s.add(shapes.Arc(id="swing", r=2, angle=90, tips="both"))
+    calls = _draw(s.engine, "swing")
+    heads = [c for c in calls if c["n"] == 3]
+    assert len(heads) == 2
+    assert np.allclose(heads[0]["positions"][0], [2, 0, 0])
+    assert np.allclose(heads[1]["positions"][0], [0, 2, 0], atol=1e-9)
+    assert _sem(s.engine, "swing")["tips"] == "both"
+
+
+def test_arrow_keeps_drawing_exactly_as_before():
+    """``strokes.arrow`` now draws its head through ``arrow_head`` (shared with path tips):
+    the same arithmetic as before, so the same bytes."""
+    from phasor.domains import strokes
+
+    cam = Scene("cam", passes=None).engine.state_at(0).camera
+    ctx = _Calls()
+    strokes.arrow(ctx, cam, (0, 0, 0), (2, 1, 0), 0.03, (1, 1, 1, 1))
+    _, head = ctx.calls
+    d = np.array([2.0, 1.0, 0.0])
+    unit = d / np.linalg.norm(d)
+    h = min(np.linalg.norm(d) * 0.3, 0.03 * 7)
+    side = np.cross(cam.forward, unit)
+    side /= max(np.linalg.norm(side), 1e-9)
+    base = np.array([2.0, 1.0, 0.0]) - unit * h
+    want = np.array([[2, 1, 0], base + side * h * 0.45, base - side * h * 0.45])
+    assert np.array_equal(head["positions"], want)
+
+
+def test_boolean_operations_make_plain_paths():
+    pytest.importorskip("shapely")
+    s = Scene("bool", passes=None)
+    a = shapes.Circle(id="a", pos=(-0.5, 0), style={"fill": "soft"})
+    b = shapes.Circle(id="b", pos=(0.5, 0))
+    lens = 2 * math.acos(0.5) - math.sqrt(0.75)
+    for op, area in (("union", 2 * math.pi - lens), ("intersection", lens),
+                     ("difference", math.pi - lens), ("exclusion", 2 * math.pi - 2 * lens)):  # fmt: skip
+        s.add(getattr(shapes, op)(a, b, id=op))
+        sem = _sem(s.engine, op)
+        assert sem["kind"] == "path" and sem["area"] == pytest.approx(area, rel=2e-3), op
+        assert s.engine.document.object(op).style == {"fill": "soft"}  # a's style
+    assert _sem(s.engine, "exclusion")["subpaths"] == 2
+    with pytest.raises(TypeError, match="shapes or paths"):
+        shapes.union(a, object(), id="nope")  # type: ignore[arg-type]
