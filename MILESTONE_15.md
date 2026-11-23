@@ -13,9 +13,9 @@ Status: **built; gates green on Linux (see Verification).** Untested on Windows 
 | --- | --- | --- |
 | Recorder | `phasor/core/record.py` | a `DrawContext` that keeps geometry and draws nothing (pure NumPy): triangles, surfaces, text boxes (`core/text.quad`), and a `field`'s quad corners without ever calling its `pixels`. Derived `world_bounds` (box of everything drawn), `features` (`center`, the box's compass points, and `start`/`end`/`curve` for one stroke, noted by `domains/strokes.py`), `semantics` (`{"type", "params"}`). Cached per (type, id, params, style, camera, folder), and made again when an object it read changes |
 | Two-member contract | `phasor/core/objects.py` | `register` needs `Params` and `draw` (or `build`); the other three come from the type or from the recorder; a `draw` without `pass_` gets a wrapper once (signature checked at registration), so every renderer still calls `draw(ctx, state, pass_)` and nothing in `render/` changed. A scene file may register its type again (a script run twice); built-ins never change |
-| Ported types | `domains/basic.py`, `domains/cx.py` | `Dot`, `Line`, `DomainColoring` and `Fractal` use `draw(ctx, state)`; `DomainColoring` and `Fractal` no longer write `world_bounds` (derived from their one field quad). Inspector output frozen before the port in `tests/golden/contract/ported_inspector.json` (2D and orbit, three times) and byte-identical after |
+| Ported types | `domains/basic.py`, `domains/cx.py` | `Dot`, `Line`, `DomainColoring` and `Fractal` use `draw(ctx, state)`; `DomainColoring` and `Fractal` no longer write `world_bounds` (derived from their one field quad). Inspector output (analytic mode) frozen in `tests/golden/contract/ported_inspector.json` (2D and orbit, three times); separately, the full inspector output and lint of that scene in analytic **and pixel** mode were compared byte for byte between this branch and its starting commit 417a7af on this machine: identical |
 | Composites | `time/compile.py`, `core/record.py`, `inspect/inspector.py`, `inspect/lint.py` | `build(state) -> [objects]`; parts get `<composite>.<name>`, are checked against document ids and `retired_ids` at every evaluation (`bad_part`), take the composite's layer, opacity and z, and are objects of their own in `SceneState` (`ObjectState.parent`). Bounds are the union, features the union box's plus `<part>.<feature>`. The inspector sees a composite where its parts are (union of their solo masks) and marks parts `"part_of"`; overlap lint ignores a composite against its own parts |
-| Scene-local types | `core/schema.py`, `core/migrate.py`, `engine.py`, `scene.py` | schema 8: `meta.modules` (relative `.py` files in the scene's folder) and `ObjectSpec.always`; migration 7 to 8. The Engine loads a module only where scripts may run (`allow_scripts`; `load("x.py")` turns it on; the MCP workspace passes `--allow-scripts`), once per file change, with `files.resolve`; a failed load rolls back the type and updater registries and `sys.modules`. `Scene.add` names the module of a type or updater defined in the folder. Render workers get the permission when the parent had all the code |
+| Scene-local types | `core/schema.py`, `core/migrate.py`, `engine.py`, `scene.py` | schema 8: `meta.modules` (relative `.py` files in the scene's folder) and `ObjectSpec.always`; migration 7 to 8. The Engine loads a module only where scripts may run (`allow_scripts`; `load("x.py")` turns it on; the MCP workspace passes `--allow-scripts`), once per file change (a changed module is run again, contract 3), with `files.resolve`; a failed load rolls back the type and updater registries and `sys.modules`. `Scene.add` names the module of a type or updater defined in the folder. Render workers get the permission when the parent had all the code |
 | `missing_type` | `inspect/lint.py`, `core/objects.py` (`Placeholder`) | a missing, refused or broken module (or an updater nobody defined): error with `times`, no `fix`; the object draws as a placeholder box at its `pos`, keeps every parameter (unknown ones stay readable by expressions), its tracks and overrides; saving it writes the same bytes |
 | Updaters | `time/updaters.py`, `time/compile.py` | `obj.always(fn)`, `fn(t, look) -> {param: value}`; each parameter it sets is an `UpdaterOut` node (a `CompiledExpr`, so `not_movable`, `track_on_expr` and motion blur treat it as an expression) whose edges are the parameters `look` read at t = 0; a cycle is the usual `cycle` error; a read it did not declare is an error at evaluation, never a stale value; it runs once per evaluation and leaves out what it does not return. `state_at` stays pure and frozen |
 | `impure_updater` | `inspect/lint.py`, theme `[lint] impure` | in `lint(strict=True)`: every updater is called again at every sample time, twice, the second pass in reverse order of times and of updaters, on the same evaluated parameters; answers that differ by more than the threshold are an error with `times`, no `fix` |
@@ -44,7 +44,7 @@ Status: **built; gates green on Linux (see Verification).** Untested on Windows 
   the migration, a render worker loading what its parent ran, and a render through two
   spawned worker processes byte-identical to a serial one); updaters (a label on a moving
   dot in both MODES, chained updaters, cycles, undeclared reads, unknown parameters, an
-  updater from outside the folder, a missing one); `impure_updater` in both MODES (a counter
+  updater from outside the folder refused, a missing one, a changed module read again); `impure_updater` in both MODES (a counter
   and state shared between two updaters fire; the writer and chained pure updaters do not);
   `Value`; the exit demo through inspector, layout, strict lint and a storyboard golden.
 - Looked at the golden storyboard: the planet goes round the sun with its name above it, the
@@ -53,7 +53,9 @@ Status: **built; gates green on Linux (see Verification).** Untested on Windows 
 - Gate (`phasor-milestone-gate`): mechanical gates as above; exit demo run
   (`tests/test_open_contract.py::test_exit_demo_*`, both lint MODES, golden looked at); the
   contract audit was done by the authoring model, **not independently** (no subagent was
-  available in the building session); it found deviation 4 below touching contract 3.
+  available in the building session). It found one contract problem, fixed before handing
+  back: updaters defined outside the scene's folder had been allowed (contract 3); they are
+  refused now (see the proposal below).
 
 ## Deviations
 
@@ -70,14 +72,13 @@ Status: **built; gates green on Linux (see Verification).** Untested on Windows 
    only drop `pass_`. `DomainColoring` and `Fractal` also drop `world_bounds`. SPEC's "types
    shipped in phasor's packages still carry the full set" is read as: every type has all five
    members after registration, and shipped types keep their docs, example and goldens.
-4. **Updaters defined outside the scene's folder** (a notebook, a doc page, a test file
-   elsewhere) are allowed and written `"<file name>:<function>"`; they work only in the
-   session that defined them, and elsewhere the document opens with `missing_type`. ADR 0005
-   only says where scene code is loaded from; refusing these would have made `always`
-   unusable in notebooks and in `docs/ai/API.md`. **This touches contract 3** (the state then
-   depends on code the document does not name a file for, as a type from an installed
-   package always has) **and needs the owner's OK**; the alternative is to refuse them in
-   `register_updater` (one line) and mark the doc examples `no-run`.
+4. **Updaters must live in a file in the scene's folder** (contract 3). One defined in a
+   notebook cell or at a prompt is refused by `always`/`Scene.add`, so the updater block in
+   `docs/ai/API.md` is `no-run` (the example and the tests run the same code). **Proposal for
+   the owner** (not built): allow such updaters as session-only references
+   (`"<file>:<name>"`) that open elsewhere as `missing_type`; it would make `always` usable in
+   notebooks but makes the state depend on code the document names no file for, so it needs
+   a contract 3 change.
 5. **`look` reads parameters before living motion.** Life is applied after the parameter
    graph, so a label kept on a wandering dot is off by the wander; the demo tags its planet
    `exact`. Reading through life would make `look` depend on style and tags.

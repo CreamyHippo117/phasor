@@ -195,7 +195,10 @@ living motion: tag an object `exact` when something must sit on it exactly.
 **`Value`** is a named number to animate with no drawing (Manim's `ValueTracker`): read
 it in an expression (`expr("speed.value")`), in an updater, or show it with a `Counter`.
 
-```python
+```python no-run
+# no-run: an updater must be defined in a file in the scene's folder (the document names
+# it), and this page's text is not one. examples/open_contract.py runs the same thing, and
+# tests/test_open_contract.py checks it.
 def above(t, look):
     x, y, z = look("ball").pos
     return {"pos": (x, y + 0.5, z)}
@@ -219,8 +222,7 @@ scripts may run (`phasor.load("scene.py")`, `Engine(..., allow_scripts=True)`, t
 server's `--allow-scripts`), only from inside the scene's folder. A missing, refused or
 broken module is lint `missing_type`: the object draws as a placeholder box and keeps its
 parameters and overrides (saving it changes nothing). An updater defined anywhere else (a
-notebook, this page) is written `"<file name>:<function>"` in angle brackets and works only
-in the Python session that defined it. Types shipped in phasor still get an entry here, an
+notebook cell, a prompt) is refused: the document could not find it again. Types shipped in phasor still get an entry here, an
 example and a storyboard test; scene-local types do not need them.
 
 ## Narrate: words drive time

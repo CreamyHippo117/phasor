@@ -77,16 +77,7 @@ def _check_updater(ref: str) -> str:
     module, sep, name = ref.rpartition(":") if isinstance(ref, str) else ("", "", "")
     if not sep or not module or not name:
         raise ValueError(f"updater {ref!r} must be written '<module>.py:<function>'")
-    if is_session_module(module):
-        return ref
     return f"{_check_module(module)}:{name}"
-
-
-def is_session_module(module: str) -> bool:
-    """``"<notebook.ipynb>"``: an updater defined outside the scene's folder (a notebook, a
-    prompt, a test file elsewhere). It works in the Python session that defined it only; a
-    document that names one opens elsewhere with lint ``missing_type``."""
-    return module.startswith("<") and module.endswith(">")
 
 
 class ObjectSpec(Model):
@@ -248,8 +239,7 @@ class Document(Model):
         modules = set(self.meta.modules)
         for o in self.objects:
             for ref in o.always:
-                module = ref.rpartition(":")[0]
-                if module not in modules and not is_session_module(module):
+                if ref.rpartition(":")[0] not in modules:
                     raise ValueError(f"{o.id}: updater {ref!r} names a module that is not in "
                                      f"meta.modules {sorted(modules)}")  # fmt: skip
             parent = parent_of(o.id)

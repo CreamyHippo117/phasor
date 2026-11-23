@@ -96,7 +96,8 @@ class _Snapshot:
                  allow_scripts: bool = False) -> None:  # fmt: skip
         self.base, self.overrides = base, overrides
         effective, orphans = apply_overrides(base, overrides)
-        modules = load_modules(effective, base_dir, allow_scripts) if needs_code(effective) else {}
+        need = needs_code(effective) or changed_modules(effective, base_dir)
+        modules = load_modules(effective, base_dir, allow_scripts) if need else {}
         self.compiled: Compiled = compile_document(effective, base_dir, modules)
         self.plan: Plan = compile_plan(self.compiled)
         self.orphans: tuple[Issue, ...] = tuple(orphans)
@@ -128,6 +129,23 @@ def needs_code(doc: Document) -> bool:
         return False
     return any(get_type(o.type) is None or any(get_updater(r) is None for r in o.always)
                for o in doc.objects)  # fmt: skip
+
+
+def changed_modules(doc: Document, base_dir: str | Path) -> bool:
+    """Whether a module this process loaded for the document has changed on disk since
+    (contract 3: files the document names are read again when they change). Modules that
+    registered their types some other way (a scene script run by ``load``) are not watched."""
+    from phasor.core import files
+
+    for rel in doc.meta.modules:
+        try:
+            path = files.resolve(base_dir, rel)
+            hit = _LOADED.get(str(path))
+            if hit is not None and path.is_file() and path.stat().st_mtime_ns != hit[0]:
+                return True
+        except (ValueError, OSError):
+            continue
+    return False
 
 
 def load_modules(doc: Document, base_dir: str | Path, allow: bool) -> dict[str, str]:

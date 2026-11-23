@@ -379,18 +379,21 @@ def updater_name(fn: Callable) -> str:
 
 
 def register_updater(fn: Callable, base_dir: str | Path) -> str:
-    """Remember ``fn`` and return the reference a document stores for it:
-    ``"<module>:<name>"`` for a function in a file in the scene's folder (the document then
-    lists the module), or ``"<file name>:<name>"`` in angle brackets for one defined
-    anywhere else (a notebook, a prompt): that one works only in this Python session."""
+    """Remember ``fn`` and return the reference a document stores for it,
+    ``"<module>:<name>"``. ``fn`` must be defined in a file in the scene's folder (the
+    document then lists the module), so the document can always find it again (contract 3:
+    the state depends only on the document, t and the files it names)."""
     if not callable(fn):
         raise TypeError(
             f"an updater must be a function fn(t, look) -> {{param: value}}, got {fn!r}"
         )
     module = scene_module(fn, base_dir)
     if module is None:
-        where = source_file(fn)
-        module = f"<{Path(where).name if where else 'session'}>"
+        raise ValueError(
+            f"updater {updater_name(fn)!r} is not defined in a file in the scene's folder "
+            f"({base_dir}); define it in the scene script or a *.types.py next to it, so the "
+            "document can name it"
+        )
     ref = f"{module}:{updater_name(fn)}"
     _UPDATERS[ref] = fn
     return ref

@@ -535,6 +535,24 @@ def test_spawned_render_workers_draw_the_scene_type_not_a_placeholder(star_scene
     assert a == b  # the workers loaded shapes.types.py: no placeholder boxes
 
 
+def test_a_changed_module_is_read_again(star_scene, tmp_path):
+    """Contract 3: files the document names are re-read when they change."""
+    import os
+
+    from phasor.engine import Engine
+
+    path, name = star_scene
+    e = Engine.open(path, passes=None, allow_scripts=True)
+    before = e.state_at(0)["star"].impl.world_bounds(e.state_at(0))
+    module = tmp_path / "shapes.types.py"
+    module.write_text(STAR_MODULE.replace("{name}", name).replace("p.r / 2", "p.r * 2"), "utf-8")
+    st = module.stat()
+    os.utime(module, ns=(st.st_atime_ns, st.st_mtime_ns + 10**9))  # a clearly newer file
+    again = Engine.open(path, passes=None, allow_scripts=True)
+    after = again.state_at(0)["star"].impl.world_bounds(again.state_at(0))
+    assert after.hi[1] > before.hi[1] + 0.5  # the inner points now reach further out
+
+
 def test_a_missing_module_and_a_broken_one(star_scene, tmp_path):
     import sys
 
@@ -779,26 +797,18 @@ def test_an_updater_that_is_not_here_is_missing_type_and_the_object_keeps_its_va
         objects._UPDATERS["test_open_contract.py:follow_dot"] = saved
 
 
-def test_an_updater_from_outside_the_folder_works_in_its_session_only(tmp_path):
-    from phasor.core import objects
-    from phasor.engine import Engine
+def test_an_updater_from_outside_the_scene_folder_is_refused():
+    """Contract 3: the document must be able to name the file an updater lives in."""
+    from phasor.core.schema import ObjectSpec
 
     ns: dict = {}
     exec(compile("def lift(t, look):\n    return {'pos': (0.0, t, 0.0)}\n", "notebook.ipynb",
                  "exec"), ns)  # fmt: skip
-    s = _scene(Dot(id="d").always(ns["lift"]))
-    (ref,) = s.engine.document.object("d").always
-    assert ref == "<notebook.ipynb>:lift"
-    assert "notebook.ipynb" not in str(s.engine.document.meta.modules)
-    assert s.engine.state_at(2.0)["d"].params.pos == (0.0, 2.0, 0.0)
-    path = tmp_path / "lift.phasor.json"
-    s.engine.save(path)
-    saved = objects._UPDATERS.pop(ref)
-    try:
-        (issue,) = Engine.open(path, passes=None, allow_scripts=True).lint()
-        assert issue.code == "missing_type" and "another Python session" in issue.message
-    finally:
-        objects._UPDATERS[ref] = saved
+    s = _scene()
+    with pytest.raises(ValueError, match="not defined in a file in the scene's folder"):
+        s.add(Dot(id="d").always(ns["lift"]))
+    with pytest.raises(ValueError, match="must be a .py file"):
+        ObjectSpec(id="d", type="dot", always=("<notebook.ipynb>:lift",))
 
 
 # ---------------------------------------------------------------- 6. the exit demo
