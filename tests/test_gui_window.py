@@ -71,6 +71,21 @@ def test_typing_in_the_inspector_edits_the_scene(window):
     assert win.ed.engine.state_at(0.0)["pole"].roles["color"] == "highlight"
 
 
+def test_the_inspector_shows_a_typed_color_and_never_replaces_it_unasked(window):
+    """Milestone 18: an explicit value is shown as it is; opening the inspector (or the
+    refresh after an edit) does not snap it to a role."""
+    _app, win, _server, _root = window
+    win.ed.set_style("pole", "color", "#58C4DD")
+    win.ed.select("pole")
+    win.inspector.refresh()
+    box = win.inspector.roles["color"]
+    assert box.currentText() == '"#58C4DD"' and box.findText("highlight") >= 0
+    win.inspector.refresh()
+    assert win.ed.engine.document.object("pole").style["color"] == "#58C4DD"
+    win.inspector.roles["color"].setCurrentText("highlight")  # picking a role is asking
+    assert win.ed.engine.document.object("pole").style["color"] == "highlight"
+
+
 def test_clicking_an_issue_jumps_to_it(window):
     _app, win, _server, _root = window
     row = next(i for i in range(win.lint.count())

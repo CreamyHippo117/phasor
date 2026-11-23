@@ -735,7 +735,8 @@ class Workspace:
     def object_types(self) -> dict[str, Any]:
         """What a patch may add: object types (use these exact names in ``add_object``) with their
         parameters and defaults and style keys (role group, default role), the role names each
-        group accepts (style takes roles, never raw colors), and the themes."""
+        group accepts (style takes roles; color, text-size and stroke keys may instead hold an
+        explicit value, checked by review), and the themes."""
         out: dict[str, Any] = {}
         scope = self._engine.code_scope if self._engine is not None else None
         for name, cls in sorted(registered_types(scope).items()):

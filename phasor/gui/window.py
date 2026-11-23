@@ -385,10 +385,18 @@ class Inspector(QWidget):
         for key, role in panel["style"].items():
             group = self.ed.engine.state_at(self.ed.t)[oid].impl.Style.get(key, (None,))[0]
             box = QComboBox()
-            box.addItems(list(ROLE_GROUPS.get(group, (role,))))
-            box.setCurrentText(role)
+            # A value the scene typed (a color, a size) is shown as it is, first; picking a
+            # role replaces it, and nothing replaces it unasked.
+            typed = None if isinstance(role, str) and not role.startswith("#") else role
+            label = json.dumps(typed) if typed is not None else None
+            if label is not None:
+                box.addItem(label)
+            box.addItems(list(ROLE_GROUPS.get(group, () if label else (role,))))
+            box.setCurrentText(label if label is not None else role)
             box.currentTextChanged.connect(
-                lambda r, k=key: self.edited.emit(self.ed.set_style(oid, k, r))
+                lambda r, k=key, keep=label: None
+                if r == keep
+                else self.edited.emit(self.ed.set_style(oid, k, r))
             )
             self.form.addRow(f"style: {key}", box)
             self.roles[key] = box

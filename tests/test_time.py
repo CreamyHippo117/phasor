@@ -170,7 +170,7 @@ def test_all_problems_are_reported_together():
             _dot("c", r={"expr": "zzz.r"}),
             _dot("d", r={"expr": "1 +"}),
             ObjectSpec(id="e", type="text"),
-            ObjectSpec(id="f", type="dot", style={"color": "#ff0000"}),
+            ObjectSpec(id="f", type="dot", style={"glow": "#ff0000"}),  # glow: roles only
             ObjectSpec(id="g", type="dot", style={"sparkle": "primary"}),
         ],
         tracks={

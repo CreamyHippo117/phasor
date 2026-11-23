@@ -22,8 +22,8 @@
 - `lint`: Find visual problems (overlap, off-screen, contrast, tiny text, clutter, ...). `fix=True` applies the fixes that are certain, then reports what is left. `aesthetic=True` also judges taste: focal point, color restraint, glow clipping, density, motion rhythm, margins, stroke weights.
 - `storyboard`: Render keyframes on one contact sheet (a PNG) with what the inspector sees in each. `marks` draws every object's box and id so you can tie picture to ids. `compare` puts each frame beside the three nearest frames in the project's `gallery/` (frames you love), with your notes on why they work.
 - `review`: One call for the self-review loop: lint, what is on screen at every marker, and a storyboard. Fix what `issues` lists, then call again until `clean`. Pass `aesthetic=True` for the beauty pass (taste rules on top of the correctness ones).
-- `critique`: The art-director's report: a taste score (0 = nothing to criticise), every aesthetic issue with the markers it happens at and its fixes (`fix` is certain, `suggested` is judgement), and the rubric (STYLE.md) to judge the storyboard by. Look at the picture too: no rule sees everything.
-- `polish`: Apply the critic's fixes (certain ones, then judgement suggestions), at most `rounds` (3) times; each round is undoable. Returns the score before and after and what is left for you to judge.
+- `critique`: The art-director's report: a taste score (0 = nothing to criticise), every aesthetic issue with the markers it happens at and its fixes (`fix` is certain, `suggested` is judgement, `snap` puts an explicit color or size back on the nearest role and is only offered), and the rubric (STYLE.md) to judge the storyboard by. Look at the picture too: no rule sees everything.
+- `polish`: Apply the critic's fixes (certain ones, then judgement suggestions), at most `rounds` (3) times; each round is undoable. Returns the score before and after and what is left for you to judge. Colors and sizes the scene typed (`off_palette`, `off_scale`) snap to the nearest role only with `snap=True`: ask the person.
 - `variants`: Show alternative looks of one beat (a marker name or a time) side by side: as it is, calmer, bolder, each with its taste score. Nothing changes until you `choose`.
 - `choose`: Pick the winner of the last `variants` call. The choice is appended to `style/choices.jsonl` (your taste as data) and, with `apply`, its changes are made to the scene.
 - `events`: The event log: when things get hidden, leave or enter the frame, change region or gain an occluder, with the nearest marker and fix hints. `problems_only` keeps the ones a viewer would notice (a label or key object hidden or leaving the frame).
@@ -33,7 +33,7 @@
 - `resolve`: Turn words like 'the pole on the left' or 'label of the loop' into object ids.
 - `render`: Render a video (preset: preview 960x540@30, final, 4k) or one PNG (`frame`).
 - `docs_search`: Search the API reference, patterns, pitfalls and examples.
-- `object_types`: What a patch may add: object types (use these exact names in `add_object`) with their parameters and defaults and style keys (role group, default role), the role names each group accepts (style takes roles, never raw colors), and the themes.
+- `object_types`: What a patch may add: object types (use these exact names in `add_object`) with their parameters and defaults and style keys (role group, default role), the role names each group accepts (style takes roles; color, text-size and stroke keys may instead hold an explicit value, checked by review), and the themes.
 
 ## Object types (use these names in add_object)
 
