@@ -610,9 +610,9 @@ expression.
 **`fourier`**: `Epicycles(points=..., terms=N, phase=0..1)` (a closed curve drawn by N rotating
 circles; `phase` animates the tip), `PartialSum(kind="square"|"sawtooth"|"triangle", terms=N)`
 (the Gibbs overshoot is in the semantics), `Spectrum(frequencies=, amplitudes=, window=)` (bars
-per bin; `leakage` in the semantics), `Spectrogram(f0=, f1=)` (a chirp, backdrop). The maths is
+per bin; `leakage` in the semantics), `Spectrogram(...)` (any signal, backdrop; below). The maths is
 `phasor.domains.fourier_math`: `epicycle_coefficients`, `series_partial_sum`, `window`,
-`spectrum`, `leakage`, `spectrogram`, `convolve`.
+`spectrum`, `leakage`, `spectrogram`, `dominant_frequency`, `sampled`, `convolve`.
 
 **`linalg`**: `TransformGrid(matrix=((a, b), (c, d)))` (2x2: the grid, the unit square whose
 area is the determinant, the images of the basis vectors; 3x3: the unit cube), `EigenLines`,
@@ -1309,3 +1309,34 @@ Example: `examples/filtering.py` (the poles, a probe round the circle with the g
 traced, a signal going in and out, the removed band fading). Numerics are in
 `phasor/domains/filters_math.py` (Butterworth by the bilinear transform with the cutoff
 pre-warped; checked against `scipy.signal`).
+
+**Spectrogram of any signal.** `fourier.Spectrogram` shows the short-time spectrum of one of
+three sources: a `.wav` file next to the scene (`wav="voice.wav"`, mixed down to mono; its length
+and sample rate are the file's own; the AI may name only files in its folder), a formula in `t`
+seconds (`signal="sin(tau * 440 * t)"` over `duration` at `fs`; at most 400000 samples), or,
+with neither, a chirp from `f0` to `f1`. `nwin`, `hop` (0: `nwin / 4`) and `window`
+(`rect`, `hann`, `hamming`, `blackman`) shape the frames; `fmax` crops the frequency axis
+(0: half the sample rate). `playhead` (0..1 of the duration, below 0 for none) draws a glowing
+line, in the `playhead` style role; track it or give it `expr("t / 6")` to sweep. The semantics
+report `source`, `duration`, `max_frequency`, `playhead_time` and `dominant_frequency`, the
+strongest frequency under the playhead. A missing file is the `missing_file` issue.
+
+```python
+from phasor import Scene, expr
+from phasor.domains.fourier import Spectrogram
+
+s = Scene("sweep", look="prism", passes=None)
+s.add(
+    Spectrogram(
+        id="sg",
+        signal="sin(tau * (200 * t + 400 * t * t))",
+        duration=1.0,
+        fs=4000.0,
+        playhead=expr("t / 4"),
+    )
+)
+s.marker("end", 4.0)
+sem = s.engine.inspect(2.0, id="sg")["objects"][0]["semantic"]
+assert sem["source"] == "formula" and abs(sem["dominant_frequency"] - 600) < 50
+# from a file next to the scene: Spectrogram(id="sg", wav="voice.wav", fmax=4000)
+```

@@ -25,6 +25,7 @@ SCENES = [
     ("prism_primes", "the prism look: primes heard through the zeta zeros, glowing strokes"),
     ("prism_domain", "domain coloring in the prism look: glowing zeros, poles, rays and rings"),
     ("prism_heat", "heat maps in the prism look: a hot spot, a vibrating drum, a chirp"),
+    ("prism_spectrogram", "a spectrogram of a formula, the playhead a glowing line sweeping it"),
     ("picture", "a picture placed in a scene: it fades in framed in light, a curve traces it"),
     ("game_tree", "every game of tic-tac-toe: its 765 positions fanning out move by move"),
     (

@@ -87,7 +87,7 @@
 - `riemann_surface`: flash, kind, pos, radius, height, scale, rings, segments
 - `room`: flash, size, origin, material, absorption
 - `source`: flash, pos, r
-- `spectrogram`: flash, f0, f1, duration, fs, nwin, pos, size, smooth, isolines
+- `spectrogram`: flash, f0, f1, signal, wav, duration, fs, nwin, hop, window, fmax, playhead, pos, size, smooth, isolines
 - `spectrum`: flash, frequencies, amplitudes, window, samples, fs, pos, extent, bins
 - `subgroup_lattice`: flash, group, pos, width, height
 - `taylor`: flash, function, center, order, xmin, xmax, ymax, pos
