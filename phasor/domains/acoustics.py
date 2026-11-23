@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import functools
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
 import numpy as np
 from pydantic import Field, field_validator
@@ -37,6 +37,7 @@ from phasor.core.simulation import runner_for
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
 from phasor.domains import ac_math
+from phasor.domains.geometry_math import sample_ramp
 from phasor.domains.heatmap import PRISM, HeatParams, heat_pixels, wheel_colour
 from phasor.domains.strokes import circle, disc, lut_colors, polyline, polylines, with_alpha
 
@@ -311,6 +312,116 @@ class Wavefront(ObjectBase):
             )
 
 
+# ---------------------------------------------------------------- Doppler wavefronts
+
+
+@register
+class Doppler(ObjectBase):
+    """Wavefronts from a source moving along +x at a constant Mach number.
+
+    ``time`` is seconds since the source started at ``pos``. Sound travels ``size`` world
+    units in one second. Each ring marks a crest at its retarded position.
+    """
+
+    type: ClassVar[str] = "doppler"
+    Style: ClassVar = {
+        "source": ("emphasis", "highlight"),
+        "cone": ("emphasis", "primary"),
+        "stroke": ("stroke", "regular"),
+        "source_radius": ("stroke", "bold"),
+        "glow": ("glow", "none"),
+        "colormap": ("colormap", "magnitude"),
+    }
+    _history: ClassVar[int] = 16
+
+    class Params(ParamsBase):
+        speed: float = Field(0.6, ge=0, allow_inf_nan=False)
+        frequency: float = Field(10.0, gt=0, allow_inf_nan=False)
+        time: float = Field(0.0, ge=0, allow_inf_nan=False)
+        pos: Vec3 = (0.0, 0.0, 0.0)
+        size: float = Field(1.0, gt=0, allow_inf_nan=False)
+
+    def _geometry(self, p):
+        origin = np.asarray(p.pos, dtype=np.float64)
+        centers, radii = ac_math.doppler_wavefronts(p.speed, p.frequency, p.time, self._history)
+        source = origin + np.array([p.size * p.speed * p.time, 0, 0])
+        centers = origin + p.size * np.c_[centers, np.zeros((len(centers), 2))]
+        return source, centers, p.size * radii
+
+    def world_bounds(self, state: SceneState) -> Bounds:
+        source, centers, radii = self._geometry(self.me(state).params)
+        extents = np.c_[radii, radii, np.zeros_like(radii)]
+        lo = np.vstack([source, centers - extents]).min(axis=0)
+        hi = np.vstack([source, centers + extents]).max(axis=0)
+        return Bounds(tuple(lo), tuple(hi))
+
+    def features(self, state: SceneState) -> dict[str, np.ndarray]:
+        source, centers, _ = self._geometry(self.me(state).params)
+        return {"center": source, "source": source, "wavefront_centers": centers}
+
+    def semantics(self, state: SceneState) -> dict[str, Any]:
+        p = self.me(state).params
+        source, _, radii = self._geometry(p)
+        return {
+            "kind": "doppler",
+            "mach": p.speed,
+            "emitted_frequency": p.frequency,
+            "frequency_ahead": p.frequency / (1 - p.speed) if p.speed < 1 else None,
+            "frequency_behind": p.frequency / (1 + p.speed),
+            "mach_angle_degrees": float(np.degrees(np.arcsin(1 / p.speed)))
+            if p.speed > 1
+            else None,
+            "source": source.tolist(),
+            "wavefront_count": len(radii),
+        }
+
+    def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
+        me = self.me(state)
+        p = me.params
+        cam = state.camera_for(me)
+        source, centers, radii = self._geometry(p)
+        scale = float(cam.units_per_height(source))
+        width = me.style["stroke"] * scale
+        glow = me.style["glow"]
+
+        angle = np.linspace(0, 2 * np.pi, 97)
+        cosine = np.cos(angle)
+        rim = np.c_[cosine, np.sin(angle), np.zeros_like(angle)]
+        heard = ac_math.doppler_frequency(p.speed, p.frequency, cosine)
+        # Map the unshifted pitch to the middle, with the caustic at the warm end.
+        hue = 1 / (1 + p.frequency / heard)
+        rgb = sample_ramp(me.style["colormap"], hue)
+        for center, radius in zip(centers, radii, strict=True):
+            fade = 1 - (radius / p.size) * p.frequency / self._history
+            colors = np.c_[rgb, np.full_like(angle, p.opacity * max(0.0, fade))]
+            polyline(
+                ctx,
+                cam,
+                center + radius * rim,
+                width,
+                color=(1.0, 1.0, 1.0, 1.0),
+                colors=colors,
+                glow=glow,
+            )
+
+        if len(radii) and p.speed > 1:
+            oldest = centers[0] - source
+            for x, y in ac_math.mach_cone_rays(p.speed):
+                ray = np.array([x, y, 0.0])
+                tangent = source + (oldest @ ray) * ray
+                color = with_alpha(me.style["cone"], p.opacity)
+                polyline(ctx, cam, [source, tangent], width, color=color, glow=glow)
+
+        disc(
+            ctx,
+            cam,
+            source,
+            me.style["source_radius"] * scale,
+            color=with_alpha(me.style["source"], p.opacity),
+            glow=glow,
+        )
+
+
 # ---------------------------------------------------------------- Image sources
 
 
@@ -349,8 +460,8 @@ class ImageSources(ObjectBase):
     def semantics(self, state: SceneState) -> dict[str, Any]:
         im = self._images(state)
         p = self.me(state).params
-        return {"kind": "image_sources", "count": int(len(im["pos"]) - 1), "order": p.order,
-                "weakest_gain": round(float(im["gain"].min()), 4)}  # fmt: skip
+        return {"kind": "image_sources", "backdrop": True, "count": int(len(im["pos"]) - 1),
+                "order": p.order, "weakest_gain": round(float(im["gain"].min()), 4)}  # fmt: skip
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
         me = self.me(state)
@@ -1034,3 +1145,80 @@ class Wavefront3D(_InRoom):
         ok = ok.reshape(len(keep), -1, 2).all(axis=2)
         k, u = np.nonzero(ok)
         return pieces[k, u], keep[k]
+
+
+# ---------------------------------------------------------------- Directivity
+
+
+@register
+class Directivity(ObjectBase):
+    """Polar pressure magnitude for a linear array, baffled piston, or cardioid."""
+
+    type: ClassVar[str] = "directivity"
+    Style: ClassVar = {
+        "color": ("emphasis", "highlight"),
+        "guide": ("emphasis", "muted"),
+        "stroke": ("stroke", "regular"),
+        "guide_stroke": ("stroke", "hairline"),
+        "glow": ("glow", "none"),
+    }
+
+    class Params(ParamsBase):
+        kind: Literal["array", "piston", "cardioid"] = "array"
+        elements: int = Field(8, ge=1)
+        spacing: float = Field(0.1715, gt=0, allow_inf_nan=False)  # meters
+        radius: float = Field(0.343, gt=0, allow_inf_nan=False)  # piston radius in meters
+        frequency: float = Field(1000.0, gt=0, allow_inf_nan=False)  # Hz
+        steer: float = Field(0.0, allow_inf_nan=False)  # degrees from +x
+        pos: Vec3 = (0.0, 0.0, 0.0)
+        size: float = Field(2.0, gt=0, allow_inf_nan=False)  # unity-gain radius in world units
+
+    def world_bounds(self, state: SceneState) -> Bounds:
+        p = self.me(state).params
+        x, y, z = p.pos
+        return Bounds((x - p.size, y - p.size, z), (x + p.size, y + p.size, z))
+
+    def features(self, state: SceneState) -> dict[str, np.ndarray]:
+        p = self.me(state).params
+        center = np.asarray(p.pos, dtype=np.float64)
+        angle = np.deg2rad(p.steer % 360)
+        peak = center + p.size * np.array([np.cos(angle), np.sin(angle), 0])
+        return {"center": center, "peak": peak}
+
+    def semantics(self, state: SceneState) -> dict[str, Any]:
+        p = self.me(state).params
+        data: dict[str, Any] = {"kind": p.kind, "steer": p.steer, "peak_gain": 1.0}
+        if p.kind == "array":
+            data.update(elements=p.elements, spacing=p.spacing, frequency=p.frequency)
+        elif p.kind == "piston":
+            data.update(radius=p.radius, frequency=p.frequency)
+        return data
+
+    def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
+        me = self.me(state)
+        p = me.params
+        cam = state.camera_for(me)
+        center = np.asarray(p.pos, dtype=np.float64)
+        angle = np.linspace(0, 2 * np.pi, 1025)
+        steer = np.deg2rad(p.steer % 360)
+        if p.kind == "array":
+            gain = ac_math.array_directivity(angle, p.elements, p.spacing, p.frequency, steer)
+        elif p.kind == "piston":
+            gain = ac_math.piston_directivity(angle - steer, p.radius, p.frequency)
+        else:
+            gain = ac_math.cardioid_directivity(angle - steer)
+
+        unit = np.stack([np.cos(angle), np.sin(angle), np.zeros_like(angle)], axis=-1)
+        rim = center + p.size * unit
+        width = float(cam.units_per_height(center))
+        guide = with_alpha(me.style["guide"], p.opacity)
+        polyline(ctx, cam, rim, width * me.style["guide_stroke"], color=guide)
+
+        points = center + (p.size * gain)[:, None] * unit
+        color = with_alpha(me.style["color"], p.opacity)
+        colors = np.broadcast_to(color, (len(angle), 4)).copy()
+        colors[:, 3] *= np.sqrt(gain)
+        polyline(
+            ctx, cam, points, width * me.style["stroke"],
+            color=color, glow=me.style["glow"], colors=colors,
+        )  # fmt: skip

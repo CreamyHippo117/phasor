@@ -16,18 +16,20 @@ from __future__ import annotations
 import functools
 import itertools
 import math
+import os
 from typing import Any, ClassVar, Literal
 
 import numpy as np
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
+from phasor.core import files
 from phasor.core.color import ramp
 from phasor.core.objects import Bounds, DrawContext, ObjectBase, ParamsBase, Pass, register
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
 from phasor.domains import fourier_math as fm
 from phasor.domains.heatmap import PRISM, HeatParams, heat_pixels, lut_colour, wheel_colour
-from phasor.domains.strokes import circle, disc, polyline, with_alpha
+from phasor.domains.strokes import circle, disc, hue_colors, polyline, with_alpha
 
 
 def _ydir(me, state: SceneState) -> float:
@@ -308,38 +310,279 @@ class Spectrum(ObjectBase):
                      color=accent if k in tones else base, glow=me.style["glow"])  # fmt: skip
 
 
-# ---------------------------------------------------------------- Spectrogram
+# ---------------------------------------------------------------- Winding
 
 
 @functools.lru_cache(maxsize=8)
-def _sg(f0, f1, duration, fs, nwin):
-    return fm.spectrogram(fm.chirp(f0, f1, duration, fs), fs, nwin)
+def _winding_grid(frequencies, amplitudes, samples, fs, limit):
+    signal = fm.sinusoids(frequencies, amplitudes, samples, fs)
+    # Sample at least eight times per DFT bin so the connecting stroke resolves each peak.
+    count = max(128, math.ceil(8 * limit * samples / fs))
+    grid = np.linspace(0, limit, count + 1)
+    # Keep the temporary frequency-by-time matrix bounded for long signals.
+    mean = np.concatenate(
+        [fm.winding_mean(signal, block, fs) for block in np.array_split(grid, count // 64 + 1)]
+    )
+    return signal, grid, np.abs(mean)
+
+
+@register
+class Winding(ObjectBase):
+    """A signal wound clockwise, its centroid, and the spectrum up to the test frequency."""
+
+    type: ClassVar[str] = "winding"
+    Style: ClassVar = {
+        "color": ("emphasis", "primary"),
+        "accent": ("emphasis", "highlight"),
+        "guide": ("emphasis", "muted"),
+        "stroke": ("stroke", "regular"),
+        "glow": ("glow", "none"),
+        "colormap": ("colormap", "phase"),
+    }
+
+    class Params(ParamsBase):
+        frequencies: tuple[float, ...] = (3.0, 6.0)
+        amplitudes: tuple[float, ...] = (1.0, 0.55)
+        fs: float = Field(32.0, gt=0, allow_inf_nan=False)
+        samples: int = Field(128, ge=16, le=2048)
+        freq: float = Field(0.0, ge=0, allow_inf_nan=False)
+        max_freq: float = Field(8.0, gt=0, allow_inf_nan=False)
+        progress: float = Field(1.0, ge=0, le=1)
+        size: float = Field(2.0, gt=0, allow_inf_nan=False)
+        pos: Vec3 = (0.0, 0.0, 0.0)  # centre of the winding diagram
+        hue_along: float = Field(0.0, ge=0, allow_inf_nan=False)
+        spectrum_guide: bool = True
+
+        @model_validator(mode="after")
+        def _signal(self):
+            if not self.frequencies or len(self.frequencies) != len(self.amplitudes):
+                raise ValueError("provide one amplitude per tone")
+            if any(not 0 < f < self.fs / 2 for f in self.frequencies):
+                raise ValueError("tone frequencies must be between DC and Nyquist")
+            if not math.isfinite(sum(map(abs, self.amplitudes))):
+                raise ValueError("amplitudes must have a finite sum of magnitudes")
+            if not self.freq <= self.max_freq <= self.fs / 2:
+                raise ValueError("freq must be at most max_freq, which cannot exceed Nyquist")
+            return self
+
+    def _data(self, p):
+        signal, grid, magnitude = _winding_grid(
+            p.frequencies, p.amplitudes, p.samples, p.fs, p.max_freq
+        )
+        wound = fm.wound_signal(signal, p.freq, p.fs)
+        return wound, wound.mean(), grid, magnitude
+
+    def _winding_points(self, p, ydir, values):
+        x, y, z = p.pos
+        scale = p.size / (sum(map(abs, p.amplitudes)) or 1.0)
+        return np.stack(
+            np.broadcast_arrays(x + values.real * scale, y + ydir * values.imag * scale, z),
+            axis=-1,
+        )
+
+    def _spectrum_points(self, p, ydir, freq, magnitude):
+        x, y, z = p.pos
+        scale = p.size / (sum(map(abs, p.amplitudes)) or 1.0)
+        return np.stack(
+            np.broadcast_arrays(
+                x + p.size * (1.5 + 3 * freq / p.max_freq),
+                y + ydir * (-p.size + 2 * magnitude * scale),
+                z,
+            ),
+            axis=-1,
+        )
+
+    def world_bounds(self, state: SceneState) -> Bounds:
+        p = self.me(state).params
+        x, y, z = p.pos
+        return Bounds((x - p.size, y - p.size, z), (x + 4.5 * p.size, y + p.size, z))
+
+    def features(self, state: SceneState) -> dict[str, np.ndarray]:
+        me = self.me(state)
+        p = me.params
+        _, mean, _, _ = self._data(p)
+        ydir = _ydir(me, state)
+        return {
+            "centroid": self._winding_points(p, ydir, mean),
+            "spectrum_tip": self._spectrum_points(p, ydir, p.freq, abs(mean)),
+        }
+
+    def semantics(self, state: SceneState) -> dict[str, Any]:
+        p = self.me(state).params
+        _, mean, _, _ = self._data(p)
+        return {
+            "kind": "winding",
+            "backdrop": True,
+            "frequency_hz": p.freq,
+            "centroid": (float(mean.real), float(mean.imag)),
+            "magnitude": float(abs(mean)),
+            "bin_width_hz": p.fs / p.samples,
+        }
+
+    def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
+        me = self.me(state)
+        p = me.params
+        cam = state.camera_for(me)
+        ydir = _ydir(me, state)
+        wound, mean, grid, magnitude = self._data(p)
+        style = me.style
+        guide = with_alpha(style["guide"], p.opacity)
+        color = with_alpha(style["color"], p.opacity)
+        accent = with_alpha(style["accent"], p.opacity)
+        width = style["stroke"] * float(cam.units_per_height())
+        glow = style["glow"]
+
+        circle(ctx, cam, p.pos, p.size, width, color=guide)
+        x, y, z = p.pos
+        if p.spectrum_guide:
+            origin = self._spectrum_points(p, ydir, 0.0, 0.0)
+            end = self._spectrum_points(p, ydir, p.max_freq, 0.0)
+            polyline(ctx, cam, [end, origin, (origin[0], y + ydir * p.size, z)], width, color=guide)
+        disc(ctx, cam, (x, y, z), width, color=guide)
+
+        if p.progress > 0:
+            points = self._winding_points(p, ydir, wound)
+            index = p.progress * (len(points) - 1)
+            whole = int(index)
+            visible = points[: whole + 1]
+            if index > whole:
+                endpoint = points[whole] + (index - whole) * (points[whole + 1] - points[whole])
+                visible = np.vstack((visible, endpoint))
+            colors = None
+            if p.hue_along and pass_ == "color":
+                length = np.linalg.norm(np.diff(points, axis=0), axis=1).sum()
+                colors = hue_colors(visible, style["colormap"], p.hue_along, total=length)
+                colors[:, 3] *= p.opacity
+            polyline(ctx, cam, visible, width, color=color, colors=colors, glow=glow)
+
+        stop = np.searchsorted(grid, p.freq)
+        traced = self._spectrum_points(
+            p, ydir, np.r_[grid[:stop], p.freq], np.r_[magnitude[:stop], abs(mean)]
+        )
+        polyline(ctx, cam, traced, width, color=color, glow=glow)
+        disc(ctx, cam, traced[-1], 2 * width, color=color, glow=glow)
+        disc(ctx, cam, self._winding_points(p, ydir, mean), 3 * width, color=accent, glow=glow)
+
+
+# ---------------------------------------------------------------- Spectrogram
+
+
+MAX_FORMULA_SAMPLES = 400_000  # a formula is evaluated sample by sample
+MAX_FRAMES = 1500  # the hop widens for long sounds so a wav never makes more columns than this
+
+
+@functools.lru_cache(maxsize=8)
+def _stft(source: str, ref: str, mtime: float, f0: float, f1: float, duration: float, fs: float,
+          nwin: int, hop: int, win: str) -> dict[str, Any]:  # fmt: skip
+    """The STFT of one signal, cached by everything that makes it (``mtime`` is the wav's)."""
+    if source == "wav":
+        from phasor.domains.media import read_wav
+
+        x, fs = read_wav(ref, mtime)
+    elif source == "formula":
+        from phasor.time.expr import compile_expr
+
+        if duration * fs > MAX_FORMULA_SAMPLES:  # also when a track drives duration or fs
+            raise ValueError(f"the signal is too long: {duration * fs:.0f} samples")
+        fn = compile_expr(ref)
+        x = fm.sampled(lambda t: fn({}, t), duration, fs)
+    else:
+        x = fm.chirp(f0, f1, duration, fs)
+    hop = hop or max(nwin // 4, min(nwin, -(-len(x) // MAX_FRAMES)))
+    sg = fm.spectrogram(x, fs, nwin, hop, win)
+    return {**sg, "duration": len(x) / fs, "fs": fs, "source": source}
 
 
 @register
 class Spectrogram(ObjectBase):
-    """A spectrogram of a chirp (a tone sliding from ``f0`` to ``f1`` Hz): time across,
-    frequency up, brightness for strength. A backdrop: labels may sit on it."""
+    """A spectrogram: time across, frequency up, brightness for strength. A backdrop: labels
+    may sit on it. The signal is, in this order, a ``.wav`` file next to the scene (``wav``,
+    mono or mixed down), a formula in ``t`` seconds (``signal``, such as
+    ``"sin(tau * 440 * t)"``), or a chirp sliding from ``f0`` to ``f1`` Hz. ``playhead``
+    (0..1 of the duration; a track or an expression moves it) draws a glowing line, and the
+    semantics name the strongest frequency under it."""
 
     type: ClassVar[str] = "spectrogram"
-    Style: ClassVar = {"colormap": ("colormap", "ocean"), "glow": ("glow", "none")}
+    Files: ClassVar = ("wav",)  # in the scene's folder (core/files.py); missing: lint
+    Style: ClassVar = {"colormap": ("colormap", "ocean"), "glow": ("glow", "none"),
+                       "playhead": ("emphasis", "highlight"),
+                       "stroke": ("stroke", "hairline")}  # fmt: skip
     # the prism look (heatmap.PRISM); here the hue runs up the frequency axis, so a sliding
     # tone's trace runs through the spectrum the way hue runs along a prism stroke
     Presets: ClassVar = {"prism": PRISM}
     Life: ClassVar = frozenset({"hue", "glow"})
 
     class Params(HeatParams):
-        f0: float = Field(200.0, gt=0)
+        f0: float = Field(200.0, gt=0)  # the chirp (no signal, no wav)
         f1: float = Field(1200.0, gt=0)
+        signal: str = ""  # a formula in t (seconds), over ``duration`` at ``fs``
+        wav: str = ""  # a .wav file next to the scene (then duration and fs are its own)
         duration: float = Field(1.0, gt=0)
         fs: float = Field(4000.0, gt=0)
         nwin: int = Field(256, ge=16, le=4096)
+        hop: int = Field(0, ge=0)  # 0: nwin / 4 (wider for long sounds)
+        window: Literal["rect", "hann", "hamming", "blackman"] = "hann"
+        fmax: float = Field(0.0, ge=0)  # top of the frequency axis in Hz; 0: half the rate
+        playhead: float = Field(-1.0, ge=-1, le=1)  # 0..1 of the duration; below 0: no line
         pos: Vec3 = (0.0, 0.0, 0.0)  # centre
         size: tuple[float, float] = (6.0, 3.0)
+
+        @field_validator("wav")
+        @classmethod
+        def _wav_file(cls, v: str) -> str:
+            if v and not v.lower().endswith(".wav"):
+                raise ValueError(f"{v!r} is not a .wav file")
+            return v
+
+        @field_validator("signal")
+        @classmethod
+        def _formula_in_t(cls, v: str) -> str:
+            if v:
+                from phasor.time.expr import ExprError, compile_expr
+
+                try:
+                    c = compile_expr(v)
+                except ExprError as e:
+                    raise ValueError(str(e)) from e
+                if c.deps:
+                    raise ValueError(f"{v!r}: a signal is a formula in t only, not "
+                                     f"{sorted(c.deps)}")  # fmt: skip
+            return v
+
+        @model_validator(mode="after")
+        def _one_source(self):
+            if self.signal and self.wav:
+                raise ValueError("give a signal formula or a wav file, not both")
+            if self.signal and self.duration * self.fs > MAX_FORMULA_SAMPLES:
+                raise ValueError(
+                    f"the signal is too long: {self.duration * self.fs:.0f} samples "
+                    f"(at most {MAX_FORMULA_SAMPLES}; lower duration or fs)"
+                )
+            return self
 
     def _rect(self, p):
         c = np.asarray(p.pos, dtype=np.float64) - np.array([p.size[0] / 2, p.size[1] / 2, 0.0])
         return c, np.array([p.size[0], 0.0, 0.0]), np.array([0.0, p.size[1], 0.0])
+
+    def _analysis(self, state: SceneState) -> dict[str, Any] | None:
+        """The signal's STFT (``freq``, ``time``, ``mag``) cropped to ``fmax``, with its
+        ``duration``, sample rate, ``source`` and the axis ``top``; None while the ``wav`` is
+        missing or unreadable (lint ``missing_file``: draws nothing)."""
+        p = self.me(state).params
+        if p.wav:
+            try:
+                file = files.resolve(state.base_dir, p.wav)
+                source, ref, mtime = "wav", str(file), os.path.getmtime(file)
+            except (OSError, ValueError):
+                return None
+        elif p.signal:
+            source, ref, mtime = "formula", p.signal, 0.0
+        else:
+            source, ref, mtime = "chirp", "", 0.0
+        sg = _stft(source, ref, mtime, p.f0, p.f1, p.duration, p.fs, p.nwin, p.hop, p.window)
+        top = p.fmax if 0 < p.fmax < sg["fs"] / 2 else sg["fs"] / 2
+        keep = sg["freq"] <= top + 1e-9
+        return {**sg, "freq": sg["freq"][keep], "mag": sg["mag"][keep], "top": float(top)}
 
     def world_bounds(self, state: SceneState) -> Bounds:
         c, r, u = self._rect(self.me(state).params)
@@ -350,13 +593,25 @@ class Spectrogram(ObjectBase):
 
     def semantics(self, state: SceneState) -> dict[str, Any]:
         p = self.me(state).params
-        return {"kind": "spectrogram", "backdrop": True, "f0": p.f0, "f1": p.f1,
-                "duration": p.duration, "max_frequency": p.fs / 2}  # fmt: skip
+        a = self._analysis(state)
+        if a is None:
+            return {"kind": "spectrogram", "backdrop": True, "source": "wav", "missing_file": p.wav}
+        out = {"kind": "spectrogram", "backdrop": True, "source": a["source"],
+               "f0": p.f0, "f1": p.f1, "duration": a["duration"], "max_frequency": a["top"],
+               "playhead": p.playhead if p.playhead >= 0 else None, "playhead_time": None,
+               "dominant_frequency": None}  # fmt: skip
+        if p.playhead >= 0:
+            at = p.playhead * a["duration"]
+            out["playhead_time"] = at
+            out["dominant_frequency"] = fm.dominant_frequency(a, at)
+        return out
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
         me = self.me(state)
         p = me.params
-        sg = _sg(p.f0, p.f1, p.duration, p.fs, p.nwin)
+        sg = self._analysis(state)
+        if sg is None:
+            return
         mag = sg["mag"] / max(float(sg["mag"].max()), 1e-12)
         lut = ramp(me.style["colormap"], np.float32)  # strongest = brightest (ocean is cyclic)
         corner, right, up = self._rect(p)
@@ -375,3 +630,10 @@ class Spectrogram(ObjectBase):
             colour_at=up_hue if p.hue_cycles > 0 else None,
         )  # fmt: skip
         ctx.field(corner, right, up, pixels=pixels, opacity=p.opacity, glow=glow)
+        if p.playhead >= 0 and pass_ == "color":
+            cam = state.camera_for(me)
+            x = corner[0] + p.playhead * p.size[0]
+            line = [(x, corner[1], corner[2]), (x, corner[1] + p.size[1], corner[2])]
+            w = me.style["stroke"] * float(cam.units_per_height(np.asarray(line[0])))
+            polyline(ctx, cam, line, w, color=with_alpha(me.style["playhead"], p.opacity),
+                     glow=2.5)  # fmt: skip

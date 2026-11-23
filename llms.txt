@@ -44,16 +44,22 @@
 - `cayley_table`: flash, group, pos, cell, reveal, subgroup, cosets
 - `clock_diagram`: flash, n, step, pos, r, cosets
 - `complex_map`: flash, function, pos, center, extent, lines, samples, amount, limit
+- `convolution`: flash, f, g, f_support, g_support, pos, extent, progress, ghost, shade, hue_cycles
 - `counter`: flash, value, digits, prefix, suffix, math, pos, anchor
+- `directivity`: flash, kind, elements, spacing, radius, frequency, steer, pos, size
 - `domain_coloring`: flash, function, pos, size, contour, softness, hue, radius, ambient, lines, a, to, blend, line_glow, light
+- `doppler`: flash, speed, frequency, time, pos, size
 - `dot`: flash, pos, r
 - `eigen_lines`: flash, matrix, pos, length
 - `epicycles`: flash, points, terms, phase, trace
 - `equation`: flash, parts, colors, pos, write, drift, keys, from_parts, from_colors, from_keys, from_pos, from_id, morph, arc
+- `filtered_signal`: flash, kind, order, cutoff, cutoff2, fs, radius, zeros, poles, gain, pos, extent, frequencies, amplitudes, duration, progress
+- `filtered_spectrum`: flash, kind, order, cutoff, cutoff2, fs, radius, zeros, poles, gain, pos, extent, frequencies, amplitudes, window, samples, fade, envelope
 - `fixed_points`: flash, f, g, constants, pos, extent, rays, labels, ray_length, reveal, grid
 - `flow_lines`: flash, fp, fq, fr, pos, extent, seeds, steps, length, both, progress
 - `flow_particles`: flash, fp, fq, fr, pos, extent, count, speed, lifetime, tail, seed
 - `fractal`: flash, kind, c, pos, size, max_iter, density, hue, center, zoom, steady, radius, ambient
+- `frequency_response`: flash, kind, order, cutoff, cutoff2, fs, radius, zeros, poles, gain, pos, extent, plot, scale, floor_db, reveal
 - `galois_diagram`: flash, primes, pos, width, height, gap
 - `graph`: flash, function, xmin, xmax, pos
 - `homomorphism`: flash, n, m, a, pos, r, gap, progress
@@ -62,6 +68,7 @@
 - `impulse_response`: flash, size, source, listener, order, material, absorption, pos, extent, duration, reveal, show_rt60
 - `limit`: flash, function, a, epsilon, xmin, xmax, pos, bands
 - `line`: flash, points, progress, hue_along, hue
+- `linear_system`: flash, matrix, pos, extent, seeds, n_seeds, t_end, steps, progress, backward, labels, hue_cycles, seed
 - `listener`: flash, pos, r
 - `loop_integral`: flash, p, q, measure, center, radius, pos, progress, arrows
 - `matrix`: flash, matrix, pos, digits
@@ -77,6 +84,7 @@
 - `permutation`: flash, perm, pos, spacing, progress
 - `phase_portrait`: flash, f, g, constants, pos, extent, seeds, n_seeds, t_end, steps, progress, backward, flow, flow_spacing, nullclines, hue_cycles, seed
 - `point_cloud`: flash, source, degree, coefficients, kind, constants, max_iter, points, values, count, seed, pos, size, scale, point_size, exposure, hue, color_by, twist, twinkle, white
+- `pole_zero`: flash, kind, order, cutoff, cutoff2, fs, radius, zeros, poles, gain, pos, size, scale, probe
 - `polygon`: flash, n, pos, r, rotation, flip, fill
 - `pressure_slice`: flash, smooth, isolines, hue_cycles, hue, fade, ambient, contrast, size, origin, source, z, time, dx, material, absorption, frequency, gain, seed
 - `riemann_sum`: flash, function, a, b, n, rule, pos
@@ -85,17 +93,19 @@
 - `room3d`: flash, size, origin, path, scale, material, absorption, walls, edge_angle
 - `sound_rays`: flash, room, source, time, speed, hue_step, count, bounces, trail, seed
 - `source`: flash, pos, r
-- `spectrogram`: flash, smooth, isolines, hue_cycles, hue, fade, ambient, contrast, f0, f1, duration, fs, nwin, pos, size
+- `spectrogram`: flash, smooth, isolines, hue_cycles, hue, fade, ambient, contrast, f0, f1, signal, wav, duration, fs, nwin, hop, window, fmax, playhead, pos, size
 - `spectrum`: flash, frequencies, amplitudes, window, samples, fs, pos, extent, bins
+- `strange_attractor`: flash, system, sigma, rho, beta, seed, t_end, progress, pos, size
 - `subgroup_lattice`: flash, group, pos, width, height
 - `taylor`: flash, function, center, order, xmin, xmax, ymax, pos
 - `text`: flash, text, pos, anchor, leader, leader_on, write
 - `tracer`: flash, path, progress, trail, r
-- `transform_grid`: flash, matrix, pos, extent, spacing, square, basis
+- `transform_grid`: flash, matrix, pos, extent, spacing, square, basis, flow, flow_time
 - `vector_field`: flash, p, q, pos, extent, spacing, color_by_size, length_by
 - `vector_field_3d`: flash, fp, fq, fr, pos, extent, counts, spacing, color_by_size, length_by
 - `wavefront`: flash, center, radius, rings
 - `wavefront3d`: flash, room, source, time, speed, hue_step, order, shell, samples
+- `winding`: flash, frequencies, amplitudes, fs, samples, freq, max_freq, progress, size, pos, hue_along, spectrum_guide
 
 ## Docs
 

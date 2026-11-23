@@ -29,6 +29,7 @@ SCENES = [
         "transitions: a constant drifting, a function blending, equations solved",
     ),
     ("prism_heat", "heat maps in the prism look: a hot spot, a vibrating drum, a chirp"),
+    ("prism_spectrogram", "a spectrogram of a formula, the playhead a glowing line sweeping it"),
     ("prism_drum_3d", "a vibrating drum in 3D, a net of glowing lines, orbiting"),
     ("point_cloud", "a million polynomial roots that glide and tear open, falling toward z = i"),
     ("prism_fractal", "fractals in the prism look: a morphing Julia set, a dive, glowing edges"),
@@ -38,6 +39,16 @@ SCENES = [
         "phase_portrait",
         "a damped pendulum: trajectories tracing the flow, then its rest points classified",
     ),
+    ("linear_system", "x' = A x: eigenvector lines, trajectories, the grid carried by the flow"),
+    (
+        "convolution",
+        "live convolution: a kernel flipped and sliding, the overlap lit, the output traced",
+    ),
+    (
+        "filtering",
+        "a low-pass filter: poles and zeros, gain and phase, a signal and its spectrum cut",
+    ),
+    ("strange_attractor", "the Lorenz attractor traces its two lobes as the camera circles"),
     ("residue_theorem", "a narrated short: the residue theorem, every motion on a spoken cue"),
     ("riemann_sqrt", "3D: the Riemann surface of sqrt(z), the camera orbits on its own"),
     ("deep_zoom", "a dive into the Mandelbrot set down to 1e-30 (the GPU's favourite)"),
@@ -45,8 +56,11 @@ SCENES = [
     ("basics_3d", "3D basics: axes, a helix, a surface, a vector field"),
     ("residues", "domain coloring of 1/(z^2 + 1) with a glowing contour"),
     ("fourier_linalg", "Fourier series and linear algebra"),
+    ("fourier_winding", "the Fourier transform: a wound signal, its centroid and the spectrum"),
     ("heat_dihedral", "the heat equation and the dihedral group"),
+    ("directivity", "polar patterns: beam steering, a baffled piston and a cardioid"),
     ("room_acoustics", "a room, its echoes and the pressure wave"),
+    ("doppler", "wavefront compression, the sonic pileup, and the Mach cone"),
     ("room_3d", "a 3D room with sound bouncing in it: rays and fronts reflecting off the walls"),
 ]
 

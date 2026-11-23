@@ -43,6 +43,7 @@ def _zeros_and_poles(
     """Zeros and poles of a rational function (with the constant ``a`` put in; with ``to``,
     of the blend (1 - blend) f + blend g), with multiplicity; () for anything else."""
     import sympy as sp
+    from mpmath.libmp.libhyper import NoConvergence
 
     from phasor.render.gpu.codegen import A, Z
 
@@ -61,7 +62,10 @@ def _zeros_and_poles(
         poly = sp.Poly(p, Z)
         if poly.degree() < 1:
             return ()
-        return tuple(complex(r) for r in poly.nroots(n=15))
+        try:
+            return tuple(complex(r) for r in poly.nroots(n=15))
+        except NoConvergence:  # a repeated float root (a filter's zeros at -1)
+            return tuple(complex(r) for r in np.roots([complex(c) for c in poly.all_coeffs()]))
 
     return roots(num), roots(den)
 

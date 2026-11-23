@@ -9,19 +9,25 @@ Formulas are read with the whitelist parser (never evaluated as Python). Named c
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from typing import Literal
 
 import numpy as np
 import sympy as sp
 
+from phasor.core.rng import rng
+from phasor.core.simulation import State
+from phasor.domains.linalg_math import expm
 from phasor.render.gpu.codegen import FunctionError, parse_expression
 
 __all__ = [
     "KINDS",
+    "AttractorSimulation",
     "FunctionError",
     "System",
     "classify",
     "fixed_points",
+    "linear_paths",
     "nullcline_segments",
     "trajectories",
 ]  # fmt: skip
@@ -128,11 +134,7 @@ def trajectories(system: System, seeds, t_end: float, steps: int = 400,
 
     alive = np.ones(len(seeds), dtype=bool)
     for k in range(steps):
-        k1 = vel(p)
-        k2 = vel(p + h / 2 * k1)
-        k3 = vel(p + h / 2 * k2)
-        k4 = vel(p + h * k3)
-        q = p + h / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
+        q = _rk4(vel, p, h)
         alive &= np.isfinite(q).all(axis=1)
         alive &= (q[:, 0] >= x0) & (q[:, 0] <= x1) & (q[:, 1] >= y0) & (q[:, 1] <= y1)
         p = np.where(alive[:, None], q, 0.0)  # a dead path keeps finite arithmetic, drawn NaN
@@ -296,3 +298,77 @@ def hash_seeds(n: int, extent, seed: int = 0) -> np.ndarray:
     wobble = np.c_[(k * 0.6180339887) % 1.0, (k * 0.7548776662) % 1.0] - 0.5
     pts = pts + wobble * np.array([0.6 / cols, 0.6 / rows])
     return (pts - 0.5) * np.array([w, h])
+
+
+# ---------------------------------------------------------------- linear systems (D5)
+# (the matrix exponential, ``expm``, lives in linalg_math)
+
+
+def linear_paths(A, seeds, t_end: float, steps: int, bounds, direction: float = 1.0) -> np.ndarray:
+    """Exact trajectories ``e^(tA) x0`` of x' = A x, shape (seeds, steps + 1, 2); a point
+    outside ``bounds`` (x0, x1, y0, y1), and every later one, is NaN."""
+    seeds = np.asarray(seeds, dtype=np.float64).reshape(-1, 2)
+    ts = np.linspace(0.0, t_end * direction, steps + 1)
+    paths = np.stack([seeds @ expm(A, t).T for t in ts], axis=1)
+    x0, x1, y0, y1 = bounds
+    out = (paths[..., 0] < x0) | (paths[..., 0] > x1) | (paths[..., 1] < y0) | (paths[..., 1] > y1)
+    out = np.logical_or.accumulate(out, axis=1)
+    paths[out] = np.nan
+    return paths
+
+
+def _rk4(velocity, point: np.ndarray, dt: float) -> np.ndarray:
+    k1 = velocity(point)
+    k2 = velocity(point + dt / 2 * k1)
+    k3 = velocity(point + dt / 2 * k2)
+    k4 = velocity(point + dt * k3)
+    return point + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
+
+
+AttractorSystem = Literal["lorenz", "rossler", "thomas"]
+
+
+@dataclass(frozen=True)
+class AttractorSimulation:
+    """Fixed-step RK4 for the Lorenz, Rössler and Thomas differential equations."""
+
+    system: AttractorSystem = "lorenz"
+    sigma: float = 10.0
+    rho: float = 28.0
+    beta: float = 8 / 3
+    seed: int = 0
+    object_id: str = "attractor"
+    start: tuple[float, float, float] | None = None
+
+    dt = 0.01
+
+    def params(self) -> dict:
+        return asdict(self)
+
+    def initial(self) -> State:
+        point = (
+            rng(self.object_id, self.seed).uniform(0.5, 1.5, size=3)
+            if self.start is None
+            else np.asarray(self.start, dtype=np.float64)
+        )
+        return {"point": point}
+
+    def velocity(self, point: np.ndarray) -> np.ndarray:
+        x, y, z = point
+        match self.system:
+            case "lorenz":
+                return np.array([self.sigma * (y - x), x * (self.rho - z) - y,
+                                 x * y - self.beta * z])  # fmt: skip
+            case "rossler":
+                return np.array([-y - z, x + 0.2 * y, 0.2 + z * (x - 5.7)])
+            case "thomas":
+                return np.sin(point[[1, 2, 0]]) - 0.208186 * point
+        raise ValueError(f"unknown attractor system: {self.system}")
+
+    def step(self, state: State, dt: float) -> State:
+        with np.errstate(over="ignore", invalid="ignore"):
+            point = _rk4(self.velocity, state["point"], dt)
+        # Custom parameters can make fixed-step integration escape numerically.
+        if not np.isfinite(point).all():
+            point = np.full(3, np.nan)
+        return {"point": point}

@@ -694,9 +694,30 @@ expression.
 **`fourier`**: `Epicycles(points=..., terms=N, phase=0..1)` (a closed curve drawn by N rotating
 circles; `phase` animates the tip), `PartialSum(kind="square"|"sawtooth"|"triangle", terms=N)`
 (the Gibbs overshoot is in the semantics), `Spectrum(frequencies=, amplitudes=, window=)` (bars
-per bin; `leakage` in the semantics), `Spectrogram(f0=, f1=)` (a chirp, backdrop). The maths is
+per bin; `leakage` in the semantics), `Spectrogram(...)` (any signal, backdrop; below). The maths is
 `phasor.domains.fourier_math`: `epicycle_coefficients`, `series_partial_sum`, `window`,
-`spectrum`, `leakage`, `spectrogram`, `convolve`.
+`spectrum`, `leakage`, `spectrogram`, `dominant_frequency`, `sampled`, `convolve`.
+
+`fourier.Winding` draws a sum of real sine tones wound clockwise at `freq` (Hz). Its
+centroid is the mean of the wound samples, equal to the complex DFT divided by the sample
+count at DFT bins. The spectrum stroke plots the centroid magnitude from zero to `freq`.
+`max_freq` sets the right edge of the spectrum and must be at or below Nyquist (`fs / 2`).
+`spectrum_guide=False` hides the spectrum axes while retaining the winding circle.
+`progress` traces the winding curve independently of the frequency sweep. `pos` sets the
+circle centre and `size` its radius. Inspector semantics expose the complex centroid as
+`(real, imag)`; the `centroid` and `spectrum_tip` features are world positions.
+
+```python
+from phasor import Scene, fourier
+
+s = Scene("winding_demo", look="prism", passes=None)
+s.add(fourier.Winding(id="wind", frequencies=(3.0,), amplitudes=(1.0,), pos=(-4, 0, 0)))
+s.marker("scan", 0.5)
+s.marker("end", 5.0)
+s.at("scan").sweep("wind.freq", 8.0, show=False)
+```
+
+See `examples/fourier_winding.py` for a two-tone sweep.
 
 **`linalg`**: `TransformGrid(matrix=((a, b), (c, d)))` (2x2: the grid, the unit square whose
 area is the determinant, the images of the basis vectors; 3x3: the unit cube), `EigenLines`,
@@ -738,6 +759,46 @@ room.add(
 ir = room.engine.inspect(0.0, id="ir")["objects"][0]["semantic"]
 assert abs(ir["first_arrival_ms"] - 4.0311 / 343 * 1000) < 1e-3 and ir["arrivals"] > 1000
 ```
+
+**`ac.Directivity`** draws normalized pressure magnitude as a polar curve. Choose
+`kind="array"` (a uniform linear array), `"piston"` (a circular piston in an infinite
+baffle), or `"cardioid"`. `steer` is in degrees counterclockwise from +x. The array lies along y,
+so +x is broadside. Front/back symmetry can yield two equal peaks.
+`elements` and `spacing` (meters) set the array, `radius` (meters) sets the piston, and
+`frequency` (Hz) applies to both. `pos` sets the plot center and `size` is the radius of
+the unity-gain guide in world units. The prism look gives stronger lobes more glow.
+
+```python
+from phasor import Scene, ac
+
+beam = Scene("beam", look="prism", passes=None)
+beam.add(ac.Directivity(id="array", elements=8, spacing=0.1715, frequency=1000, steer=-25))
+beam.marker("turn", 1.0)
+beam.at("turn").sweep("array.steer", 25.0, show=False)
+assert beam.engine.inspect(0, id="array")["objects"][0]["semantic"]["peak_gain"] == 1.0
+```
+
+**`ac.Doppler(speed=, frequency=, time=, pos=, size=)`** draws wavefronts from a sound
+source traveling along +x. `speed` is the constant Mach number for the frame,
+`frequency` is in Hz, `time` is seconds from emission start, `pos` is the starting
+position, and `size` is the world distance sound travels in one second. Animate `time`
+to move the source. For a different constant speed, restart the run. In the prism look
+the rings fade with age and their hue encodes local apparent frequency. At Mach 1 the
+leading edges meet at the source. Above Mach 1 the lines show the planar section of
+the Mach cone. Inspector semantics use `None` for frequency ahead at and above Mach 1
+and report the cone half-angle in degrees for supersonic motion.
+
+```python
+from phasor import Scene, ac, expr
+
+doppler = Scene("doppler", look="prism", passes=None)
+doppler.add(ac.Doppler(id="source", speed=0.5, frequency=12, time=expr("t"), size=2))
+doppler.marker("end", 1.0)
+wave = doppler.engine.inspect(0.8, id="source")["objects"][0]["semantic"]
+assert wave["frequency_ahead"] == 24.0 and wave["frequency_behind"] == 8.0
+```
+
+Example: `examples/doppler.py`.
 
 **Simulations** (`phasor.core.simulation`): a `Simulation` has a fixed `dt`, `params()` (the
 seed included), `initial()` and a pure `step(state, dt)`. `runner_for(sim).state_at(t)` is the
@@ -1291,6 +1352,86 @@ assert kinds == ["saddle", "stable spiral", "saddle"]
 Example: `examples/phase_portrait.py`. The prism looks make trajectories glow with the arrow
 field and nullclines kept faint.
 
+### Linear systems and their modes
+
+`dyn.LinearSystem(matrix=((a, b), (c, d)), extent=, seeds= or n_seeds=, t_end=, progress=,
+backward=, labels=)`: x' = A x with exact trajectories `e^(tA) x0` (`backward` runs each seed
+back in time too, so the whole curve shows) and a label of the type and eigenvalues. Semantics:
+the type (`saddle`, `stable node`, ...), eigenvalues, real eigenvectors, trace and determinant.
+Its modes and the matrix exponential acting on a grid are drawn by the linalg objects beside it:
+`linalg.EigenLines(matrix=A)` (the invariant lines) and `linalg.TransformGrid(flow=A,
+flow_time=t)`, which shows `e^(tA)` on the grid instead of `matrix` (sweep it with
+`s.at("m").sweep("grid.flow_time", 0.6, show=False)`; every cell's area is multiplied by
+`e^(trace * t)`). `linalg_math.expm(m, t)` is the matrix exponential.
+
+```python
+from phasor import Scene, dyn, linalg
+
+A = ((1, 2), (2, 1))
+s = Scene("modes", passes=None)
+s.add(dyn.LinearSystem(id="sys", matrix=A))
+s.add(linalg.TransformGrid(id="grid", flow=A, flow_time=0.5))
+sem = s.engine.inspect(0.0, id="sys")["objects"][0]["semantic"]
+assert sem["type"] == "saddle"
+det = s.engine.inspect(0.0, id="grid")["objects"][0]["semantic"]["determinant"]
+assert abs(det - 2.718282) < 1e-5  # e^(trace * 0.5)
+```
+
+Example: `examples/linear_system.py`.
+## Signals: live convolution
+
+`from phasor import conv`. `conv.Convolution(f=, g=, progress=, pos=, extent=)` shows two signals
+and the output they make. The top panel has `f`, the kernel `g` flipped and slid to the shift
+tau (two hues), and under them their product f(s) g(tau - s), filled where they overlap. The
+bottom panel shares the time axis: the area of that product is the output (f * g)(tau), traced
+point by point with a beacon at the point being made. `progress` 0 -> 1 slides the kernel over
+every shift at which the two can overlap (`s.at("m").sweep("c.progress", 1.0, show=False)`).
+
+- A signal is a name (`box`, `triangle`, `decay`, `ramp`, `gauss`, `wave`) or a formula in `t`
+  (read safely, never run as Python), zero outside its support. `f_support=(lo, hi)` and
+  `g_support` set where it is not zero (`(0, 0)`: the shape's own; a formula without one gets
+  -1..1).
+- `ghost` draws the whole output faintly ahead of the traced part; `shade` (0..1) is how strongly
+  the product is filled; `hue_cycles` runs the palette along the output.
+- Semantics: `shift`, `shift_range`, `output` (the area at this shift), `peak` and `overlapping`.
+
+```python
+from phasor import Scene, conv
+
+s = Scene("overlap", passes=None)
+s.add(conv.Convolution(id="c", f="box", g="box", progress=0.5))  # halfway: shift 0
+sem = s.engine.inspect(0.0, id="c")["objects"][0]["semantic"]
+assert sem["shift_range"] == [-2.0, 2.0] and abs(sem["shift"]) < 1e-9
+assert abs(sem["output"] - 2.0) < 0.01  # a box with itself peaks at its width
+```
+
+Example: `examples/convolution.py`. The prism looks make both signals and the output glow, the
+product lit where they overlap. Numerics (a sum on a fine grid, checked against box * box = a
+triangle, decay * decay = t e^-at and Gaussian widths adding) are in
+`phasor/domains/convolution_math.py`.
+- `dyn.StrangeAttractor(system="lorenz", sigma=10, rho=28, beta=8/3, seed=0, t_end=36,
+  progress=1, pos=(0, 0, 0), size=6)` traces a single three-dimensional trajectory. Use
+  `system="rossler"` or `"thomas"` for their classic parameter sets. The three named
+  coefficients customize Lorenz. The object ID and seed determine the starting point.
+  The solver uses a fixed step of 0.01 and `t_end` is in simulation time, from 0.01 to
+  120, rounded to the nearest step. The complete path is centered on `pos` with longest span `size`. Animate
+  `progress` from 0 to 1 and use an orbit camera to view its depth. The prism look colors
+  the stroke by simulation time. The inspector reports the simulated time at the head.
+
+```python
+from phasor import Scene, dyn
+
+s = Scene("lorenz", look="prism")
+s.use_camera("orbit", azimuth=-90, elevation=12, distance=11)
+s.add(dyn.StrangeAttractor(id="trajectory", progress=0))
+s.marker("begin", 0.0)
+s.marker("finish", 8.0)
+s.at("begin").trace("trajectory")
+s.at("begin").orbit(70, until="finish")
+```
+
+Example: `examples/strange_attractor.py`.
+
 ## Command line
 
 | Command | Status | Purpose |
@@ -1395,3 +1536,85 @@ assert report.tier in {"A", "B", "C"}
 
 Tiers: **A** CUDA kernels and GL 4.3. **B** GL 4.3 only. **C** no usable GL: the inspector
 runs in analytic mode, stills are unavailable.
+
+## Filtering: poles and zeros, response, signal and spectrum
+
+`from phasor import filt`. One digital filter, shown four ways. Every object takes the same
+filter parameters: `kind` (`lowpass`, `highpass`, `bandpass`, `bandstop`: Butterworth, with the
+half-power frequency `cutoff` in Hz and, for the bands, `cutoff2`; `notch`: zeros on the unit
+circle at `cutoff`, poles at `radius` times them; `custom`: `zeros`, `poles` as (re, im) pairs
+in conjugate pairs, and `gain`), `order`, and the sample rate `fs`. A cutoff outside 0 to `fs / 2`
+is refused when the object is added.
+
+- `filt.transfer_plane(id, pos=, scale=, size=, **filter)`: the `cx.DomainColoring` of H(z),
+  placed so the z plane sits at `pos` with `scale` world units per unit of z. In the prism look
+  its zeros and poles glow with the phase wrapped round them.
+- `filt.PoleZero(pos=, scale=, size=, probe=, **filter)`: the unit circle, zeros (rings) and poles
+  (crosses) with their multiplicity. Give it the plane's `pos`, `scale`, `size` and a higher
+  `z_index`. `probe` (0 to 1, DC to half the sample rate) puts a bright point on the circle at
+  that frequency; sweep it together with the response's `reveal`. Semantics list zeros, poles
+  (with multiplicity), `stable` and the largest pole radius.
+- `filt.FrequencyResponse(plot="gain" | "phase", scale="db" | "linear", reveal=, pos=,
+  extent=, **filter)`: the gain (dB with a floor, or linear) or the unwrapped phase from DC to
+  half the sample rate, the cutoffs marked, traced as `reveal` goes 0 -> 1. Semantics give the
+  gain and phase at each cutoff (-3.01 dB at a Butterworth cutoff; -n pi / 4 radians for an
+  order-n low-pass).
+- `filt.FilteredSignal(frequencies=, amplitudes=, duration=, progress=, **filter)`: a sum of
+  sinusoids before (faint) and after (bright) the filter, run from rest so the start-up shows.
+- `filt.FilteredSpectrum(frequencies=, amplitudes=, window=, samples=, fade=, envelope=,
+  **filter)`: the spectrum of the same tones through a window (the one `fourier.Spectrum` draws),
+  what the filter keeps solid and what it removes on top in a second color; `fade` 0 -> 1 fades the
+  removed part out. Semantics: `removed_energy_share` and each tone's gain.
+
+```python
+from phasor import Scene, filt
+
+low = dict(kind="lowpass", order=4, cutoff=1000.0, fs=8000.0)
+s = Scene("low_pass", passes=None)
+s.add(filt.transfer_plane("plane", **low))
+s.add(filt.PoleZero(id="poles", z_index=1, **low))
+s.add(filt.FrequencyResponse(id="gain", pos=(0, -4), **low))
+s.add(filt.FilteredSpectrum(id="spec", frequencies=(300.0, 2800.0), amplitudes=(1.0, 1.0),
+                            pos=(0, 4), **low))  # fmt: skip
+e = s.engine
+sem = {o["id"]: o["semantic"] for o in e.inspect(0.0)["objects"]}
+assert sem["poles"]["zeros"] == [[-1.0, 0.0, 4]] and len(sem["poles"]["poles"]) == 4
+assert abs(sem["gain"]["gain_db_at_cutoff"][0] + 3.0103) < 1e-3
+assert sem["spec"]["tones"][0]["kept"] > 0.99 > 0.01 > sem["spec"]["tones"][1]["kept"]
+```
+
+Example: `examples/filtering.py` (the poles, a probe round the circle with the gain and phase
+traced, a signal going in and out, the removed band fading). Numerics are in
+`phasor/domains/filters_math.py` (Butterworth by the bilinear transform with the cutoff
+pre-warped; checked against `scipy.signal`).
+
+**Spectrogram of any signal.** `fourier.Spectrogram` shows the short-time spectrum of one of
+three sources: a `.wav` file next to the scene (`wav="voice.wav"`, mixed down to mono; its length
+and sample rate are the file's own; the AI may name only files in its folder), a formula in `t`
+seconds (`signal="sin(tau * 440 * t)"` over `duration` at `fs`; at most 400000 samples), or,
+with neither, a chirp from `f0` to `f1`. `nwin`, `hop` (0: `nwin / 4`) and `window`
+(`rect`, `hann`, `hamming`, `blackman`) shape the frames; `fmax` crops the frequency axis
+(0: half the sample rate). `playhead` (0..1 of the duration, below 0 for none) draws a glowing
+line, in the `playhead` style role; track it or give it `expr("t / 6")` to sweep. The semantics
+report `source`, `duration`, `max_frequency`, `playhead_time` and `dominant_frequency`, the
+strongest frequency under the playhead. A missing file is the `missing_file` issue.
+
+```python
+from phasor import Scene, expr
+from phasor.domains.fourier import Spectrogram
+
+s = Scene("sweep", look="prism", passes=None)
+s.add(
+    Spectrogram(
+        id="sg",
+        signal="sin(tau * (200 * t + 400 * t * t))",
+        duration=1.0,
+        fs=4000.0,
+        playhead=expr("t / 4"),
+    )
+)
+s.marker("end", 4.0)
+sem = s.engine.inspect(2.0, id="sg")["objects"][0]["semantic"]
+assert sem["source"] == "formula" and abs(sem["dominant_frequency"] - 600) < 50
+# from a file next to the scene: Spectrogram(id="sg", wav="voice.wav", fmax=4000)
+```
