@@ -634,8 +634,54 @@ lint_added, lint_resolved)`. Each error has `code`, `message`, `ids`, `path`, `f
 | `remove_constraint` | `rule` |
 
 On a scene built by a script, `set_param`, `set_style` and `add_constraint` are stored as
-tweaks in `name.overrides.json` and survive re-running the script; other ops are refused
-with `scripted_scene` (change the script instead).
+tweaks (the engine's `overrides`) and survive re-running the script; saving writes them into
+the script's **tweaks block** (below, ADR 0004). Other ops are refused with `scripted_scene`
+(change the script instead).
+
+### The tweaks block: a script keeps its tweaks (ADR 0004)
+
+A tweak made in the editor (the inspector, a drag) or by an AI on a script scene is written
+into a managed block at the end of the script, as ordinary code, one line per tweak in a
+fixed order (parameters by path, then styles, then layout rules as added). Code outside the
+markers is never touched; the block goes before a trailing `if __name__ == "__main__":`.
+
+```
+# --- phasor tweaks: written by the editor and the AI; edit freely, keep the markers ---
+s.tweak('pole.r', 0.3)
+s.tweak_style('pole', 'color', 'highlight')
+s.tweak_rule('label(pole) near pole')
+# --- end phasor tweaks ---
+```
+
+`s.tweak(path, value)`, `s.tweak_style(id, key, value)` and `s.tweak_rule(rule, priority=)`
+lay the tweak over what the script built (the engine's overrides, not its base). Unlike
+`s.set`, a tweak whose object the script no longer makes is kept and the script still runs:
+lint `orphan_override` says so. Running the script fresh gives the document the live editor
+holds. A scene saved before ADR 0004 (`name.overrides.json` beside the script) has that file
+folded into the block the first time the script is opened in the app or by `phasor mcp`,
+then removed; `phasor.load` still reads such a file. A `.phasor.json` scene keeps its
+overrides file. The block helpers are in `phasor.core.pycode`:
+
+```python
+import tempfile
+from pathlib import Path
+
+from phasor import load
+from phasor.core.pycode import read_tweaks, with_tweaks
+
+folder = Path(tempfile.mkdtemp())
+script = folder / "tweaked.py"
+script.write_text("from phasor import Dot, Scene\n"
+                  "s = Scene('tweaked', passes=None)\n"
+                  "s.add(Dot(id='pole', r=0.2))\n", encoding="utf-8")
+e = load(script)
+e.apply({"op": "set_param", "path": "pole.r", "value": 0.3})  # a tweak: into the overrides
+text = with_tweaks(script.read_text(encoding="utf-8"), e.overrides, "s")
+assert "s.tweak('pole.r', 0.3)" in text and read_tweaks(text).params == {"pole.r": 0.3}
+script.write_text(text, encoding="utf-8")
+assert load(script).document.object("pole").params["r"] == 0.3  # a fresh run keeps it
+assert load(script).base.object("pole").params["r"] == 0.2  # the script's own value
+```
 
 `lint_added` and `lint_resolved` are worked out when you first read them (or call
 `to_dict()`), so building a scene stays fast.
@@ -2397,52 +2443,87 @@ opens a document without running its modules; the person trusts them in the edit
 
 `phasor-gui` (or `phasor gui`) with no scene opens a **start screen**: new scene (2D, 3D,
 a complex function), open a file, recent scenes, and the examples (double-click copies one
-to `Documents/phasor/examples` and opens the copy). Each scene gets its own window with a
-menu bar: **File** (New, Open, Open Example, Open Recent, Save, Save As, Export, Close,
-Quit), **Edit** (Undo, Redo), **View** (Play, back to the start), **Settings** (math
-typesetting: built-in, the default, or LaTeX; add phasor to the applications menu),
-**Help** (these docs, a hardware check, about). The title marks unsaved edits with `•`,
-and closing such a window asks first. **Export** makes a picture, a video or a web page
-with sliders, with a progress bar, in a separate process (it can be cancelled and the
-window keeps working). The packaged app is built with PyInstaller (`packaging/README.md`).
+to `Documents/phasor/examples` and opens the copy). Each scene gets its own window, the
+**code-first window** (Milestone 25, `APP_PLAN.md`):
 
-The logic is plain Python in `phasor.gui.app` (no Qt): settings, templates, examples,
-exports and the shortcut.
+- **Left: the script.** Always editable. **Run** (Ctrl+Enter) builds the scene from it;
+  **Save** (Ctrl+S) runs changed code first ("Run on save") and writes it. A mistake is
+  marked at its line (also in Problems) and the preview keeps the last scene that ran; the
+  file keeps the code that ran. Clicking a line selects the object it makes. A
+  `.phasor.json` scene shows code generated from it (Run makes that code the scene,
+  `name.scene.py`); Explorer documents stay documents.
+- **Right: what it renders.** The preview (click selects an object and shows its line; drag
+  the selected object to move it; drag empty space to turn or slide the camera; the wheel
+  zooms), the timeline (narration with its waveform, markers, animated spans: drag to
+  retime), and tabs: **Problems** (the script's error, then lint; a click goes to the object,
+  its time and its line), **Inspector**, **Looks**, **Narration** (narrate from a recording,
+  wav or mp4; its speech and pauses; "Snap markers to narration" with a preview of every
+  move and the recording's flags said plainly, applied as one undoable step), **Sound and
+  MIDI** (a sound clip at a marker; notes from a `.mid` or typed, `C4 0 0.5, E4 0.5 0.5`;
+  export the notes to `.mid`), **Footage** (a video, picture or picture sequence as the
+  background or placed like any object; a file from elsewhere is copied into `media/`),
+  **Sliders**, and **AI** (the chat comes in phase 4; until then an AI attaches with
+  `phasor mcp --attach`). "Who changed what" is under View.
+- **Toolbar:** Run, **Draft preview** (the `draft` preset to `<scene>.draft.mp4` on a
+  thread, progress in the status bar, Cancel, played in the system's player when done),
+  **Render...** (video or picture; quality draft, preview, final or 4K with the size and
+  frames a second it gives; where to; a file that exists is replaced only when you say so
+  and only when the new one is done; Cancel leaves nothing behind), Play, Undo, Redo, Save.
+- **One script, several editors (ADR 0004).** A tweak in the inspector or the preview, or an
+  attached AI's, is written into the script's tweaks block at once (you see it in the code);
+  on a script scene, adding footage, sound, notes, narration or the snap adds a line of code
+  before the block and runs it. The file is watched: an edit from outside (another editor,
+  Claude Code) reloads and runs when you have no unsaved edits; with unsaved edits the app
+  asks which version to keep and never merges.
+- **Trust.** Opening a script runs it. The first time a script the app did not write is
+  opened, the app asks once (examples it copied and scripts it saved are trusted).
+- **Menus:** File (New, Open, Open Example, Open Recent, Save, Save As, Export, Close,
+  Quit), Edit, Scene (Run, Draft preview, Render), View, Settings (math typesetting; the
+  applications menu), Help. **Export** also makes a web page with sliders (a separate
+  process; its Cancel removes what it wrote). Without OpenGL the preview says so and the
+  rest works. The packaged app is built with PyInstaller (`packaging/README.md`).
+
+The logic is plain Python, tested without Qt: `phasor.gui.app` (settings, trust, templates,
+examples, the web export, the shortcut) and `phasor.gui.controller.Editor` (the script, Run,
+the file watch, the panels, render jobs):
 
 ```python
 import tempfile
 from pathlib import Path
 
 from phasor.gui.app import EXPORTS, TEMPLATES, ExportJob, examples
+from phasor.gui.controller import Editor, open_workspace, parse_notes
 
 assert {"2D scene", "3D scene"} <= set(TEMPLATES) and set(EXPORTS) == {"picture", "video", "web"}
 assert any(e["name"] == "julia explorer" for e in examples())
 job = ExportJob(None, "web", Path(tempfile.mkdtemp()) / "page.html", scene_dir=".")
 assert job.command("s.phasor.json")[-5:] == ["s.phasor.json", "-o", str(job.out), "--steps", "5"]
+
+folder = Path(tempfile.mkdtemp())
+script = folder / "app.py"
+script.write_text("from phasor import Dot, Scene\n"
+                  "s = Scene('app', passes=None)\n"
+                  "s.add(Dot(id='pole', r=0.2))\n", encoding="utf-8")
+ed = Editor(open_workspace(str(script)))
+assert ed.is_script and ed.line_of("pole") == 3 and ed.object_at_line(3) == "pole"
+ed.set_param("pole", "r", "0.3")  # a tweak: written into the tweaks block
+assert "s.tweak('pole.r', 0.3)" in ed.buffer and ed.dirty
+ed.save()  # no rerun for a tweak; the block is written
+assert script.read_text(encoding="utf-8") == ed.buffer
+bad = ed.run_code(ed.buffer + "s.add(Dot(id='x', r=-1))\n")
+assert not bad["ok"] and bad["line"] == 8  # the last good scene stays
+assert ed.render_plan("draft")["path"].endswith("app.draft.mp4")
+assert parse_notes("C4 0 0.5, E4 0.5 0.5")[1][0] == 64.0
 ```
 
 ## The editor and the AI on one scene (`phasor gui`)
 
-`phasor gui scene.py` opens the editor: the viewport (click selects; drag the selected
-object to move it), the timeline (markers, one lane per animated parameter, click or drag to
-scrub, Space plays), and tabs for the **inspector** (every parameter as a field: type JSON
-or text and press Enter; style roles as menus; what the inspector reads), **lint** (click an
-issue to jump to its object and time) and **looks** (switch the whole scene to a look; show
-the variants of a beat and pick one: recorded in `style/choices.jsonl` as the person's
-choice). Ctrl+Z / Ctrl+Shift+Z / Ctrl+S undo, redo, save. Every edit is one
-`Engine.apply`, so a script scene keeps them as overrides. Also: drag empty space to turn the 3D
-camera (shift-drag or a 2D scene: slide it), the wheel zooms; the **Sliders** tab previews the
-scene's controls; the **Code** tab shows the scene as Python (the script itself, or one
-generated from the document) with highlighting: edit and Run (Ctrl+Enter) to rebuild the scene;
-the timeline shows narration with its waveform, and lets you drag markers and animation spans
-(or their ends) to retime them; the **Who changed what** dock lists your edits and an attached
-AI's; hovering shows values under the pointer. `phasor-gui` starts the editor as a program.
-
-While it is open, `phasor mcp --attach --root <same folder>` serves the editor's own live
-scene to an AI: its edits show up in the window, the window's edits are what it inspects.
-The editor writes `<root>/.phasor/gui.json` (host, port, a token; readable only by you)
-and removes it on close; `--no-ai` keeps the AI out. The logic is `phasor.gui.controller.Editor`
-(no Qt in it), and the shared tools are `phasor.workspace`:
+`phasor gui scene.py` opens the same window as the desktop app, without its menus. While
+it is open, `phasor mcp --attach --root <same folder>` serves the editor's own live scene
+to an AI: its edits show up in the window (and, on a script, in its tweaks block), the
+window's edits are what it inspects. The editor writes `<root>/.phasor/gui.json` (host,
+port, a token; readable only by you) and removes it on close; `--no-ai` keeps the AI out.
+The shared tools are `phasor.workspace`:
 
 ```python
 import tempfile

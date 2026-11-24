@@ -28,7 +28,7 @@ a variant and compare.
 
 | Tool | Use it to |
 | --- | --- |
-| `scene_new`, `scene_open`, `scene_save` | start, load or save `name.phasor.json` (inside the workspace folder only) |
+| `scene_new`, `scene_open`, `scene_save` | start, load or save `name.phasor.json` (inside the workspace folder only); a script scene's `scene_save` writes its tweaks into the tweaks block at the end of the script (ADR 0004) and leaves its other code alone |
 | `scene_palette` | the colors run along strokes: `spectrum` (the prism rainbow), `moonlight`, `gold`, `glacier`, `borealis`, `rose`, or none; in the prism looks every glowing curve takes them |
 | `scene_edit` | apply a patch (below); returns `ok`, `errors`, and the lint issues it added or fixed |
 | `animate` | a choreography verb at a marker or time: `reveal`, `exit`, `trace`, `bloom_in`, `dim_others`, `undim`, `focus_pull`, `morph`, `settle`, `write`, `travel`, `flash`, `wiggle`, `circumscribe` (`value` "circle" or "box"), `transform`, `transform_matching` and `become` (`targets` [from, to]), `sweep` (`path`, `value`), and in 3D `orbit` (`value` degrees, `until` a marker) and `orbit_reveal` |
@@ -44,6 +44,7 @@ a variant and compare.
 | `variants`, `choose` | alternative looks of one beat side by side (as is, calmer, bolder); pick one, it is recorded in `style/choices.jsonl` and applied |
 | `diff`, `checkpoint`, `restore`, `undo`, `redo` | compare and branch |
 | `render` | a video (`draft`, `preview`, `final`, `4k`) or one PNG with `frame`; `start`/`end`/`frame` take seconds or a marker name (a draft goes to `<scene>.draft.mp4`) |
+| `render_start`, `render_status`, `render_cancel` | a render that runs while you go on: `render_start` (as `render`; default `draft`) returns a `job` at once; `render_status` gives `state` (running, done, failed, cancelled), `frame` of `frames`, `progress`; `render_cancel` stops it and removes its partial file. It renders the scene as it was when started, writes beside the target and replaces it only when done (an existing file only with `overwrite: true`; a draft's own `<scene>.draft.mp4` always) |
 | `export_midi` | write the scene's MIDI notes (every `notes` object, as heard, at its times in the scene) to a `.mid` (format 1, a track per object); `out` defaults to `<scene>.mid`; never over a file the scene reads, nor over an existing file unless `overwrite: true` |
 | `docs_search` | find the API, a pattern or an example |
 | `explorer_state`, `explorer_edit`, `explorer_preset` | the Explorer: its rows, systems, equilibria and sliders in one call; add, retype, hide, recolour or remove rows and set variables (one undoable edit); load a classic system |
@@ -216,6 +217,15 @@ a `sound` clip. `export_midi` writes them all to one `.mid`.
 
 ```json calls
 {"tool": "export_midi", "out": "out/tune.mid"}
+```
+
+A long render need not block you: start it, ask how far it is, stop it if the scene needs
+another change (nothing half-written is left behind).
+
+```json calls
+{"tool": "render_start", "preset": "draft", "out": "out/look.draft.mp4"}
+{"tool": "render_status"}
+{"tool": "render_cancel", "job": "render_1"}
 ```
 
 `animate` returns `start` and `end`: pass `offset: end - start` to start the next step when

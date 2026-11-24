@@ -21,10 +21,10 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6.QtWidgets", reason="the gui extra is not installed")
 
-from PySide6.QtWidgets import QSplitter  # noqa: E402
+from PySide6.QtWidgets import QSplitter
 
-from phasor.gui.window import open_editor  # noqa: E402
-from phasor.workspace import jobs as jobmod  # noqa: E402
+from phasor.gui.window import open_editor
+from phasor.workspace import jobs as jobmod
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
 
@@ -47,7 +47,7 @@ def scene(tmp_path):
 
 @pytest.fixture
 def win(scene):
-    _app, w, server = open_editor(str(scene), serve_ai=False, show=False)
+    _app, w, _server = open_editor(str(scene), serve_ai=False, show=False)
     w.timer.stop()  # the tests tick it by hand
     w.resize(1200, 760)
     yield w

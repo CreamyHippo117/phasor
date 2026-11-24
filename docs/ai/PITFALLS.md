@@ -54,9 +54,10 @@ report `visible_fraction` 1.0. Its own visibility is still measured.
 
 ## Tweaks to a scripted scene
 
-`set_param` and `set_style` on a scene built by a `.py` script go to `name.overrides.json`.
-If the script later drops that object, lint reports `orphan_override` (an error). Fix the
-script or delete the entry; phasor never discards a tweak silently.
+`set_param` and `set_style` on a scene built by a `.py` script are tweaks: saving writes
+them into the tweaks block at the end of the script (`s.tweak(...)` lines, ADR 0004). If the
+script later drops that object, the line stays and lint reports `orphan_override` (an
+error). Fix the script or delete the line; phasor never discards a tweak silently.
 
 ## GL contexts
 

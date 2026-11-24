@@ -1,7 +1,8 @@
 # ADR 0004: a script scene keeps its tweaks inside the script
 
-Status: **Proposed** (2026-11-22), waiting for the owner. Touches SPEC contract 2
-("Document is truth"). Nothing here is built yet. Part of `APP_PLAN.md`.
+Status: **Accepted** by the owner (recorded in `CLAUDE.md`, 2026-11-22). Touches SPEC
+contract 2 ("Document is truth"). Built in Milestone 25 (`MILESTONE_25.md`). Part of
+`APP_PLAN.md`.
 
 ## Context
 
@@ -13,7 +14,7 @@ Tweaks made in the editor or by an AI over MCP live in `scene.overrides.json` (c
 SPEC line 63). The script is not the whole truth, and a person reading it cannot see what
 was changed in the app.
 
-## Decision (proposed)
+## Decision
 
 The overrides of a script scene move into a **managed block at the end of the script**,
 written by phasor and readable as ordinary code:

@@ -1,8 +1,8 @@
 # The code-first desktop app: plan
 
 Working doc, like `GPU_SPEED.md`. Asked for by the owner on 2026-11-22: "one shared script
-everyone uses". Status: **proposed, nothing built**. Needs the owner's answers (end of this
-doc) and ADR 0004 accepted before phase 1 starts.
+everyone uses". Status: ADR 0004 accepted; **phases 1 and 2 built in Milestone 25**
+(`MILESTONE_25.md`, with the buttons and panels of `STUDIO.md`); phases 3 and 4 not started.
 
 ## What the owner wants
 

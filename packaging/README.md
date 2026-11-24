@@ -2,8 +2,11 @@
 
 The app is the editor (`phasor-gui`) frozen with PyInstaller into a folder you can run
 without installing Python: `phasor` (or `phasor.exe`, or `phasor.app` on macOS). It opens
-a start screen; File > Export makes pictures, videos and web pages; the command line is
-inside it too (`phasor --cli render scene.phasor.json`).
+a start screen; each scene opens in the code-first window (Milestone 25: the script on the
+left, the preview on the right, Draft preview and Render buttons); File > Export makes
+pictures, videos and web pages; the command line is inside it too
+(`phasor --cli render scene.phasor.json`). After Milestone 25 the Windows package must be
+rebuilt and checked by hand: `pc_tasks/13_desktop_app.md`.
 
 Build on each system for that system (PyInstaller does not cross-compile):
 

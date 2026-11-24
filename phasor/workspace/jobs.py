@@ -26,9 +26,6 @@ MAX_RUNNING = 2  # renders at once (each shares the one GL thread with the edito
 KEEP_FINISHED = 16  # finished jobs whose status can still be read
 CANCEL_WAIT = 5.0  # seconds ``cancel`` waits for the render to stop and clean up
 
-_ids = itertools.count(1)
-
-
 def _render(engine: Any, out: Path, **kwargs: Any) -> dict[str, Any]:
     """The render a job runs (a seam: tests put a fake here, so jobs are tested without
     OpenGL). One process: ``scene.render`` with one worker, its kernels on every core."""
@@ -46,7 +43,7 @@ def partial_path(target: Path) -> Path:
 class RenderJob:
     def __init__(self, engine: Any, target: Path, *, preset: str, start: Any = None,
                  end: Any = None, fps: float | None = None, frame: Any = None) -> None:  # fmt: skip
-        self.id = f"render_{next(_ids)}"
+        self.id = ""  # given by ``Jobs.start``: render_1, render_2, ... in each workspace
         self.engine, self.target, self.preset = engine, Path(target), preset
         self.kwargs = {"preset": preset, "start": start, "end": end, "fps": fps, "frame": frame}
         self.partial = partial_path(self.target)
@@ -57,9 +54,11 @@ class RenderJob:
         self.started = time.monotonic()
         self.finished: float | None = None
         self._cancel = threading.Event()
-        self._thread = threading.Thread(target=self._run, name=f"phasor-{self.id}", daemon=True)
+        self._thread: threading.Thread | None = None
 
-    def start(self) -> RenderJob:
+    def start(self, job_id: str) -> RenderJob:
+        self.id = job_id
+        self._thread = threading.Thread(target=self._run, name=f"phasor-{job_id}", daemon=True)
         self._thread.start()
         return self
 
@@ -96,10 +95,12 @@ class RenderJob:
     def cancel(self, wait: float = CANCEL_WAIT) -> None:
         """Stop the render (between two frames) and wait for it to clean up."""
         self._cancel.set()
-        self._thread.join(wait)
+        if self._thread is not None:
+            self._thread.join(wait)
 
     def wait(self, timeout: float | None = None) -> None:
-        self._thread.join(timeout)
+        if self._thread is not None:
+            self._thread.join(timeout)
 
     def status(self) -> dict[str, Any]:
         end = self.finished if self.finished is not None else time.monotonic()
@@ -125,6 +126,7 @@ class Jobs:
 
     def __init__(self) -> None:
         self._jobs: dict[str, RenderJob] = {}
+        self._next = itertools.count(1)
 
     def start(self, job: RenderJob) -> RenderJob:
         running = [j for j in self._jobs.values() if j.running]
@@ -137,8 +139,9 @@ class Jobs:
         done = [k for k, j in self._jobs.items() if not j.running]
         for k in done[: max(0, len(done) - KEEP_FINISHED + 1)]:
             del self._jobs[k]
-        self._jobs[job.id] = job
-        return job.start()
+        job_id = f"render_{next(self._next)}"
+        self._jobs[job_id] = job
+        return job.start(job_id)
 
     def get(self, job_id: str) -> RenderJob:
         if job_id not in self._jobs:
