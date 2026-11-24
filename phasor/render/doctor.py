@@ -50,6 +50,7 @@ class DoctorReport:
             "tier": self.tier,
             "encoder": self.encoder,
             "checks": [asdict(c) for c in self.checks],
+            "presets": presets_table(),
         }
 
 
@@ -432,5 +433,20 @@ def format_report(report: DoctorReport) -> str:
         "",
         f"  encoder: {report.encoder or 'none found'}",
         f"  tier:    {report.tier} - {tier_text(report)}",
+        "",
+        "  render presets (phasor render --preset NAME):",
     ]
+    for p in presets_table():
+        fx = [k for k in ("bloom", "lens", "fog", "life") if p[k]]
+        extra = ["motion blur"] if p["motion_blur"] else []
+        extra += ["repeats still frames"] if p["dedup"] else []
+        fps = "the scene's fps" if isinstance(p["fps"], str) else f"{p['fps']:g} fps"
+        what = [f"look: {', '.join(fx) or 'plain'}", *extra, f"{p['encoder']} encoder"]
+        lines.append(f"    {p['name']:<8} {p['size']}, {fps}; " + "; ".join(what))
     return "\n".join(lines)
+
+
+def presets_table() -> list[dict[str, Any]]:
+    from phasor.render.presets import table
+
+    return table()

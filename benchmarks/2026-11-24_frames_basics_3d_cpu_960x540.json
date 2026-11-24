@@ -1,0 +1,44 @@
+{
+  "backend": "cpu",
+  "calls": {
+    "draw": 20,
+    "encode": 21,
+    "post": 20,
+    "readback": 20,
+    "setup": 1,
+    "srgb": 20,
+    "state": 21,
+    "widen": 20
+  },
+  "commit": "fa4232d",
+  "encoder": "ffmpeg:libx264",
+  "frame": [
+    960,
+    540
+  ],
+  "frames": 20,
+  "gl_renderer": "llvmpipe (LLVM 20.1.2, 256 bits)",
+  "machine": "vm",
+  "motion_blur": false,
+  "ms_per_frame": 125.1,
+  "platform": "Linux-6.18.44-fc-v819-x86_64-with-glibc2.39",
+  "preset": "preview",
+  "scene": "basics_3d",
+  "setup_s": 0.219,
+  "stages_ms_per_frame": {
+    "blur sum": 0.0,
+    "draw": 47.14,
+    "encode": 5.55,
+    "gpu draw": 0.0,
+    "other": 0.72,
+    "post": 46.27,
+    "readback": 1.46,
+    "simulation": 0.0,
+    "srgb": 7.9,
+    "state": 0.67,
+    "widen": 15.39
+  },
+  "threads": 4,
+  "wall_s": 2.722,
+  "when": "2026-11-24T09:11:36+00:00"
+}

@@ -31,7 +31,9 @@ person both edit. The `phasor` MCP tools (when connected) let you see what it re
    in the script and check again. At most 5 rounds, then report what is left.
 5. The beauty pass: `review` with `aesthetic: true`, or `critique`. Look at the storyboard
    against `STYLE.md` and the person's `TASTE.md`.
-6. Render a preview: `render` with `preset: "preview"` (or `phasor render SCENE`).
+6. Render a draft to check the motion quickly: `render` with `preset: "draft"` (or
+   `phasor preview SCENE`; small, 15 fps, plain look). Then a preview with the full look:
+   `render` with `preset: "preview"` (or `phasor render SCENE`).
 
 ## Never
 

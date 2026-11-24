@@ -613,6 +613,27 @@ def test_the_export_dialog_shows_only_what_each_kind_needs(desk, home):
     assert "no sliders" in dlg.status.text()  # this scene has none
 
 
+def test_the_export_dialog_offers_a_draft_and_still_starts_on_preview(desk, home):
+    """Milestone 21: the draft preset is in the quality list; the default stays preview."""
+    from phasor.gui.desktop import ExportDialog
+    from phasor.render.presets import PRESETS
+
+    dlg = ExportDialog(desk.open(plain_scene(home / "a.phasor.json")))
+    data = [dlg.preset.itemData(i) for i in range(dlg.preset.count())]
+    assert data == list(PRESETS) and dlg.preset.currentData() == "preview"
+    dlg.kind.setCurrentIndex(dlg.kind.findData("video"))
+    assert dlg.out.text().endswith("a.mp4")
+    dlg.preset.setCurrentIndex(dlg.preset.findData("draft"))
+    # a draft never overwrites the real render (audit of M21): a.draft.mp4, as the CLI names it
+    assert dlg.out.text().endswith("a.draft.mp4")
+    job = ExportJob(None, "video", dlg.out.text(), scene_dir=".", preset=dlg.preset.currentData())
+    assert job.command("s.phasor.json")[-4:] == ["-o", dlg.out.text(), "--preset", "draft"]
+    dlg.kind.setCurrentIndex(dlg.kind.findData("picture"))
+    assert dlg.out.text().endswith("a.draft.png")
+    dlg.preset.setCurrentIndex(dlg.preset.findData("final"))
+    assert dlg.out.text().endswith("a.png")
+
+
 # ---------------------------------------------------------------- A9: launching
 
 

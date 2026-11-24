@@ -31,7 +31,7 @@
 - `free_space_near`: Empty label-sized places around `id` at `t`, nearest first (boxes are 0-1, top-left origin): where a label or note could go.
 - `hit_test`: Objects under an output-pixel point (origin top-left), topmost first.
 - `resolve`: Turn words like 'the pole on the left' or 'label of the loop' into object ids.
-- `render`: Render a video (preset: preview 960x540@30, final, 4k) or one PNG (`frame`).
+- `render`: Render a video or one PNG (`frame`). `preset`: `draft` (quick look: long side 640, 15 fps, no bloom, lens, fog or life, still frames repeated, not redrawn), `preview` (960x540@30), `final` or `4k`. `start`/`end`/`frame`: seconds or a marker name (a draft of one stretch: `start="intro", end="proof"`). A draft is written to `<scene>.draft.mp4` by default.
 - `docs_search`: Search the API reference, patterns, pitfalls and examples.
 - `object_types`: What a patch may add: object types (use these exact names in `add_object`) with their parameters and defaults and style keys (role group, default role), the role names each group accepts (style takes roles; color, text-size and stroke keys may instead hold an explicit value, checked by review), and the themes.
 

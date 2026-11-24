@@ -718,6 +718,105 @@ s.save("residues.phasor.json")  # canonical, diff-friendly
 engine = load("residues.phasor.json")  # or load("residues.py")
 ```
 
+## Render presets and the draft render (Milestone 21)
+
+One table (`phasor.render.presets.PRESETS`; `phasor doctor` prints it) says what each
+quality draws:
+
+| preset | size | fps | motion blur | look | life, camera drift | still frames | encoder |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `draft` | long side 640, the scene's aspect, even sides, never enlarged | 15 | off | plain | off | repeated, not drawn | fast |
+| `preview` | 960 x 540 | 30 | off | full | on | drawn | quality |
+| `final` | the scene's own | the scene's | 0.5, 4 samples | full | on | drawn | quality |
+| `4k` | 3840 x 2160 | the scene's | 0.5, 4 samples | full | on | drawn | quality |
+
+What the draft skips and keeps, effect by effect:
+
+| effect | where | draft |
+| --- | --- | --- |
+| bloom (bright pass, blur pyramid) | `render/post.py`, theme `[bloom]` strength, levels | skipped; the emission target is not even read back |
+| lens: fringe, vignette | `render/post.py`, theme `[bloom]` fringe, vignette | skipped |
+| tone map (exposure, knee) | `render/post.py` | kept: once, as always (contract 4) |
+| sRGB encode | `render/post.py`, `render/output.py` | kept: once |
+| depth fog ("haze") on lit surfaces | `render/passes.py`, theme `[light]` fog | skipped (`u_fog` 0) |
+| lit surfaces: key/fill/rim light, specular, glass, wire grid | `render/passes.py`, theme `[light]` | kept |
+| glow (HDR paint brighter than 1) | `render/passes.py`, theme `[glow]` | kept in the picture; its halo is the bloom, skipped |
+| antialiasing (4x MSAA) | `render/passes.py` | kept (thin strokes break up without it) |
+| hue along strokes | theme `[strokes]` hue_along, scene `palette` | kept (it is the prism look's color) |
+| hue flowing along strokes over time | theme `[strokes]` flow (`prism_vivid`) | kept (those frames never repeat) |
+| kernel pictures (domain coloring, fractals, heat maps, point clouds) and their glow-weight "haze" | `render/gpu/kernels/` | kept, computed at the draft's size only |
+| motion blur | `Engine.frame_blurred` | skipped (shutter 0) |
+| life: glow breathing, shimmer, drifting dots and equations, turning field colors, twinkle | theme `[life]`, scene `life` | skipped: the scene is drawn with `life="off"` |
+| the theme's slow camera drift (3D) | theme `[camera]` drift | skipped when the camera takes the theme's (`drift` < 0); an explicit `drift` is kept |
+| verbs, tracks, expressions, simulations, the flash verb | `[motion]`, the document | kept: everything the document animates moves |
+| narration and sound clips | `Engine.audio_track` | kept (muxed into an `.mp4`) |
+
+How it is fast: the picture is about a ninth of the pixels of 1080p and half the frames of
+`preview`; no bloom pyramid, no emission readback, no blur samples; kernels compute only the
+draft's pixels; the layout is baked once (a draft draws `engine.without_decoration()`, a
+fork with life off that bakes once per version of the document and is kept); kernels use
+every core without CUDA; and a frame whose drawing is identical to the last one is not
+drawn again: its bytes are repeated (`render.job.FrameDrawer`). Whether two frames are
+identical is decided from what the objects' `draw` recorded (`GLRenderer.frame_plan`): the
+draw calls, draw order, each object's layer, opacity, flash and camera, the light, the
+background, the stroke hue and the size. A type that draws from `state.t` with constant
+parameters (flow particles) records different calls, so it is drawn every frame. Kernel
+pictures are keyed as the renderer caches them (type, parameters, roles, style, quad,
+background), not by their pixels. The repeated frames are byte for byte the frames drawing
+would make. The encoder runs `ultrafast` (libx264; `p1` on NVENC), no B-frames, a keyframe
+every second; a PNG sequence compresses at level 1.
+
+**Where a draft is not much faster.** The savings are in pixels and post effects. A scene
+whose time goes into computing its data, not its pixels, gains only the halved frame rate:
+`examples/point_cloud.py` solves a million polynomial roots whenever `twist` moves, whatever
+the picture's size (measured 2026-11-24, 4-core CPU: 8.1 s a frame as a draft, 6.4 s as a
+preview; the draft's whole 3.0-3.4 s window took 48.5 s against 76.2 s, 1.6x). The same holds
+for any kernel picture whose parameters change every frame.
+
+```python
+from phasor import Dot, Scene
+from phasor.render.job import resolve_time
+from phasor.render.presets import DRAFT, PRESETS
+
+draft = PRESETS["draft"]
+assert draft.size(1920, 1080) == (640, 360) and draft.size(1080, 1920) == (360, 640)
+assert draft.fps == 15.0 and draft.effects == DRAFT and not DRAFT.bloom
+assert PRESETS["preview"].size(1920, 1080) == (960, 540)  # unchanged
+
+s = Scene("quick", passes=None, look="glow")
+s.add(Dot(id="d"))
+s.marker("intro", 0.0)
+s.marker("proof", 2.0)
+plain = s.engine.without_decoration()  # what a draft draws
+assert plain.document.meta.life == "off" and s.engine.document.meta.life == "lively"
+assert resolve_time(s.engine, "proof") == 2.0  # a window starts at a marker
+```
+
+```python no-run
+# no-run: needs OpenGL 4.3 and writes files
+import threading
+
+s.render("quick.draft.mp4", preset="draft")  # Scene.render: workers=N renders in N processes
+engine.render("x.mp4", preset="draft", start="proof", end="outro")  # a window, by markers
+stop = threading.Event()  # set it from another thread (a Cancel button) to stop
+show = lambda k, n: print(f"{k}/{n}")  # noqa: E731
+r = engine.render("x.draft.mp4", preset="draft", cancel=stop, progress=show)
+# stopped: RenderCancelled, and the partial file (or the PNGs it wrote, never the folder)
+# is removed
+r["drawn"], r["repeated"]  # frames drawn, frames repeated
+```
+
+`render_file(...)`, `Engine.render(...)` and `Scene.render(...)` take `preset`, `fps`,
+`start`/`end`/`frame` (seconds or a marker name), `progress(k, n)` and `cancel` (a
+`threading.Event` or a callable, checked between frames; cancelling raises
+`render.job.RenderCancelled` and removes what was written, and the folders the render
+made if they are empty; Ctrl-C does the same). A bad preset, a frame rate outside 1/1001 to
+1000, a time that is not finite, an unknown marker (a marker name is tried first, so a
+marker called `inf` works) or a window of more than `render.job.MAX_FRAMES` (1,000,000:
+4.6 hours at 60 fps) is a `ValueError` before anything is written. A draft's default file is `<scene>.draft.mp4`, so it
+never overwrites the real render. `phasor preview SCENE` is `phasor render SCENE --preset
+draft`. Untested on Windows, macOS and CUDA (NVENC's fast settings included).
+
 ## GPU kernels: per-pixel math
 
 ```python
@@ -2080,10 +2179,11 @@ slider, separatrices, a probe).
 | `phasor inspect SCENE [--t T] [--id ID] [--detail brief\|standard\|full] [--allow-scripts]` | M1 | What is on screen at time t |
 | `phasor lint SCENE [--fix] [--strict] [--json] [--step S] [--allow-scripts]` | M2 | Lint; exit 1 on errors (`--strict`: on warnings too). `--fix` applies suggested fixes and saves them |
 | `phasor storyboard SCENE [-o PNG] [--t T]... [--marks] [--json] [--allow-scripts]` | M2 | Keyframe contact sheet plus what the inspector sees |
-| `phasor render SCENE [-o OUT] [--preset preview\|final\|4k] [--fps F] [--start S] [--end E] [--frame T] [--workers N] [--threads T] [--allow-scripts]` | M3 | Video (`.mp4`; `.mov` is ProRes; a folder or `%05d.png` is a PNG sequence) or one PNG with `--frame`. `--workers`: render processes (default a quarter of the CPU threads, 1 to 4); the result is the same file as one process makes. `--threads`: CPU kernel threads per process without CUDA (default: the cores shared out, workers x threads <= cores) |
+| `phasor render SCENE [-o OUT] [--preset draft\|preview\|final\|4k] [--fps F] [--start S] [--end E] [--frame T] [--workers N] [--threads T] [--allow-scripts]` | M3, M21 | Video (`.mp4`; `.mov` is ProRes; a folder or `%05d.png` is a PNG sequence) or one PNG with `--frame`. `--start`, `--end` and `--frame` take seconds or a marker name. `draft` (M21): small, 15 fps, plain look, written to `<scene>.draft.mp4` by default. `--workers`: render processes (default a quarter of the CPU threads, 1 to 4); the result is the same file as one process makes. `--threads`: CPU kernel threads per process without CUDA (default: the cores shared out, workers x threads <= cores) |
+| `phasor preview SCENE [...]` | M21 | `phasor render SCENE --preset draft` (the same options): the quick plain look, a window by markers with `--start`/`--end` |
 | `phasor kit [FOLDER]` | kit | Set up or update a folder where an AI writes scenes (default `Documents/phasor`): `CLAUDE.md`, the AI docs, the examples sorted by kind, the `/scene` command, `TASTE.md`, and the phasor tools in `.mcp.json`. Your `TASTE.md`, `WISHLIST.md` and `scenes/` are never replaced |
 | `phasor bench [--width W] [--height H]` | M3 | ms per frame per kernel and peak VRAM; saved in `benchmarks/` |
-| `phasor bench --frames SCENE [--count N] [--preset P] [--allow-scripts]` | GPU_SPEED.md | ms per final frame per stage (state, simulation, draw, gpu draw, readback, widen, blur sum, post, srgb, encode); saved in `benchmarks/` |
+| `phasor bench --frames SCENE [--count N] [--preset P] [--allow-scripts]` | GPU_SPEED.md | ms per final frame per stage (state, simulation, dedup, draw, gpu draw, readback, widen, blur sum, post, srgb, encode); saved in `benchmarks/` |
 | `phasor mcp [--root DIR] [--allow-scripts] [--attach]` | M5, M10 | MCP server; `--attach` edits the scene open in a running `phasor gui` |
 | `phasor gui [SCENE] [--root DIR] [--no-ai] [--install-shortcut]` | M10 | The desktop app (needs `uv sync --extra gui`): a start screen, or the editor on SCENE; also `phasor-gui`; a Manim script opens too |
 | `phasor web SCENE [-o PAGE.html] [--steps N] [--allow-scripts]` | M12 | Bake a self-contained interactive web page from the scene's sliders |
