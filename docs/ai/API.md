@@ -359,8 +359,10 @@ from phasor import Notes
 from phasor.domains import midi_math
 
 s5.marker("chord", 1.0)
-partials = [(57 + 12 * math.log2(k), 0.1 * i, 0.8, round(100 / k))  # a square wave's
-            for i, k in enumerate((1, 3, 5))]  # first odd partials, quieter as 1/k
+partials = [
+    (57 + 12 * math.log2(k), 0.1 * i, 0.8, round(100 / k))  # a square wave's
+    for i, k in enumerate((1, 3, 5))
+]  # first odd partials, quieter as 1/k
 s5.add(Notes(id="partials", notes=partials, start="chord", instrument="sine"))
 sem = s5.engine.inspect(0.0, id="partials")["objects"][0]["semantic"]
 assert sem["count"] == 3 and sem["pitch_range"][0] == 57.0 and sem["voices"] == ["sine"]
