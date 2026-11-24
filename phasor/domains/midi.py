@@ -12,7 +12,6 @@ scene to one ``.mid``. Nothing is drawn unless ``show``: a piano roll in a box.
 
 from __future__ import annotations
 
-import functools
 import math
 import threading
 from collections import OrderedDict
@@ -172,14 +171,20 @@ class Notes(ObjectBase):
         filtered, repeated), with the synthesizer that plays them; cached."""
         p = self.me(state).params
         stamp = files.stamp(state.base_dir, p.path) if p.path else None
-        key = (self.id, stamp, p.notes, p.transpose, p.tempo_scale, p.instrument, p.program,
-               p.channels, p.repeat, p.seed)  # fmt: skip
-        return _placed(key)
+        key = (self.id, stamp, _listed(p.notes), p.transpose, p.tempo_scale, p.instrument,
+               p.program, p.channels, p.repeat, p.seed, p.gain)  # fmt: skip
+        return _placed(key, p.notes)
 
     def midi_notes(self, state: SceneState) -> tuple[str, tuple[mm.Note, ...], float | str]:
         """What ``Engine.export_midi`` writes: (track name, notes from the clip's start,
-        ``start``)."""
-        return self.id, self.placed(state).notes, self.me(state).params.start
+        ``start``). With an ``instrument`` other than ``auto`` each melodic note carries that
+        voice's program (``midi_math.PROGRAM_OF``), so it plays the same when read back."""
+        p = self.me(state).params
+        notes = self.placed(state).notes
+        if p.instrument != "auto":
+            prog = mm.PROGRAM_OF[p.instrument]
+            notes = tuple(n if n.channel == mm.DRUMS else n._replace(program=prog) for n in notes)
+        return self.id, notes, p.start
 
     # ------------------------------------------------------------ contract members
 
@@ -231,7 +236,8 @@ class Notes(ObjectBase):
             return None
         marker = p.start if isinstance(p.start, str) else None
         start = 0.0 if marker else float(p.start)
-        return Clip(path=p.path or self.id, start=start, gain=p.gain, source=pl.synth,
+        # gain is the synthesizer's (before its limiter), not the mix's
+        return Clip(path=p.path or self.id, start=start, gain=0.0, source=pl.synth,
                     marker=marker)  # fmt: skip
 
     def note_report(self, state: SceneState) -> dict[str, Any]:
@@ -313,23 +319,54 @@ class _Placed:
             }  # fmt: skip
 
 
-@functools.lru_cache(maxsize=4)
-def _read_song(stamp: tuple) -> mm.Song:
-    """The ``.mid`` file ``stamp`` names (cached by its path, time and size: read again when
-    it changes)."""
-    try:
-        data = files.read_bytes(stamp[0], mm.MAX_FILE_BYTES)
-    except ValueError as e:
-        return mm.Song(error=str(e))
-    return mm.read_smf(data)
-
-
 CACHED_NOTES = 400_000  # notes kept placed (with their synthesizers) across objects
+CACHED_SONGS = 256  # files kept read (also bounded by CACHED_NOTES notes in all)
 _cache: OrderedDict[tuple, _Placed] = OrderedDict()
+_songs: OrderedDict[tuple, mm.Song] = OrderedDict()
+_lists: OrderedDict[int, tuple[tuple, str]] = OrderedDict()
 _lock = threading.Lock()
 
 
-def _placed(key: tuple) -> _Placed:
+def _read_song(stamp: tuple) -> mm.Song:
+    """The ``.mid`` file ``stamp`` names, cached by its path, time and size (read again when
+    it changes): the most recently used files are kept while they hold at most
+    ``CACHED_NOTES`` notes and ``CACHED_SONGS`` files (at least one)."""
+    with _lock:
+        hit = _songs.get(stamp)
+        if hit is not None:
+            _songs.move_to_end(stamp)
+            return hit
+    try:
+        song = mm.read_smf(files.read_bytes(stamp[0], mm.MAX_FILE_BYTES))
+    except ValueError as e:
+        song = mm.Song(error=str(e))
+    with _lock:
+        _songs[stamp] = song
+        while len(_songs) > 1 and (
+            len(_songs) > CACHED_SONGS or sum(len(v.notes) for v in _songs.values()) > CACHED_NOTES
+        ):
+            _songs.popitem(last=False)
+    return song
+
+
+def _listed(notes: tuple) -> str:
+    """A digest of a script's notes, made once per notes tuple (a cache key need not hash
+    20 000 rows at every call); the tuple is kept with it, so its id is never reused."""
+    import hashlib
+
+    with _lock:
+        hit = _lists.get(id(notes))
+        if hit is not None and hit[0] is notes:
+            return hit[1]
+    digest = hashlib.sha256(repr(notes).encode()).hexdigest()
+    with _lock:
+        _lists[id(notes)] = (notes, digest)
+        while len(_lists) > 512:
+            _lists.popitem(last=False)
+    return digest
+
+
+def _placed(key: tuple, script: tuple = ()) -> _Placed:
     """``_place(key)``, cached: the most recently used are kept while they hold at most
     ``CACHED_NOTES`` notes in all (at least one), so many small objects all stay cached and
     a few huge ones cost a bounded amount of memory."""
@@ -338,7 +375,7 @@ def _placed(key: tuple) -> _Placed:
         if hit is not None:
             _cache.move_to_end(key)
             return hit
-    made = _place(key)
+    made = _place(key, script)
     with _lock:
         _cache[key] = made
         while len(_cache) > 1 and sum(len(v.notes) for v in _cache.values()) > CACHED_NOTES:
@@ -346,8 +383,20 @@ def _placed(key: tuple) -> _Placed:
     return made
 
 
-def _place(key: tuple) -> _Placed:
-    object_id, stamp, script, transpose, scale, instrument, program, channels, repeat, seed = key
+def _place(key: tuple, script: tuple) -> _Placed:
+    (
+        object_id,
+        stamp,
+        _listed_digest,
+        transpose,
+        scale,
+        instrument,
+        program,
+        channels,
+        repeat,
+        seed,
+        gain,
+    ) = key
     song = _read_song(stamp) if stamp is not None and stamp[1] is not None else None
     cut = song.cut if song is not None else None
     if song is not None:
@@ -374,5 +423,7 @@ def _place(key: tuple) -> _Placed:
             break
         notes += [n._replace(start=n.start + r * period) for n in moved]
     notes.sort(key=lambda n: (n.start, n.channel, n.pitch))
-    synth = mm.Synth(notes, instrument, mm.drum_noise(rng(object_id, seed)))
+    synth = mm.Synth(
+        notes, instrument, mm.drum_noise(rng(object_id, seed)), gain=10.0 ** (gain / 20.0)
+    )
     return _Placed(tuple(notes), synth, cut, out_of_range, instrument)

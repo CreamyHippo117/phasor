@@ -771,18 +771,19 @@ class Workspace:
         except (RuntimeError, EncodeError, OSError, ValueError) as err:
             raise ToolError(str(err)) from err
 
-    def export_midi(self, out: str | None = None) -> dict[str, Any]:
+    def export_midi(self, out: str | None = None, overwrite: bool = False) -> dict[str, Any]:
         """Write the scene's MIDI notes (every ``notes`` object, as heard, at its times in
         the scene) to a ``.mid`` file: format 1, one track per object. ``out``: a path in
-        the workspace (default ``<scene>.mid`` next to the renders). Returns ``path``,
-        ``tracks``, ``notes`` and ``seconds``."""
+        the workspace (default ``<scene>.mid`` next to the renders). Never over a file the
+        scene reads; over another existing file only with ``overwrite``. Returns ``path``,
+        ``tracks``, ``notes``, ``left_out`` and ``seconds``."""
         e = self.engine
         target = (
             self._inside(out) if out else self.out_dir / f"{file_stem(e.document.meta.title)}.mid"
         )
         if target.suffix.lower() not in (".mid", ".midi"):
             raise ToolError(f"{out}: a MIDI file ends in .mid")
-        return self._guard(lambda: e.export_midi(target))
+        return self._guard(lambda: e.export_midi(target, overwrite=bool(overwrite)))
 
     # ------------------------------------------------------------ learning
 

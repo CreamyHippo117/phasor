@@ -438,7 +438,8 @@ def test_transpose_tempo_channels_repeat_and_gain(tmp_path):
     loud = Notes(id="m", notes=base, gain=6.0)
     s.add(loud)
     st = s.engine.state_at(0.0)
-    assert st["m"].impl.audio_clip(st).gain == 6.0
+    synth = st["m"].impl.audio_clip(st).source  # gain is applied inside, before the limiter
+    assert st["m"].impl.audio_clip(st).gain == 0.0 and abs(synth.gain - 10 ** (6 / 20)) < 1e-12
 
 
 def test_drum_noise_comes_from_rng_and_the_seed(tmp_path):

@@ -44,7 +44,7 @@ a variant and compare.
 | `variants`, `choose` | alternative looks of one beat side by side (as is, calmer, bolder); pick one, it is recorded in `style/choices.jsonl` and applied |
 | `diff`, `checkpoint`, `restore`, `undo`, `redo` | compare and branch |
 | `render` | a video (`draft`, `preview`, `final`, `4k`) or one PNG with `frame`; `start`/`end`/`frame` take seconds or a marker name (a draft goes to `<scene>.draft.mp4`) |
-| `export_midi` | write the scene's MIDI notes (every `notes` object, as heard, at its times in the scene) to a `.mid` (format 1, a track per object); `out` defaults to `<scene>.mid` |
+| `export_midi` | write the scene's MIDI notes (every `notes` object, as heard, at its times in the scene) to a `.mid` (format 1, a track per object); `out` defaults to `<scene>.mid`; never over a file the scene reads, nor over an existing file unless `overwrite: true` |
 | `docs_search` | find the API, a pattern or an example |
 | `explorer_state`, `explorer_edit`, `explorer_preset` | the Explorer: its rows, systems, equilibria and sliders in one call; add, retype, hide, recolour or remove rows and set variables (one undoable edit); load a classic system |
 | `find_equilibria`, `flow_probe`, `sweep_parameter` | the Explorer's numbers, on a fork (nothing changes): equilibria with eigenvalues, a path's behaviour (period, escape, Lyapunov exponent, the dt check), candidate bifurcations along a variable |

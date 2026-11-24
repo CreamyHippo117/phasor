@@ -45,6 +45,7 @@ MAX_NOTE_SECONDS = 60.0  # longer notes (a note never let go) are cut to this
 MIN_BPM, MAX_BPM = 1.0, 1000.0  # a tempo outside is ignored (said)
 
 DRUMS = 9  # channel 10, counted from 0: General MIDI percussion
+DRUM_HIT = 0.01  # seconds a drum note on and off at one tick lasts (a hit rings anyway)
 
 # The 128 General MIDI program names (program 0 = "Acoustic Grand Piano").
 GM_NAMES = (
@@ -233,6 +234,15 @@ def _vlq(data: bytes, i: int, b: int) -> tuple[int, int]:
     raise ValueError("a number longer than 4 bytes")
 
 
+def _text(body: bytes) -> str:
+    """A text meta event: UTF-8 (what phasor writes, and most tools now), else Latin-1."""
+    try:
+        text = body.decode("utf-8")
+    except UnicodeDecodeError:
+        text = body.decode("latin-1")
+    return text[:64].strip()
+
+
 def _track(data: bytes, a: int, b: int, k: int, f: _Found) -> None:
     """Read track ``k`` (bytes ``a`` to ``b``) into ``f``. A fault stops this track (said in
     ``f.problems``); a bound stops every track (``_Stop``, said in ``f.stop``)."""
@@ -262,7 +272,9 @@ def _track(data: bytes, a: int, b: int, k: int, f: _Found) -> None:
                     raise ValueError(f"a meta event says {n} bytes; {b - j} are left")
                 body = data[j : j + n]
                 i = j + n
-                status = 0  # meta and system events cancel running status
+                # The standard says a meta event cancels running status; files in the wild
+                # go on without a status byte after one (and other readers accept it), so
+                # the last channel status is kept.
                 if kind == 0x2F:
                     break
                 if kind == 0x51:
@@ -281,7 +293,7 @@ def _track(data: bytes, a: int, b: int, k: int, f: _Found) -> None:
                     f.order += 1
                 elif kind == 0x03 and not named:
                     named = True
-                    f.names.append(body[:64].decode("latin-1").strip())
+                    f.names.append(_text(body))
                 elif kind == 0x58 and n >= 2 and f.signature is None and body[1] <= 6:
                     f.signature = (body[0], 1 << body[1])
                 continue
@@ -289,8 +301,7 @@ def _track(data: bytes, a: int, b: int, k: int, f: _Found) -> None:
                 n, j = _vlq(data, i + 1, b)
                 if n > b - j:
                     raise ValueError(f"a system exclusive event says {n} bytes; {b - j} are left")
-                i = j + n
-                status = 0
+                i = j + n  # (the last channel status is kept, as after a meta event)
                 continue
             if c & 0x80:
                 if c >= 0xF0:
@@ -367,6 +378,12 @@ def _timed(f: _Found, ppq: int, tick_seconds: float | None,
     late = t_on > MAX_SECONDS
     if late.any():
         cut.append(f"{int(late.sum())} notes after {MAX_SECONDS:g} s are left out")
+    drums = raw[:, 4] == DRUMS
+    length = np.where(drums & (length <= 0), DRUM_HIT, length)  # a hit needs no length
+    empty = (length <= 0) & ~late
+    if empty.any():
+        cut.append(f"{int(empty.sum())} notes with no length (on and off at one tick) are "
+                   "left out")  # fmt: skip
     keep = (length > 0) & ~late
     progs = _programs(f.programs, raw[:, 4], on)
     order = np.lexsort((raw[:, 2], raw[:, 4], t_on))  # by start, then channel, then pitch
@@ -398,7 +415,18 @@ PPQ = 960  # ticks a quarter note in files phasor writes
 BPM = 120.0  # their tempo: a tick is 1/1920 s
 
 
+def _utf8(text: str) -> bytes:
+    """A name, at most 60 characters: Latin-1 when it can be (what most readers assume),
+    else UTF-8 (``read_smf`` tries UTF-8 first, then Latin-1)."""
+    try:
+        return text[:60].encode("latin-1")
+    except UnicodeEncodeError:
+        return text[:60].encode("utf-8")
+
+
 def _vlq_bytes(v: int) -> bytes:
+    if not 0 <= v < 1 << 28:  # 4 bytes at most: the most a reader takes
+        raise ValueError(f"a time of {v} ticks cannot be written (at most 2^28 - 1)")
     out = [v & 0x7F]
     v >>= 7
     while v:
@@ -420,11 +448,15 @@ def write_smf(tracks: Sequence[tuple[str, Iterable[Note]]], *, bpm: float = BPM,
     """``tracks`` (a name and its notes each) as a format 1 Standard MIDI File: a conductor
     track (``title``, the tempo, 4/4), then one track per entry. Times are rounded to ticks
     (1/1920 s at the defaults), pitches to whole semitones and into 0-127, velocities into
-    1-127; a note lasts at least one tick. Each channel's program is set before its first
-    note and again where a note asks for another one."""
+    1-127; a note lasts at least one tick. Each channel's program is set, in time order,
+    before every note that asks for another one. A note struck again on its key and channel
+    while it is held ends there (MIDI cannot say which note-off ends which). Names are
+    Latin-1, or UTF-8 when they need it. ``ValueError`` for a note starting after
+    ``MAX_SECONDS`` (``read_smf`` would
+    leave it out; a time past 2^28 ticks cannot even be written)."""
     us = round(60e6 / bpm)
     per_second = ppq * bpm / 60.0
-    conductor = _meta(0x03, title.encode("latin-1", "replace")[:127]) if title else b""
+    conductor = _meta(0x03, _utf8(title)) if title else b""
     conductor += b"\x00" + _meta(0x51, us.to_bytes(3, "big"))
     conductor += b"\x00" + _meta(0x58, bytes([4, 2, 24, 8]))
     conductor += b"\x00" + _meta(0x2F, b"")
@@ -434,22 +466,31 @@ def write_smf(tracks: Sequence[tuple[str, Iterable[Note]]], *, bpm: float = BPM,
     for name, notes in tracks:
         events: list[tuple[int, int, int, bytes]] = []  # tick, kind (off, program, on), seq
         program: dict[int, int] = {}
-        for seq, n in enumerate(notes):
+        held: dict[tuple[int, int], int] = {}  # (channel, key) -> the index of its note-off
+        timed = sorted(enumerate(notes), key=lambda e: (float(e[1].start), e[0]))
+        for seq, n in timed:
+            if not float(n.start) <= MAX_SECONDS:
+                raise ValueError(f"a note starts after {MAX_SECONDS:g} s ({float(n.start):g} s): "
+                                 "a MIDI file phasor reads ends there")  # fmt: skip
             ch = min(max(int(n.channel), 0), 15)
             p = min(max(round(float(n.pitch)), 0), 127)
             v = min(max(int(n.velocity), 1), 127)
             t0 = max(0, round(float(n.start) * per_second))
             t1 = max(t0 + 1, round((float(n.start) + float(n.length)) * per_second))
             prog = min(max(int(n.program), 0), 127)
+            before = held.get((ch, p))
+            if before is not None and events[before][0] > t0:  # struck again while held
+                events[before] = (t0, *events[before][1:])
             if ch != DRUMS and program.get(ch) != prog:
                 program[ch] = prog
                 events.append((t0, 1, seq, bytes([0xC0 | ch, prog])))
             events.append((t0, 2, seq, bytes([0x90 | ch, p, v])))
+            held[(ch, p)] = len(events)
             events.append((t1, 0, seq, bytes([0x80 | ch, p, 64])))
         events.sort(key=lambda e: (e[0], e[1], e[2]))
         body = bytearray()
         if name:
-            body += b"\x00" + _meta(0x03, name.encode("latin-1", "replace")[:127])
+            body += b"\x00" + _meta(0x03, _utf8(name))
         last, status = 0, 0
         for tick, _, _, msg in events:
             body += _vlq_bytes(tick - last)
@@ -467,7 +508,7 @@ def write_smf(tracks: Sequence[tuple[str, Iterable[Note]]], *, bpm: float = BPM,
 
 # ---------------------------------------------------------------- the synthesizer
 
-RATE = 48000  # the synthesizer's sample rate; the mixer resamples to the track's
+RATE = 48000  # the synthesizer's own rate; the mixer asks for its track's (``at_rate``)
 MAX_VOICES = 64  # notes sounding at once (with their release); later ones are dropped
 # Samples made in all, summed over the notes (a voice's every sample costs about the same):
 # one synthesizer, and a scene's notes together (``Engine.audio_track``), make at most this
@@ -480,7 +521,8 @@ _TABLE = 1 << _TABLE_BITS  # samples in a waveform table
 _FRAC_BITS = 32 - _TABLE_BITS
 _EXP_SPAN = 16.0  # the decay table covers exp(-u) for u in [0, 16]
 _NOISE = 1 << 16  # samples in a drum's noise table
-LEVEL = 0.25  # a voice at full velocity peaks here (several can play without clipping)
+LEVEL = 0.18  # a voice at full velocity peaks about here (several can play at once)
+KNEE = 0.5  # the limiter leaves the sum of the voices as it is up to here
 
 INSTRUMENTS = ("auto", "sine", "pluck", "organ", "bell", "pad", "lead")
 
@@ -524,8 +566,13 @@ def timbre_of(program: int, channel: int, instrument: str = "auto") -> str:
 # The voice of each General MIDI family of eight programs (pianos, chromatic percussion,
 # organs, guitars, basses, strings, ensembles, brass, reeds, pipes, synth leads, synth pads,
 # synth effects, ethnic, percussive, sound effects).
-_FAMILY = ("pluck", "bell", "organ", "pluck", "pluck", "pad", "pad", "lead", "lead", "lead",
+_FAMILY = ("pluck", "bell", "organ", "pluck", "pluck", "pad", "pad", "lead", "lead", "sine",
            "lead", "pad", "bell", "pluck", "bell", "sine")  # fmt: skip
+
+# The General MIDI program each voice is written as, so ``instrument`` survives an export
+# (read back, ``timbre_of`` gives the same voice): flute, nylon guitar, drawbar organ,
+# tubular bells, warm pad, sawtooth lead.
+PROGRAM_OF = {"sine": 73, "pluck": 24, "organ": 16, "bell": 14, "pad": 89, "lead": 81}
 
 
 @functools.lru_cache(maxsize=64)
@@ -567,8 +614,19 @@ def _phase(k: np.ndarray, inc: int) -> np.ndarray:
     return (k.astype(np.uint64) * np.uint64(inc)) & np.uint64(0xFFFFFFFF)
 
 
-def _inc(freq: float) -> int:
-    return round(freq / RATE * 4294967296.0) & 0xFFFFFFFF
+def _inc(freq: float, rate: int) -> int:
+    return round(freq / rate * 4294967296.0) & 0xFFFFFFFF
+
+
+def _limit(x: np.ndarray) -> np.ndarray:
+    """A soft limiter, in place: unchanged up to ``KNEE``, then bending smoothly (slope 1 at
+    the knee) towards 1, which it never reaches; only +, -, x, / (the same in any window)."""
+    a = np.abs(x)
+    over = a > KNEE
+    if over.any():
+        u = (a[over] - KNEE) / (1.0 - KNEE)
+        x[over] = np.sign(x[over]) * (KNEE + (1.0 - KNEE) * u / (1.0 + u))
+    return x
 
 
 # drum kinds by GM percussion key: (kind, seconds it rings, decay seconds, tone Hz)
@@ -593,7 +651,7 @@ def _drum(pitch: int) -> tuple[int, float, float, float]:
 
 @dataclass(frozen=True, slots=True)
 class _Voice:
-    first: int  # the track sample (at ``RATE``) the note starts on
+    first: int  # the sample (at the synthesizer's rate) the note starts on
     held: int  # samples it is held
     total: int  # samples it sounds, with its release (or a drum's ring)
     timbre: str
@@ -604,28 +662,38 @@ class _Voice:
 
 
 class Synth:
-    """Notes as a ``time.narration.Source`` at ``RATE``: ``frames`` covers the last note's
-    release (at most ``MAX_SECONDS``); ``read(skip, count)`` makes those samples a window
-    at a time. At most ``MAX_VOICES`` notes sound at once (a note starting when that many
-    are sounding is dropped: ``dropped``), and at most ``MAX_SYNTH_WORK`` samples are made
-    in all (``work``; notes past it are dropped too: ``over_work``). ``noise``: the drum
-    kit's noise (``rng(id, seed)``: the only randomness)."""
+    """Notes as a ``time.narration.Source`` at ``rate`` (``RATE``, or the mixer's track rate
+    through ``at_rate``: no resampling, partials band-limited below 0.45 of it): ``frames``
+    covers the last note's release (at most ``MAX_SECONDS``); ``read(skip, count)`` makes
+    those samples a window at a time. ``gain`` (linear) scales every voice before they are
+    summed and the sum goes through a soft limiter (``_limit``: unchanged up to ``KNEE``),
+    so a quieter ``gain`` is cleaner and nothing is hard-clipped. At most ``MAX_VOICES``
+    notes sound at once (a note starting when that many are sounding is dropped:
+    ``dropped``), and at most ``MAX_SYNTH_WORK`` samples (counted at ``RATE``) are made in
+    all (``work``; notes past it are dropped too: ``over_work``). ``noise``: the drum kit's
+    noise (``rng(id, seed)``: the only randomness)."""
 
     def __init__(self, notes: Sequence[Note], instrument: str = "auto",
-                 noise: np.ndarray | None = None) -> None:  # fmt: skip
+                 noise: np.ndarray | None = None, *, rate: int = RATE,
+                 gain: float = 1.0) -> None:  # fmt: skip
+        self.rate = int(rate)
+        self.gain = float(gain)
+        self.instrument = instrument
+        self._notes = tuple(notes)
+        r = self.rate
         voices: list[_Voice] = []
-        for j, n in enumerate(notes):
+        for j, n in enumerate(self._notes):
             ch, pitch = int(n.channel), float(n.pitch)
             name = timbre_of(int(n.program), ch, instrument)
-            first = round(float(n.start) * RATE)
-            held = max(1, round(float(n.length) * RATE))
+            first = round(float(n.start) * r)
+            held = max(1, round(float(n.length) * r))
             v = min(max(int(n.velocity), 1), 127)
-            amp = LEVEL * v * v / (127 * 127)
+            amp = self.gain * LEVEL * v * v / (127 * 127)
             if name == "drums":
                 _, ring, _, _ = _drum(round(pitch))
-                total, freq = round(ring * RATE), 0.0
+                total, freq = round(ring * r), 0.0
             else:
-                total = held + round(TIMBRES[name].release * RATE)
+                total = held + round(TIMBRES[name].release * r)
                 freq = 440.0 * 2.0 ** ((pitch - 69.0) / 12.0)
             voices.append(_Voice(first, held, total, name, freq, amp, round(pitch),
                                  (j * 7919) % _NOISE))  # fmt: skip
@@ -634,31 +702,43 @@ class Synth:
         self.dropped = 0  # notes left out: past MAX_VOICES at once, or past the work
         self.over_work = 0  # ... of them, past MAX_SYNTH_WORK
         self.dropped_at: float | None = None  # seconds: the first note dropped
-        self.work = 0  # samples made in all (each note's, with its release)
+        work = 0  # samples made in all at this rate (each note's, with its release)
+        budget = MAX_SYNTH_WORK * r // RATE  # the same seconds of work at any rate
         for v in voices:
             while ends and ends[0] <= v.first:
                 heapq.heappop(ends)
             busy = len(ends) >= MAX_VOICES
-            if busy or self.work + v.total > MAX_SYNTH_WORK:
+            if busy or work + v.total > budget:
                 self.dropped += 1
                 self.over_work += not busy
                 if self.dropped_at is None:
-                    self.dropped_at = v.first / RATE
+                    self.dropped_at = v.first / r
                 continue
             heapq.heappush(ends, v.first + v.total)
-            self.work += v.total
+            work += v.total
             kept.append(v)
+        self.work = work * RATE // r  # counted at RATE, whatever the rate
         self.voices = tuple(kept)
         self._starts = [v.first for v in kept]
         self._longest = max((v.total for v in kept), default=0)
         self.frames = min(max((v.first + v.total for v in kept), default=0),
-                          int(MAX_SECONDS * RATE))  # fmt: skip
-        self.rate = RATE
+                          int(MAX_SECONDS * r))  # fmt: skip
         self.noise = np.zeros(_NOISE) if noise is None else np.asarray(noise, np.float64)
 
+    def at_rate(self, rate: int) -> Synth:
+        """The same notes made at ``rate`` (the mixer's track rate), band-limited to it."""
+        if int(rate) == self.rate:
+            return self
+        return Synth(self._notes, self.instrument, self.noise, rate=rate, gain=self.gain)
+
     def read(self, skip: int, count: int) -> np.ndarray:
-        """Samples ``skip`` to ``skip + count`` (cut at ``frames``) as float32 in -1..1."""
-        skip, count = max(0, int(skip)), max(0, min(int(count), self.frames - int(skip)))
+        """Samples ``skip`` to ``skip + count`` (cut at ``frames``) as float32 in -1..1;
+        samples before 0 are silence."""
+        skip, count = int(skip), max(0, int(count))
+        if skip < 0:
+            head = np.zeros(min(count, -skip), np.float32)
+            return np.concatenate([head, self.read(0, count - len(head))])
+        count = max(0, min(count, self.frames - skip))
         out = np.zeros(count, np.float64)
         for a in range(skip, skip + count, _SUB):
             b = min(skip + count, a + _SUB)
@@ -669,31 +749,38 @@ class Synth:
                 if e > s:
                     k = np.arange(s - v.first, e - v.first, dtype=np.int64)
                     out[s - skip : e - skip] += self._voice(v, k)
-        np.clip(out, -1.0, 1.0, out=out)
+        _limit(out)
         return out.astype(np.float32)
 
     def _voice(self, v: _Voice, k: np.ndarray) -> np.ndarray:
         if v.timbre == "drums":
             return v.amp * 2.0 * self._hit(v, k)
+        r = self.rate
+        nyquist = 0.45 * r
         t = TIMBRES[v.timbre]
-        top = max(1, int(0.45 * RATE // max(v.freq, 1e-9)))
-        sound = _lookup(_wave(v.timbre, top), _phase(k, _inc(v.freq)))
-        for r, a in t.partials:  # inharmonic partials (a bell), each dying faster
-            if not float(r).is_integer() and r * v.freq < 0.45 * RATE:
-                part = _lookup(_wave("sine", 1), _phase(k, _inc(v.freq * r)))
-                sound = sound + a * part * _decay(k * (r / (t.decay * RATE)))
+        top = max(1, int(nyquist // max(v.freq, 1e-9)))
+        sound = _lookup(_wave(v.timbre, top), _phase(k, _inc(v.freq, r)))
+        extra = 0.0
+        for ratio, a in t.partials:  # inharmonic partials (a bell), each dying faster
+            if not float(ratio).is_integer():
+                extra += a
+                if ratio * v.freq < nyquist:
+                    part = _lookup(_wave("sine", 1), _phase(k, _inc(v.freq * ratio, r)))
+                    sound = sound + a * part * _decay(k * (ratio / (t.decay * r)))
+        if extra:
+            sound = sound / (1.0 + extra)  # a bell peaks where any other voice does
         if t.detune:
             f2 = v.freq * 2.0 ** (t.detune / 1200.0)
-            top2 = max(1, int(0.45 * RATE // f2))
-            sound = 0.5 * (sound + _lookup(_wave(v.timbre, top2), _phase(k, _inc(f2))))
-        return v.amp * sound * self._envelope(t, v, k)
+            top2 = max(1, int(nyquist // f2))
+            sound = 0.5 * (sound + _lookup(_wave(v.timbre, top2), _phase(k, _inc(f2, r))))
+        return v.amp * sound * self._envelope(t, v, k, r)
 
     @staticmethod
-    def _envelope(t: Timbre, v: _Voice, k: np.ndarray) -> np.ndarray:
+    def _envelope(t: Timbre, v: _Voice, k: np.ndarray, rate: int) -> np.ndarray:
         """Attack, decay to sustain while held; from the level at release down to 0 over
         ``release`` (an exponential fade times a straight line, so it ends at exactly 0)."""
-        attack = max(1, round(t.attack * RATE))
-        tau = t.decay * RATE
+        attack = max(1, round(t.attack * rate))
+        tau = t.decay * rate
         if t.sustain == 0:  # a plucked string: low notes ring longer
             tau *= min(4.0, max(0.25, (261.6 / max(v.freq, 1.0)) ** 0.5))
 
@@ -714,25 +801,29 @@ class Synth:
         return out
 
     def _hit(self, v: _Voice, k: np.ndarray) -> np.ndarray:
+        """One drum hit; its last quarter also fades in a straight line to 0 at its ring
+        time, so it never ends on a step."""
+        r = self.rate
         kind, _, decay, tone = _drum(v.pitch)
-        env = _decay(k / (decay * RATE))
+        fade = np.minimum(1.0, (v.total - k).astype(np.float64) / max(1.0, 0.25 * v.total))
+        env = _decay(k / (decay * r)) * fade
         idx = (k + v.noise_at) % _NOISE
         noise = self.noise[idx]
         if kind == _KICK:  # a sine falling from 150 Hz to its tone
-            tau = 0.04 * RATE
-            cycles = (tone * k + (150.0 - tone) * tau * (1.0 - _decay(k / tau))) / RATE
+            tau = 0.04 * r
+            cycles = (tone * k + (150.0 - tone) * tau * (1.0 - _decay(k / tau))) / r
             frac = cycles - np.floor(cycles)
             sine = _wave("sine", 1)
             g = frac * _TABLE
             i = np.minimum(g.astype(np.int64), _TABLE - 1)
             body = sine[i] + (sine[i + 1] - sine[i]) * (g - i)
-            return env * (body + 0.1 * noise * _decay(k / (0.004 * RATE)))
+            return env * (body + 0.1 * noise * _decay(k / (0.004 * r)))
         if kind == _TOM:
-            body = _lookup(_wave("sine", 1), _phase(k, _inc(tone)))
+            body = _lookup(_wave("sine", 1), _phase(k, _inc(tone, r)))
             return env * body
         if kind == _SNARE:
-            body = _lookup(_wave("sine", 1), _phase(k, _inc(tone)))
-            return 0.6 * noise * env + 0.4 * body * _decay(k / (0.04 * RATE))
+            body = _lookup(_wave("sine", 1), _phase(k, _inc(tone, r)))
+            return 0.6 * noise * env + 0.4 * body * _decay(k / (0.04 * r)) * fade
         if kind in (_HAT, _CYMBAL):  # noise with its low end taken out (a first difference)
             before = self.noise[(idx - 1) % _NOISE]
             return 0.5 * (noise - before) * env

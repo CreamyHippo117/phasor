@@ -743,6 +743,8 @@ def _plan_clips(root: Path, files: Any, clips: Sequence[Clip], rate: int, g0: in
             if problems is not None:
                 problems.append(f"sound {c.path!r} left out: {e}")
             continue
+        if src.rate != rate and hasattr(src, "at_rate"):  # a synthesizer: made at the rate
+            src = src.at_rate(rate)
         same = src.rate == rate
         count = src.frames if same else int(src.frames * rate / src.rate)
         p = _budget(_Planned(src, c.path, first, count, src.rate / rate,

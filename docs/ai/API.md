@@ -333,23 +333,36 @@ A `Notes` object is a track of notes: from a `.mid` file in the scene's folder (
 any code can make them (the partials of a Fourier series: a fractional pitch plays its exact
 frequency). `phasor render` plays them with a small built-in synthesizer (deterministic, no
 dependency: a few General MIDI-like voices, ADSR envelopes, a drum kit on channel 10 = 9
-from 0, at most `midi_math.MAX_VOICES` (64) notes at once) and mixes them into the video's
-sound exactly like a `Sound` clip: from `start` (seconds, or a **marker's name**: the notes
-follow the marker when it moves, a narration snap included), `gain` dB louder, cut where the
-scene ends, counted towards `MAX_SOUNDS` and `MAX_MIX_SAMPLES`. `transpose` (semitones; never
-drums), `tempo_scale`, `channels`, `repeat` change what is played; `instrument="auto"` gives
-each note the voice of its program (`program` for script notes). Nothing is drawn unless
+from 0, at most `midi_math.MAX_VOICES` (64) notes at once), made at the track's own sample
+rate (so an 8 or 16 kHz narration gets no aliasing), and mixes them into the video's sound
+like a `Sound` clip: from `start` (seconds, or a **marker's name**: the notes follow the
+marker when it moves, a narration snap included), cut where the scene ends, counted towards
+`MAX_SOUNDS` and `MAX_MIX_SAMPLES`. `gain` (dB) scales the voices before they are summed and
+pass a soft limiter (unchanged up to half of full scale, then bending towards it, never
+clipped), so a chord does not distort and a lower `gain` is cleaner. `transpose` (semitones;
+never drums), `tempo_scale`, `channels`, `repeat` change what is played;
+`instrument="auto"` gives each note the voice of its program (`program` for script notes;
+pipes such as flutes are the sine voice). The `pad` voice has a second oscillator 7 cents
+up, so its pitch reads about 3.5 cents sharp (a chorus, by design). Nothing is drawn unless
 `show=True`: a piano roll (with `start` in seconds, the notes sounding at `t` light up and a
-playhead runs). `s.export_midi("out.mid")` (`Engine.export_midi`, the MCP tool `export_midi`)
-writes every `Notes` of the scene to one Standard MIDI File (format 1, 120 bpm, a track per
-object) at its times in the scene: the score, also notes past the scene's end.
+playhead runs). `s.export_midi("out.mid")` (`Engine.export_midi`, the MCP tool
+`export_midi`) writes every `Notes` of the scene to one Standard MIDI File (format 1, 120 bpm,
+a track per object) at its times in the scene: the score, also notes past the scene's end
+(notes after 3 h are `left_out`). Each object and program gets a channel of its own (drums
+stay on 10), and an `instrument` is written as a program that reads back as that voice. It
+never writes over a file the scene reads (`ValueError`), nor over any existing file unless
+`overwrite=True` (`FileExistsError`); the file appears whole or not at all. A note struck
+again on its key while held ends there in the file (MIDI cannot say which note-off ends
+which).
 
 The semantics give `count`, `span`, `pitch_range`, `channels`, `programs` (General MIDI
 names), `voices`, and for a file `format`, `tracks`, `bpm`, `names`. A missing file is
 `missing_file`; one that is not MIDI (or format 2) is `bad_file` and plays nothing; one read
 only in part (a track cut short, a lying length, past `MAX_EVENTS`, `MAX_NOTES` or
-`MAX_TEMPOS`) is `truncated` and plays what was read; notes starting after the scene's end,
-notes dropped past the voices or the synthesizer's work (`MAX_SYNTH_WORK`) and a `start` marker the scene lacks are `notes_limit`.
+`MAX_TEMPOS`, melodic notes with no length) is `truncated` and plays what was read (a drum
+hit with no length plays); notes starting after the scene's end, notes dropped past the
+voices or the synthesizer's work (`MAX_SYNTH_WORK`) and a `start` marker the scene lacks are
+`notes_limit`.
 Hearing it is untested by a person: the samples, timing and pitch are checked numerically.
 
 ```python
