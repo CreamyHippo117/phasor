@@ -74,8 +74,15 @@ class Picture(ObjectBase):
         raise NotImplementedError
 
     def _probe(self, state: SceneState) -> tuple[mm.Source, mm.Probe]:
+        """The source and its probe, named once per state (bounds, semantics and draw all
+        ask: stamping a long sequence is one ``lstat`` a picture)."""
+        memo = getattr(self, "_memo", None)
+        if memo is not None and memo[0] is state:
+            return memo[1], memo[2]
         src = self.source(state)
-        return src, src.probe()
+        probe = src.probe()
+        self._memo = (state, src, probe)
+        return src, probe
 
     # ------------------------------------------------------------ where
 

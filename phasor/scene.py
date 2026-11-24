@@ -407,7 +407,7 @@ class Scene:
             a, b = mm.clip_range(tuple(clip.get("trim", (0.0, 0.0))), probe.seconds)
             speed = float(clip.get("speed", 1.0))
             seconds = float(clip.get("start", 0.0)) + (b - a) / speed
-            seconds = round(min(seconds, mm.MAX_SECONDS), 6)
+            seconds = min(seconds, mm.MAX_SECONDS)  # unrounded: the clip ends at the end
             scene._apply(SetMeta(field="duration", value=seconds))
         return scene
 

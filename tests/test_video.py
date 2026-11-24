@@ -676,6 +676,26 @@ def test_from_video_makes_a_scene_as_long_as_the_clip(tmp_path):
     assert s2.engine.document.meta.duration == pytest.approx(2.0)
 
 
+def test_a_fast_clip_scene_ends_exactly_with_its_clip(tmp_path):
+    _clip(tmp_path / "c.mp4", n=36)
+    for speed in (7.3, 64.0):
+        s = Scene.from_video("c.mp4", base_dir=tmp_path, passes=None, clip={"speed": speed})
+        assert "clip_ended" not in _codes(s), speed
+
+
+def test_a_still_past_the_pixel_cap_is_bad_file(tmp_path, monkeypatch):
+    from PIL import Image as PILImage
+
+    _png(tmp_path / "p.png", w=40, h=30)
+    monkeypatch.setattr(PILImage, "MAX_IMAGE_PIXELS", None)  # Pillow's own check off
+    monkeypatch.setattr(mm, "picture_pixels_cap", lambda: 100)
+    s = _scene(tmp_path)
+    s.add(Image(id="v", path="p.png", width=2.0))
+    codes = _codes(s)
+    assert "bad_file" in codes and "video_too_big" not in codes
+    assert "pixels" in _sem(s, 0.0)["unreadable"]
+
+
 def test_saving_a_scene_elsewhere_brings_every_frame_of_its_sequence(tmp_path):
     path = _frames(tmp_path / "fr", 3)
     s = _scene(tmp_path)
@@ -734,12 +754,23 @@ def test_a_video_draws_the_frame_of_each_time(tmp_path):
 
 @pytest.mark.gl
 @pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
-def test_a_parallel_render_of_footage_equals_the_serial_render(tmp_path):
+@pytest.mark.parametrize("background", ["png_sequence", "mp4"])
+def test_a_parallel_render_of_footage_equals_the_serial_render(tmp_path, background):
     from phasor.render.job import render_file
     from phasor.scene import parallel_frames
 
-    s = _gl_scene(tmp_path)
-    s.background(_frames(tmp_path / "fr", 6), id="back", fps=6.0, opacity=0.5)
+    if background == "mp4":
+        from phasor import Video
+
+        _clip(tmp_path / "c.mp4", n=24)
+        s = Scene.from_video("c.mp4", base_dir=tmp_path)
+        s.set("camera.height", 2.25)
+        s.add(Image(id="seq", path=_frames(tmp_path / "fr", 6), fps=6.0, width=1.0,
+                    loop=True))  # fmt: skip
+        s.add(Video(id="v", path="c.mp4", width=1.0, pos=(1.2, 0, 0), speed=2.0, loop=True))
+    else:
+        s = _gl_scene(tmp_path)
+        s.background(_frames(tmp_path / "fr", 6), id="back", fps=6.0, opacity=0.5)
     e = s.engine
     serial = render_file(e, tmp_path / "serial", preset="preview", fps=12.0)
     many = render_file(e, tmp_path / "many", preset="preview", fps=12.0,

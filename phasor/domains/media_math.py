@@ -246,8 +246,8 @@ class StillSource(Source):
     def _probe(self) -> Probe:
         try:
             img = self._linear()
-        except PictureTooBig as e:
-            return Probe(too_big=str(e))
+        except PictureTooBig as e:  # a still: bad_file (video_too_big is for clips)
+            return Probe(problem=f"the picture is {e}")
         key = (self.kind, self.stamp, 0)
         img.flags.writeable = False
         _FRAMES.put(key, img)
@@ -557,7 +557,9 @@ def clip_time(t: float, *, start: float, trim: tuple[float, float], speed: float
         return a, False
     if loop:
         return a + float(np.fmod(local, span)), False
-    if local > span + EPS:  # at its very end it has just finished: not yet "ended"
+    # at its very end it has just finished, not "ended" (within EPS of scene time: times
+    # rounded to the microsecond, as lint samples them, are scaled by ``speed`` here)
+    if local > span + EPS * max(1.0, speed):
         return b, True
     return min(a + local, b), False
 

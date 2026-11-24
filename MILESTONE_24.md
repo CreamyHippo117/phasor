@@ -28,7 +28,7 @@ by the authoring model (not independent).** Untested on Windows, macOS and CUDA.
 
 ## Verification (Linux, 4 cores, llvmpipe OpenGL 4.5, no CUDA)
 
-Tests: `tests/test_video.py` (new, 41 tests: sequences and stamps, clip time, frame choice
+Tests: `tests/test_video.py` (new, 44 tests: sequences and stamps, clip time, frame choice
 at k/fps including 30000/1001, fit, premultiplied sampling, crop-conversion equals full
 conversion, a one-frame sequence equals its still, decode order independence (in order,
 shuffled, fresh decoder: byte-identical), no seek when playing in order, byte-bounded
@@ -36,7 +36,7 @@ cache, bounded decoders, Video semantics and bounds, fill following the camera, 
 sequences, lint in both modes (`passes=None` and OpenGL) for `missing_file`, `bad_file`,
 `clip_ended`, `video_too_big`, `missing_extra`, overlap/contrast on footage, hostile files,
 FIFO, symlinks, `from_video`, saving a sequence scene elsewhere, a worker refusing a changed
-sequence, GL frame-per-time, parallel render = serial render byte for byte, examples lint
+sequence, GL frame-per-time, parallel render = serial render byte for byte (an mp4 background with a sequence and a clip placed on it, and a sequence background with a clip placed), a fast clip scene (speed 7.3 and 64) ending without `clip_ended`, an over-cap still as `bad_file`, examples lint
 clean in both modes, two golden storyboards); `tests/test_final.py` gains `video` in
 `REQUIRED`/`NEEDS`.
 
@@ -50,6 +50,7 @@ Measurements (`/tmp` scripts, this box):
 | 7680x4320 clip (3 frames) | probe + 3 frames 0.35 s, stored at 4096x2304; peak RSS +260 MB; sampled to 4K +210 MB |
 | frame cache at its cap | 253 MB used of 256 MB playing 300 HD frames; process peak 538 MB |
 | stamp of a 3000-picture sequence | 60 ms (one lstat a frame) |
+| a 3000-picture sequence as the background (the cap) | `state_at` 46-56 ms, `inspect` 177 ms, a 480x270 frame 234 ms: the engine, the draw cache and the object each stamp the sequence (once per state for the object, memoized); proportionally less for shorter sequences (a 120-picture one: about 2 ms a stamp) |
 | hostile files (one process each) | truncated mp4 (moov lost; or frames cut, faststart), 1 KB of zeros as .mkv, 200 KB of noise as .mp4, a 1 KB mp4 whose stts claims 10^9 frames (shows its 1 real frame), the same with stsz claiming 10^9 (`no frames`), a PNG claiming 30000x30000 (Pillow's bomb error) or 12000x12000 with no data: each 5-75 ms, no memory growth, `bad_file` or drawn as what it really holds |
 
 ## Deviations
@@ -66,7 +67,8 @@ Measurements (`/tmp` scripts, this box):
 - **`video_too_big` draws nothing** (a cap is a hard limit); absurd values are `bad_file`.
   No theme `[lint]` thresholds were added: these are safety caps, not taste (constants in
   `media_math`).
-- **A still past the bomb limit is `bad_file`**, not `video_too_big`.
+- **A still past the pixel cap (Pillow's bomb limit) is `bad_file`**, not `video_too_big`
+  (tested with Pillow's own check off).
 - **Before `start` a clip shows its first frame** (fade it in with `reveal` to hide it).
 - **Transparent pictures are sampled premultiplied** (no fringe of the colour stored under
   clear pixels). Opaque pictures draw exactly as before.
@@ -90,6 +92,8 @@ Measurements (`/tmp` scripts, this box):
 - Sound of a clip is not played (use `Sound`); a damaged frame in the middle of a good clip
   draws the background for that frame (not reported per frame).
 - Faster sampling (GPU texture upload of the frame instead of CPU sampling).
+- Cheaper stamping of long sequences (each `state_at` stamps every picture once, about 20 µs
+  a picture here).
 - The `kit` copies examples without `assets/` (as for `picture.py` before).
 
 ## Untested
@@ -104,5 +108,22 @@ skip there).
 hint map, the analytic contrast branch), `kit/examples.toml`, `phasor/__init__.py`
 (`Video`), `phasor/domains/__init__.py`, `phasor/domains/media.py` (only the `Image` part;
 `Sound` untouched), `core/files.py`, `core/extras.py` (`av`), `core/objects.py` (docstring),
-`core/pycode.py`, `engine.py` (`_bring_files`), `render/passes.py` (one line), `scene.py`
-(two methods, `BACKGROUND_Z`), `tests/test_final.py`.
+`core/pycode.py` (it now writes `meta.duration` for any document that sets one, not only
+footage scenes), `engine.py` (`_bring_files`), `render/passes.py` (one line), `scene.py`
+(two methods, `BACKGROUND_Z`), `tests/test_final.py`, `STUDIO.md` (row 24). `ruff format`
+reformatted the python blocks in `docs/ai/API.md` (expect noise there).
+
+## Gate (phasor-milestone-gate, 2026-11-24, by the authoring model, not independent)
+
+| Step | Result | Evidence |
+| --- | --- | --- |
+| ruff check, ruff format --check, lint-imports | pass | all checks passed; 2 contracts kept |
+| focused tests | pass | test_video (44), and test_beauty, test_lint, test_docs, test_layers, test_open_contract, test_engine, test_workers, test_render, test_kit, test_mcp, test_pycode, test_sound, test_shapes, test_final `-k "not slow"`: 841 passed, 5 skipped (CUDA; drawless types) before the last fixes; the affected suites re-run after them |
+| full suite | not run here | as instructed; CI runs it |
+| phasor doctor | pass | tier B (OpenGL llvmpipe, no CUDA), PyAV 19.0.2 with libx264 |
+| exit demo | pass on Linux | `examples/video_input.py` (an mp4 as the background, a placed looping inset) and `examples/picture_scene.py` (a png sequence as the background, a still and the sequence placed): storyboards looked at, goldens `tests/golden/software/{video_input,picture_scene}.png`; parallel = serial byte for byte with each as the background; hostile files lint and draw nothing |
+| contract audit | done by the authoring model (no tool to start a fresh reviewer) | one write path (`from_video` uses `Engine.apply`); state depends on (document, t, files named in `Files`); `av` only in `domains`; `Video` registers with Params and draw; render workers open their own decoders and refuse changed files (existing frozen stamps); colour linear once |
+| docs and artifacts | pass | API.md rows and section (blocks run), examples, goldens (software only; no GPU goldens), this file |
+
+MILESTONE 24: DONE (on Linux, gate by the authoring model, not independent; untested on
+Windows, macOS, CUDA).
