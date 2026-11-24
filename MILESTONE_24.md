@@ -167,6 +167,15 @@ uncached stand-in pixels), `time/compile.py` (the `Fixed` check), `core/objects.
 (two methods, `BACKGROUND_Z`), `tests/test_final.py`, `STUDIO.md` (row 24). `ruff format`
 reformatted the python blocks in `docs/ai/API.md` (expect noise there).
 
+## After the audit (2026-11-24)
+
+Audited independently: 3 blockers + 6 should-fix fixed (and nits N1, N2, N3, N5; N4, N6
+not done). ruff check, ruff format --check, lint-imports (2 contracts kept): pass. Focused
+suites, each run on its own: test_video 57 passed (GL included); test_lint 32; test_engine
+30; test_workers 9; test_render 22 (1 skipped: CUDA); test_beauty 31; test_docs 5;
+test_layers 9; test_open_contract 71; test_pycode 5; test_final `-k "not slow"` 426 passed,
+4 skipped. Full suite not run (shared box). Untested on Windows, macOS, CUDA.
+
 ## Gate (phasor-milestone-gate, 2026-11-24, by the authoring model, not independent)
 
 | Step | Result | Evidence |
