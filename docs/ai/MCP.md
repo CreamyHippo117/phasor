@@ -17,7 +17,8 @@ this file runs in order, against one scene, in `tests/test_docs.py`.
 4. `review`: lint + what is on screen at every marker + a storyboard picture.
    Fix each item in `todo` (`scene_edit`, or `lint` with `fix: true` for the certain fixes)
    and `review` again. Stop when `clean` is true or after 5 rounds; say what is left.
-5. `scene_save`, then `render` (`preview` is fast).
+5. `scene_save`, then `render` (`draft` is quickest: small, 15 fps, plain look; `preview`
+   shows the full look).
 
 A failed patch changes nothing and tells you why (`errors[].message`, often with
 `fix_hint`). `undo` reverts the last edit; `checkpoint` / `restore` / `diff` let you try
@@ -32,6 +33,7 @@ a variant and compare.
 | `scene_edit` | apply a patch (below); returns `ok`, `errors`, and the lint issues it added or fixed |
 | `animate` | a choreography verb at a marker or time: `reveal`, `exit`, `trace`, `bloom_in`, `dim_others`, `undim`, `focus_pull`, `morph`, `settle`, `write`, `travel`, `flash`, `wiggle`, `circumscribe` (`value` "circle" or "box"), `transform`, `transform_matching` and `become` (`targets` [from, to]), `sweep` (`path`, `value`), and in 3D `orbit` (`value` degrees, `until` a marker) and `orbit_reveal` |
 | `narrate` | set the script and voice; markers appear in `markers` |
+| `snap_to_narration` | move the markers you placed by hand onto the narration's sentence starts (a recording: `narrate` with `audio`); `dry_run` (default true) previews each move (marker, from, to, why, confidence) with `alignment` and `unreliable`; `dry_run: false` applies it as one undo step |
 | `inspect` | what is on screen at `t`: `brief` (a line each), `standard`, `full` |
 | `lint` | visual problems; `fix: true` applies the certain fixes |
 | `review` | the whole self-review round in one call |
@@ -41,7 +43,7 @@ a variant and compare.
 | `critique`, `polish` | the art director: a taste score, aesthetic issues with fixes and the rubric; apply the fixes (3 rounds at most; `snap: true` also snaps explicit values to roles) |
 | `variants`, `choose` | alternative looks of one beat side by side (as is, calmer, bolder); pick one, it is recorded in `style/choices.jsonl` and applied |
 | `diff`, `checkpoint`, `restore`, `undo`, `redo` | compare and branch |
-| `render` | a video (`preview`, `final`, `4k`) or one PNG with `frame` |
+| `render` | a video (`draft`, `preview`, `final`, `4k`) or one PNG with `frame`; `start`/`end`/`frame` take seconds or a marker name (a draft goes to `<scene>.draft.mp4`) |
 | `docs_search` | find the API, a pattern or an example |
 | `explorer_state`, `explorer_edit`, `explorer_preset` | the Explorer: its rows, systems, equilibria and sliders in one call; add, retype, hide, recolour or remove rows and set variables (one undoable edit); load a classic system |
 | `find_equilibria`, `flow_probe`, `sweep_parameter` | the Explorer's numbers, on a fork (nothing changes): equilibria with eigenvalues, a path's behaviour (period, escape, Lyapunov exponent, the dt check), candidate bifurcations along a variable |
@@ -183,6 +185,21 @@ to a marker with a verb. Do not animate by raw seconds in a narrated scene (lint
 {"tool": "narrate", "script": "Here are the poles. [[poles]] Draw a loop around the first. [[loop]] The result is two pi.", "voice": "estimate"}
 {"tool": "animate", "verb": "reveal", "at": "poles", "targets": ["pole_i"]}
 {"tool": "animate", "verb": "trace", "at": "loop", "targets": ["loop"]}
+```
+
+A recording instead of a voice: put the file (WAV, or an mp4, m4a, mp3, ogg, flac) in the
+scene's folder and call `narrate` with `audio` and the `script` it reads (its sentences are
+found in the audio; `[[markers]]` fall on their words). Markers you placed by hand before
+the recording existed snap onto it: `snap_to_narration` previews (`dry_run`, the default),
+then `dry_run: false` moves them. Lint `narration_drift` lists markers the snap would move.
+Read `unreliable` and `alignment` in the preview before applying: `ambiguous_timing` (the
+scene's timing fits the voice two ways; nothing moves: pin markers with `anchors`),
+`alignment_doubtful` (a sentence break is probably misplaced: the reader ran sentences
+together or paused as long inside them), `unreadable`, `music`, `low_snr`. Anchors that
+would reorder markers or cross a `[[marker]]` of the script are refused.
+
+```json calls
+{"tool": "snap_to_narration", "dry_run": true}
 ```
 
 `animate` returns `start` and `end`: pass `offset: end - start` to start the next step when

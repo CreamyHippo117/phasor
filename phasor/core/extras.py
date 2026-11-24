@@ -11,7 +11,10 @@ EXTRAS: dict[str, tuple[str, str]] = {
     "shapely": ("boolean", "boolean operations on shapes"),
     "svgelements": ("svg", "SVG drawings"),
     "pygments": ("code", "highlighting code"),
-    "av": ("encode", "reading video files"),
+    "av": (
+        "encode",
+        "video files, and sound from mp4, m4a, mp3, ogg and flac files (WAV needs nothing)",
+    ),
 }
 
 

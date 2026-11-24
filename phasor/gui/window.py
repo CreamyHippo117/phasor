@@ -202,7 +202,7 @@ class Timeline(QWidget):
         self.data: dict[str, Any] = {"duration": 0.0, "markers": {}, "lanes": {}, "narration": []}
         self._hits: list[tuple[QRectF, str, tuple]] = []
         self._drag: tuple | None = None  # (kind, key..., original, current)
-        self._waves: dict[tuple[str, int], list[float]] = {}
+        self._waves: dict[tuple, list[float]] = {}
 
     def refresh(self) -> None:
         self.data = self.ed.timeline()
@@ -221,10 +221,10 @@ class Timeline(QWidget):
         d = max(self.data["duration"], 1e-6)
         return (x - self.LABELS) / max(self.width() - self.LABELS - 8, 1) * d
 
-    def _wave(self, audio: str, bins: int) -> list[float]:
-        key = (audio, bins)
+    def _wave(self, audio: str, bins: int, span=None) -> list[float]:
+        key = (audio, bins, tuple(span) if span else None)
         if key not in self._waves:
-            self._waves[key] = self.ed.waveform(audio, bins)
+            self._waves[key] = self.ed.waveform(audio, bins, span)
         return self._waves[key]
 
     def paintEvent(self, ev) -> None:
@@ -239,7 +239,7 @@ class Timeline(QWidget):
             p.fillRect(box, QColor(80, 120, 90, 90))
             if b.get("audio"):
                 bins = max(int(box.width() / 2), 2)
-                wave = self._wave(b["audio"], bins)
+                wave = self._wave(b["audio"], bins, b.get("span"))
                 p.setPen(QPen(QColor("#7fcf9a"), 1))
                 for k, a in enumerate(wave):
                     h = a * box.height() / 2

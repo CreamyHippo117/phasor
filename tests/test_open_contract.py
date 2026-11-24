@@ -585,7 +585,8 @@ def test_the_cli_flag_reaches_the_render_workers(star_scene, tmp_path, monkeypat
     monkeypatch.setattr(scene_mod, "parallel_frames", fake)
     for flags in ([], ["--allow-scripts"]):
         out = tmp_path / "f.png"
-        main(["render", str(path), "--frame", "0", "-o", str(out), "--quiet",
+        # a frame range, not one frame: a single frame is drawn here whatever --workers says
+        main(["render", str(path), "--start", "0", "--end", "0.1", "-o", str(out), "--quiet",
               "--workers", "2", *flags])  # fmt: skip
     assert seen == [False, True]
 

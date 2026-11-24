@@ -91,6 +91,7 @@ _TABLES = {
         "tick_gap",
         "flow_work",
         "flow_arrows",
+        "narration_drift",
     ),
     "life": (
         "glow",
@@ -104,7 +105,15 @@ _TABLES = {
         "subtle",
     ),
     "bloom": ("threshold", "strength", "levels", "exposure", "knee"),
-    "narration": ("words_per_second", "lead", "gap", "pause_per_change", "pause_max"),
+    "narration": (
+        "words_per_second",
+        "lead",
+        "gap",
+        "pause_per_change",
+        "pause_max",
+        "phrase_pause",
+        "snap_reach",
+    ),
     "camera": (
         "drift",
         "drift_period",

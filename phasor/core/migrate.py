@@ -66,6 +66,16 @@ def _v8_to_v9(raw: dict[str, Any]) -> dict[str, Any]:
     return raw
 
 
+def _v9_to_v10(raw: dict[str, Any]) -> dict[str, Any]:
+    """Version 10 added ``NarrationBlock.audio_span`` (a block playing part of a recording,
+    M22). Older blocks play their whole file, as before."""
+    nar = raw.get("narration")
+    if isinstance(nar, dict) and isinstance(nar.get("blocks"), list):
+        nar["blocks"] = [{**b, "audio_span": b.get("audio_span")} if isinstance(b, dict) else b
+                         for b in nar["blocks"]]  # fmt: skip
+    return raw
+
+
 MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {
     1: _v1_to_v2,
     2: _v2_to_v3,
@@ -75,6 +85,7 @@ MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {
     6: _v6_to_v7,
     7: _v7_to_v8,
     8: _v8_to_v9,
+    9: _v9_to_v10,
 }
 
 

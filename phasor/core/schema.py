@@ -17,10 +17,10 @@ from phasor.core.files import relative_path
 from phasor.core.ids import is_valid_id, is_valid_name, parent_of, split_path, split_style_path
 from phasor.core.values import normalize
 
-SCHEMA_VERSION = 9  # 2: `constraints` (M2); 3: `retired_ids`; 4: `narration`, `Segment.verb` (M4);
+SCHEMA_VERSION = 10  # 2: `constraints` (M2); 3: `retired_ids`; 4: `narration`, `Segment.verb` (M4);
 # 5: `meta.life`, `meta.seed`, `meta.look` (M7); 6: `controls` (M12); 7: `meta.palette`;
 # 8: `meta.modules`, `ObjectSpec.always` (M15, ADR 0005); 9: explicit style values beside
-# roles, `meta.background` (M18)
+# roles, `meta.background` (M18); 10: `NarrationBlock.audio_span` (M22: narration from a file)
 OVERRIDES_VERSION = 1
 
 
@@ -206,15 +206,32 @@ class Word(Model):
     end: float = Field(ge=0)
 
 
+MAX_AUDIO_SECONDS = 3 * 3600.0  # a narration recording is read this far at most (the mix's bound)
+
+
 class NarrationBlock(Model):
     """One spoken chunk (a sentence), or a silent pause when ``text`` is empty."""
 
     text: str
     start: float = Field(ge=0)  # seconds on the scene timeline
     duration: float = Field(ge=0)
-    audio: str | None = None  # WAV path relative to the scene's folder; None: silent/estimate
+    audio: str | None = None  # audio file relative to the scene's folder; None: silent/estimate
     words: tuple[Word, ...] = ()
     markers: dict[str, float] = Field(default_factory=dict)  # name -> seconds from block start
+    # Seconds (a, b) of ``audio`` this block plays (a recording cut into sentences, M22);
+    # None: the whole file (a synthesized clip per block, as before).
+    audio_span: tuple[float, float] | None = None
+
+    @model_validator(mode="after")
+    def _span(self) -> NarrationBlock:
+        if self.audio_span is not None:
+            a, b = self.audio_span
+            if not (math.isfinite(a) and math.isfinite(b) and 0 <= a <= b <= MAX_AUDIO_SECONDS):
+                raise ValueError(f"audio_span {self.audio_span}: seconds a <= b, from 0 to "
+                                 f"{MAX_AUDIO_SECONDS:g}")  # fmt: skip
+            if self.audio is None:
+                raise ValueError("audio_span needs the audio file it cuts")
+        return self
 
 
 class Narration(Model):
@@ -292,7 +309,7 @@ class Control(Model):
 
 
 class Document(Model):
-    schema_version: Literal[9] = SCHEMA_VERSION
+    schema_version: Literal[10] = SCHEMA_VERSION
     meta: Meta
     objects: tuple[ObjectSpec, ...] = ()
     constraints: tuple[ConstraintSpec, ...] = ()

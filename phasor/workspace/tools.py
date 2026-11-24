@@ -456,16 +456,30 @@ class Workspace:
         start = base + offset
         return {"verb": verb, "start": start, "end": start + step._end, "version": e.version}
 
-    def narrate(self, script: str, voice: str = "auto", pace: bool = True) -> dict[str, Any]:
+    def narrate(self, script: str = "", voice: str = "auto", pace: bool = True,
+                audio: str | None = None) -> dict[str, Any]:  # fmt: skip
         """Set the narration. ``[[name]]`` puts a marker at the next word. Every animation
         anchored to a marker follows the voice. ``pace`` adds breathing room after busy
-        sentences."""
+        sentences. ``audio``: a recording in the scene's folder (a WAV, or an mp4, m4a, mp3,
+        ogg or flac) instead of a voice; ``script`` is then what it says (its sentences are
+        found in the audio), or empty (its phrases become the blocks). A recording keeps its
+        own timing, so ``pace`` is not applied to it; ``snap_to_narration`` moves your
+        markers onto it."""
         e = self.engine
         if e.scripted:
             raise ToolError("this scene is built by a script: change the narration there")
         scene = Scene.of(e)
+        if audio is not None:
+            self._inside(e.base_dir / audio)  # (and the scene's folder: core/files.py)
+        from phasor.voice import VoiceError
 
         def go():
+            if audio is not None:
+                try:
+                    scene.narrate(script, audio=audio)
+                except VoiceError as err:
+                    raise ToolError(str(err)) from err
+                return
             scene.narrate(script, voice=voice)
             if pace:
                 scene.pace()
@@ -476,6 +490,20 @@ class Workspace:
             "duration": e.duration,
             "voice": e.document.narration.voice if e.document.narration else None,
         }
+
+    def snap_to_narration(self, dry_run: bool = True, anchors: dict[str, int] | None = None,
+                          allow_short: bool = False) -> dict[str, Any]:  # fmt: skip
+        """Move the markers you placed by hand onto the narration's sentence starts (or where
+        speech resumes after a pause), keeping their order and each scene long enough for its
+        motions. ``dry_run`` (the default) only previews: ``moves`` lists marker, from, to,
+        why and confidence. Call again with ``dry_run: false`` to apply (one undo step).
+        ``anchors`` pins a marker to a narration block index (``{"poles": 2}``)."""
+        e = self.engine
+        if e.scripted and not dry_run:
+            raise ToolError("this scene is built by a script: add s.snap_to_narration() there, "
+                            "after s.narrate(...)")  # fmt: skip
+        return self._guard(lambda: e.snap_to_narration(dry_run=dry_run, anchors=anchors,
+                                                       allow_short=allow_short))  # fmt: skip
 
     # ------------------------------------------------------------ checkpoints
 
@@ -720,22 +748,26 @@ class Workspace:
         }
 
     def render(
-        self, preset: str = "preview", out: str | None = None, start: float | None = None,
-        end: float | None = None, frame: float | None = None,
+        self, preset: str = "preview", out: str | None = None, start: float | str | None = None,
+        end: float | str | None = None, frame: float | str | None = None,
     ) -> dict[str, Any]:  # fmt: skip
-        """Render a video (preset: preview 960x540@30, final, 4k) or one PNG (``frame``)."""
+        """Render a video or one PNG (``frame``). ``preset``: ``draft`` (quick look: long side
+        640, 15 fps, no bloom, lens, fog or life, still frames repeated, not redrawn),
+        ``preview`` (960x540@30), ``final`` or ``4k``. ``start``/``end``/``frame``: seconds
+        or a marker name (a draft of one stretch: ``start="intro", end="proof"``). A draft
+        is written to ``<scene>.draft.mp4`` by default."""
         from phasor.render.encode import EncodeError
-        from phasor.render.job import PRESETS, render_file
+        from phasor.render.job import PRESETS
 
-        if preset not in PRESETS:
+        if not isinstance(preset, str) or preset not in PRESETS:
             raise ToolError(f"preset is one of {sorted(PRESETS)}")
         e = self.engine
-        stem = file_stem(e.document.meta.title)
+        stem = file_stem(e.document.meta.title) + (".draft" if preset == "draft" else "")
         default = self.out_dir / (f"{stem}.png" if frame is not None else f"{stem}.mp4")
         target = self._inside(out) if out else default
         target.parent.mkdir(parents=True, exist_ok=True)
         try:
-            return render_file(e, target, preset=preset, start=start, end=end, frame=frame)
+            return e.render(target, preset=preset, start=start, end=end, frame=frame)
         except (RuntimeError, EncodeError, OSError, ValueError) as err:
             raise ToolError(str(err)) from err
 

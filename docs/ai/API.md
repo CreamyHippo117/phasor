@@ -43,6 +43,8 @@ s.set("camera.height", 6)  # world units visible top to bottom
 | `Sound` | `path` (a WAV file in the scene's folder), `start` (seconds into the scene), `gain` (dB, -60 to 24); nothing is drawn: `phasor render` mixes it in (see "Narrate") | none |
 | `Image` | `path` (a PNG/JPEG/WebP file, relative to the scene's folder; a GIF shows its first frame; `frames/shot_%04d.png` is a picture sequence played at `fps`, default 24), `pos` (centre), `width`, `height` (0: keep the picture's shape), `frame` (an outline of light), `fit`, `fill`, `backdrop`, and for a sequence `start`, `trim`, `speed`, `loop` (as `Video`; see "Footage and picture sequences") | `glow` (glow, none: bright parts shine), `frame` (emphasis, muted), `stroke` (stroke, hairline). Presets `plain`, `framed`, `luminous`. A missing file is issue `missing_file`, an unreadable one `bad_file`; transparent parts show the background; an AI may only name files inside its folder |
 | `Video` | `path` (an `.mp4`, `.mov`, `.m4v`, `.webm` or `.mkv` file in the scene's folder; needs the `encode` extra), `start` (scene seconds where it begins; before it, its first frame), `trim` ((in, out) seconds inside the clip; out 0: its end), `speed` (0-64), `loop` (off: it holds its last frame, lint `clip_ended`), `pos`, `width`, `height` (0: the clip's shape), `fit` (`stretch`, `contain`, `cover`, `none`), `fill` (fill the camera's view: a full-frame background, 2D camera), `backdrop` (labels may sit on it), `frame` | as `Image`. Nothing is heard (use `Sound`). Missing: `missing_file`; not a video: `bad_file`; past a cap: `video_too_big`; without PyAV: `missing_extra`; each draws nothing |
+| `Sound` | `path` (a sound file in the scene's folder: WAV, or an mp4's sound, m4a, mp3, ogg, flac with the `encode` extra), `start` (seconds into the scene), `gain` (dB, -60 to 24); nothing is drawn: `phasor render` mixes it in (see "Narrate") | none |
+| `Image` | `path` (a PNG/JPEG/WebP file, relative to the scene's folder), `pos` (centre), `width`, `height` (0: keep the picture's shape), `frame` (an outline of light) | `glow` (glow, none: bright parts shine), `frame` (emphasis, muted), `stroke` (stroke, hairline). Presets `plain`, `framed`, `luminous`. A missing file is issue `missing_file`; transparent parts show the background; an AI may only name files inside its folder |
 | `Text` | `text` (`$...$` is typeset math), `pos`, `anchor` (`center`/`left`/`right`), `leader`, `leader_on` (set by layout) | `color` (emphasis, primary), `size` (text, label), `leader` (stroke, hairline) |
 | `Equation` | `parts` (math or text, set on one baseline), `colors` (an emphasis role per part), `pos` | `color` (emphasis, primary), `size` (text, math), `glow` (glow, none) |
 
@@ -287,8 +289,10 @@ assert s4.engine.lint(strict=True) == []
   `WhisperX()` or `TimingsFile()`.
 - `phasor render` muxes the narration into the video, with any **sound clips**: a `Sound`
   (Manim's `add_sound`) plays a WAV file in the scene's folder from `start` seconds, `gain`
-  dB louder, cut where the scene ends. PCM WAV only (8 to 32-bit, 8 to 192 kHz, 1 to 16
-  channels, mixed down to mono and resampled to the narration's rate, else 48 kHz); at most
+  dB louder, cut where the scene ends. PCM WAV (8 to 32-bit, 8 to 192 kHz, 1 to 16
+  channels), or with the `encode` extra the sound of an mp4, m4a, mp3, ogg or flac (decoded
+  once into the user's cache; an mp4 with no sound is `bad_file`; without PyAV
+  `missing_extra`), mixed down to mono and resampled to the narration's rate, else 48 kHz; at most
   `MAX_CLIP_FRAMES` (2^26) frames of a clip are read, the track covers at most 3 hours, and
   at most `MAX_SOUNDS` (256) clips and `MAX_MIX_SAMPLES` (2^30) clip samples in all are
   mixed. The mix is made a chunk at a time on the scene's own sample grid (a render of part
@@ -318,6 +322,90 @@ track, rate = s5.engine.audio_track()
 assert rate == 48000 and len(track) == 2 * 48000  # the scene's length, no narration needed
 assert track[:24000].max() == 0 and track[24000 : 24000 + 4800].max() > 0
 assert s5.engine.inspect(0.0, id="click")["objects"][0]["semantic"]["seconds"] == 0.1
+```
+
+### Narration from a recording, and snapping the scene to it
+
+`s.narrate(script, audio="talk.wav")` takes the narration from a recording in the scene's
+folder instead of a voice: a WAV, or the sound of an `.mp4`, `.m4a`, `.mp3`, `.ogg`,
+`.flac` (decoded once with PyAV, the `encode` extra, into the user's cache, never into the
+scene's folder; without PyAV only WAV works and lint says `missing_extra`; a WAV may be
+PCM or 32/64-bit float). Speech and pauses
+are found in it (pure NumPy: an energy detector with a noise floor that follows the room).
+With the script it reads, each sentence is aligned to the speech that says it (by its words,
+against the pauses; not equal spacing) and its `[[markers]]` fall on its words; with no
+script (`s.narrate(audio="talk.wav")`) each phrase (speech up to a pause of the theme's
+`[narration] phrase_pause`) is a block of unknown words (`"…"`). The recording plays from
+0 s, cut into one block per sentence (`NarrationBlock.audio_span`: the part of the file it
+plays), so `pace()` and re-pacing work on it as on a voice.
+
+`s.snap_to_narration(dry_run=True)` then says how the markers you placed by hand
+(`s.marker`, the scene starts) would move onto it: `moves` (marker, from, to, why,
+confidence 0..1, kind `sentence`/`phrase`/`between`), `kept`, the detection's `quality` and
+`flags`, and `alignment`: how the scene's clock was read against the voice's (`scale`,
+`offset`, `residual`, `margin`, `ambiguous`) and, for a recording read with its script, how
+the words fitted the speech (`speech`: `rate`, `misfit`, `worst`, `doubtful`). `unreliable`
+is true when anything is in doubt: flags `ambiguous_timing` (the timing fits two ways:
+nothing is moved; pin markers with `anchors`), `alignment_doubtful` (a sentence break is
+probably misplaced: the speaker ran sentences together, or paused as long inside sentences
+as between them; confidences are at most 0.3), `unreadable` (the recording is gone: quality
+0), `music`, `low_snr`, `no_pauses`. Read `unreliable` before applying.
+
+Without `dry_run` it moves them, as one patch (one undo step); a second snap moves nothing.
+The scene may have been laid out on another clock than the voice's: a scale (0.6 to 1.6) and
+an offset are fitted so most markers fall on sentence starts, then each marker goes to its
+sentence by the steps between markers (a scene that drifts, slower in one half, still lands);
+or where speech resumes after a pause; markers left over keep their place between those,
+stretched with them. Markers never change order or pass a marker the narration owns, and no
+scene gets shorter than the motions anchored at its marker need (at least the theme's
+shortest verb) unless `allow_short=True`. `anchors={"poles": 2}` pins a marker to the start
+of `narration.blocks[2]`; anchors that would reorder markers or cross one the narration owns
+are refused (`ValueError`). Motions anchored to a moved marker follow it. Lint
+`narration_drift` lists the markers a snap would move (no `fix`: the snap is the offer). It
+works on any narration; on an estimated one the confidence is at most 0.5.
+
+Limits (measured on synthetic speech, not on voices): sentence starts are found within about
+40 ms at 12 dB SNR and better; a reader who does not pause between sentences, or a slow one
+whose word gaps are as long as sentence pauses, can get sentence starts wrong: that is
+flagged `alignment_doubtful`, not hidden. Two markers or few sentences say little about the
+scene's clock; very evenly spaced sentences can fit two ways (`ambiguous_timing`). Sound is
+decoded to at most 3 hours and at most 64 times the file's size (a tiny file that decodes to
+hours of silence is refused); the decode cache is pruned, oldest first, to 4 GiB.
+
+```python
+import tempfile
+import wave
+from pathlib import Path
+
+import numpy as np
+
+from phasor import Dot, Scene
+
+folder = Path(tempfile.mkdtemp())
+rate = 8000
+x = np.zeros(7 * rate)
+for a, b in ((0.5, 1.9), (2.6, 3.8), (4.5, 6.4)):  # three "sentences": tone bursts here
+    i, j = int(a * rate), int(b * rate)
+    x[i:j] = 0.4 * np.sin(2 * np.pi * 220 * np.arange(j - i) / rate)
+with wave.open(str(folder / "talk.wav"), "wb") as w:
+    w.setnchannels(1), w.setsampwidth(2), w.setframerate(rate)
+    w.writeframes((x * 32767).astype("<i2").tobytes())
+
+s6 = Scene("recorded", passes=None, base_dir=folder)
+s6.add(Dot(id="p"))
+s6.marker("start", 0.0)  # laid out before the recording existed
+s6.marker("move", 2.0)
+s6.at("start").bloom_in("p")
+s6.at("move").settle("p.pos", (2, 0))
+s6.narrate(
+    "One thing appears here. It moves [[moves]] right. And that is all there is.", audio="talk.wav"
+)
+plan = s6.snap_to_narration(dry_run=True)
+assert [m["marker"] for m in plan["moves"]] == ["start", "move"]
+s6.snap_to_narration()
+markers = s6.engine.document.timeline.markers
+assert abs(markers["move"] - 2.6) < 0.08  # sentence 2 starts there (less a 0.03 s pre-roll)
+assert s6.snap_to_narration(dry_run=True)["moves"] == []  # nothing left to move
 ```
 
 ## Animate with verbs
@@ -477,7 +565,7 @@ lint_added, lint_resolved)`. Each error has `code`, `message`, `ids`, `path`, `f
 | `set_marker` / `remove_marker` | `name`, `t` |
 | `set_meta` | `field`, `value` |
 | `add_constraint` | `rule`, `priority` (`required`/`strong`/`medium`/`weak`, default `strong`) |
-| `set_narration` | `narration` (from `phasor.voice.narrate`) or `null`; replaces the markers it owns |
+| `set_narration` | `narration` (from `phasor.voice.narrate` or `phasor.voice.from_audio`) or `null`; replaces the markers it owns |
 | `remove_constraint` | `rule` |
 
 On a scene built by a script, `set_param`, `set_style` and `add_constraint` are stored as
@@ -565,6 +653,7 @@ Each issue has `code`, `severity`, `message`, `ids`, `times`, `fix_hint`, and `f
 | `morph_limit` | warning | a morph between outlines with more than `morph_math.MAX_SUBPATHS` (512) subpaths a side: the rest fade |
 | `bad_file` | warning | a file an object reads is not valid (an SVG that is not SVG), or some of its shapes are skipped (points not finite or absurdly far out); what cannot be read draws nothing |
 | `sound_limit` | warning | a sound clip the mix leaves out: past `narration.MAX_SOUNDS` (256) clips in one scene; or a clip whose `start` or `gain` is animated (the mix reads them once, at 0 s, so the animation is not heard) |
+| `narration_drift` | warning | a marker placed by hand that `snap_to_narration` would move by more than `[lint] narration_drift` seconds (0.3) onto a sentence of a recorded narration; no fix (the snap is offered); `missing_file`, `bad_file` and `missing_extra` also cover the recording |
 | `svg_too_complex` | warning | an SVG past a reading limit (size, elements once `<use>` is expanded, nesting, shapes, segments): its drawing is empty or cut short |
 | `crowded_ticks` | warning | numbers along an axis (or a chart's bar names) closer **on screen** than `[lint] tick_gap` text heights (every pair, so an axis a 3D camera sees end-on is caught); `path` names the axis (`ax.x`), the hint the smallest nice step that clears them, or to turn the camera when the axis points at it |
 | `truncated` | warning | a file a `Table` or `Code` reads is past a limit (rows, columns, lines), or a picture sequence has more than 3000 pictures; only its first part is shown (plays) |
@@ -717,6 +806,105 @@ bytes8 = engine.frame(3.0, (3840, 2160), output="srgb8")  # (h, w, 3) uint8, enc
 s.save("residues.phasor.json")  # canonical, diff-friendly
 engine = load("residues.phasor.json")  # or load("residues.py")
 ```
+
+## Render presets and the draft render (Milestone 21)
+
+One table (`phasor.render.presets.PRESETS`; `phasor doctor` prints it) says what each
+quality draws:
+
+| preset | size | fps | motion blur | look | life, camera drift | still frames | encoder |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `draft` | long side 640, the scene's aspect, even sides, never enlarged | 15 | off | plain | off | repeated, not drawn | fast |
+| `preview` | 960 x 540 | 30 | off | full | on | drawn | quality |
+| `final` | the scene's own | the scene's | 0.5, 4 samples | full | on | drawn | quality |
+| `4k` | 3840 x 2160 | the scene's | 0.5, 4 samples | full | on | drawn | quality |
+
+What the draft skips and keeps, effect by effect:
+
+| effect | where | draft |
+| --- | --- | --- |
+| bloom (bright pass, blur pyramid) | `render/post.py`, theme `[bloom]` strength, levels | skipped; the emission target is not even read back |
+| lens: fringe, vignette | `render/post.py`, theme `[bloom]` fringe, vignette | skipped |
+| tone map (exposure, knee) | `render/post.py` | kept: once, as always (contract 4) |
+| sRGB encode | `render/post.py`, `render/output.py` | kept: once |
+| depth fog ("haze") on lit surfaces | `render/passes.py`, theme `[light]` fog | skipped (`u_fog` 0) |
+| lit surfaces: key/fill/rim light, specular, glass, wire grid | `render/passes.py`, theme `[light]` | kept |
+| glow (HDR paint brighter than 1) | `render/passes.py`, theme `[glow]` | kept in the picture; its halo is the bloom, skipped |
+| antialiasing (4x MSAA) | `render/passes.py` | kept (thin strokes break up without it) |
+| hue along strokes | theme `[strokes]` hue_along, scene `palette` | kept (it is the prism look's color) |
+| hue flowing along strokes over time | theme `[strokes]` flow (`prism_vivid`) | kept (those frames never repeat) |
+| kernel pictures (domain coloring, fractals, heat maps, point clouds) and their glow-weight "haze" | `render/gpu/kernels/` | kept, computed at the draft's size only |
+| motion blur | `Engine.frame_blurred` | skipped (shutter 0) |
+| life: glow breathing, shimmer, drifting dots and equations, turning field colors, twinkle | theme `[life]`, scene `life` | skipped: the scene is drawn with `life="off"` |
+| the theme's slow camera drift (3D) | theme `[camera]` drift | skipped when the camera takes the theme's (`drift` < 0); an explicit `drift` is kept |
+| verbs, tracks, expressions, simulations, the flash verb | `[motion]`, the document | kept: everything the document animates moves |
+| narration and sound clips | `Engine.audio_track` | kept (muxed into an `.mp4`) |
+
+How it is fast: the picture is about a ninth of the pixels of 1080p and half the frames of
+`preview`; no bloom pyramid, no emission readback, no blur samples; kernels compute only the
+draft's pixels; the layout is baked once (a draft draws `engine.without_decoration()`, a
+fork with life off that bakes once per version of the document and is kept); kernels use
+every core without CUDA; and a frame whose drawing is identical to the last one is not
+drawn again: its bytes are repeated (`render.job.FrameDrawer`). Whether two frames are
+identical is decided from what the objects' `draw` recorded (`GLRenderer.frame_plan`): the
+draw calls, draw order, each object's layer, opacity, flash and camera, the light, the
+background, the stroke hue and the size. A type that draws from `state.t` with constant
+parameters (flow particles) records different calls, so it is drawn every frame. Kernel
+pictures are keyed as the renderer caches them (type, parameters, roles, style, quad,
+background), not by their pixels. The repeated frames are byte for byte the frames drawing
+would make. The encoder runs `ultrafast` (libx264; `p1` on NVENC), no B-frames, a keyframe
+every second; a PNG sequence compresses at level 1.
+
+**Where a draft is not much faster.** The savings are in pixels and post effects. A scene
+whose time goes into computing its data, not its pixels, gains only the halved frame rate:
+`examples/point_cloud.py` solves a million polynomial roots whenever `twist` moves, whatever
+the picture's size (measured 2026-11-24, 4-core CPU: 8.1 s a frame as a draft, 6.4 s as a
+preview; the draft's whole 3.0-3.4 s window took 48.5 s against 76.2 s, 1.6x). The same holds
+for any kernel picture whose parameters change every frame.
+
+```python
+from phasor import Dot, Scene
+from phasor.render.job import resolve_time
+from phasor.render.presets import DRAFT, PRESETS
+
+draft = PRESETS["draft"]
+assert draft.size(1920, 1080) == (640, 360) and draft.size(1080, 1920) == (360, 640)
+assert draft.fps == 15.0 and draft.effects == DRAFT and not DRAFT.bloom
+assert PRESETS["preview"].size(1920, 1080) == (960, 540)  # unchanged
+
+s = Scene("quick", passes=None, look="glow")
+s.add(Dot(id="d"))
+s.marker("intro", 0.0)
+s.marker("proof", 2.0)
+plain = s.engine.without_decoration()  # what a draft draws
+assert plain.document.meta.life == "off" and s.engine.document.meta.life == "lively"
+assert resolve_time(s.engine, "proof") == 2.0  # a window starts at a marker
+```
+
+```python no-run
+# no-run: needs OpenGL 4.3 and writes files
+import threading
+
+s.render("quick.draft.mp4", preset="draft")  # Scene.render: workers=N renders in N processes
+engine.render("x.mp4", preset="draft", start="proof", end="outro")  # a window, by markers
+stop = threading.Event()  # set it from another thread (a Cancel button) to stop
+show = lambda k, n: print(f"{k}/{n}")  # noqa: E731
+r = engine.render("x.draft.mp4", preset="draft", cancel=stop, progress=show)
+# stopped: RenderCancelled, and the partial file (or the PNGs it wrote, never the folder)
+# is removed
+r["drawn"], r["repeated"]  # frames drawn, frames repeated
+```
+
+`render_file(...)`, `Engine.render(...)` and `Scene.render(...)` take `preset`, `fps`,
+`start`/`end`/`frame` (seconds or a marker name), `progress(k, n)` and `cancel` (a
+`threading.Event` or a callable, checked between frames; cancelling raises
+`render.job.RenderCancelled` and removes what was written, and the folders the render
+made if they are empty; Ctrl-C does the same). A bad preset, a frame rate outside 1/1001 to
+1000, a time that is not finite, an unknown marker (a marker name is tried first, so a
+marker called `inf` works) or a window of more than `render.job.MAX_FRAMES` (1,000,000:
+4.6 hours at 60 fps) is a `ValueError` before anything is written. A draft's default file is `<scene>.draft.mp4`, so it
+never overwrites the real render. `phasor preview SCENE` is `phasor render SCENE --preset
+draft`. Untested on Windows, macOS and CUDA (NVENC's fast settings included).
 
 ## GPU kernels: per-pixel math
 
@@ -2119,10 +2307,11 @@ assert s.engine.document.controls[0].path == "g.value"
 | `phasor inspect SCENE [--t T] [--id ID] [--detail brief\|standard\|full] [--allow-scripts]` | M1 | What is on screen at time t |
 | `phasor lint SCENE [--fix] [--strict] [--json] [--step S] [--allow-scripts]` | M2 | Lint; exit 1 on errors (`--strict`: on warnings too). `--fix` applies suggested fixes and saves them |
 | `phasor storyboard SCENE [-o PNG] [--t T]... [--marks] [--json] [--allow-scripts]` | M2 | Keyframe contact sheet plus what the inspector sees |
-| `phasor render SCENE [-o OUT] [--preset preview\|final\|4k] [--fps F] [--start S] [--end E] [--frame T] [--workers N] [--threads T] [--allow-scripts]` | M3 | Video (`.mp4`; `.mov` is ProRes; a folder or `%05d.png` is a PNG sequence) or one PNG with `--frame`. `--workers`: render processes (default a quarter of the CPU threads, 1 to 4); the result is the same file as one process makes. `--threads`: CPU kernel threads per process without CUDA (default: the cores shared out, workers x threads <= cores) |
+| `phasor render SCENE [-o OUT] [--preset draft\|preview\|final\|4k] [--fps F] [--start S] [--end E] [--frame T] [--workers N] [--threads T] [--allow-scripts]` | M3, M21 | Video (`.mp4`; `.mov` is ProRes; a folder or `%05d.png` is a PNG sequence) or one PNG with `--frame`. `--start`, `--end` and `--frame` take seconds or a marker name. `draft` (M21): small, 15 fps, plain look, written to `<scene>.draft.mp4` by default. `--workers`: render processes (default a quarter of the CPU threads, 1 to 4); the result is the same file as one process makes. `--threads`: CPU kernel threads per process without CUDA (default: the cores shared out, workers x threads <= cores) |
+| `phasor preview SCENE [...]` | M21 | `phasor render SCENE --preset draft` (the same options): the quick plain look, a window by markers with `--start`/`--end` |
 | `phasor kit [FOLDER]` | kit | Set up or update a folder where an AI writes scenes (default `Documents/phasor`): `CLAUDE.md`, the AI docs, the examples sorted by kind, the `/scene` command, `TASTE.md`, and the phasor tools in `.mcp.json`. Your `TASTE.md`, `WISHLIST.md` and `scenes/` are never replaced |
 | `phasor bench [--width W] [--height H]` | M3 | ms per frame per kernel and peak VRAM; saved in `benchmarks/` |
-| `phasor bench --frames SCENE [--count N] [--preset P] [--allow-scripts]` | GPU_SPEED.md | ms per final frame per stage (state, simulation, draw, gpu draw, readback, widen, blur sum, post, srgb, encode); saved in `benchmarks/` |
+| `phasor bench --frames SCENE [--count N] [--preset P] [--allow-scripts]` | GPU_SPEED.md | ms per final frame per stage (state, simulation, dedup, draw, gpu draw, readback, widen, blur sum, post, srgb, encode); saved in `benchmarks/` |
 | `phasor mcp [--root DIR] [--allow-scripts] [--attach]` | M5, M10 | MCP server; `--attach` edits the scene open in a running `phasor gui` |
 | `phasor gui [SCENE] [--root DIR] [--no-ai] [--install-shortcut]` | M10 | The desktop app (needs `uv sync --extra gui`): a start screen, or the editor on SCENE; also `phasor-gui`; a Manim script opens too |
 | `phasor web SCENE [-o PAGE.html] [--steps N] [--allow-scripts]` | M12 | Bake a self-contained interactive web page from the scene's sliders |

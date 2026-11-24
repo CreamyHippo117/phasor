@@ -58,7 +58,7 @@ def test_a_version_8_document_migrates_to_9_and_reads_the_same():
            "objects": [{"id": "d", "type": "dot", "params": {"r": 0.2},
                         "style": {"color": "highlight"}, "always": []}]}  # fmt: skip
     doc = Document.model_validate(migrate(json.loads(json.dumps(raw))))
-    assert doc.schema_version == SCHEMA_VERSION == 9
+    assert doc.schema_version == SCHEMA_VERSION == 10
     assert doc.meta.background is None and doc.objects[0].style == {"color": "highlight"}
     old = Engine(doc, passes=None).state_at(0)
     assert old.background == load_theme(doc.meta.theme).background

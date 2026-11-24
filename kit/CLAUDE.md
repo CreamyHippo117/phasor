@@ -18,6 +18,7 @@ person's and are never touched.
 {phasor} lint scenes/NAME.py --aesthetic          # problems, with fixes; exit 1 on errors
 {phasor} storyboard scenes/NAME.py --marks -o out/NAME.storyboard.png
 {phasor} inspect scenes/NAME.py --t 3.5 --detail brief   # what is on screen at t = 3.5 s
+{phasor} preview scenes/NAME.py -o out/NAME.draft.mp4   # quick draft: small, 15 fps, plain
 {phasor} render scenes/NAME.py --preset preview -o out/NAME.mp4
 ```
 

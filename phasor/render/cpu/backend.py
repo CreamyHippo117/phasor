@@ -141,15 +141,9 @@ def _kind(path: str) -> str | None:
 
 def cache_dir() -> Path:
     """Where built kernels live: ``PHASOR_CPU_CACHE``, else the user's cache folder."""
-    if os.environ.get("PHASOR_CPU_CACHE"):
-        return Path(os.environ["PHASOR_CPU_CACHE"])
-    if sys.platform == "win32":
-        base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
-    elif sys.platform == "darwin":
-        base = Path.home() / "Library" / "Caches"
-    else:
-        base = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
-    return base / "phasor" / "cpu_kernels"
+    from phasor.core.files import user_cache
+
+    return user_cache("cpu_kernels", "PHASOR_CPU_CACHE")
 
 
 def unsupported_compilers() -> list[str]:
