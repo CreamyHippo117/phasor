@@ -21,6 +21,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from phasor.core.proc import NO_WINDOW
+from phasor.render.glcontext import glsl
 
 # Encoder probe order, SPEC "GPU and CUDA plan / Encoding".
 # H.264 before HEVC: it plays everywhere (owner, 2026-11-20).
@@ -190,17 +191,17 @@ def check_nvidia_smi() -> Check:
 # ------------------------------------------------------------------ OpenGL
 
 _TRI_VS = """
-#version 430
+#version GLSL_VERSION
 in vec2 in_pos;
 void main() { gl_Position = vec4(in_pos, 0.0, 1.0); }
 """
 _TRI_FS = """
-#version 430
+#version GLSL_VERSION
 out vec4 color;
 void main() { color = vec4(1.0, 0.5, 0.25, 1.0); }
 """
 _ID_FS = """
-#version 430
+#version GLSL_VERSION
 layout(location = 0) out uint obj_id;
 uniform uint u_id;
 void main() { obj_id = u_id; }
@@ -235,7 +236,7 @@ def _exercise_opengl(ctx) -> Check:
     vbo = ctx.buffer(tri.tobytes())
 
     # Color pass analogue: RGBA16F target (SPEC contract 4).
-    prog = ctx.program(vertex_shader=_TRI_VS, fragment_shader=_TRI_FS)
+    prog = ctx.program(vertex_shader=glsl(_TRI_VS), fragment_shader=glsl(_TRI_FS))
     vao = ctx.vertex_array(prog, [(vbo, "2f", "in_pos")])
     color = ctx.texture((size, size), 4, dtype="f2")
     fbo = ctx.framebuffer(color_attachments=[color])
@@ -247,7 +248,7 @@ def _exercise_opengl(ctx) -> Check:
     corner_ok = np.allclose(px[0, 0], 0)
 
     # ID pass analogue: R32UI target + depth, read back and counted (SPEC "3D spatial awareness").
-    id_prog = ctx.program(vertex_shader=_TRI_VS, fragment_shader=_ID_FS)
+    id_prog = ctx.program(vertex_shader=glsl(_TRI_VS), fragment_shader=glsl(_ID_FS))
     id_prog["u_id"].value = 7
     id_vao = ctx.vertex_array(id_prog, [(vbo, "2f", "in_pos")])
     id_tex = ctx.texture((size, size), 1, dtype="u4")
@@ -359,7 +360,7 @@ def pick_encoder(pyav: Check | None, ffmpeg: Check | None) -> str | None:
 
 
 def compute_tier(checks: list[Check]) -> str:
-    """A: CUDA kernels run and GL 4.3 works. B: GL 4.3 only. C: neither usable."""
+    """A: CUDA kernels run and GL 4.1 works. B: GL 4.1 only. C: neither usable."""
     by = {c.name: c for c in checks}
     gl = by.get("opengl")
     k = by.get("rawkernel")

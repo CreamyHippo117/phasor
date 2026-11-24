@@ -16,6 +16,7 @@ from phasor.render.doctor import (
     pick_encoder,
     run_doctor,
 )
+from phasor.render.glcontext import REQUIRED_GL
 
 # ---------------------------------------------------------------- pure logic
 
@@ -81,7 +82,7 @@ def test_run_doctor_never_raises():
 def test_opengl_triangle_and_id_pass():
     c = check_opengl()
     assert c.ok, c.detail
-    assert c.data["version_code"] >= 430
+    assert c.data["version_code"] >= REQUIRED_GL
     assert c.data["triangle_ok"] and c.data["id_pass_ok"]
 
 
@@ -121,3 +122,12 @@ def test_cli_doctor_require_tier(capsys):
 def test_planned_commands_say_which_milestone(command, capsys):
     assert main([command]) == EXIT_NOT_IMPLEMENTED
     assert f"Milestone {PLANNED[command][0]}" in capsys.readouterr().err
+
+
+def test_shader_version_comes_from_required_gl():
+    from phasor.render import doctor, passes
+    from phasor.render.glcontext import glsl
+
+    for src in (doctor._TRI_VS, doctor._ID_FS, passes._VS, passes._VS_LIT, *passes._FS.values()):
+        out = glsl(src)
+        assert f"#version {REQUIRED_GL}" in out and "GLSL_VERSION" not in out

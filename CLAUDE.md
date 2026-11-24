@@ -31,6 +31,10 @@ compounding. If this file and SPEC.md disagree, stop and ask.
   the owner's PC must run.
 - Render speed: `GPU_SPEED.md` (steps 1-4 done, workers included); resume at its "Next
   session"; measure with wall clock before and after each step.
+- OpenGL floor (owner, 2026-11-24): 4.1 core, `REQUIRED_GL = 410` in `render/glcontext.py`
+  (shaders say `#version GLSL_VERSION`, filled by `glsl()`), so macOS can render. UNTESTED on
+  macOS, Windows and CUDA; only simulated with a Mesa version cap on Linux. Use no 4.2+
+  feature (compute, SSBO, image load/store, `layout(binding)`, uniform locations).
 - One milestone per branch. No work on milestone N+1 until N's exit demo and tests pass.
 - Before declaring a milestone done, run the `phasor-milestone-gate` skill.
 

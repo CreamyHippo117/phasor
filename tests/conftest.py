@@ -35,7 +35,7 @@ def cuda_available() -> bool:
 
 
 def pytest_collection_modifyitems(config, items):
-    skip_gl = pytest.mark.skip(reason="no OpenGL 4.3 context on this machine")
+    skip_gl = pytest.mark.skip(reason="no OpenGL 4.1 context on this machine")
     skip_gpu = pytest.mark.skip(reason="no CUDA device on this machine")
     for item in items:
         if "gl" in item.keywords and not gl_available():

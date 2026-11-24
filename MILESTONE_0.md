@@ -11,7 +11,7 @@ Status: **built and green on Linux; exit demo (doctor on clean Windows + CUDA) N
 - `phasor doctor [--json] [--require A|B|C]`. Every probe exercises the capability:
   - CUDA device, VRAM, compute capability (CuPy); `nvidia-smi` fallback;
   - NVRTC version; compiles and runs a `RawKernel`, checked against NumPy;
-  - standalone GL ≥ 4.3 context; renders a triangle into an RGBA16F target and an
+  - standalone GL ≥ 4.3 (lowered to 4.1 on 2026-11-24) context; renders a triangle into an RGBA16F target and an
     R32UI + depth id target, read back and counted with `np.bincount`;
   - encoders: PyAV `hevc_nvenc` / `h264_nvenc` / `libx264` and system ffmpeg, each by
     encoding real frames; picks one in the SPEC probe order;
@@ -50,7 +50,7 @@ uv run phasor doctor --require A
 Checked against installed current versions: ModernGL 5.13, PyAV 19.0, CuPy 14.2,
 pydantic 2.14, import-linter 2.16, kiwisolver.
 
-- ModernGL: `create_context(standalone=True, require=430, backend="egl")` works headless;
+- ModernGL: `create_context(standalone=True, require=430 (now 410), backend="egl")` works headless;
   `dtype="u4"` (R32UI) textures render and read back. Matches the spec.
 - CuPy: `RawKernel(code, name)`, `cuda.nvrtc.getVersion()`, `MemoryPool.free_all_blocks()`
   match the spec. Kernel execution not run (no GPU).

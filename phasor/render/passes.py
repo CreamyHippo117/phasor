@@ -24,7 +24,7 @@ from phasor.core import text as text_metrics
 from phasor.core.state import ObjectState, SceneState
 from phasor.core.timing import stage
 from phasor.layout.geometry import occludes
-from phasor.render.glcontext import on_gl_thread, shared_context
+from phasor.render.glcontext import glsl, on_gl_thread, shared_context
 
 DEPTH_BIAS = 1e-5  # NDC depth per draw-order step
 MAX_TEXT_PX = 512
@@ -32,7 +32,7 @@ MAX_FIELD_PX = 8192  # largest side of a kernel-drawn quad's texture
 FIELD_CACHE = 16  # kernel results kept, keyed by object parameters and view
 
 _VS = """
-#version 430
+#version GLSL_VERSION
 uniform mat4 u_vp;
 uniform float u_bias;
 uniform float u_zoom;
@@ -59,7 +59,7 @@ void main() {
 """
 _FS = {
     "color": """
-#version 430
+#version GLSL_VERSION
 uniform vec4 u_color;
 uniform float u_glow;
 #ifdef TEXTURED
@@ -100,7 +100,7 @@ void main() {
 }
 """,
     "id": """
-#version 430
+#version GLSL_VERSION
 uniform uint u_id;
 #ifdef TEXTURED
 uniform sampler2D u_tex;
@@ -115,7 +115,7 @@ void main() {
 }
 """,
     "solo": """
-#version 430
+#version GLSL_VERSION
 #ifdef TEXTURED
 uniform sampler2D u_tex;
 in vec2 v_uv;
@@ -136,7 +136,7 @@ void main() {
 # background. Materials: 0 solid, 1 glass (brighter at grazing angles), 2 wire (a grid
 # drawn along the surface coordinates), 3 emissive (unlit, glowing).
 _VS_LIT = """
-#version 430
+#version GLSL_VERSION
 uniform mat4 u_vp;
 uniform float u_bias;
 uniform float u_zoom;
@@ -156,7 +156,7 @@ void main() {
 }
 """
 _FS_LIT = """
-#version 430
+#version GLSL_VERSION
 uniform vec3 u_eye;
 uniform vec3 u_light_dir[3];
 uniform float u_light[3];
@@ -366,10 +366,13 @@ class GLRenderer:
     def _program(self, pass_: str, kind: str):
         key = (pass_, kind)
         if key == ("color", "lit") and key not in self._programs:
-            self._programs[key] = self.ctx.program(vertex_shader=_VS_LIT, fragment_shader=_FS_LIT)
+            self._programs[key] = self.ctx.program(
+                vertex_shader=glsl(_VS_LIT), fragment_shader=glsl(_FS_LIT)
+            )
         if key not in self._programs:
             self._programs[key] = self.ctx.program(
-                vertex_shader=_define(_VS, kind), fragment_shader=_define(_FS[pass_], kind)
+                vertex_shader=glsl(_define(_VS, kind)),
+                fragment_shader=glsl(_define(_FS[pass_], kind)),
             )
         return self._programs[key]
 

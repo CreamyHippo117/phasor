@@ -134,6 +134,10 @@ loaded by another agent's tests, 2x2 was 7% faster (25.9 against 28.0 s). Not ad
 
 ## Deviations from SPEC (SPEC updated)
 
+- OpenGL floor lowered from 4.3 to 4.1 (owner, 2026-11-24, from the 14.4 findings): SPEC tier
+  B and the doctor now say 4.1; `REQUIRED_GL = 410`. Nothing in the renderer needed 4.3.
+  UNTESTED on macOS, Windows and CUDA (simulated with a Mesa 4.1 cap on Linux only).
+
 1. SPEC's "one kernel path" is kept: the CPU backend is a second *compiler* for the same
    kernel strings, not a second implementation. SPEC's tier B row and an as-built note in
    "GPU and CUDA plan" are updated.

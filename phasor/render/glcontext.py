@@ -24,11 +24,19 @@ if TYPE_CHECKING:
     import moderngl
 
 T = TypeVar("T")
-REQUIRED_GL = 430  # OpenGL 4.3: compute shaders, SSBOs, integer textures
+# OpenGL 4.1 core (macOS stops there). The renderer uses vertex/fragment shaders, uniforms,
+# integer color targets and blits only; nothing from 4.2+ (no compute, SSBOs, image
+# load/store, layout(binding), uniform locations). The one place the number lives.
+REQUIRED_GL = 410
+
+
+def glsl(src: str) -> str:
+    """Give a shader's ``#version GLSL_VERSION`` line the version matching ``REQUIRED_GL``."""
+    return src.replace("#version GLSL_VERSION", f"#version {REQUIRED_GL}", 1)
 
 
 class GLUnavailableError(RuntimeError):
-    """No OpenGL 4.3 context could be created on this machine."""
+    """No OpenGL 4.1 context could be created on this machine."""
 
 
 def _backends() -> list[str | None]:
@@ -40,7 +48,7 @@ def _backends() -> list[str | None]:
 
 
 def create_standalone_context(require: int = REQUIRED_GL) -> moderngl.Context:
-    """Create an offscreen context with at least GL ``require`` (e.g. 430).
+    """Create an offscreen context with at least GL ``require`` (e.g. 410).
 
     Raises GLUnavailableError listing every backend that was tried.
     """

@@ -130,5 +130,5 @@ suite passes with OpenGL on the RTX card (1,178 passed). `phasor bench` saved. S
 - Hairline strokes under one pixel wide vanish in small pictures (thumbnails). Full-size
   frames are fine. Fixing it changes every reference picture: waiting for the owner.
 - A dense 3D *box* of arrows (preset `dense` with depth) is cluttered; a plane is fine.
-- On macOS the renderer cannot start: it needs OpenGL 4.3 and macOS stops at 4.1 (see the
-  Mac discussion of 2026-11-20 in the session notes; no decision yet).
+- On macOS the renderer cannot start: it needed OpenGL 4.3 and macOS stops at 4.1. The requirement is now 4.1
+  (owner, 2026-11-24). UNTESTED on macOS: only simulated with a Mesa 4.1 version cap on Linux.

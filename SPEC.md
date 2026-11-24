@@ -297,7 +297,7 @@ Two renderers share one scene: a fast preview for iteration and a CUDA-accelerat
 **Final renderer**
 
 - Compute: CuPy RawKernels for per-pixel math (domain coloring, fractals, PDE fields, wave simulation). CPU fallback via NumPy for machines without CUDA, slower but correct.
-- Raster: ModernGL (OpenGL 4.3) for geometry, surfaces, volumes, text; GPU interop with CUDA buffers where possible to avoid round-trips.
+- Raster: ModernGL (OpenGL 4.1 core) for geometry, surfaces, volumes, text; GPU interop with CUDA buffers where possible to avoid round-trips.
 - Vector: curves and text tessellated on GPU with analytic anti-aliasing; LaTeX via a local TeX install or MathJax-to-SVG.
 - Encode: PyAV/FFmpeg with NVENC when available; ProRes/PNG sequence for editing.
 - Motion blur via sub-frame accumulation; adaptive supersampling on high-detail regions.
@@ -361,7 +361,7 @@ CUDA does the math, OpenGL draws the picture, and one narrow bridge connects the
 | Tier | Hardware | Behavior |
 | --- | --- | --- |
 | A | NVIDIA with CUDA 12 | Everything |
-| B | Any GPU with OpenGL 4.3, no CUDA | Kernels run on every CPU core through the CPU backend when g++ or clang++ is found (as built, Milestone 14), else on the NumPy references; final renders allowed, warned as slower than tier A |
+| B | Any GPU with OpenGL 4.1 or newer, no CUDA | Kernels run on every CPU core through the CPU backend when g++ or clang++ is found (as built, Milestone 14), else on the NumPy references; final renders allowed, warned as slower than tier A |
 | C | No usable GPU | Timeline and lint work; the inspector runs in analytic mode (exact geometry, no occlusion, marked `"occlusion": "analytic"`); no rendering |
 
 **Testing and benchmarks**
@@ -593,7 +593,7 @@ Everything runs natively on Windows 10/11 with an NVIDIA GPU; no WSL, no C++ too
 | --- | --- | --- |
 | Language | Python 3.11+ | Type hints throughout; `uv` for env and deps |
 | GPU compute | CuPy (RawKernel) only | CUDA 12.x wheels; NumPy fallback |
-| Graphics | ModernGL (+ moderngl-window) | OpenGL 4.3; consider wgpu-py later for WebGPU export |
+| Graphics | ModernGL (+ moderngl-window) | OpenGL 4.1 core; consider wgpu-py later for WebGPU export |
 | Encode | PyAV (FFmpeg) | NVENC when present |
 | Symbolic | SymPy | Lambdify to CuPy/NumPy |
 | Text/LaTeX | MiKTeX or TeX Live, or MathJax to SVG | Glyphs cached as GPU textures/curves |
@@ -685,7 +685,7 @@ Build the AI-visible core first, then beauty, then breadth. Each milestone ends 
 
 | # | Milestone | Scope | Exit demo | Model |
 | --- | --- | --- | --- | --- |
-| 0 | Skeleton | Repo, `uv` env, CLI stub, `import-linter`, CI, `CLAUDE.md`, `phasor doctor` (CUDA, NVRTC, OpenGL 4.3, encoders) | `phasor doctor` passes on clean Windows | Strong |
+| 0 | Skeleton | Repo, `uv` env, CLI stub, `import-linter`, CI, `CLAUDE.md`, `phasor doctor` (CUDA, NVRTC, OpenGL 4.1, encoders) | `phasor doctor` passes on clean Windows | Strong |
 | 1 | Core + inspector | Schema, Engine, patches, overrides file, pure timeline, object contract, 2D primitives, `color` + `id` + `solo` passes, `inspect`, preview stills | Moving labeled dot; `where` and `visible` correct at any t | Strong |
 | 2 | Layout + linter | kiwisolver stage, label placer with hysteresis, layout bake, lint rules, storyboard with marks | A deliberately cluttered scene is flagged, then auto-fixed | Strong |
 | 3 | GPU beauty | Kernel registry, `CopyBridge`, tiling, domain coloring, Mandelbrot/Julia, HDR, bloom, tone map, encode chain, first theme, style roles | Domain-colored 1/(z²+1) with a glowing contour at 4K | Strong for kernels and bridge, then Sonnet |
@@ -727,7 +727,7 @@ Do Milestone 0 only:
    in short form.
 3. Implement `phasor doctor`: report Python, GPU model and VRAM, CUDA and
    NVRTC availability, compile and run one trivial CuPy RawKernel, create a
-   standalone ModernGL 4.3 context, render one offscreen triangle, and probe
+   standalone ModernGL 4.1 context, render one offscreen triangle, and probe
    encoders (PyAV nvenc, system ffmpeg, libx264). Print a hardware tier A/B/C.
 4. Before using any library API you are not certain of (CuPy RawKernel,
    ModernGL integer textures, PyAV codecs, WhisperX, MCP SDK), check its
