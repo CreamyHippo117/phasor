@@ -67,7 +67,8 @@ if __name__ == "__main__":
     for name in ("start", "pull", "faded", "wide", "glide", "arrive", "dive", "rise", "close"):
         t = e.document.timeline.markers[name]
         st = e.state_at(t)
+        center = st.values["camera.center"]
         print(f"{name:>6} t={t:5.2f}  c = {st['julia'].params.c}  "
-              f"zoom {st['mandel'].params.zoom:.2f}  center {st.values['camera.center']}")  # fmt: skip
+              f"zoom {st['mandel'].params.zoom:.2f}  center {center}")  # fmt: skip
     for issue in e.lint(strict=True):
         print("lint:", issue)
