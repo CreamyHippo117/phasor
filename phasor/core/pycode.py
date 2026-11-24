@@ -19,7 +19,12 @@ from phasor.core.schema import Document, ExprSpec, MarkerRef
 
 # class module -> how the generated script reaches it
 # from phasor import Dot, Image, Video, ...
-_TOP = {"phasor.domains.basic", "phasor.domains.media", "phasor.domains.video"}
+_TOP = {
+    "phasor.domains.basic",
+    "phasor.domains.media",
+    "phasor.domains.video",
+    "phasor.domains.midi",
+}
 _ALIAS = {
     "phasor.domains.cx": "cx",
     "phasor.domains.acoustics": "ac",

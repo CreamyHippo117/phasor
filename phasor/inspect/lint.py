@@ -32,6 +32,7 @@ returns one issue per problem with the times it was seen. Rules in this mileston
 | clip_ended | warning | a clip past its end (``loop`` off) or trimmed past it: last frame holds |
 | too_many_clips | warning | more clips playing at once than decoders are kept open: slow    |
 | narration_drift | warning | a hand-placed marker near a sentence of a recording but not on it |
+| notes_limit | warning | notes not heard: past the scene's end or the voices, or at no marker |
 
 ``missing_extra`` also warns when a type draws without its extra, plainer (``Code`` without
 pygments is drawn in one color).
@@ -391,7 +392,7 @@ def control_rules(c: Compiled) -> list[Issue]:
     return out
 
 
-DRAWLESS = ("value", "sound", "variable", "flow_note")  # semantic kinds of types that draw nothing
+DRAWLESS = ("value", "sound", "variable", "flow_note", "notes")  # kinds that may draw nothing
 
 
 def file_rules(c: Compiled) -> list[Issue]:
@@ -445,6 +446,8 @@ def _sound_rules(c: Compiled) -> list[Issue]:
         from phasor.time.compile import file_values
 
         for o in sounds:
+            if o.type != "sound":  # a Notes reads its .mid itself (Milestone 23)
+                continue
             names = [v for v in file_values(c, f"{o.id}.path")
                      if not v.lower().endswith((".wav", ".wave"))]  # fmt: skip
             if not names:
@@ -467,6 +470,55 @@ def _sound_rules(c: Compiled) -> list[Issue]:
                     ids=(o.id,), path=path, times=(0.0,),
                     fix_hint=f"set {path} once (clear its track), or use one clip per start",
                 ))  # fmt: skip
+    return out
+
+
+def notes_rules(c: Compiled, state_at: Callable[[float], SceneState]) -> list[Issue]:
+    """``notes_limit``: notes (``Notes``, Milestone 23) that are not heard as written: notes
+    starting at or after the scene's end (the mix stops there), notes the synthesizer drops
+    because ``MAX_VOICES`` already sound, and a ``start`` naming a marker the scene does not
+    have (then nothing is heard). Each object says what it holds (``note_report``); no
+    threshold: each is a hard limit of the mix. A file that cannot be read is ``bad_file``,
+    one read only in part ``truncated`` (from the semantics, like other files)."""
+    reporting = [o for o in c.objects if hasattr(o.impl, "note_report")]
+    if not reporting:
+        return []
+    try:
+        state = state_at(0.0)
+    except DocumentError:
+        return []
+    markers = c.doc.timeline.markers
+    end = c.duration
+    out: list[Issue] = []
+    for o in reporting:
+        r = o.impl.note_report(state)
+        at = r["start"]
+        if isinstance(at, str):
+            if at not in markers:
+                out.append(Issue(
+                    "notes_limit", f"{o.id}: its notes start at the marker {at!r}, which the "
+                    "scene does not have; they are not heard", severity="warning",
+                    ids=(o.id,), path=f"{o.id}.start", times=(0.0,),
+                    fix_hint=f"add the marker {at!r}, or set {o.id}.start to seconds or "
+                    "another marker"))  # fmt: skip
+                continue
+            at = markers[at]
+        late = [float(at) + t for t in r["starts"] if float(at) + t >= end]
+        if late:
+            out.append(Issue(
+                "notes_limit", f"{o.id}: {len(late)} of its {len(r['starts'])} notes start "
+                f"at or after the scene's end ({end:g} s), from {min(late):g} s; they are not "
+                "heard", severity="warning", ids=(o.id,), times=(round(end, 6),),
+                fix_hint="make the scene longer (a later marker), start the notes earlier, "
+                "or raise tempo_scale"))  # fmt: skip
+        if r["dropped"]:
+            when = float(at) + r["dropped_at"]
+            out.append(Issue(
+                "notes_limit", f"{o.id}: {r['dropped']} notes are dropped, from {when:g} s: "
+                f"the synthesizer plays at most {r['voices']} notes at once (with their "
+                "release)", severity="warning", ids=(o.id,), times=(round(when, 6),),
+                fix_hint="fewer or shorter notes at once, or split them over two Notes "
+                "objects"))  # fmt: skip
     return out
 
 
@@ -960,7 +1012,9 @@ def run(
                      "wav": "save the file again as PCM WAV (16-bit, 48 kHz)",
                      "wave": "save the file again as PCM WAV (16-bit, 48 kHz)",
                      **dict.fromkeys(files.VIDEO_EXT, "export the clip again as H.264 mp4"),
-                     **dict.fromkeys(files.PICTURE_EXT, "save the picture again as PNG")}.get(
+                     **dict.fromkeys(files.PICTURE_EXT, "save the picture again as PNG"),
+                     **dict.fromkeys(("mid", "midi", "smf"), "export it again as a Standard "
+                                     "MIDI File (format 0 or 1)")}.get(
                 ext, "save the file again as UTF-8 text")  # fmt: skip
             if info.get("sound") and ext in {"mp4", "m4a", "m4v", "mov", "mp3", "aac", "ogg",
                                              "oga", "opus", "flac", "webm", "mkv"}:  # fmt: skip

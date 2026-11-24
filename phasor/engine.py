@@ -599,11 +599,63 @@ class Engine:
             for o in state.objects
             if (c := getattr(o.impl, "audio_clip", lambda s: None)(state)) is not None
         ]
+        clips = self._at_markers(clips, problems)
         n = self.document.narration
         if n is None and not clips:
             return None
         return mix_track(n, self.base_dir, self.duration, clips, problems, start, end,
                          resolve=readable_wav)  # fmt: skip
+
+    def _at_markers(self, clips: list, problems: list[str] | None) -> list:
+        """Clips that start at a marker (``Clip.marker``: ``Notes(start="beat")``) placed at
+        the marker's time; one whose marker the scene does not have is left out and said."""
+        import dataclasses
+
+        markers = self.document.timeline.markers
+        out = []
+        for c in clips:
+            if getattr(c, "marker", None) is None:
+                out.append(c)
+            elif c.marker in markers:
+                out.append(dataclasses.replace(c, start=float(markers[c.marker]) + c.start,
+                                               marker=None))  # fmt: skip
+            elif problems is not None:
+                problems.append(f"{c.path!r} left out: it starts at the marker {c.marker!r}, "
+                                "which the scene does not have")  # fmt: skip
+        return out
+
+    def export_midi(self, path: str | Path) -> dict[str, Any]:
+        """Write every ``Notes`` of the scene (Milestone 23) to ``path`` as a Standard MIDI
+        File (format 1: a conductor track at 120 beats a minute, then one track per object,
+        named by its id): every note as the synthesizer plays it (transposed, scaled,
+        filtered, repeated) at its time in the scene (a marker ``start`` resolved; an object
+        whose marker the scene lacks is left out). Notes past the scene's end are written
+        too: the file is the score (lint ``notes_limit`` says which are not heard). Returns
+        ``path``, ``tracks``, ``notes`` and ``seconds`` (the last note's end)."""
+        from phasor.domains import midi_math
+
+        state = self.state_at(0.0)
+        markers = self.document.timeline.markers
+        tracks, count, last = [], 0, 0.0
+        for o in state.objects:
+            get = getattr(o.impl, "midi_notes", None)
+            if get is None:
+                continue
+            name, notes, at = get(state)
+            if isinstance(at, str):
+                if at not in markers:
+                    continue
+                at = markers[at]
+            shifted = [n._replace(start=float(at) + n.start) for n in notes]
+            tracks.append((name, shifted))
+            count += len(shifted)
+            last = max([last, *(n.start + n.length for n in shifted)])
+        data = midi_math.write_smf(tracks, title=self.document.meta.title)
+        out = Path(path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(data)
+        return {"path": str(out), "tracks": len(tracks), "notes": count,
+                "seconds": round(last, 6)}  # fmt: skip
 
     def snap_to_narration(self, *, dry_run: bool = False,
                           anchors: dict[str, int] | None = None, allow_short: bool = False,
@@ -733,6 +785,8 @@ class Engine:
             snap.lint[step] = (*snap.orphans, *self._bake(snap).issues,
                                *lint_rules.control_rules(snap.compiled),
                                *lint_rules.file_rules(snap.compiled),
+                               *lint_rules.notes_rules(snap.compiled,
+                                                       lambda t: self._state(snap, t)),
                                *lint_rules.narration_rules(
                                    snap.compiled, audio_info,
                                    lambda: self._snap_plan(snap.compiled)[0]),

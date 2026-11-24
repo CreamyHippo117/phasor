@@ -1,6 +1,9 @@
 """Make the small media files the footage examples use (Milestone 24), so they can be
 checked and made again: ``clip.mp4`` (2 s of drifting light, 320 x 180, H.264) and
-``frames/orbit_00.png`` ... ``orbit_11.png`` (a planet going round, 12 pictures).
+``frames/orbit_00.png`` ... ``orbit_11.png`` (a planet going round, 12 pictures), and
+``motif.mid`` (Milestone 23: a two-bar phrase of tubular bells over a drum kit, written by
+phasor's own MIDI writer; ``uv run python examples/assets/make_assets.py motif`` makes only
+it).
 
 Run:  uv run python examples/assets/make_assets.py      (needs the ``encode`` extra)
 """
@@ -53,8 +56,24 @@ def _frames(folder: Path, n: int = 12, w: int = 192, h: int = 108) -> None:
         PILImage.fromarray(img).save(folder / f"orbit_{i:02d}.png", optimize=True)
 
 
+def _motif(path: Path) -> None:
+    """Tubular bells (program 14) rising and falling over a kick, snare and hi-hat."""
+    from phasor.domains.midi_math import Note, write_smf
+
+    bells = [Note(p, 0.3 * i, 0.5, 96 - 6 * (i % 4), 0, 14)
+             for i, p in enumerate((72, 76, 79, 84, 79, 76, 72, 67))]  # fmt: skip
+    kit = [Note(36 if i % 4 == 0 else 38 if i % 4 == 2 else 42, 0.3 * i, 0.1,
+                110 if i % 2 == 0 else 70, 9) for i in range(8)]  # fmt: skip
+    path.write_bytes(write_smf([("bells", bells), ("drums", kit)], title="motif"))
+
+
 if __name__ == "__main__":
+    import sys
+
+    _motif(HERE / "motif.mid")
+    if sys.argv[1:] == ["motif"]:
+        raise SystemExit
     _clip(HERE / "clip.mp4")
     _frames(HERE / "frames")
-    for p in [HERE / "clip.mp4", *sorted((HERE / "frames").glob("*.png"))]:
+    for p in [HERE / "motif.mid", HERE / "clip.mp4", *sorted((HERE / "frames").glob("*.png"))]:
         print(p.relative_to(HERE), p.stat().st_size, "bytes")

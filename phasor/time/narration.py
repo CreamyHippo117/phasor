@@ -501,12 +501,15 @@ class Clip:
     """A sound clip to mix in (``media.Sound``): a file in the scene's folder (``path``), from
     ``start`` seconds, ``gain`` dB louder. ``source``: samples already opened (a type that
     makes its own sound); None reads the file at ``path`` (a WAV, or through the mix's
-    ``resolve``: another format decoded to a WAV)."""
+    ``resolve``: another format decoded to a WAV). ``marker``: a marker the clip starts at,
+    ``start`` seconds after it (``Engine.audio_track`` resolves it before mixing; the mix
+    itself reads only ``start``)."""
 
     path: str
     start: float
     gain: float = 0.0
     source: Source | None = None
+    marker: str | None = None
 
 
 Resolve = Callable[[Path], Path]  # a file in the scene's folder -> a PCM WAV of its sound
