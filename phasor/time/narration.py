@@ -261,7 +261,7 @@ def read_wav(path: str | Path) -> tuple[np.ndarray, int]:
     """Mono int16 samples and the sample rate (narration: any rate). Stereo is mixed down.
     ``ValueError`` for a file that is not 16-bit PCM WAV (``parse_wav`` says why)."""
     info = parse_wav(path)
-    if info.width != 2:
+    if info.width != 2 or info.floating:
         raise ValueError(f"{path}: only 16-bit WAV is supported")
     with open(path, "rb") as f:
         f.seek(info.offset)
@@ -298,14 +298,16 @@ class WavInfo:
     width: int  # bytes per sample: 1 (unsigned), 2, 3 or 4 (signed PCM)
     frames: int  # the frames the file really holds (never more than its header says)
     offset: int = 0  # where the sample data starts in the file
+    floating: bool = False  # IEEE float samples (format 3), 4 or 8 bytes, in -1..1 (M22)
 
     @property
     def seconds(self) -> float:
         return self.frames / self.rate
 
 
-_WAVE_PCM, _WAVE_EXTENSIBLE = 1, 0xFFFE
+_WAVE_PCM, _WAVE_FLOAT, _WAVE_EXTENSIBLE = 1, 3, 0xFFFE
 _PCM_GUID = b"\x01\x00\x00\x00\x00\x00\x10\x00\x80\x00\x00\xaa\x008\x9bq"
+_FLOAT_GUID = b"\x03" + _PCM_GUID[1:]
 _MAX_CHUNKS = 1024  # chunks walked before giving up on finding the data
 
 
@@ -352,35 +354,42 @@ def _parse_wav(path: Path) -> WavInfo:
             elif name == b"data":
                 if fmt is None:
                     raise ValueError("a data chunk before the fmt chunk")
-                rate, channels, width = fmt
+                rate, channels, width, floating = fmt
                 held = size - body if n == 0xFFFFFFFF else min(n, size - body)
                 if known and body + held > riff + 8 + 1:  # (+1: a pad byte miscounted)
                     raise ValueError(f"its RIFF header says the file is {riff + 8} bytes, but "
                                      f"its data runs to byte {body + held}")  # fmt: skip
-                return WavInfo(rate, channels, width, held // (width * channels), body)
+                return WavInfo(rate, channels, width, held // (width * channels), body,
+                               floating)  # fmt: skip
             pos = body + n + (n & 1)  # chunks are padded to an even size
         raise ValueError("no fmt chunk and data chunk" if fmt is None else "no data chunk")
 
 
-def _fmt_chunk(raw: bytes) -> tuple[int, int, int]:
-    """(rate, channels, bytes per sample) of a ``fmt `` chunk; PCM only."""
+def _fmt_chunk(raw: bytes) -> tuple[int, int, int, bool]:
+    """(rate, channels, bytes per sample, float) of a ``fmt `` chunk: PCM, or IEEE float
+    (32 or 64-bit; plain or extensible)."""
     import struct
 
     tag, channels, rate, _, _, bits = struct.unpack("<HHIIHH", raw[:16])
     if tag == _WAVE_EXTENSIBLE:
-        if len(raw) < 40 or raw[24:40] != _PCM_GUID:
-            raise ValueError("an extensible format that is not PCM")
-    elif tag != _WAVE_PCM:
-        raise ValueError(f"format {tag} (compressed): only PCM is read")
+        if len(raw) >= 40 and raw[24:40] == _FLOAT_GUID:
+            tag = _WAVE_FLOAT
+        elif len(raw) < 40 or raw[24:40] != _PCM_GUID:
+            raise ValueError("an extensible format that is neither PCM nor float")
+    elif tag not in (_WAVE_PCM, _WAVE_FLOAT):
+        raise ValueError(f"format {tag} (compressed): only PCM and float are read")
     width = (bits + 7) // 8
     if not width or not channels or not rate:
         raise ValueError(f"{channels} channels of {bits}-bit samples at {rate} Hz")
-    return rate, channels, width
+    if tag == _WAVE_FLOAT and bits not in (32, 64):
+        raise ValueError(f"{bits}-bit float samples (32 or 64-bit float)")
+    return rate, channels, width, tag == _WAVE_FLOAT
 
 
 def wav_info(path: str | Path) -> WavInfo:
     """A WAV file's header (``parse_wav``), checked against the bounds above. ``ValueError``
-    (with the reason) for anything that is not PCM WAV phasor can mix: not a WAV, compressed,
+    (with the reason) for anything that is not PCM (or float, M22) WAV phasor can mix: not a
+    WAV, compressed,
     a lying header, a sample rate, channel count or sample width out of range."""
     try:
         info = parse_wav(path)
@@ -391,8 +400,9 @@ def wav_info(path: str | Path) -> WavInfo:
                          f"{SOUND_RATES[1]})")  # fmt: skip
     if not 1 <= info.channels <= MAX_CHANNELS:
         raise ValueError(f"{info.channels} channels (1 to {MAX_CHANNELS})")
-    if info.width not in (1, 2, 3, 4):
-        raise ValueError(f"{info.width * 8}-bit samples (8, 16, 24 or 32-bit PCM)")
+    if info.width not in ((4, 8) if info.floating else (1, 2, 3, 4)):
+        raise ValueError(f"{info.width * 8}-bit samples (8, 16, 24 or 32-bit PCM, or 32 or "
+                         "64-bit float)")  # fmt: skip
     return info
 
 
@@ -433,8 +443,11 @@ def _frames(path: str | Path, info: WavInfo, skip: int, count: int,
 
 
 def _pcm(raw: bytes, info: WavInfo) -> np.ndarray:
-    """Interleaved PCM bytes as mono float32 in -1..1 (channels averaged)."""
-    if info.width == 1:
+    """Interleaved PCM (or float) bytes as mono float32 in -1..1 (channels averaged)."""
+    if info.floating:
+        x = np.frombuffer(raw, "<f4" if info.width == 4 else "<f8").astype(np.float32)
+        x = np.clip(np.nan_to_num(x, nan=0.0, posinf=1.0, neginf=-1.0), -1.0, 1.0)
+    elif info.width == 1:
         x = (np.frombuffer(raw, np.uint8).astype(np.float32) - 128.0) / 128.0
     elif info.width == 2:
         x = np.frombuffer(raw, "<i2").astype(np.float32) / 32768.0
@@ -548,11 +561,25 @@ def mix_track(
     scene_end = max(float(duration), 0.0)
     lo = max(float(start), 0.0)
     ends = [t + len(s) / rate for t, (s, _) in spoken]
-    ends += [b.start + b.duration for b in cut if str(b.audio) in opened]
+    # a recording's blocks lengthen the track at most SPAN_MARGIN past the scene (a block
+    # placed far beyond it is a hostile or broken document: lint says so, nothing is made)
+    late = [b for b in cut if b.start > scene_end + SPAN_MARGIN]
+    if late and problems is not None:
+        problems.append(f"{len(late)} narration block(s) from {late[0].start:g} s left out: "
+                        f"past the scene's end ({scene_end:g} s) by more than "
+                        f"{SPAN_MARGIN:g} s")  # fmt: skip
+    cut = [b for b in cut if b not in late]
+    ends += [min(b.start + b.duration, scene_end + SPAN_MARGIN) for b in cut
+             if str(b.audio) in opened]  # fmt: skip
     hi = max([scene_end, *ends]) if end is None else end
     hi = min(max(float(hi), lo), lo + MAX_TRACK_SECONDS)
     g0 = round(lo * rate)  # the window's first sample, on the scene's sample grid
     size = max(0, int(np.ceil(hi * rate - 1e-6)) - g0)  # to the grid sample at or after hi
+    if size > MAX_TRACK_SAMPLES:  # a very high rate: the track is cut, never a memory blow-up
+        if problems is not None:
+            problems.append(f"the track is cut after {MAX_TRACK_SAMPLES / rate:g} s: at most "
+                            f"{MAX_TRACK_SAMPLES} samples are mixed")  # fmt: skip
+        size = MAX_TRACK_SAMPLES
     stop = min(g0 + size, int(np.ceil(scene_end * rate)))  # clips stop where the scene ends
     work = [0]
     plan = _plan_spans(cut, opened, rate, g0, g0 + size, work, problems)
@@ -615,6 +642,8 @@ def _plan_spans(blocks: Sequence[NarrationBlock], opened: Mapping[str, Source], 
     return plan
 
 
+SPAN_MARGIN = 60.0  # seconds a recording's blocks may run past the scene's end
+MAX_TRACK_SAMPLES = int(MAX_TRACK_SECONDS * SOUND_RATE)  # samples in one track (1 GiB int16)
 MAX_SOUNDS = 256  # sound clips mixed into one track; the rest are left out (lint sound_limit)
 MAX_MIX_SAMPLES = 1 << 30  # clip samples mixed in all (6 hours at 48 kHz: 2 full tracks)
 _OUT_CHUNK = 1 << 20  # track samples mixed at a time

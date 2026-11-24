@@ -6,7 +6,10 @@ decoded once with PyAV (the ``encode`` extra) into a 16-bit mono WAV in the user
 (``files.user_cache("audio")``, ``PHASOR_AUDIO_CACHE`` to move it), never into the scene's
 folder. The cached file is named by everything it depends on: the file's resolved path,
 modification time, size, a digest of its first and last 64 KiB, and the decoder's version; a
-changed file is a different name, so it is decoded again (contract 3). The mixer
+changed file is a different name, so it is decoded again (contract 3). An edit that keeps
+a file's size and modification time and changes only its middle is not seen (the digest
+covers the ends). The cache is pruned, oldest first, to ``MAX_CACHE_BYTES``; a file may not
+decode to more than ``MAX_GROWTH`` times its size (and 256 MiB). The mixer
 (``narration.mix_track``) and the narration builder read the cached WAV through
 ``readable_wav``, which the engine hands to the lower layers (``core``, ``style``, ``time``
 and ``layout`` import no video library).
@@ -21,6 +24,7 @@ then renamed).
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 import hashlib
 import os
@@ -83,9 +87,12 @@ def readable_wav(path: str | Path) -> Path:
     except OSError as e:
         raise ValueError(f"cannot be read ({e})") from None
     args = (str(path.resolve()), st.st_mtime_ns, st.st_size, str(cache_dir()))
-    done = _decoded(*args)
-    if not done.startswith("error:") and not Path(done).is_file():  # the cache was emptied
-        done = _decoded.__wrapped__(*args)
+    try:
+        done = _decoded(*args)
+        if not done.startswith("error:") and not Path(done).is_file():  # pruned meanwhile
+            done = _decoded.__wrapped__(*args)
+    except OSError as e:  # passing (and never cached): said, not raised as another type
+        raise ValueError(str(e)) from None
     if done.startswith("error:"):
         raise ValueError(done[6:])
     return Path(done)
@@ -97,17 +104,57 @@ _LOCK = threading.Lock()
 @functools.lru_cache(maxsize=64)
 def _decoded(path: str, mtime_ns: int, size: int, cache: str) -> str:
     """The cached WAV's path, or ``"error:<why>"`` (cached too: a bad file is not decoded
-    again until it changes)."""
+    again until it changes). A passing trouble (``OSError``: the cache folder, another
+    process holding a file) is raised, so it is never cached."""
     try:
         key = _key(Path(path), mtime_ns, size)
-        out = Path(cache) / f"{key}.wav"
+    except OSError:
+        raise
+    except Exception as e:
+        return "error:" + (str(e) or type(e).__name__)
+    folder = Path(cache)
+    for name in (f"{key}.wav", f"{key}.cut.wav"):
+        if (folder / name).is_file():
+            return str(folder / name)
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise OSError(f"the audio cache folder {folder} cannot be made ({e}); set "
+                      "PHASOR_AUDIO_CACHE to a folder you can write") from None  # fmt: skip
+    try:
         with _LOCK:
-            if out.is_file():
-                return str(out)
-            _decode(Path(path), out)
+            out = _decode(Path(path), folder, key)
+        _prune(folder, keep=out)
         return str(out)
+    except OSError:
+        raise
     except Exception as e:  # whatever a hostile file provokes: a reason, never a traceback
         return "error:" + (str(e) or type(e).__name__)
+
+
+MAX_CACHE_BYTES = 4 << 30  # the audio cache is pruned, oldest first, down to this
+MAX_GROWTH = 64  # a decoded file may be at most this many times its source (and 256 MiB)
+_MIN_DECODED = 256 << 20
+
+
+def _prune(folder: Path, keep: Path) -> None:
+    """Delete the least recently made decoded files until the cache holds at most
+    ``MAX_CACHE_BYTES`` (``keep`` stays); files in use elsewhere are skipped."""
+    try:
+        found = [(p.stat().st_mtime_ns, p.stat().st_size, p) for p in folder.glob("*.wav")]
+    except OSError:
+        return
+    total = sum(size for _, size, _ in found)
+    for _, size, p in sorted(found):
+        if total <= MAX_CACHE_BYTES:
+            break
+        if p == keep:
+            continue
+        try:
+            p.unlink()
+            total -= size
+        except OSError:  # open in another process (Windows): left for next time
+            pass
 
 
 def _key(path: Path, mtime_ns: int, size: int) -> str:
@@ -133,27 +180,41 @@ def _open_regular(path: Path):
     return f
 
 
-def _decode(path: Path, out: Path) -> None:
+def _decode(path: Path, folder: Path, key: str) -> Path:
+    """Decode ``path`` into ``folder`` as ``<key>.wav`` (``<key>.cut.wav`` when it was cut at
+    ``MAX_DECODE_SECONDS``) and return that path."""
     import av
 
-    out.parent.mkdir(parents=True, exist_ok=True)
-    tmp = out.with_name(f"{out.stem}.{os.getpid()}.{threading.get_ident()}.tmp")
+    tmp = folder / f"{key}.{os.getpid()}.{threading.get_ident()}.tmp"
     try:
         with _open_regular(path) as f:
-            if os.fstat(f.fileno()).st_size > MAX_DECODE_BYTES:
+            size = os.fstat(f.fileno()).st_size
+            if size > MAX_DECODE_BYTES:
                 raise ValueError(f"it is larger than {MAX_DECODE_BYTES >> 30} GiB")
-            _decode_stream(av, f, tmp)
-        os.replace(tmp, out)
-    except ValueError:
+            cut = _decode_stream(av, f, tmp, max(_MIN_DECODED, MAX_GROWTH * size))
+        out = folder / (f"{key}.cut.wav" if cut else f"{key}.wav")
+        try:
+            os.replace(tmp, out)
+        except PermissionError:  # Windows: another process made and holds the same file
+            if not out.is_file():
+                raise
+        return out
+    except av.FFmpegError as e:  # PyAV's own errors (some are ValueError or OSError too):
+        why = getattr(e, "strerror", None) or str(e)  # their reason, not an errno and a path
+        raise ValueError(f"cannot be decoded: {why}") from None
+    except (ValueError, OSError):
         raise
-    except Exception as e:  # PyAV's own errors (and anything else a hostile file provokes)
+    except Exception as e:  # anything else a hostile file provokes
         raise ValueError(f"cannot be decoded ({type(e).__name__}: {e})") from None
     finally:
         if tmp.exists():
             tmp.unlink()
 
 
-def _decode_stream(av, f, tmp: Path) -> None:
+def _decode_stream(av, f, tmp: Path, max_bytes: int) -> bool:
+    """Decode the first audio stream of ``f`` into a 16-bit mono WAV at ``tmp``; whether it
+    was cut at ``MAX_DECODE_SECONDS``. ``ValueError`` past ``max_bytes`` of output (a tiny
+    file that decodes to hours of silence) or ``MAX_DECODE_WALL`` seconds of work."""
     start = time.monotonic()
     with av.open(f, mode="r") as c:
         streams = c.streams.audio
@@ -178,6 +239,9 @@ def _decode_stream(av, f, tmp: Path) -> None:
                     a = np.asarray(o.to_ndarray()).reshape(-1)[: limit - written]
                     w.writeframes(a.astype("<i2").tobytes())
                     written += a.size
+                if 2 * written > max_bytes:
+                    raise ValueError(f"it would decode to more than {max_bytes >> 20} MiB "
+                                     f"({MAX_GROWTH} times its size): refused")  # fmt: skip
 
             for frame in c.decode(stream):
                 put(resampler.resample(frame))
@@ -189,6 +253,7 @@ def _decode_stream(av, f, tmp: Path) -> None:
                 put(resampler.resample(None))
         if written == 0:
             raise ValueError("its audio stream holds no sound")
+    return written >= limit
 
 
 # ------------------------------------------------------------------ what a file holds
@@ -218,7 +283,10 @@ def _speech(path: str, mtime_ns: int, size: int, cache: str):
         wav = readable_wav(path)
         head = nar.wav_info(wav)
         src = nar.WavSource(wav, head, int(sp.MAX_SECONDS * head.rate) + 1)
-        return sp.detect(src.read, src.frames, head.rate)
+        heard = sp.detect(src.read, src.frames, head.rate)
+        if wav.name.endswith(".cut.wav") and "cut" not in heard.flags:  # decoding stopped
+            heard = dataclasses.replace(heard, flags=(*heard.flags, "cut"))
+        return heard
     except Exception as e:
         return str(e) or type(e).__name__
 

@@ -407,11 +407,11 @@ def align(speech: Speech, expected: Sequence[float], pause_before: Sequence[floa
     inner = [float(gaps[j]) for j in range(1, m) if j not in chosen and gaps[j] > 0]
     out.breaks = breaks
     out.inner = inner
-    # sentence breaks no longer than the pauses inside sentences: the pauses say nothing
+    # sentence breaks hardly longer than the pauses inside sentences: the pauses say nothing
     blind = (
         bool(breaks)
         and bool(inner)
-        and float(np.median(breaks)) < 1.5 * float(np.percentile(inner, 75))
+        and float(np.median(breaks)) < 1.3 * float(np.percentile(inner, 75))
     )
     out.doubtful = bool(out.worst >= _DOUBT or out.misfit >= math.log(1.3) or blind)
     if out.doubtful:  # say it in every sentence's confidence too

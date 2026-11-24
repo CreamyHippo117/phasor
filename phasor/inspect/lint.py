@@ -485,6 +485,16 @@ def narration_rules(c: Compiled, probe: Callable[[Any, str], Any] | None = None,
                              f"{head}", severity="warning", path="narration", times=(0.0,),
                              fix_hint="save it again as PCM WAV (16-bit, 48 kHz), or narrate "
                              "from another file"))  # fmt: skip
+    from phasor.time.narration import SPAN_MARGIN
+
+    late = [b for b in nar.blocks if b.audio_span is not None and
+            b.start > c.duration + SPAN_MARGIN]  # fmt: skip
+    if late:
+        out.append(Issue("sound_limit", f"narration: {len(late)} block(s) of the recording start "
+                         f"after {late[0].start:g} s, past the scene's end ({c.duration:g} s) by "
+                         f"more than {SPAN_MARGIN:g} s; they are not heard", severity="warning",
+                         path="narration", times=(round(c.duration, 6),),
+                         fix_hint="narrate again from the recording"))  # fmt: skip
     if plan is None:
         return out
     th = float(c.theme.lint["narration_drift"])
