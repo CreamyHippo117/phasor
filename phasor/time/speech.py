@@ -9,9 +9,9 @@ looked at a chunk at a time and the work is bounded by ``MAX_SECONDS``.
   the recording (the 10th percentile of each 1.5 s window, the median of it and its two
   neighbours); a start threshold and a lower stop threshold above it (hysteresis);
   pauses shorter than ``MIN_PAUSE`` closed, speech shorter than ``MIN_SPEECH`` dropped. It
-  says how sure it is (``quality`` 0..1) and why not (``flags``: ``silence``, ``constant_noise``, ``low_snr``,
-  ``clipping``, ``music``, ``short``, ``cut``; ``unreliable`` when the pauses it found cannot
-  be trusted).
+  says how sure it is (``quality`` 0..1) and why not (``flags``: ``silence``,
+  ``constant_noise``, ``low_snr``, ``clipping``, ``music``, ``no_pauses``, ``short``,
+  ``cut``; ``unreliable`` when the pauses it found cannot be trusted).
 - ``align``: which speech belongs to which sentence of a script, by dynamic programming over
   the detected segments: a sentence's length should be in proportion to its words (the
   speaking rate is measured from the whole recording), sentence breaks should fall on long
