@@ -37,7 +37,8 @@ undo, checkpoint, restore and diff work on those."""
 TOOL_NAMES = (
     "scene_new", "scene_open", "scene_save", "scene_edit", "scene_palette", "undo", "redo",
     "animate",
-    "narrate", "checkpoint", "restore", "diff", "inspect", "lint", "storyboard", "review",
+    "narrate", "snap_to_narration", "checkpoint", "restore", "diff", "inspect", "lint",
+    "storyboard", "review",
     "critique", "polish", "variants", "choose",
     "events", "when_hidden", "free_space_near", "hit_test", "resolve", "render", "docs_search",
     "object_types",

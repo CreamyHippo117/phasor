@@ -165,6 +165,8 @@ Only that pole contributes [[residue_glow]].
 - Alignment: synthesized voices are spoken piece by piece between markers, so each `[[marker]]` time is exact without a model. Recordings use WhisperX (or a word-timings file) to place markers on words.
 - `[[pause 1.5]]` writes a silent block. A marker at the end of a sentence means its end.
 - Re-recording re-aligns everything; nothing is hard-timed.
+- A recording can also be the narration as it is (Milestone 22): a WAV, or the sound of an mp4, m4a, mp3, ogg or flac in the scene's folder (decoded once with PyAV into the user's cache). Speech and pauses are detected (energy, an adaptive noise floor, no model), the script's sentences are aligned to the speech by dynamic programming over the detected segments (sentence length in proportion to its words, breaks on long pauses), and each block plays its part of the file (`NarrationBlock.audio_span`). Without a script, each phrase is a block.
+- `snap_to_narration` moves the markers placed by hand (scene starts) onto the narration's sentence starts or pause ends, in order, keeping each scene long enough for the motions anchored at it; it previews (`dry_run`) and applies through `Engine.apply` as one patch. Lint `narration_drift` lists what it would move.
 
 **State tracks and transitions**
 

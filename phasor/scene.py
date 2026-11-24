@@ -303,19 +303,45 @@ class Scene:
         at every key time; a rule it cannot satisfy shows up in ``engine.lint()``."""
         self._apply(AddConstraint(rule=rule, priority=priority))
 
-    def narrate(self, script: str, *, voice: str = "auto") -> None:
+    def narrate(self, script: str = "", *, voice: str = "auto", audio: str | None = None) -> None:
         """Speak ``script`` and take its ``[[markers]]`` as the timeline (SPEC "Narration").
 
         ``voice``: ``auto`` (espeak-ng when installed, else estimated timing), ``estimate``,
         ``espeak[:lang[:wpm]]`` or ``piper:<model.onnx>``. Audio clips are cached in
         ``<title>.narration/`` beside the script. Calling it again (another voice, an edited
         script) moves every marker, and everything anchored to them follows.
-        """
-        from phasor.voice import narrate
 
-        folder = self.engine.base_dir / f"{file_stem(self.engine.document.meta.title)}.narration"
+        ``audio``: a recording in the scene's folder instead of a voice (a WAV, or the sound of
+        an mp4, m4a, mp3, ogg or flac with the ``encode`` extra). With ``script`` (what was
+        read), each sentence is found in it and its ``[[markers]]`` fall on the words; without,
+        its phrases are the blocks. ``snap_to_narration`` then moves hand-placed markers onto
+        it.
+        """
+        from phasor.voice import from_audio, narrate
+
         theme = self.engine._snap.compiled.theme
-        self._apply(SetNarration(narration=narrate(script, voice, folder, theme)))
+        if audio is not None:
+            narration = from_audio(script, audio, self.engine.base_dir, theme)
+        else:
+            folder = (
+                self.engine.base_dir / f"{file_stem(self.engine.document.meta.title)}.narration"
+            )
+            narration = narrate(script, voice, folder, theme)
+        self._apply(SetNarration(narration=narration))
+
+    def snap_to_narration(self, *, dry_run: bool = False, anchors: dict[str, int] | None = None,
+                          allow_short: bool = False) -> dict[str, Any]:  # fmt: skip
+        """Move the markers placed by hand (``marker``) onto the narration's sentences
+        (``Engine.snap_to_narration``): what moves, from where to where, why and how sure.
+        ``dry_run`` only says. Run it after ``narrate``; running it again moves nothing."""
+        out = self.engine.snap_to_narration(dry_run=dry_run, anchors=anchors,
+                                            allow_short=allow_short, origin="script")  # fmt: skip
+        if out.get("errors"):  # refused: raise, as every Scene call does
+            from phasor.core.issues import DocumentError, Issue
+
+            raise DocumentError([Issue(**{k: v for k, v in e.items() if k != "fix"})
+                                 for e in out["errors"]])  # fmt: skip
+        return out
 
     def pace(self) -> None:
         """Give each sentence breathing room in proportion to how much it changes on screen:
