@@ -808,7 +808,8 @@ def run(
                 f.add("morph_limit", (e["id"],), t, n=sem["morph_limit"])
             if sem.get("unreadable") or sem.get("skipped"):
                 f.add("bad_file", (e["id"],), t, why=sem.get("unreadable"),
-                      skipped=sem.get("skipped", 0), file=sem.get("file"))  # fmt: skip
+                      skipped=sem.get("skipped", 0), file=sem.get("file"),
+                      sound=e.get("type") == "sound")  # fmt: skip
             if sem.get("too_big"):
                 f.add("video_too_big", (e["id"],), t, why=sem["too_big"], file=sem.get("file"))
             if sem.get("ended") and e["opacity"] > FAINT:
@@ -958,8 +959,8 @@ def run(
                      **dict.fromkeys(files.VIDEO_EXT, "export the clip again as H.264 mp4"),
                      **dict.fromkeys(files.PICTURE_EXT, "save the picture again as PNG")}.get(
                 ext, "save the file again as UTF-8 text")  # fmt: skip
-            if ext in {"mp4", "m4a", "m4v", "mov", "mp3", "aac", "ogg", "oga", "opus",
-                       "flac", "webm", "mkv"}:  # a sound file (M22)  # fmt: skip
+            if info.get("sound") and ext in {"mp4", "m4a", "m4v", "mov", "mp3", "aac", "ogg",
+                                             "oga", "opus", "flac", "webm", "mkv"}:  # fmt: skip
                 again = "export it again with a sound track (or as PCM WAV)"
             return Issue(
                 code,
