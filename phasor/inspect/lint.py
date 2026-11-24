@@ -14,6 +14,7 @@ returns one issue per problem with the times it was seen. Rules in this mileston
 | unsolved  | error    | a constraint that does not hold (from the bake, or a guard)    |
 | occluded_label | warning | 3D: a label partly hidden by something in front of it      |
 | missing_file | warning | a file an object reads (a mesh) is not in the scene's folder    |
+| unstable_filter | warning | a filter with a pole at or beyond the unit circle             |
 
 Under a perspective camera ``overlap`` only compares labels with labels and points with
 points: a label in front of a surface is fine, and one behind it is ``occluded_label``.
@@ -478,6 +479,14 @@ def run(
                 if e["layer"] != "overlay" and v is not None and v < th["occluded"]:
                     by = e["hidden_by"][0]["id"] if e["hidden_by"] else None
                     f.add("occluded_label", (e["id"],), t, visible=v, by=by)
+        loud = [e for e in shown if e["semantic"].get("max_pole_radius", 0.0) >= th["pole_radius"]]
+        if loud:
+            f.add(
+                "unstable_filter",
+                tuple(sorted(e["id"] for e in loud)),
+                t,
+                radius=max(e["semantic"]["max_pole_radius"] for e in loud),
+            )
         for e in labels:
             missing = text_metrics.missing_glyphs(e["semantic"].get("text", ""))
             if missing:
@@ -563,6 +572,12 @@ def run(
                          fix_hint="give it a 'near' constraint so the placer moves it, add the "
                          f"camera goal 'camera avoid_occlusion({ids[0]})', or make the "
                          "occluder glass")  # fmt: skip
+        if code == "unstable_filter":
+            what = "filter" if len(ids) == 1 else "filters"
+            return Issue(code, f"{what} {', '.join(map(repr, ids))} unstable: a pole at radius "
+                         f"{info['radius']:g} (limit {th['pole_radius']:g}) {when}", "warning",
+                         ids, times=ts, fix_hint="move every pole inside the unit circle "
+                         "(|p| < 1), or keep it only if the blow-up is the point")  # fmt: skip
         if code == "tiny":
             return Issue(code, f"{info['what']} {ids[0]!r} is only {info['px']:.0f} px "
                          f"{when}", "warning", ids,

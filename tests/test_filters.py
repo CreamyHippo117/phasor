@@ -281,3 +281,89 @@ def test_filtering_golden_storyboard():
 
 def test_cx_is_the_coloring_the_plane_uses():
     assert isinstance(filt.transfer_plane("p"), cx.DomainColoring)
+
+
+# ---------------------------------------------------------------- unstable_filter (the linter)
+
+LINT_MODES = [None, pytest.param("auto", marks=pytest.mark.gl)]  # as MODES in tests/test_lint.py
+
+
+def _lint_scene(passes, **kw):
+    s = Scene("filt_lint", passes=passes)
+    s.set("camera.height", 9)
+    s.add(filt.PoleZero(id="f", kind="custom", **kw))
+    return s
+
+
+def _unstable(s):
+    return [i for i in s.engine.lint() if i.code == "unstable_filter"]
+
+
+def test_stability_is_the_pole_distance_from_zero_by_known_maths():
+    # y[n] = a y[n-1] + x[n] has one pole at a; its impulse response is a^n
+    def tail(a):
+        return fm.custom([], [(a, 0.0)], 1.0, FS).apply(np.r_[1.0, np.zeros(2000)])[-1]
+
+    assert abs(tail(0.99)) < 1e-6 and abs(tail(1.0)) == pytest.approx(1.0) and abs(tail(1.01)) > 1e3
+    assert [fm.custom([], [(a, 0.0)], 1.0, FS).stable for a in (0.99, 1.0, 1.01)] == [
+        True, False, False]  # fmt: skip
+    # a complex pair is judged by its distance from 0, not by either coordinate
+    assert not fm.custom([], [(0.8, 0.7), (0.8, -0.7)], 1.0, FS).stable
+    assert fm.custom([], [(0.6, 0.7), (0.6, -0.7)], 1.0, FS).stable
+
+
+def test_every_theme_sets_the_pole_radius_limit():
+    from phasor.style.theme import available_themes, load_theme
+
+    assert all(load_theme(n).lint["pole_radius"] == 1.0 for n in available_themes())
+
+
+@pytest.mark.parametrize("passes", LINT_MODES)
+def test_a_custom_filter_with_an_outside_pole_is_flagged_with_times_and_no_fix(passes):
+    (issue,) = _unstable(_lint_scene(passes, poles=((1.2, 0.0),)))
+    assert issue.severity == "warning" and issue.ids == ("f",)
+    assert issue.times == (0.0,) and "t = 0" in issue.message and "1.2" in issue.message
+    assert issue.fix == () and issue.fix_hint
+
+
+@pytest.mark.parametrize("passes", LINT_MODES)
+def test_stable_filters_are_clean_and_a_pole_on_the_circle_counts(passes):
+    assert _unstable(_lint_scene(passes, poles=((0.5, 0.5), (0.5, -0.5)))) == []
+    for kind in ("lowpass", "bandstop", "notch"):
+        s = Scene("filt_ok", passes=passes)
+        s.add(filt.PoleZero(id="n", kind=kind, cutoff=1000.0))
+        assert _unstable(s) == []
+    assert _unstable(_lint_scene(passes, poles=((0.0, 1.0), (0.0, -1.0))))
+
+
+@pytest.mark.parametrize("passes", LINT_MODES)
+def test_every_filter_object_of_an_unstable_filter_is_covered(passes):
+    spec = {"kind": "custom", "poles": ((1.3, 0.0),), "fs": FS}
+    s = Scene("filt_all", passes=passes)
+    s.add(filt.FrequencyResponse(id="r", **spec))
+    s.add(filt.FilteredSignal(id="w", frequencies=(300.0,), amplitudes=(1.0,), **spec))
+    s.add(filt.FilteredSpectrum(id="p", frequencies=(300.0,), amplitudes=(1.0,), **spec))
+    (issue,) = _unstable(s)
+    assert issue.ids == ("p", "r", "w")
+
+
+@pytest.mark.parametrize("passes", LINT_MODES)
+def test_instability_that_starts_later_reports_that_time(passes):
+    s = _lint_scene(passes, poles=((0.5, 0.0),))
+    s.marker("late", 2.0)
+    s.at("late").set("f.poles", ((1.5, 0.0),))
+    s.at("late", 1.0).to("f.opacity", 0.9)  # keep the scene running past the change
+    (issue,) = _unstable(s)
+    assert min(issue.times) >= 2.0
+
+
+def test_an_unstable_pole_is_drawn_in_the_danger_colour():
+    me = _lint_scene(None, poles=((0.5, 0.0), (1.4, 0.0))).engine.state_at(0.0)["f"]
+    assert me.style["unstable"] != me.style["pole"]
+
+
+def test_the_filtering_example_is_clean_and_the_poles_example_is_flagged():
+    clean = runpy.run_path(str(ROOT / "examples" / "filtering.py"))["s"]
+    assert _unstable(clean) == []
+    bad = runpy.run_path(str(ROOT / "examples" / "filter_poles.py"))["s"]
+    assert [i.ids for i in _unstable(bad)] == [("unstable",)]

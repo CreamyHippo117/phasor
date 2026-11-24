@@ -492,6 +492,7 @@ Each issue has `code`, `severity`, `message`, `ids`, `times`, `fix_hint`, and `f
 | `raw_motion` | warning, strict only | a transition written with raw `to()` instead of a verb |
 | `orphan_override` | error | a tweak whose object is gone |
 | `missing_file` | warning | a file an object reads (a room's `.obj`) is not in the scene's folder; it draws nothing |
+| `unstable_filter` | warning | a filter (`kind="custom"`) with a pole at or beyond the theme's `[lint] pole_radius` (the unit circle); no fix, the poles are the design |
 
 `engine.autofix()` applies every `fix` the linter offers (add `near` for a child label that
 overlaps, `on_screen` for something cut by the frame), lints again, and returns
@@ -1759,8 +1760,26 @@ assert abs(sem["gain"]["gain_db_at_cutoff"][0] + 3.0103) < 1e-3
 assert sem["spec"]["tones"][0]["kept"] > 0.99 > 0.01 > sem["spec"]["tones"][1]["kept"]
 ```
 
-Example: `examples/filtering.py` (the poles, a probe round the circle with the gain and phase
-traced, a signal going in and out, the removed band fading). Numerics are in
+A `kind="custom"` filter may put poles anywhere. One at or beyond the unit circle (distance from 0
+of at least the theme's `[lint] pole_radius`, 1.0) is unstable: `PoleZero` draws it in the danger
+colour, every filter object reports `stable` and `max_pole_radius` in its semantics, and the
+linter reports `unstable_filter` (a warning with the times it is seen and no fix: the poles are
+the design).
+
+```python
+from phasor import Scene, filt
+
+s = Scene("unstable", passes=None)
+s.add(filt.PoleZero(id="ok", kind="lowpass", order=2, cutoff=1000.0, fs=8000.0))
+s.add(filt.PoleZero(id="bad", kind="custom", poles=((1.2, 0.0),)))
+sem = s.engine.inspect(0.0, id="bad")["objects"][0]["semantic"]
+assert sem["stable"] is False and sem["max_pole_radius"] == 1.2
+assert [i.ids for i in s.engine.lint() if i.code == "unstable_filter"] == [("bad",)]
+```
+
+Examples: `examples/filtering.py` (the poles, a probe round the circle with the gain and phase
+traced, a signal going in and out, the removed band fading) and `examples/filter_poles.py` (a
+stable and an unstable filter side by side, the lint warning). Numerics are in
 `phasor/domains/filters_math.py` (Butterworth by the bilinear transform with the cutoff
 pre-warped; checked against `scipy.signal`).
 

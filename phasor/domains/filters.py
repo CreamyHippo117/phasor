@@ -74,6 +74,11 @@ def _beacon(glow: float) -> float:
     return glow * 1.2 if glow > 1.0 else 1.0
 
 
+def _pole_radius(f: fm.Filter) -> float:
+    """The largest pole distance from 0 (1 or more: unstable); the linter's ``unstable_filter``."""
+    return round(float(np.abs(f.poles).max()), 6) if f.order else 0.0
+
+
 def _filter(p) -> fm.Filter:
     key = ("filter", p.kind, p.order, p.cutoff, p.cutoff2, p.fs, p.radius, p.zeros, p.poles, p.gain)
     return _memo(key, lambda: fm.design(p.kind, p.order, p.cutoff, p.fs, p.cutoff2, p.radius,
@@ -109,12 +114,14 @@ class PoleZero(ObjectBase):
     multiplicity, and a probe on the circle at ``probe`` (0 to 1: DC to half the sample rate) whose
     distances to the poles and zeros set the response there. ``scale`` is world units per unit of z
     and ``pos`` is z = 0, so it lines up with ``transfer_plane`` at the same ``pos`` and
-    ``scale``."""
+    ``scale``. A pole on or outside the circle (only ``kind="custom"`` can) is drawn in the danger
+    colour, and the linter reports ``unstable_filter``."""
 
     type: ClassVar[str] = "pole_zero"
     Style: ClassVar = {
         "zero": ("emphasis", "primary"),
         "pole": ("emphasis", "primary"),
+        "unstable": ("emphasis", "danger"),
         "circle": ("emphasis", "muted"),
         "probe": ("emphasis", "highlight"),
         "text": ("emphasis", "primary"),
@@ -164,8 +171,7 @@ class PoleZero(ObjectBase):
 
         return {"kind": "pole_zero", "filter": p.kind, "order": f.order, "stable": f.stable,
                 "zeros": listed(f.zeros), "poles": listed(f.poles), "gain": round(f.gain, 9),
-                "max_pole_radius": round(float(np.abs(f.poles).max()), 6) if f.order else 0.0,
-                }  # fmt: skip
+                "max_pole_radius": _pole_radius(f)}  # fmt: skip
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
         me = self.me(state)
@@ -202,10 +208,10 @@ class PoleZero(ObjectBase):
                      color=zc, glow=glow)  # fmt: skip
             if n > 1:
                 ctx.text(str(n), c + _xyz(0, r * 2.4), me.style["size"] * unit, color=zc, glow=1.0)
-        pc = with_alpha(me.style["pole"], p.opacity)
         for z, n in self._groups(f.poles):
             if not inside(z):
                 continue
+            pc = with_alpha(me.style["pole" if abs(z) < 1.0 else "unstable"], p.opacity)
             c = at(z)
             for d in ([1, 1, 0], [1, -1, 0]):
                 d = np.asarray(d, dtype=np.float64) * r * 0.9
@@ -320,7 +326,8 @@ class FrequencyResponse(ObjectBase):
         cuts = _cutoffs(p)
         out: dict[str, Any] = {"kind": "frequency_response", "plot": p.plot, "filter": p.kind,
                                "cutoffs_hz": [float(c) for c in cuts],
-                               "stable": f.stable}  # fmt: skip
+                               "stable": f.stable,
+                               "max_pole_radius": _pole_radius(f)}  # fmt: skip
         if cuts:
             h = f.response(np.array(cuts))
             out["gain_db_at_cutoff"] = [round(float(v), 4) for v in fm.gain_db(h)]
@@ -435,7 +442,8 @@ class FilteredSignal(ObjectBase):
         return {"kind": "filtered_signal", "filter": p.kind, "samples": len(x),
                 "input_rms": round(rms(x), 6), "output_rms": round(rms(y), 6),
                 "late_gain": round(rms(y[h:]) / max(rms(x[h:]), 1e-12), 6),
-                "progress": round(p.progress, 6)}  # fmt: skip
+                "progress": round(p.progress, 6), "stable": _filter(p).stable,
+                "max_pole_radius": _pole_radius(_filter(p))}  # fmt: skip
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
         me = self.me(state)
@@ -525,7 +533,7 @@ class FilteredSpectrum(ObjectBase):
             "removed_energy_share": round(1 - float(np.sum(after**2)) / max(e0, 1e-300), 6),
             "tones": [{"hz": float(h), "kept": round(float(g), 6)}
                       for h, g in zip(p.frequencies, gains, strict=True)],
-            "fade": round(p.fade, 6),
+            "fade": round(p.fade, 6), "stable": f.stable, "max_pole_radius": _pole_radius(f),
         }  # fmt: skip
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
