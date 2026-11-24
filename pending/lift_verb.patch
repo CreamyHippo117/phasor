@@ -1,5 +1,5 @@
 diff --git a/docs/ai/API.md b/docs/ai/API.md
-index c22ba24..0bf9874 100644
+index ff13dad..91cea0a 100644
 --- a/docs/ai/API.md
 +++ b/docs/ai/API.md
 @@ -281,7 +281,7 @@ assert s4.engine.lint(strict=True) == []
@@ -248,7 +248,7 @@ index f1090d3..5e1e403 100644
  duration = 2.4
  ease = "smoother"
 diff --git a/phasor/time/verbs.py b/phasor/time/verbs.py
-index 34c429e..46b5a47 100644
+index 34c429e..9b9166f 100644
 --- a/phasor/time/verbs.py
 +++ b/phasor/time/verbs.py
 @@ -27,6 +27,17 @@ from phasor.time.compile import Compiled, evaluate
@@ -269,7 +269,17 @@ index 34c429e..46b5a47 100644
  
  
  class VerbError(ValueError):
-@@ -289,6 +300,31 @@ class Verbs:
+@@ -218,6 +229,9 @@ class Verbs:
+         height = max(h, w / self.state.aspect) * (1 + 2 * margin)
+         cam = self.c.doc.timeline.camera
+         if self.c.doc.camera(cam).kind == "orbit":  # 3D: aim at it and come close enough
++            if isinstance(self.c.doc.camera(cam).params.get("distance"), ExprSpec):
++                raise VerbError(f"{cam}.distance is an expression (a flat or lifted camera): "
++                                f"move {cam}.target and morph {cam}.fov to zoom")  # fmt: skip
+             radius = float(b.radius) * (1 + 2 * margin)
+             fov = float(self.state.values[f"{cam}.fov"])
+             dist = radius / max(1e-6, math.tan(math.radians(fov) / 2))
+@@ -289,6 +303,31 @@ class Verbs:
          }
          return Motion(({"op": "add_segment", "path": path, "segment": seg},), end)
  
@@ -332,12 +342,26 @@ index ee87d0c..1b2a25d 100644
          elif verb == "focus_pull":
              if len(targets) != 1:
                  raise ToolError("focus_pull needs exactly one target id")
+diff --git a/tests/test_cues.py b/tests/test_cues.py
+index 36c5291..4f1a120 100644
+--- a/tests/test_cues.py
++++ b/tests/test_cues.py
+@@ -128,8 +128,7 @@ def test_cli_cues_to_stdout_and_to_a_file(tmp_path, capsys):
+     motions = [(r["name"], r["start"], r["end"]) for r in rows if r["kind"] == "motion"]
+     assert motions == [
+         ("reveal drum", "0.000", "0.600"),
+-        ("morph camera", "3.000", "5.500"),  # the field of view widens
+-        ("morph camera", "5.500", "10.000"),  # then the camera tilts over
++        ("lift camera", "3.000", "10.000"),  # depth fades in, then the camera tips over
+         ("morph drum", "6.500", "10.000"),
+         ("orbit camera", "10.000", "16.000"),
+     ]
 diff --git a/tests/test_lift.py b/tests/test_lift.py
 new file mode 100644
-index 0000000..ea26ef2
+index 0000000..c42b874
 --- /dev/null
 +++ b/tests/test_lift.py
-@@ -0,0 +1,100 @@
+@@ -0,0 +1,114 @@
 +"""The lift (TRANSITIONS.md T1): a flat picture tipping up into 3D with no cut.
 +
 +``use_camera("orbit", flat=h)`` must show what the 2D camera of height ``h`` shows, and the
@@ -438,3 +462,17 @@ index 0000000..ea26ef2
 +    a, b = build(True), build(False)
 +    for t in (0.0, 1.5, 3.0, 4.5, 6.0):
 +        assert np.allclose(_screen(a, t), _screen(b, t))
++
++
++def test_focus_pull_on_a_lifted_camera_says_how_to_zoom():
++    s = _flat_scene()
++    s.at("go").lift()
++    with pytest.raises(VerbError, match="fov"):
++        s.at("landed").focus_pull(_dot(s))
++
++
++def _dot(s):
++    from phasor import Dot
++
++    s.add(Dot(id="d", pos=(1.0, 1.0, 0.0)))
++    return "d"

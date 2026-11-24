@@ -16,10 +16,12 @@ Each change is a patch against the branch it sits on, plus pictures. Apply with
   not move the plane; landing values; `until`; errors; script order). Docs: API.md 3D
   section (a runnable block), MCP.md, llms.txt. `examples/prism_lift.py` uses the verb.
 - Limit: after a lift the distance stays tied to `fov`, so `focus_pull` on that camera
-  cannot animate the distance; zoom by morphing `fov`.
-- Pictures: `lift_verb_before.png` (the example done by hand with `morph`), and
-  `lift_verb_after.png` (with the verb; the drum's phase shifted so it is at full swing as
-  the camera lands). Times 2, 4.5, 6.5/6, 8/7.5, 10, 14 s.
+  refuses with a `VerbError` that says to move `target` and morph `fov`. The cue sheet shows
+  the lift as one cue (`tests/test_cues.py` updated in the patch).
+- Tested together with `text_depth.patch` on top: 155 passed (cues, lift, camera3d, docs,
+  kit, mcp, motion, narration, layers) and `test_final -k "prism_lift or prism_dive"`.
+- Pictures: `lift_verb_before.png` (the example as on the branch: done by hand with
+  `morph`) and `lift_verb_after.png` (with the verb). Times 2, 4.5, 6, 7.5, 10, 14 s.
 
 ## `text_depth.patch`: text no longer cut by the plane it stands on when the camera tilts
 
