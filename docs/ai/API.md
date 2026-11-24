@@ -326,7 +326,8 @@ assert s5.engine.inspect(0.0, id="click")["objects"][0]["semantic"]["seconds"] =
 `s.narrate(script, audio="talk.wav")` takes the narration from a recording in the scene's
 folder instead of a voice: a WAV, or the sound of an `.mp4`, `.m4a`, `.mp3`, `.ogg`,
 `.flac` (decoded once with PyAV, the `encode` extra, into the user's cache, never into the
-scene's folder; without PyAV only WAV works and lint says `missing_extra`). Speech and pauses
+scene's folder; without PyAV only WAV works and lint says `missing_extra`; a WAV may be
+PCM or 32/64-bit float). Speech and pauses
 are found in it (pure NumPy: an energy detector with a noise floor that follows the room).
 With the script it reads, each sentence is aligned to the speech that says it (by its words,
 against the pauses; not equal spacing) and its `[[markers]]` fall on its words; with no
@@ -338,16 +339,35 @@ plays), so `pace()` and re-pacing work on it as on a voice.
 `s.snap_to_narration(dry_run=True)` then says how the markers you placed by hand
 (`s.marker`, the scene starts) would move onto it: `moves` (marker, from, to, why,
 confidence 0..1, kind `sentence`/`phrase`/`between`), `kept`, the detection's `quality` and
-`flags` (`low_snr`, `music`, `clipping`, `unreliable`, ...). Without `dry_run` it moves them,
-as one patch (one undo step); a second snap moves nothing. Each marker goes to the start of
-the sentence it sits near by its place in the scene (within `[narration] snap_reach` of the
-narration's length), or where speech resumes after a pause; markers left over keep their
-place between those, stretched with them. Markers never change order or pass a marker the
-narration owns, and no scene gets shorter than the motions anchored at its marker need
-(at least the theme's shortest verb) unless `allow_short=True`. `anchors={"poles": 2}` pins a
-marker to the start of `narration.blocks[2]`. Motions anchored to a moved marker follow it.
-Lint `narration_drift` lists the markers a snap would move (no `fix`: the snap is the
-offer). It works on any narration; on an estimated one the confidence is at most 0.5.
+`flags`, and `alignment`: how the scene's clock was read against the voice's (`scale`,
+`offset`, `residual`, `margin`, `ambiguous`) and, for a recording read with its script, how
+the words fitted the speech (`speech`: `rate`, `misfit`, `worst`, `doubtful`). `unreliable`
+is true when anything is in doubt: flags `ambiguous_timing` (the timing fits two ways:
+nothing is moved; pin markers with `anchors`), `alignment_doubtful` (a sentence break is
+probably misplaced: the speaker ran sentences together, or paused as long inside sentences
+as between them; confidences are at most 0.3), `unreadable` (the recording is gone: quality
+0), `music`, `low_snr`, `no_pauses`. Read `unreliable` before applying.
+
+Without `dry_run` it moves them, as one patch (one undo step); a second snap moves nothing.
+The scene may have been laid out on another clock than the voice's: a scale (0.6 to 1.6) and
+an offset are fitted so most markers fall on sentence starts, then each marker goes to its
+sentence by the steps between markers (a scene that drifts, slower in one half, still lands);
+or where speech resumes after a pause; markers left over keep their place between those,
+stretched with them. Markers never change order or pass a marker the narration owns, and no
+scene gets shorter than the motions anchored at its marker need (at least the theme's
+shortest verb) unless `allow_short=True`. `anchors={"poles": 2}` pins a marker to the start
+of `narration.blocks[2]`; anchors that would reorder markers or cross one the narration owns
+are refused (`ValueError`). Motions anchored to a moved marker follow it. Lint
+`narration_drift` lists the markers a snap would move (no `fix`: the snap is the offer). It
+works on any narration; on an estimated one the confidence is at most 0.5.
+
+Limits (measured on synthetic speech, not on voices): sentence starts are found within about
+40 ms at 12 dB SNR and better; a reader who does not pause between sentences, or a slow one
+whose word gaps are as long as sentence pauses, can get sentence starts wrong: that is
+flagged `alignment_doubtful`, not hidden. Two markers or few sentences say little about the
+scene's clock; very evenly spaced sentences can fit two ways (`ambiguous_timing`). Sound is
+decoded to at most 3 hours and at most 64 times the file's size (a tiny file that decodes to
+hours of silence is refused); the decode cache is pruned, oldest first, to 4 GiB.
 
 ```python
 import tempfile
@@ -381,7 +401,7 @@ plan = s6.snap_to_narration(dry_run=True)
 assert [m["marker"] for m in plan["moves"]] == ["start", "move"]
 s6.snap_to_narration()
 markers = s6.engine.document.timeline.markers
-assert abs(markers["move"] - 2.6) < 0.05  # sentence 2 starts there (less a 0.03 s pre-roll)
+assert abs(markers["move"] - 2.6) < 0.08  # sentence 2 starts there (less a 0.03 s pre-roll)
 assert s6.snap_to_narration(dry_run=True)["moves"] == []  # nothing left to move
 ```
 

@@ -106,10 +106,30 @@ def test_b1_markers_land_on_their_own_sentence_when_the_scene_runs_on_another_cl
     }[name]  # fmt: skip
     s, truth = _clock_scene(tmp_path, words, starts, clock, motions_to=end)
     r = s.snap_to_narration(dry_run=True)
+    if name == "drift x0.9":  # two readings fit almost as well: said, and nothing moves
+        assert r["unreliable"] and r["alignment"]["ambiguous"] and not r["moves"]
+        return
     to = {m["marker"]: m["to"] for m in r["moves"] + r["kept"]}
     wrong = [k for k, t in truth.items() if abs(to[k] + 0.03 - t) > 0.25]
     assert not wrong, (wrong, r["alignment"])
     assert not r["unreliable"] and not r["alignment"]["ambiguous"]
+
+
+def test_b1_a_wrong_answer_is_never_confident_on_evenly_spaced_sentences(tmp_path):
+    """Sentences all of one length, markers 2 s off their sentences: any shift by a whole
+    sentence fits as well. Either every marker is right, or the snap says it is ambiguous
+    and moves nothing (was: confident, markers 12 s off)."""
+    words = [8] * 40
+    x, starts = speech(9, words, rate=8000)
+    write(tmp_path / "t.wav", x, 8000)
+    rng = np.random.default_rng(0)
+    s, truth = _clock_scene(tmp_path, words, starts,
+                            lambda t: t + float(rng.normal(0, 2.0)), every=4)  # fmt: skip
+    r = s.snap_to_narration(dry_run=True)
+    to = {m["marker"]: m["to"] for m in r["moves"] + r["kept"]}
+    wrong = [k for k, t in truth.items() if abs(to[k] + 0.03 - t) > 0.25 and
+             any(m["marker"] == k for m in r["moves"])]  # fmt: skip
+    assert not wrong or (r["unreliable"] and not r["moves"])
 
 
 def test_b1_when_the_timing_fits_two_ways_nothing_moves_and_it_says_so():

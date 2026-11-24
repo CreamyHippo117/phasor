@@ -592,17 +592,11 @@ def plan_snap(
     moves: list[Move] = []
     rival = fit.pop("rival", None)
     if rival is not None:  # a close second reading: ambiguous only if it moves markers elsewhere
-        one, c1 = _plan_once(current, owned, boundaries, (fit["scale"], fit["offset"]), nend,
-                             reach, fit["tolerance"], need, anchors or {}, allow_short)  # fmt: skip
-        two, c2 = _plan_once(current, owned, boundaries, rival, nend, reach, fit["tolerance"],
-                             need, anchors or {}, allow_short)  # fmt: skip
-        differ = any(abs(x.t1 - y.t1) > 1e-4 for x, y in zip(one, two, strict=True))
-        # each reading's fit plus how well its chain of steps holds, per marker
-        k = max(1, len(hand))
-        first, second = c1 / k, fit["margin"] + c2 / k
-        if differ and second < first - _AMBIGUOUS:
-            fit["scale"], fit["offset"] = round(rival[0], 4), round(rival[1], 4)
-        fit["ambiguous"] = differ and abs(first - second) <= _AMBIGUOUS
+        one, _ = _plan_once(current, owned, boundaries, (fit["scale"], fit["offset"]), nend,
+                            reach, fit["tolerance"], need, anchors or {}, allow_short)  # fmt: skip
+        two, _ = _plan_once(current, owned, boundaries, rival, nend, reach, fit["tolerance"],
+                            need, anchors or {}, allow_short)  # fmt: skip
+        fit["ambiguous"] = any(abs(x.t1 - y.t1) > 1e-4 for x, y in zip(one, two, strict=True))
     if not fit["ambiguous"]:
         clock = (fit["scale"], fit["offset"])
         for _ in range(_PASSES):
@@ -673,7 +667,7 @@ def fit_clock(hand: Mapping[str, float], boundaries: Sequence[Boundary], narrati
 
     def cost(a: float, b: float) -> float:
         _, d = assign(a, b)
-        prior = ((a - 1) / 0.3) ** 2 + (b / (0.2 * span)) ** 2
+        prior = ((a - 1) / 0.3) ** 2 + (b / max(2 * spacing, 1.0)) ** 2  # shifts by sentences
         # few markers say little about the clock: the preference for no change weighs more
         return float(np.mean(np.minimum(d, tol) / tol)) + _PRIOR * max(1.0, 6 / len(h)) * prior
 
