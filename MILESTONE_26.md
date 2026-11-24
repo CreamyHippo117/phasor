@@ -120,3 +120,9 @@ regenerating `llms.txt`, then passed); `-m slow`: 27 passed, 17 skipped, with
 minutes under that load and was stopped; not run on this tree). `tests/test_flow.py`: 52
 passed. ruff check, ruff format and lint-imports clean. Skips are the usual ones (no CUDA,
 no gui extra, no TeX, no espeak-ng, opt-in packaging).
+
+After the audit fixes (focused suites, one at a time): test_flow 69 passed; test_flow_parser 36;
+test_dynamics 19; test_docs 5; test_layers 9; test_beauty 33 (2 skipped); test_lint 32; test_kit 11;
+test_calc 12; test_geometry 17; test_geo_camera 5; test_final not-slow 452 (6 skipped);
+test_mcp -k llms 1. ruff check, ruff format and lint-imports clean. The whole suite was not
+rerun after the audit fixes.
