@@ -1009,6 +1009,35 @@ class Editor:
                              what=f"{'background' if background else kind}: {rel}")  # fmt: skip
         return {**r, "copied": brought["copied"]}
 
+    def add_sequence(self, frame: str | Path, *, background: bool = True,
+                     fps: float = 24.0) -> dict[str, Any]:  # fmt: skip
+        """A picture sequence from one of its frames (``shot_0007.png`` -> ``shot_%04d.png``,
+        every frame of it in the scene's folder), played at ``fps``."""
+        import re
+
+        p = Path(frame)
+        m = re.fullmatch(r"(.*?)(\d+)", p.stem)
+        if m is None:
+            raise ToolError(f"{p.name}: a frame of a sequence ends in its number (shot_0001.png)")
+        folder = Path(self.engine.base_dir).resolve()
+        if folder not in p.resolve().parents:
+            raise ToolError("a picture sequence is used where it is: put its folder inside the "
+                            f"scene's folder ({folder}) first")  # fmt: skip
+        digits = m.group(2)
+        width = len(digits) if digits.startswith("0") else 0
+        pattern = p.with_name(f"{m.group(1)}%0{width}d{p.suffix}" if width
+                              else f"{m.group(1)}%d{p.suffix}")  # fmt: skip
+        rel = pattern.resolve().relative_to(folder).as_posix()
+        from phasor.scene import BACKGROUND_Z
+
+        params: dict[str, Any] = {"path": rel, "fps": float(fps)}
+        code = None
+        if background:
+            params.update(fill=True, fit="cover", z_index=BACKGROUND_Z)
+            code = [f"{{s}}.background({rel!r}, id={{id}}, fps={float(fps)!r})"]
+        return self._add_object("image", params, prefix="background" if background else "frames",
+                                code=code, what=f"picture sequence: {rel}")  # fmt: skip
+
     # Sound and MIDI (Milestones 22, 23) -------------------------------------------
 
     def add_sound(self, path: str | Path, at: str | float | None = None,
@@ -1089,6 +1118,24 @@ class Editor:
             self.ws.activity.append({"who": "you", "what": f"narration: {rel}",
                                      "version": self.version, "t": self.t})  # fmt: skip
         return {**r, "copied": brought["copied"]}
+
+    def speech_preview(self, audio: str | None = None) -> dict[str, Any]:
+        """Speech and pauses in a recording (the narration's, or ``audio`` in the scene's
+        folder), as the snap sees them: segments, pauses, how far the pauses can be trusted
+        (``quality`` 0-1) and its flags said plainly (``notes``)."""
+        from phasor.domains import audio as sound
+
+        name = audio or self.narration()["audio"]
+        if not name:
+            return {"ok": False, "message": "no recording: choose one first"}
+        try:
+            sp = sound.speech(self.engine.base_dir, name).to_dict()
+        except ValueError as e:
+            return {"ok": False, "message": f"{name}: {e}"}
+        notes = [_FLAG_TEXT.get(f, f) for f in sp["flags"]]
+        text = (f"{len(sp['segments'])} stretches of speech, {len(sp['pauses'])} pauses in "
+                f"{sp['seconds']:.1f} s; pauses trusted {100 * sp['quality']:.0f}%")  # fmt: skip
+        return {"ok": True, "audio": name, **sp, "notes": notes, "text": text}
 
     def snap_preview(self) -> dict[str, Any]:
         """What "Snap markers to narration" would do, without doing it: each move (marker,

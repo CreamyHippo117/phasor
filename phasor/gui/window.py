@@ -1,13 +1,15 @@
 """The editor window (SPEC "GUI editor"), Qt (PySide6) widgets over ``controller.Editor``.
 
 Nothing here decides anything: widgets draw what the ``Editor`` holds and forward clicks and
-typing to it. A 30 Hz timer advances playback and notices edits made by an attached AI
-(``phasor mcp --attach``), so both editors always show the same live scene.
+typing to it. A 30 Hz timer advances playback, notices edits made by an attached AI
+(``phasor mcp --attach``), watches the script file and follows render jobs, so every editor
+always shows the same live scene.
 
-Layout: the viewport (click to select, drag a selected object to move it) above the
-timeline (markers, animated spans, the playhead: click or drag to scrub); on the right,
-tabs for the inspector (parameters, style roles, what the inspector reads), lint (click an
-issue to jump to it) and looks (switch look, pick among variants of a beat).
+Layout (the code-first window, APP_PLAN.md, Milestone 25): the script on the left (Run with
+Ctrl+Enter; an error is marked at its line); on the right the viewport (click to select and
+see its line, drag a selected object to move it), the timeline (markers, animated spans,
+the playhead) and tabs: Problems (click to go to the object and its line), Inspector, Looks,
+Narration, Sound and MIDI, Footage, Sliders, AI. Toolbar: Run, Draft preview, Render.
 """
 
 from __future__ import annotations
@@ -15,13 +17,15 @@ from __future__ import annotations
 import json
 import keyword
 import re
-from typing import Any
+from pathlib import Path
+from typing import Any, ClassVar
 
 import numpy as np
-from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
     QAction,
     QColor,
+    QDesktopServices,
     QFont,
     QImage,
     QPainter,
@@ -29,11 +33,18 @@ from PySide6.QtGui import (
     QPixmap,
     QSyntaxHighlighter,
     QTextCharFormat,
+    QTextCursor,
+    QTextFormat,
     QTextOption,
 )
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QDockWidget,
+    QDoubleSpinBox,
+    QFileDialog,
     QFormLayout,
     QHBoxLayout,
     QLabel,
@@ -41,12 +52,16 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMessageBox,
     QPlainTextEdit,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSlider,
+    QSpinBox,
     QSplitter,
     QTabWidget,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -99,7 +114,8 @@ class Viewport(QLabel):
             img = self.ed.frame(size)
         except RuntimeError as e:  # no OpenGL on this machine
             self.error = str(e)
-            self.setText(f"No preview: {e}")
+            self.setText(f"No preview here: {e}\n\nThe script, Problems, the inspector and the "
+                         "other panels still work.")  # fmt: skip
             return
         self.error = None
         self._size = size
@@ -407,21 +423,34 @@ class Inspector(QWidget):
 
 
 class LintPanel(QListWidget):
+    """The Problems tab: the script's error (at its line), then lint. A click goes to the
+    object, its time and its line in the script."""
+
     picked = Signal(dict)
 
     def __init__(self, editor: Editor) -> None:
         super().__init__()
         self.ed = editor
-        self.itemClicked.connect(lambda item: self.picked.emit(item.data(Qt.ItemDataRole.UserRole)))
+        self.itemClicked.connect(self._clicked)
+
+    def _clicked(self, item) -> None:
+        issue = item.data(Qt.ItemDataRole.UserRole)
+        if isinstance(issue, dict):
+            self.picked.emit(issue)
 
     def refresh(self) -> None:
         self.clear()
-        items = self.ed.lint_items()
+        try:
+            items = self.ed.problems()
+        except (ToolError, RuntimeError) as e:  # lint needs what this machine lacks
+            items = [{"severity": "info", "code": "lint", "message": str(e), "ids": []}]
         if not items:
-            self.addItem("No issues")
+            self.addItem("No problems")
         for issue in items:
             when = f" @ {issue['times'][0]:g}s" if issue.get("times") else ""
-            it = QListWidgetItem(f"[{issue['severity']}] {issue['code']}{when}: {issue['message']}")
+            line = f" (line {issue['line']})" if issue.get("line") else ""
+            it = QListWidgetItem(f"[{issue['severity']}] {issue['code']}{when}{line}: "
+                                 f"{issue['message']}")  # fmt: skip
             it.setData(Qt.ItemDataRole.UserRole, issue)
             self.addItem(it)
 
@@ -596,64 +625,424 @@ class PythonHighlighter(QSyntaxHighlighter):
 
 
 class CodePanel(QWidget):
-    """The scene as Python. Edit it and press Run (Ctrl+Enter): it becomes the scene. For a
-    script scene this is the script itself (saved on Run); otherwise it is generated from the
-    document and kept beside it as ``name.scene.py``."""
+    """The script, on the left of the window: always editable. Run (Ctrl+Enter) builds the
+    scene from it; a mistake is marked at its line and the preview keeps the last good scene.
+    For a script scene it is the script itself, its tweaks block kept in step with the scene
+    (ADR 0004); for a document it is code generated from it (Run makes it the scene,
+    ``name.scene.py``). Clicking a line selects the object it makes."""
 
     ran = Signal(object)
+    line_clicked = Signal(int)
 
     def __init__(self, editor: Editor) -> None:
         super().__init__()
         self.ed = editor
         self.text = QPlainTextEdit()
-        self.text.setFont(QFont("Monospace", 9))
+        self.text.setFont(QFont("Monospace", 10))
         self.text.setWordWrapMode(QTextOption.WrapMode.NoWrap)
         self.highlighter = PythonHighlighter(self.text.document())
+        self.title = QLabel("")
+        self.title.setStyleSheet("font-weight: bold;")
         self.status = QLabel("")
+        self.status.setWordWrap(True)
         run = QPushButton("Run")
+        run.setToolTip("Build the scene from this code (Ctrl+Enter; Ctrl+S runs and saves)")
         run.setShortcut("Ctrl+Return")
         run.clicked.connect(self.run)
-        self.edited = False
+        self._typed = False  # a document's generated code was typed in
         self._loading = False
         self._note = ""  # the result of the last Run, kept across refreshes
+        self._line: int | None = None  # the line shown for the selection
         self.text.textChanged.connect(self._changed)
+        self.text.viewport().installEventFilter(self)
         lay = QVBoxLayout(self)
+        lay.setContentsMargins(4, 4, 4, 4)
         row = QHBoxLayout()
+        row.addWidget(self.title, 1)
         row.addWidget(run)
-        row.addWidget(self.status, 1)
         lay.addLayout(row)
-        lay.addWidget(self.text)
+        lay.addWidget(self.text, 1)
+        lay.addWidget(self.status)
+
+    @property
+    def edited(self) -> bool:
+        """Edits in the box that are not saved (a script) or not run (generated code)."""
+        return self.ed.dirty if self.ed.is_script else self._typed
 
     def _changed(self) -> None:
-        if not self._loading:
-            self.edited = True
+        if self._loading:
+            return
+        self.ed.set_buffer(self.text.toPlainText())
+        if not self.ed.is_script:
+            self._typed = True
+
+    def eventFilter(self, obj, ev) -> bool:  # a click on a line selects what it makes
+        from PySide6.QtCore import QEvent
+
+        released = ev.type() == QEvent.Type.MouseButtonRelease
+        if obj is self.text.viewport() and released and not self.text.textCursor().hasSelection():
+            self.line_clicked.emit(self.text.textCursor().blockNumber() + 1)
+        return False
 
     def refresh(self, force: bool = False) -> None:
-        """Show the scene's code (unless the person has unsaved edits in the box)."""
-        if self.edited and not force:
+        """Show the editor's text (a tweak rewrote the block, the file was reloaded) where
+        the cursor was, the error's line, and where the code is."""
+        if self.ed.is_script:
+            want = self.ed.buffer
+        elif self._typed and not force:
             self.status.setText("edited: Run to use it")
             return
+        else:
+            want = self.ed.code()["text"]
+            self.ed.set_buffer(want)
+            self._typed = False
+        if self.text.toPlainText() != want:
+            cur = self.text.textCursor().position()
+            scroll = self.text.verticalScrollBar().value()
+            self._loading = True
+            self.text.setPlainText(want)
+            self._loading = False
+            c = self.text.textCursor()
+            c.setPosition(min(cur, len(want)))
+            self.text.setTextCursor(c)
+            self.text.verticalScrollBar().setValue(scroll)
         code = self.ed.code()
-        self._loading = True
-        self.text.setPlainText(code["text"])
-        self._loading = False
-        self.edited = False
+        self.title.setText(Path(code["path"]).name + ("" if code["is_script"] else " (generated)"))
+        self._marks()
+        if self.ed.error is not None:
+            err = self.ed.error
+            where = f"line {err['line']}: " if err.get("line") else ""
+            self.status.setText(f"not run: {where}{err['message']}  (the preview shows the last "
+                                "scene that ran)")  # fmt: skip
+            return
         where = ("script: " if code["is_script"] else "generated: ") + code["path"]
         self.status.setText(f"{self._note}   ({where})" if self._note else where)
+
+    def _marks(self) -> None:
+        """The error's line in red, the selected object's line in amber."""
+        marks = []
+        for line, color in ((self._line, "#3a3220"),
+                            ((self.ed.error or {}).get("line"), "#4a1f24")):  # fmt: skip
+            block = self.text.document().findBlockByNumber((line or 0) - 1) if line else None
+            if block is None or not block.isValid():
+                continue
+            sel = QTextEdit.ExtraSelection()
+            sel.format.setBackground(QColor(color))
+            sel.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
+            sel.cursor = QTextCursor(block)
+            marks.append(sel)
+        self.text.setExtraSelections(marks)
+
+    def show_line(self, line: int | None) -> None:
+        """Mark the selected object's line and scroll to it (None: no mark)."""
+        self._line = line
+        if line:
+            block = self.text.document().findBlockByNumber(line - 1)
+            if block.isValid():
+                self.text.setTextCursor(QTextCursor(block))
+                self.text.centerCursor()
+        self._marks()
 
     def run(self) -> None:
         r = self.ed.run_code(self.text.toPlainText())
         if r["ok"]:
             self._note = "ran: the scene was rebuilt from this code"
+            self._typed = False
             self.refresh(force=True)
         else:
             self._note = ""
             self.status.setText("not run: " + r["error"])
+            self._marks()
+            self.show_line(r.get("line"))
         self.ran.emit(r)
 
 
+class NarrationPanel(QWidget):
+    """Narration from a recording (a WAV, or the sound of an mp4): what speaks now, the
+    speech and pauses found in it, and "Snap markers to narration" with a preview of what
+    would move (nothing moves until Apply; one undoable step)."""
+
+    changed = Signal(object)
+
+    def __init__(self, editor: Editor) -> None:
+        super().__init__()
+        self.ed = editor
+        self.now = QLabel("")
+        self.now.setWordWrap(True)
+        self.words = QPlainTextEdit()
+        self.words.setPlaceholderText("What the recording says (optional): its sentences are "
+                                      "found in it; [[name]] puts a marker on a word.")  # fmt: skip
+        self.words.setMaximumHeight(70)
+        pick = QPushButton("Choose a recording (wav, mp4, ...)...")
+        pick.clicked.connect(lambda: self.choose())
+        self.record = QPushButton("Record...")
+        self.record.setEnabled(False)  # no audio input library in the gui extra
+        self.record.setToolTip("Recording needs an audio input library the app does not ship; "
+                               "record with any recorder and choose the file")  # fmt: skip
+        listen = QPushButton("Speech and pauses")
+        listen.clicked.connect(self.show_speech)
+        preview = QPushButton("Snap markers to narration: preview")
+        preview.clicked.connect(self.preview)
+        self.apply = QPushButton("Apply the snap")
+        self.apply.setEnabled(False)
+        self.apply.clicked.connect(self.do_apply)
+        self.report = QListWidget()
+        lay = QVBoxLayout(self)
+        lay.addWidget(self.now)
+        lay.addWidget(self.words)
+        row = QHBoxLayout()
+        row.addWidget(pick, 1)
+        row.addWidget(self.record)
+        lay.addLayout(row)
+        row2 = QHBoxLayout()
+        row2.addWidget(listen)
+        row2.addWidget(preview)
+        row2.addWidget(self.apply)
+        lay.addLayout(row2)
+        lay.addWidget(self.report, 1)
+
+    def refresh(self) -> None:
+        n = self.ed.narration()
+        if n["voice"] is None:
+            self.now.setText("No narration yet. Choose a recording, or write s.narrate(...) "
+                             "in the script for a voice.")  # fmt: skip
+        elif n["audio"]:
+            self.now.setText(f"Narrated by the recording {n['audio']} ({n['blocks']} blocks)")
+        else:
+            self.now.setText(f"Narrated by the voice {n['voice']} ({n['blocks']} blocks)")
+
+    def choose(self, path: str | None = None) -> None:
+        if path is None:
+            path, _ = QFileDialog.getOpenFileName(self, "Choose the narration's recording", "",
+                                                  "Sound (*.wav *.mp4 *.m4a *.mp3 *.ogg *.flac "
+                                                  "*.mov *.webm);;All files (*)")  # fmt: skip
+            if not path:
+                return
+        try:
+            r = self.ed.set_narration_audio(path, self.words.toPlainText().strip())
+        except ToolError as e:
+            r = {"ok": False, "errors": [{"message": str(e)}]}
+        self.changed.emit(r)
+        self.refresh()
+
+    def _show(self, lines: list[str]) -> None:
+        self.report.clear()
+        self.report.addItems(lines or ["(nothing)"])
+
+    def show_speech(self) -> None:
+        r = self.ed.speech_preview()
+        self._show([r["text"], *r["notes"]] if r["ok"] else [r["message"]])
+
+    def preview(self) -> None:
+        try:
+            r = self.ed.snap_preview()
+        except ToolError as e:
+            self._show([str(e)])
+            self.apply.setEnabled(False)
+            return
+        lines = [*(f"note: {n}" for n in r["notes"]), *r["rows"], *r["kept_rows"]]
+        if not r["rows"]:
+            lines.insert(0, "nothing would move")
+        self._show(lines)
+        self.apply.setEnabled(bool(r["can_apply"]))
+
+    def do_apply(self) -> None:
+        r = self.ed.snap_apply()
+        self.apply.setEnabled(False)
+        self.changed.emit(r)
+
+
+class SoundPanel(QWidget):
+    """Sound clips and MIDI notes at markers, and the notes exported to a .mid."""
+
+    changed = Signal(object)
+
+    def __init__(self, editor: Editor) -> None:
+        super().__init__()
+        self.ed = editor
+        self.at = QComboBox()
+        self.at.setEditable(True)
+        self.at.setToolTip("A marker (the notes follow it), or seconds")
+        self.instrument = QComboBox()
+        self.instrument.addItems(["auto", "sine", "pluck", "organ", "bell", "pad", "lead"])
+        self.roll = QCheckBox("show a piano roll")
+        self.typed = QPlainTextEdit()
+        self.typed.setPlaceholderText("Notes: pitch start length [velocity], e.g. "
+                                      "C4 0 0.5, E4 0.5 0.5, G4 1 1")  # fmt: skip
+        self.typed.setMaximumHeight(60)
+        add_sound = QPushButton("Add a sound clip...")
+        add_sound.clicked.connect(lambda: self.add_sound())
+        add_mid = QPushButton("Add notes from a .mid...")
+        add_mid.clicked.connect(lambda: self.add_midi())
+        add_typed = QPushButton("Add the typed notes")
+        add_typed.clicked.connect(self.add_typed)
+        export = QPushButton("Export the notes to .mid...")
+        export.clicked.connect(lambda: self.export())
+        self.note = QLabel("")
+        self.note.setWordWrap(True)
+        form = QFormLayout()
+        form.addRow("At", self.at)
+        form.addRow("Instrument", self.instrument)
+        form.addRow("", self.roll)
+        lay = QVBoxLayout(self)
+        lay.addLayout(form)
+        row = QHBoxLayout()
+        row.addWidget(add_sound)
+        row.addWidget(add_mid)
+        lay.addLayout(row)
+        lay.addWidget(self.typed)
+        row2 = QHBoxLayout()
+        row2.addWidget(add_typed)
+        row2.addWidget(export)
+        lay.addLayout(row2)
+        lay.addWidget(self.note)
+        lay.addStretch(1)
+
+    def refresh(self) -> None:
+        current = self.at.currentText()
+        self.at.clear()
+        self.at.addItems(["0", *self.ed.timeline()["markers"]])
+        self.at.setCurrentText(current or "0")
+
+    def _done(self, r: dict) -> None:
+        if r.get("copied"):
+            self.note.setText(f"copied into the scene's folder: {r['copied']}")
+        elif r.get("ok") is False:
+            self.note.setText("not added: " + (r.get("errors") or [{}])[0].get("message", ""))
+        else:
+            self.note.setText(f"added {r.get('id', '')}")
+        self.changed.emit(r)
+
+    def _ask(self, title: str, filt: str) -> str:
+        path, _ = QFileDialog.getOpenFileName(self, title, "", filt)
+        return path
+
+    def add_sound(self, path: str | None = None) -> None:
+        path = path or self._ask("Add a sound clip", "Sound (*.wav *.mp3 *.ogg *.flac *.m4a "
+                                 "*.mp4);;All files (*)")  # fmt: skip
+        if path:
+            try:
+                self._done(self.ed.add_sound(path, at=self.at.currentText()))
+            except ToolError as e:
+                self._done({"ok": False, "errors": [{"message": str(e)}]})
+
+    def add_midi(self, path: str | None = None) -> None:
+        path = path or self._ask("Add notes from a MIDI file", "MIDI (*.mid *.midi);;All (*)")
+        if path:
+            try:
+                self._done(self.ed.add_notes(path=path, at=self.at.currentText(),
+                                             instrument=self.instrument.currentText(),
+                                             show=self.roll.isChecked()))  # fmt: skip
+            except ToolError as e:
+                self._done({"ok": False, "errors": [{"message": str(e)}]})
+
+    def add_typed(self) -> None:
+        try:
+            self._done(self.ed.add_notes(typed=self.typed.toPlainText(), at=self.at.currentText(),
+                                         instrument=self.instrument.currentText(),
+                                         show=self.roll.isChecked()))  # fmt: skip
+        except ToolError as e:
+            self._done({"ok": False, "errors": [{"message": str(e)}]})
+
+    def export(self, path: str | None = None, overwrite: bool = False) -> dict | None:
+        if path is None:
+            start = str(self.ed._default_output(".mid"))
+            path, _ = QFileDialog.getSaveFileName(self, "Export the notes", start,
+                                                  "MIDI (*.mid)")  # fmt: skip
+            if not path:
+                return None
+            overwrite = True  # the save dialog already asked about replacing it
+        try:
+            r = self.ed.export_midi(path, overwrite=overwrite)
+            self.note.setText(f"wrote {r['notes']} notes in {r['tracks']} tracks to {r['path']}")
+        except ToolError as e:
+            r = None
+            self.note.setText(f"not exported: {e}")
+        return r
+
+
+class FootagePanel(QWidget):
+    """Video clips, pictures and picture sequences: as the full-frame background, or placed
+    like any object."""
+
+    changed = Signal(object)
+
+    def __init__(self, editor: Editor) -> None:
+        super().__init__()
+        self.ed = editor
+        self.background = QCheckBox("as the background (fills the frame, behind everything)")
+        self.background.setChecked(True)
+        add = QPushButton("Add a video or picture...")
+        add.clicked.connect(lambda: self.add())
+        seq = QPushButton("Add a picture sequence (pick one frame)...")
+        seq.clicked.connect(lambda: self.add_sequence())
+        self.note = QLabel("")
+        self.note.setWordWrap(True)
+        lay = QVBoxLayout(self)
+        lay.addWidget(self.background)
+        lay.addWidget(add)
+        lay.addWidget(seq)
+        lay.addWidget(self.note)
+        lay.addStretch(1)
+
+    def refresh(self) -> None:
+        pass
+
+    def _done(self, r: dict) -> None:
+        if r.get("ok") is False:
+            self.note.setText("not added: " + (r.get("errors") or [{}])[0].get("message", ""))
+        else:
+            extra = f" (copied into the scene's folder: {r['copied']})" if r.get("copied") else ""
+            self.note.setText(f"added {r.get('id', '')}{extra}")
+        self.changed.emit(r)
+
+    def add(self, path: str | None = None) -> None:
+        if path is None:
+            kinds = "Video and pictures (*.mp4 *.mov *.m4v *.webm *.mkv *.png *.jpg *.jpeg *.gif)"
+            path, _ = QFileDialog.getOpenFileName(self, "Add a video or picture", "",
+                                                  f"{kinds};;All (*)")  # fmt: skip
+            if not path:
+                return
+        try:
+            self._done(self.ed.add_footage(path, background=self.background.isChecked()))
+        except ToolError as e:
+            self._done({"ok": False, "errors": [{"message": str(e)}]})
+
+    def add_sequence(self, path: str | None = None) -> None:
+        if path is None:
+            path, _ = QFileDialog.getOpenFileName(
+                self, "Pick one frame of the sequence", "", "Pictures (*.png *.jpg *.jpeg);;All (*)"
+            )
+            if not path:
+                return
+        try:
+            self._done(self.ed.add_sequence(path, background=self.background.isChecked()))
+        except ToolError as e:
+            self._done({"ok": False, "errors": [{"message": str(e)}]})
+
+
+class AIPanel(QWidget):
+    """The AI tab: the chat inside the app comes in phase 4 (APP_PLAN.md). Until then an AI
+    edits this same scene from outside, through ``phasor mcp --attach``."""
+
+    def __init__(self, editor: Editor, hint: str = "") -> None:
+        super().__init__()
+        text = QLabel(
+            "<b>The AI chat inside the app comes later (phase 4 of APP_PLAN.md).</b><p>Today an "
+            "AI edits this same scene from outside: Claude Code or Claude Desktop with "
+            "<code>phasor mcp</code> and the phasor skill. Its edits show up here at once (and "
+            "in the script's tweaks block); edits to the script file reload it.</p>"
+            + (f"<p>{hint}</p>" if hint else "")
+        )
+        text.setWordWrap(True)
+        text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        lay = QVBoxLayout(self)
+        lay.addWidget(text)
+        lay.addStretch(1)
+
+
 class ActivityDock(QListWidget):
-    """Who changed the scene, newest last: your edits and an attached AI's."""
+    """Who changed the scene, newest last: your edits, an attached AI's, the file's."""
 
     def __init__(self, editor: Editor) -> None:
         super().__init__()
@@ -662,58 +1051,269 @@ class ActivityDock(QListWidget):
     def refresh(self) -> None:
         self.clear()
         for a in self.ed.activity():
-            who = "AI" if a["who"] == "ai" else "you"
+            who = {"ai": "AI", "file": "file"}.get(a["who"], "you")
             item = QListWidgetItem(f"{who}: {a['what']}")
             item.setForeground(QColor("#7fb8ff" if who == "AI" else "#d8dee9"))
             self.addItem(item)
         self.scrollToBottom()
 
 
+class RenderDialog(QDialog):
+    """Render: what (a video or one picture), the quality (draft, preview, final, 4K; the
+    size and frames a second it gives), where. It renders in the app on a thread (a render
+    job), with progress; Cancel stops it and leaves nothing half-written (an earlier file of
+    that name stays until the new one is done)."""
+
+    KINDS: ClassVar[dict[str, str]] = {"video": "Video (MP4, or .mov for ProRes)",
+                                       "picture": "Picture (PNG)"}  # fmt: skip
+
+    def __init__(self, win: EditorWindow) -> None:
+        super().__init__(win)
+        self.win = win
+        self.setWindowTitle("Render")
+        self.kind = QComboBox()
+        self._add_kinds()
+        self.out = QLineEdit()
+        browse = QPushButton("Choose...")
+        browse.clicked.connect(self.choose)
+        where = QHBoxLayout()
+        where.addWidget(self.out, 1)
+        where.addWidget(browse)
+        self.preset = QComboBox()
+        for p, text in (("draft", "Draft (small, 15 fps, plain look: quickest)"),
+                        ("preview", "Preview (960 x 540, 30 fps, quick)"),
+                        ("final", "Final (the scene's size and frame rate, motion blur)"),
+                        ("4k", "4K (3840 x 2160)")):  # fmt: skip
+            self.preset.addItem(text, p)
+        self.preset.setCurrentIndex(self.preset.findData("preview"))  # the default, as before
+        self.size = QLabel("")
+        self.fps = QDoubleSpinBox()
+        self.fps.setRange(1.0, 240.0)
+        self.fps.setDecimals(3)
+        self.time = QDoubleSpinBox()
+        self.time.setRange(0.0, max(win.ed.engine.duration, 0.0))
+        self.time.setDecimals(2)
+        self.time.setValue(win.ed.t)
+        self.steps = QSpinBox()
+        self.steps.setRange(2, 25)
+        self.steps.setValue(5)
+        form = QFormLayout()
+        form.addRow("What", self.kind)
+        form.addRow("Save to", where)
+        form.addRow("Quality", self.preset)
+        form.addRow("Size", self.size)
+        form.addRow("Frames a second", self.fps)
+        form.addRow("At time (s)", self.time)
+        form.addRow("Steps per slider", self.steps)
+        self.form = form
+        self.bar = QProgressBar()
+        self.bar.setRange(0, 0)
+        self.bar.hide()
+        self.status = QLabel("")
+        self.status.setWordWrap(True)
+        self.buttons = QDialogButtonBox()
+        self.go = self.buttons.addButton("Render", QDialogButtonBox.ButtonRole.AcceptRole)
+        self.stop = self.buttons.addButton("Cancel", QDialogButtonBox.ButtonRole.RejectRole)
+        self.show_file = self.buttons.addButton("Show File", QDialogButtonBox.ButtonRole.ActionRole)
+        self.show_file.hide()
+        self.go.clicked.connect(self.start)
+        self.stop.clicked.connect(self.cancel)
+        self.show_file.clicked.connect(self.reveal)
+        lay = QVBoxLayout(self)
+        lay.addLayout(form)
+        lay.addWidget(self.bar)
+        lay.addWidget(self.status)
+        lay.addWidget(self.buttons)
+        self.job: str | None = None
+        self.kind.currentIndexChanged.connect(self._kind_changed)
+        self.preset.currentIndexChanged.connect(self._preset_changed)
+        self._preset_changed()
+
+    def _add_kinds(self) -> None:
+        for k, label in self.KINDS.items():
+            self.kind.addItem(label, k)
+
+    def _kind(self) -> str:
+        return self.kind.currentData()
+
+    def _suffix(self, kind: str) -> str:
+        return {"video": ".mp4", "picture": ".png", "web": ".html"}[kind]
+
+    def _preset_changed(self) -> None:
+        plan = self.win.ed.render_plan(self.preset.currentData())
+        self.size.setText(f"{plan['size'][0]} x {plan['size'][1]}   ({plan['note']})")
+        self.fps.setValue(float(plan["fps"]))
+        self._kind_changed()
+
+    def _kind_changed(self) -> None:
+        k = self._kind()
+        self.form.setRowVisible(self.preset, k != "web")
+        self.form.setRowVisible(self.size, k != "web")
+        self.form.setRowVisible(self.fps, k == "video")
+        self.form.setRowVisible(self.time, k == "picture")
+        self.form.setRowVisible(self.steps, k == "web")
+        if k == "web" and not self.win.ed.engine.document.controls:
+            self.status.setText("This scene has no sliders: the page will show only the picture.")
+        else:
+            self.status.setText("")
+        base = Path(self.out.text()) if self.out.text() else self.win.ed._default_output("")
+        # a draft never takes the real render's name (as `phasor render --preset draft`)
+        draft = ".draft" if k != "web" and self.preset.currentData() == "draft" else ""
+        self.out.setText(str(base.with_name(base.name.split(".")[0] + draft + self._suffix(k))))
+
+    def choose(self) -> None:
+        k = self._kind()
+        suffix = self._suffix(k)
+        path, _ = QFileDialog.getSaveFileName(self, "Render to", self.out.text(),
+                                              f"{k} (*{suffix});;All files (*)")  # fmt: skip
+        if path:
+            self.out.setText(path)
+
+    def confirm_replace(self, path: Path) -> bool:
+        """Ask before replacing a file (it is replaced only when the new one is done)."""
+        box = QMessageBox(self)
+        box.setWindowTitle("Replace the file?")
+        box.setText(f"{path.name} exists. Replace it when the new render is done?")
+        box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        return box.exec() == QMessageBox.StandardButton.Yes
+
+    def start(self) -> None:
+        ed = self.win.ed
+        out = Path(self.out.text()).expanduser()
+        if not out.name:
+            self.status.setText("Choose where to save it.")
+            return
+        preset = self.preset.currentData()
+        overwrite = None
+        if out.exists():
+            if not self.confirm_replace(out):
+                return
+            overwrite = True
+        fps = self.fps.value() if self._kind() == "video" else None
+        plan = ed.render_plan(preset)
+        try:
+            if self._kind() == "picture":
+                with ed.lock:
+                    r = ed.ws.render_start(preset, out=str(out), frame=self.time.value(),
+                                           overwrite=overwrite)  # fmt: skip
+                ed.job, ed._job_opens = r["job"], False
+            else:
+                own = fps is not None and abs(fps - float(plan["fps"])) < 1e-9
+                ed.start_render(preset, out=out, overwrite=overwrite, fps=None if own else fps)
+        except ToolError as e:
+            self.status.setText(f"Could not start: {e}")
+            return
+        self.job = ed.job
+        self.go.setEnabled(False)
+        self.show_file.hide()
+        self.bar.setRange(0, 0)
+        self.bar.show()
+        self.status.setText("Rendering... (you can keep editing; it renders the scene as it was "
+                            "when you pressed Render)")  # fmt: skip
+
+    def poll(self, st: dict | None) -> None:
+        """The window's timer hands the job's status here."""
+        if st is None or self.job is None or st.get("job") != self.job:
+            return
+        if st["frames"]:
+            self.bar.setRange(0, st["frames"])
+            self.bar.setValue(st["frame"])
+        if st["state"] in ("done", "failed", "cancelled"):
+            self.bar.hide()
+            self.go.setEnabled(True)
+            self.job = None
+            if st["state"] == "done":
+                self.status.setText(f"Saved {st['path']}")
+                self.show_file.show()
+            elif st["state"] == "failed":
+                self.status.setText(f"Render failed: {st.get('error', '')}")
+            else:
+                self.status.setText("Cancelled: nothing was left behind.")
+
+    def cancel(self) -> None:
+        if self.job is not None:
+            self.win.cancel_job()
+            self.bar.hide()
+            self.go.setEnabled(True)
+            self.job = None
+            self.status.setText("Cancelled: nothing was left behind.")
+        else:
+            self.close()
+
+    def reveal(self) -> None:
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(self.out.text()).parent)))
+
+
 class EditorWindow(QMainWindow):
+    """The code-first window (APP_PLAN.md): the script on the left; on the right the preview,
+    the timeline and the tabs (Problems, Inspector, Looks, Narration, Sound and MIDI,
+    Footage, Sliders, AI, and tabs other clients add). The toolbar: Run, Draft preview,
+    Render, Play, Undo, Redo, Save. "Who changed what" is under View."""
+
+    POLL_FILE_TICKS = 15  # look at the script file about twice a second
+
     def __init__(self, editor: Editor, attach_hint: str = "") -> None:
         super().__init__()
         self.ed = editor
         self.playing = False
+        self.attach_hint = attach_hint
         self.setWindowTitle(f"phasor: {editor.engine.document.meta.title}")
-        self.resize(1400, 860)
+        self.resize(1500, 900)
         self.viewport = Viewport(editor)
         self.timeline = Timeline(editor)
         self.inspector = Inspector(editor)
-        self.lint = LintPanel(editor)
+        self.lint = LintPanel(editor)  # the Problems tab
         self.looks = LooksPanel(editor)
         self.controls = ControlsPanel(editor)
         self.code = CodePanel(editor)
+        self.narration = NarrationPanel(editor)
+        self.sound = SoundPanel(editor)
+        self.footage = FootagePanel(editor)
+        self.ai = AIPanel(editor, attach_hint)
         self.activity = ActivityDock(editor)
         self.readout = QLabel("")
+        self.job_bar = QProgressBar()
+        self.job_bar.setMaximumWidth(220)
+        self.job_bar.setFormat("render %p%")
+        self.job_cancel = QPushButton("Cancel render")
+        self.job_cancel.clicked.connect(self.cancel_job)
+        for w in (self.job_bar, self.job_cancel):
+            w.hide()
+            self.statusBar().addPermanentWidget(w)
         self.statusBar().addPermanentWidget(self.readout)
+        self.render_dialog: RenderDialog | None = None
         self._hover: tuple | None = None
         self._hover_done: tuple | None = None
         self._preview_dirty = False
-        left = QSplitter(Qt.Orientation.Vertical)
-        left.addWidget(self.viewport)
-        left.addWidget(self.timeline)
-        left.setStretchFactor(0, 4)
-        left.setSizes([620, 180])
-        tabs = QTabWidget()
-        tabs.addTab(self.inspector, "Inspector")
-        tabs.addTab(self.lint, "Lint")
-        tabs.addTab(self.looks, "Looks")
-        tabs.addTab(self.controls, "Sliders")
-        tabs.addTab(self.code, "Code")
+        self._ticks = 0
+        right = QSplitter(Qt.Orientation.Vertical)
+        right.addWidget(self.viewport)
+        right.addWidget(self.timeline)
+        self.tabs = QTabWidget()
+        self.tabs.addTab(self.lint, "Problems")
+        self.tabs.addTab(self.inspector, "Inspector")
+        self.tabs.addTab(self.looks, "Looks")
+        self.tabs.addTab(self.narration, "Narration")
+        self.tabs.addTab(self.sound, "Sound and MIDI")
+        self.tabs.addTab(self.footage, "Footage")
+        self.tabs.addTab(self.controls, "Sliders")
+        self.tabs.addTab(self.ai, "AI")
         self.panels = _extra_panels(self)
-        for title, widget in self.panels:
-            tabs.addTab(widget, title)
-        dock = QDockWidget("Who changed what", self)
-        dock.setWidget(self.activity)
-        dock.setObjectName("activity")
-        self.activity.setMaximumHeight(110)
-        dock.setMaximumHeight(140)
-        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, dock)
+        for title, widget in self.panels:  # e.g. Sketch; Explorer (Milestone 29) docks here
+            self.tabs.addTab(widget, title)
+        right.addWidget(self.tabs)
+        right.setStretchFactor(0, 4)
+        right.setSizes([480, 150, 260])
+        self.activity_dock = QDockWidget("Who changed what", self)
+        self.activity_dock.setWidget(self.activity)
+        self.activity_dock.setObjectName("activity")
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.activity_dock)
+        self.activity_dock.hide()  # under View: hidden, not deleted (APP_PLAN)
         split = QSplitter(Qt.Orientation.Horizontal)
-        split.addWidget(left)
-        split.addWidget(tabs)
-        split.setStretchFactor(0, 3)
-        split.setSizes([1060, 340])
+        split.addWidget(self.code)
+        split.addWidget(right)
+        split.setStretchFactor(1, 3)
+        split.setSizes([620, 880])
         self.setCentralWidget(split)
         self._actions()
         self.viewport.picked.connect(lambda _: self._after_selection())
@@ -726,9 +1326,12 @@ class EditorWindow(QMainWindow):
         self.controls.moved.connect(lambda: setattr(self, "_preview_dirty", True))
         self.controls.applied.connect(self._report)
         self.code.ran.connect(self._ran)
+        self.code.line_clicked.connect(self._line_clicked)
         self.inspector.edited.connect(self._report)
         self.lint.picked.connect(self._jump)
         self.looks.changed.connect(self._report)
+        for panel in (self.narration, self.sound, self.footage):
+            panel.changed.connect(self._panel_changed)
         self.statusBar().showMessage(attach_hint or "Ready")
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.tick)
@@ -741,17 +1344,27 @@ class EditorWindow(QMainWindow):
         bar = self.addToolBar("edit")
         bar.setObjectName("edit")
         self.actions: dict[str, QAction] = {}
-        for text, key, fn in (
-            ("Play", "Space", self.toggle_play),
-            ("Undo", "Ctrl+Z", lambda: self._report(self.ed.undo())),
-            ("Redo", "Ctrl+Shift+Z", lambda: self._report(self.ed.redo())),
-            ("Save", "Ctrl+S", lambda: self.save_scene()),
-        ):
+        for text, key, fn, tip in (
+            ("Run", None, self.code.run, "Build the scene from the script (Ctrl+Enter)"),
+            ("Draft preview", "Ctrl+Shift+P", self.draft_preview,
+             "A quick low-quality render (15 fps, small, no blur, bloom or haze), played "
+             "when done"),
+            ("Render...", "Ctrl+R", self.open_render, "Render a video or a picture: choose the "
+             "quality"),
+            ("Play", "Space", self.toggle_play, "Play the preview"),
+            ("Undo", "Ctrl+Z", lambda: self._report(self.ed.undo()), ""),
+            ("Redo", "Ctrl+Shift+Z", lambda: self._report(self.ed.redo()), ""),
+            ("Save", "Ctrl+S", lambda: self.save_scene(), "Save (runs changed code first)"),
+        ):  # fmt: skip
             act = QAction(text, self)
-            act.setShortcut(key)
+            if key:
+                act.setShortcut(key)
+            if tip:
+                act.setToolTip(tip)
             act.triggered.connect(fn)
             bar.addAction(act)
             self.actions[text] = act
+        self.actions["Who changed what"] = self.activity_dock.toggleViewAction()
 
     def save_scene(self) -> None:
         """Ctrl+S. The desktop app asks where when the scene has never been saved."""
@@ -759,6 +1372,86 @@ class EditorWindow(QMainWindow):
             self._report(self.ed.save())
         except ToolError as e:
             self.statusBar().showMessage(str(e), 8000)
+        self.code.refresh()
+
+    # ------------------------------------------------------------ renders
+
+    def draft_preview(self) -> None:
+        """The low-quality preview render: in the background, progress in the status bar,
+        played in the system's player when it is done."""
+        try:
+            self.ed.draft_preview()
+        except ToolError as e:
+            self.statusBar().showMessage(f"No draft: {e}", 8000)
+            return
+        self.job_bar.setRange(0, 0)
+        self.job_bar.show()
+        self.job_cancel.show()
+        self.statusBar().showMessage("Rendering a draft...", 4000)
+
+    def open_render(self) -> None:
+        if self.render_dialog is None or not self.render_dialog.isVisible():
+            self.render_dialog = RenderDialog(self)
+        self.render_dialog.show()
+        self.render_dialog.raise_()
+
+    def cancel_job(self) -> None:
+        r = self.ed.cancel_job()
+        self.job_bar.hide()
+        self.job_cancel.hide()
+        if r is not None:
+            self.statusBar().showMessage("Render cancelled: nothing was left behind.", 6000)
+
+    def play_file(self, path: str) -> None:
+        """Play a finished draft in the system's default player."""
+        QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
+    def _poll_job(self) -> None:
+        st = self.ed.poll_job()
+        if self.render_dialog is not None:
+            self.render_dialog.poll(st)
+        if st is None:
+            return
+        if st["frames"]:
+            self.job_bar.setRange(0, st["frames"])
+            self.job_bar.setValue(st["frame"])
+        self.job_bar.show()
+        self.job_cancel.show()
+        if st["state"] in ("done", "failed", "cancelled"):
+            self.job_bar.hide()
+            self.job_cancel.hide()
+            if st["state"] == "done":
+                self.statusBar().showMessage(f"Rendered {st['path']}", 8000)
+                if st.get("open"):
+                    self.play_file(st["open"])
+            elif st["state"] == "failed":
+                self.statusBar().showMessage(f"Render failed: {st.get('error', '')}", 12000)
+
+    # ------------------------------------------------------------ the script file
+
+    def ask_conflict(self) -> str:
+        """The script changed on disk while there are unsaved edits here: which to keep."""
+        box = QMessageBox(self)
+        box.setWindowTitle("The script changed on disk")
+        box.setText("The script was changed outside the app (another editor, or an AI) while "
+                    "you have unsaved edits here. Which version do you keep?")  # fmt: skip
+        mine = box.addButton("Keep mine", QMessageBox.ButtonRole.RejectRole)
+        box.addButton("Take the file's", QMessageBox.ButtonRole.AcceptRole)
+        box.exec()
+        return "mine" if box.clickedButton() is mine else "file"
+
+    def _poll_file(self) -> None:
+        r = self.ed.poll_file()
+        if r is None:
+            return
+        if r["event"] == "conflict":
+            choice = self.ask_conflict()
+            self._ran(self.ed.resolve_conflict(choice))
+            return
+        msg = ("The script changed on disk: reloaded." if r["ok"] else
+               f"The script changed on disk and does not run: {r['error']}")  # fmt: skip
+        self.statusBar().showMessage(msg, 8000)
+        self._ran(r)
 
     # ------------------------------------------------------------ events
 
@@ -771,9 +1464,17 @@ class EditorWindow(QMainWindow):
         self._report(self.ed.drag_camera(dx, dy, size, pan))
 
     def _ran(self, result: dict) -> None:
-        if result["ok"]:
-            self.setWindowTitle(f"phasor: {self.ed.engine.document.meta.title}")
-            self.refresh_all()
+        self.setWindowTitle(f"phasor: {self.ed.engine.document.meta.title}")
+        self.refresh_all()
+
+    def _panel_changed(self, result: dict) -> None:
+        self._report(result)
+        self.refresh_all()
+
+    def _line_clicked(self, line: int) -> None:
+        if self.ed.select_line(line) is not None:
+            self.viewport.refresh()
+            self.inspector.refresh()
 
     def _show_readout(self) -> None:
         """The value under the pointer (f(z), escape count, coordinates) in the status bar."""
@@ -786,6 +1487,7 @@ class EditorWindow(QMainWindow):
             self.readout.setText("")
 
     def tick(self) -> None:
+        self._ticks += 1
         self._show_readout()
         if self._preview_dirty:
             self._preview_dirty = False
@@ -794,7 +1496,11 @@ class EditorWindow(QMainWindow):
             self.playing = self.ed.play_step(TICK_MS / 1000)
             self.viewport.refresh()
             self.timeline.update()
-        if self.ed.changed():  # an edit here or by an attached AI
+        if self._ticks % self.POLL_FILE_TICKS == 0:
+            self._poll_file()
+        if self.ed.job is not None:
+            self._poll_job()
+        if self.ed.changed():  # an edit here, by an attached AI, or the file reloaded
             self.refresh_all()
 
     def _scrub(self, t: float) -> None:
@@ -806,6 +1512,7 @@ class EditorWindow(QMainWindow):
     def _after_selection(self) -> None:
         self.viewport.refresh()
         self.inspector.refresh()
+        self.code.show_line(self.ed.line_of())
 
     def _drag(self, oid: str, u: float, v: float, size: tuple) -> None:
         try:
@@ -816,6 +1523,7 @@ class EditorWindow(QMainWindow):
     def _jump(self, issue: dict) -> None:
         self.ed.jump(issue)
         self.refresh_all()
+        self.code.show_line(issue.get("line") or self.ed.line_of())
 
     def _report(self, result: Any) -> None:
         if isinstance(result, dict) and result.get("ok") is False:
@@ -823,6 +1531,7 @@ class EditorWindow(QMainWindow):
             self.statusBar().showMessage("Not applied: " + errs[0].get("message", ""), 8000)
         elif isinstance(result, dict) and result.get("saved"):
             self.statusBar().showMessage(f"Saved {result['saved']}", 4000)
+        self.code.refresh()
 
     def refresh_all(self) -> None:
         self.viewport.refresh()
@@ -832,10 +1541,15 @@ class EditorWindow(QMainWindow):
         self.looks.refresh()
         self.controls.refresh()
         self.code.refresh()
+        self.narration.refresh()
+        self.sound.refresh()
+        self.footage.refresh()
         self.activity.refresh()
 
     def closeEvent(self, ev) -> None:
         self.timer.stop()
+        if self.ed.job is not None:
+            self.ed.cancel_job()
         super().closeEvent(ev)
 
 

@@ -34,6 +34,7 @@ from phasor.workspace.paths import (  # noqa: F401  (part of this module's inter
 
 APP_NAME = "phasor"
 MAX_RECENT = 12
+MAX_TRUSTED = 500  # scripts the person said may run (the oldest are forgotten first)
 ASSETS = Path(__file__).parent / "assets"
 ICON = ASSETS / "icon.png"
 
@@ -62,6 +63,9 @@ class Settings:
     recent: list[str] = field(default_factory=list)
     last_dir: str = ""
     math_engine: str = "mathtext"  # typeset by default; "latex" or "auto" is the option
+    # Scripts the person let run (asked once, the first time a script the app did not
+    # write is opened; APP_PLAN "Trust"), and scripts the app wrote itself.
+    trusted: list[str] = field(default_factory=list)
 
     @classmethod
     def path(cls) -> Path:
@@ -79,12 +83,14 @@ class Settings:
         s.last_dir = str(raw.get("last_dir", ""))
         if raw.get("math_engine") in ("mathtext", "latex", "auto"):
             s.math_engine = raw["math_engine"]
+        s.trusted = [str(p) for p in raw.get("trusted", []) if isinstance(p, str)][-MAX_TRUSTED:]
         return s
 
     def save(self) -> None:
         p = self.path()
         p.parent.mkdir(parents=True, exist_ok=True)
-        data = {"recent": self.recent, "last_dir": self.last_dir, "math_engine": self.math_engine}
+        data = {"recent": self.recent, "last_dir": self.last_dir, "math_engine": self.math_engine,
+                "trusted": self.trusted}  # fmt: skip
         tmp = p.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
         tmp.replace(p)
@@ -94,6 +100,14 @@ class Settings:
         p = str(Path(path).resolve())
         self.recent = [p, *[r for r in self.recent if r != p]][:MAX_RECENT]
         self.last_dir = str(Path(p).parent)
+
+    def is_trusted(self, path: str | Path) -> bool:
+        """Whether the person already let the script at ``path`` run (or the app wrote it)."""
+        return str(Path(path).resolve()) in self.trusted
+
+    def trust(self, path: str | Path) -> None:
+        p = str(Path(path).resolve())
+        self.trusted = [*[t for t in self.trusted if t != p], p][-MAX_TRUSTED:]
 
     def existing_recent(self) -> list[str]:
         """Recent scenes that are still on disk."""
@@ -187,6 +201,7 @@ class ExportJob:
         self._buf = ""
         self._snapshot: Path | None = None
         self._log: Any = None
+        self._before: tuple[int, int] | None = None  # the output file before the job, if any
 
     def command(self, scene: str) -> list[str]:
         if self.kind == "picture":
@@ -200,6 +215,7 @@ class ExportJob:
         """Snapshot the scene and start the process. Raises ``OSError`` (leaving nothing
         behind) when the output folder cannot be made or the process cannot start."""
         self.out.parent.mkdir(parents=True, exist_ok=True)  # before anything is written
+        self._before = _stamp(self.out)
         fd, name = tempfile.mkstemp(prefix=".phasor-export-", suffix=".phasor.json",
                                     dir=self.scene_dir)  # fmt: skip
         os.close(fd)
@@ -242,12 +258,18 @@ class ExportJob:
                 "message": self.message, "out": str(self.out)}  # fmt: skip
 
     def cancel(self) -> None:
+        """Stop the process and remove what it wrote: a cancelled export leaves no partial
+        file (Milestone 21 left one; fixed in Milestone 25). A file that was there before and
+        was not touched stays."""
         if self.proc is not None and self.proc.poll() is None:
             self.proc.terminate()
             try:
                 self.proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 self.proc.kill()
+                self.proc.wait(timeout=5)
+            if _stamp(self.out) != self._before:
+                self.out.unlink(missing_ok=True)
         self.done, self.ok, self.message = True, False, "cancelled"
         self._cleanup()
 
@@ -261,6 +283,14 @@ class ExportJob:
         if self._log is not None:
             self._log.close()
             self._log = None
+
+
+def _stamp(path: Path) -> tuple[int, int] | None:
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return st.st_mtime_ns, st.st_size
 
 
 # ---------------------------------------------------------------- the launcher

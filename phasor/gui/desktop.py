@@ -7,8 +7,11 @@
   desktop shortcut), Help (docs, hardware check, about);
 - **several windows**, one scene each; closing a window with unsaved edits asks first; the
   title says which file and marks unsaved edits;
-- **export** of a picture, a video or a web page with a progress bar, in a separate
-  process (``app.ExportJob``), cancellable.
+- **render and export**: a picture or a video rendered in the app on a thread (a render
+  job, ``Workspace.render_start``) with progress and a Cancel that leaves nothing behind;
+  a web page in a separate process (``app.ExportJob``), cancellable;
+- **trust**: the first time a script the app did not write is opened, the app asks before
+  running it (once per script).
 
 The decisions are in ``app.py`` (no Qt) and ``controller.Editor``; this file draws them.
 """
@@ -24,21 +27,13 @@ from typing import Any
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
-    QComboBox,
-    QDialog,
-    QDialogButtonBox,
-    QDoubleSpinBox,
     QFileDialog,
-    QFormLayout,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
-    QProgressBar,
     QPushButton,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -46,7 +41,13 @@ from PySide6.QtWidgets import (
 from phasor import __version__
 from phasor.gui.app import EXPORTS, TEMPLATES, ExportJob, Settings, examples, install_shortcut
 from phasor.gui.controller import Editor
-from phasor.gui.window import EditorWindow, make_workspace, qt_app, start_ai_server
+from phasor.gui.window import (
+    EditorWindow,
+    RenderDialog,
+    make_workspace,
+    qt_app,
+    start_ai_server,
+)
 from phasor.workspace import ToolError
 from phasor.workspace.paths import scenes_folder
 
@@ -84,6 +85,12 @@ class Desktop:
                     w.raise_()
                     w.activateWindow()
                     return w
+            if p.suffix == ".py" and p.exists() and not self.settings.is_trusted(p):
+                # A script runs when it opens: the first time, the person says so (once).
+                if not self.confirm_run(p):
+                    return None
+                self.settings.trust(p)
+                self.settings.save()
         try:
             ws = make_workspace(str(path) if path else None,
                                 None if path else str(scenes_folder()))  # fmt: skip
@@ -122,6 +129,16 @@ class Desktop:
             st.destroyed.connect(lambda *_: self._closing.remove(st))
             st.deleteLater()
         return win
+
+    def confirm_run(self, path: Path) -> bool:
+        """Ask before running a script the app did not write (asked once per script)."""
+        box = QMessageBox()
+        box.setWindowTitle("Run this script?")
+        box.setText(f"{path.name} is Python code: opening it runs it, with your rights on this "
+                    "computer. Run it only if you trust where it came from (you, or an AI "
+                    "you asked). You are asked once per script.")  # fmt: skip
+        box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        return box.exec() == QMessageBox.StandardButton.Yes
 
     def closed(self, win: DesktopWindow) -> None:
         if win in self.windows:
@@ -163,6 +180,8 @@ class Desktop:
             for f in src.parent.glob(src.stem + ".*"):
                 if f.is_file() and not (dest_dir / f.name).exists():
                     shutil.copy2(f, dest_dir / f.name)
+            if dest.suffix == ".py":  # the app copied it from phasor's own examples
+                self.settings.trust(dest)
         return self.open(dest)
 
     def set_math_engine(self, name: str) -> None:
@@ -243,9 +262,14 @@ class DesktopWindow(EditorWindow):
         e.addAction(self.actions["Undo"])
         e.addAction(self.actions["Redo"])
 
+        sc = bar.addMenu("S&cene")
+        for name in ("Run", "Draft preview", "Render..."):
+            sc.addAction(self.actions[name])
+
         v = bar.addMenu("&View")
         v.addAction(self.actions["Play"])
         act(v, "Back to the &Start", lambda: self._scrub(0.0), "Home")
+        v.addAction(self.actions["Who changed what"])
 
         s = bar.addMenu("&Settings")
         math = s.addMenu("&Math Typesetting")
@@ -296,7 +320,7 @@ class DesktopWindow(EditorWindow):
         super().tick()
         self.update_title()
         if self.export_job is not None and self.export_dialog is not None:
-            self.export_dialog.poll()
+            self.export_dialog.poll_web()
 
     # ---------------------------------------------------------- saving
 
@@ -309,8 +333,8 @@ class DesktopWindow(EditorWindow):
 
     def save_as(self) -> bool:
         start = self.ed.path or (scenes_folder() / _slug(self.ed.engine.document.meta.title))
-        path, _ = QFileDialog.getSaveFileName(self, "Save the scene as", str(start),
-                                              "phasor scenes (*.phasor.json)")  # fmt: skip
+        kind = "phasor scripts (*.py)" if self.ed.is_script else "phasor scenes (*.phasor.json)"
+        path, _ = QFileDialog.getSaveFileName(self, "Save the scene as", str(start), kind)
         if not path:
             return False
         try:
@@ -318,6 +342,11 @@ class DesktopWindow(EditorWindow):
         except ToolError as e:
             self.statusBar().showMessage(str(e), 8000)
             return False
+        if r.get("ok") is False:
+            self._report(r)
+            return False
+        if self.ed.is_script:  # the app wrote it: it may run without asking
+            self.desktop.settings.trust(r["saved"])
         if self.server is not None:
             self.server.write_handoff()  # the workspace folder may have moved
         self._report(r)
@@ -349,6 +378,7 @@ class DesktopWindow(EditorWindow):
             return
         if self.export_job is not None and not self.export_job.done:
             self.export_job.cancel()
+        self.ed.ws._jobs.cancel_all()  # a render still running stops and cleans up
         if self.server is not None:
             self.server.stop()
             self.server = None
@@ -367,12 +397,19 @@ class DesktopWindow(EditorWindow):
     export_dialog: ExportDialog | None = None
 
     def export(self) -> None:
-        if self.export_job is not None and not self.export_job.done:
+        if self.export_dialog is not None and (
+            (self.export_job is not None and not self.export_job.done) or self.export_dialog.job
+        ):
             self.export_dialog.show()
             self.export_dialog.raise_()
             return
         self.export_dialog = ExportDialog(self)
+        self.render_dialog = self.export_dialog  # the window hands it the job's progress
         self.export_dialog.show()
+
+    def open_render(self) -> None:
+        """Render... (toolbar, Scene menu): the export dialog, on a video."""
+        self.export()
 
     # ---------------------------------------------------------- settings and help
 
@@ -485,109 +522,28 @@ class StartScreen(QWidget):
 # ---------------------------------------------------------------- export
 
 
-class ExportDialog(QDialog):
-    """Choose what to export and where; watch it go; cancel it."""
+class ExportDialog(RenderDialog):
+    """Render a picture or a video (in the app, a render job: ``RenderDialog``) or export a
+    web page with sliders (a ``phasor web`` process, ``app.ExportJob``)."""
+
+    KINDS = {k: e["label"] for k, e in EXPORTS.items()}  # noqa: RUF012
 
     def __init__(self, win: DesktopWindow) -> None:
         super().__init__(win)
-        self.win = win
         self.setWindowTitle("Export")
-        self.kind = QComboBox()
-        for k, e in EXPORTS.items():
-            self.kind.addItem(e["label"], k)
-        self.out = QLineEdit()
-        browse = QPushButton("Choose...")
-        browse.clicked.connect(self.choose)
-        where = QHBoxLayout()
-        where.addWidget(self.out, 1)
-        where.addWidget(browse)
-        self.preset = QComboBox()
-        for p, text in (("draft", "Draft (small, 15 fps, plain look: quickest)"),
-                        ("preview", "Preview (960 x 540, 30 fps, quick)"),
-                        ("final", "Final (the scene's size and frame rate, motion blur)"),
-                        ("4k", "4K (3840 x 2160)")):  # fmt: skip
-            self.preset.addItem(text, p)
-        self.preset.setCurrentIndex(self.preset.findData("preview"))  # the default, as before
-        self.time = QDoubleSpinBox()
-        self.time.setRange(0.0, max(win.ed.engine.duration, 0.0))
-        self.time.setDecimals(2)
-        self.time.setValue(win.ed.t)
-        self.steps = QSpinBox()
-        self.steps.setRange(2, 25)
-        self.steps.setValue(5)
-        form = QFormLayout()
-        form.addRow("What", self.kind)
-        form.addRow("Save to", where)
-        form.addRow("Quality", self.preset)
-        form.addRow("At time (s)", self.time)
-        form.addRow("Steps per slider", self.steps)
-        self.form = form
-        self.bar = QProgressBar()
-        self.bar.setRange(0, 0)
-        self.bar.hide()
-        self.status = QLabel("")
-        self.status.setWordWrap(True)
-        self.buttons = QDialogButtonBox()
-        self.go = self.buttons.addButton("Export", QDialogButtonBox.ButtonRole.AcceptRole)
-        self.stop = self.buttons.addButton("Cancel", QDialogButtonBox.ButtonRole.RejectRole)
-        self.show_file = self.buttons.addButton("Show File", QDialogButtonBox.ButtonRole.ActionRole)
-        self.show_file.hide()
-        self.go.clicked.connect(self.start)
-        self.stop.clicked.connect(self.cancel)
-        self.show_file.clicked.connect(self.reveal)
-        lay = QVBoxLayout(self)
-        lay.addLayout(form)
-        lay.addWidget(self.bar)
-        lay.addWidget(self.status)
-        lay.addWidget(self.buttons)
-        self.kind.currentIndexChanged.connect(self._kind_changed)
-        self.preset.currentIndexChanged.connect(self._kind_changed)  # a draft: a.draft.mp4
-        self._kind_changed()
-
-    def _kind(self) -> str:
-        return self.kind.currentData()
-
-    def _kind_changed(self) -> None:
-        k = self._kind()
-        self.form.setRowVisible(self.preset, k != "web")
-        self.form.setRowVisible(self.time, k == "picture")
-        self.form.setRowVisible(self.steps, k == "web")
-        if k == "web" and not self.win.ed.engine.document.controls:
-            self.status.setText("This scene has no sliders: the page will show only the picture.")
-        else:
-            self.status.setText("")
-        base = Path(self.out.text()) if self.out.text() else self._default_dir() / self._stem()
-        # a draft never takes the real render's name (as `phasor render --preset draft`)
-        draft = ".draft" if k != "web" and self.preset.currentData() == "draft" else ""
-        suffix = draft + EXPORTS[k]["suffix"]
-        self.out.setText(str(base.with_name(base.name.split(".")[0] + suffix)))
-
-    def _default_dir(self) -> Path:
-        p = self.win.ed.path
-        return Path(p).parent if p else scenes_folder()
-
-    def _stem(self) -> str:
-        p = self.win.ed.path
-        return Path(p).name.split(".")[0] if p else _slug(self.win.ed.engine.document.meta.title)
-
-    def choose(self) -> None:
-        k = self._kind()
-        suffix = EXPORTS[k]["suffix"]
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Export to", self.out.text(), f"{EXPORTS[k]['label']} (*{suffix});;All files (*)"
-        )
-        if path:
-            self.out.setText(path)
+        self.go.setText("Export")
 
     def start(self) -> None:
+        if self._kind() != "web":
+            super().start()
+            return
         ed = self.win.ed
         out = Path(self.out.text()).expanduser()
         if not out.name:
             self.status.setText("Choose where to save it.")
             return
         with ed.lock:
-            job = ExportJob(ed.engine, self._kind(), out, scene_dir=self._default_dir(),
-                            t=self.time.value(), preset=self.preset.currentData(),
+            job = ExportJob(ed.engine, "web", out, scene_dir=self._default_dir(),
                             steps=self.steps.value())  # fmt: skip
             try:
                 job.start()
@@ -602,7 +558,11 @@ class ExportDialog(QDialog):
         self.status.setText("Working... (you can keep editing; the export uses the scene as "
                             "it was when you pressed Export)")  # fmt: skip
 
-    def poll(self) -> None:
+    def _default_dir(self) -> Path:
+        p = self.win.ed.path
+        return Path(p).parent if p else scenes_folder()
+
+    def poll_web(self) -> None:
         job = self.win.export_job
         if job is None:
             return
@@ -624,16 +584,13 @@ class ExportDialog(QDialog):
     def cancel(self) -> None:
         job = self.win.export_job
         if job is not None and not job.done:
-            job.cancel()
+            job.cancel()  # the process stops; what it wrote is removed
             self.win.export_job = None
             self.bar.hide()
             self.go.setEnabled(True)
-            self.status.setText("Cancelled.")
-        else:
-            self.close()
-
-    def reveal(self) -> None:
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(self.out.text()).parent)))
+            self.status.setText("Cancelled: nothing was left behind.")
+            return
+        super().cancel()
 
 
 # ---------------------------------------------------------------- entry point
