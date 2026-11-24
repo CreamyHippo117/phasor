@@ -21,7 +21,7 @@ timing from the theme `[motion]`, docs, an example, tests, a storyboard golden.
 | # | What | Status | Prism version |
 |---|---|---|---|
 | T1 | **Lift (2D -> 3D)**: a flat picture tilts up and becomes a landscape (a heat map into its surface, domain colouring into the \|f(z)\| surface, a spectrogram into terrain, a pole-zero plot into \|H(z)\| with the unit circle cut through it) | **prototype**: `examples/prism_lift.py`, built from existing pieces, no engine change | the flat picture glowing, then the landscape under its net of glowing lines |
-| T2 | **Pull back / dive**: zoom out until the scene is one point in a bigger space, glide, zoom into another point (one filter -> the map of all filters over cutoff and Q; a Julia set -> its point on the Mandelbrot set -> another Julia set) | plan | the big space dark with faint structure, the current point a beacon |
+| T2 | **Pull back / dive**: zoom out until the scene is one point in a bigger space, glide, zoom into another point (one filter -> the map of all filters over cutoff and Q; a Julia set -> its point on the Mandelbrot set -> another Julia set) | **example**: `examples/prism_dive.py` (Douady rabbit -> its c on the Mandelbrot set -> c glides to seahorse valley -> dive into its double spiral). The zoom is the fractals' own `zoom`, driven by one `Value`; one `c` drives everything | the big space dark with faint structure, the current point a beacon |
 | T3 | **Reshape while out**: zoomed out, the space itself bends (a line rolls up into the unit circle: sampling -> aliasing; a time axis winds into the winding picture), then zoom back in | plan; needs per-object "embedding" morphs (a line object's points morphed onto a circle already works with `morph`/`transform`) | the bending axis as a glowing stroke |
 | T4 | **Fly through**: the camera passes through an object into the next idea (through the wall of the room into the spectrum of what was recorded there) | plan; needs the near plane and fog checked so the wall dissolves rather than clips | the wall as faint light the camera passes through |
 
@@ -56,6 +56,13 @@ timing from the theme `[motion]`, docs, an example, tests, a storyboard golden.
   edge and black beyond it. The drum, as a bounded object, looks right with its edge.
 - **A |f(z)| surface type** does not exist yet; the domain-colouring lift needs one
   (`cx.ModulusSurface`, the domain colouring as its texture). Not built.
+- **Camera expressions may read only the camera** (found building T2):
+  `core/pycode.py` `document_to_python` writes the camera's `s.set(...)` before any
+  `s.add(...)`, so a camera expression that reads an object can't be rebuilt from Python and
+  fails `test_every_example_round_trips_through_its_python_code`. `prism_dive` zooms the
+  fractals instead. Fixing the write order would let a camera follow an object.
+- **The lift verb** is ready as `pending/lift_verb.patch` (with pictures), waiting for the
+  owner's OK.
 - **A true ortho <-> perspective blend** (a 2D scene converted without opting in to the
   orbit camera) would change contract 4 and the schema: needs owner approval. The
   prototype doesn't need it.
@@ -67,11 +74,10 @@ The owner does the music. On screen:
 - slow camera drift after landing (`drift`, `orbit(..., until=)`); Life on everything not
   `exact`; depth fog and haze so far geometry fades into the dark; hold shots longer than
   feels natural.
-- **Cue sheet export** (plan): the scene's markers and verb spans written as a CSV / DAW
-  marker file (`phasor cues scene.py -o cues.csv`), so swells and hits can be placed on
-  transitions in the audio editor.
+- **Cue sheet export** (done): `phasor cues scene.py -o cues.csv` writes the markers and
+  each verb's span as CSV (`time,timecode,kind,name,start,end,duration`), so swells and hits
+  can be placed on transitions in the audio editor (`phasor/workspace/cues.py`).
 
 ## Order
 
-T1 verb (after the owner's OK), cue sheet export, T2 (Julia <-> Mandelbrot first: both
-exist), T3, T4.
+Done: T1 prototype, cue sheet, T2 example. Next: T1 verb (after the owner's OK), T3, T4.

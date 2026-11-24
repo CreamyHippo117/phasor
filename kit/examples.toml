@@ -107,6 +107,11 @@ kind = "physics"
 tier = "technique"
 teaches = "A spatial transition with no cut: a flat heat map gains depth by a dolly zoom (camera.distance as an expression of camera.fov), tips over and rises into a 3D landscape"
 
+[examples.prism_dive]
+kind = "complex"
+tier = "technique"
+teaches = "A pull back / dive with no cut: a Julia set shrinks into its point c on the Mandelbrot set, c glides, and the view dives into the Julia set of the new c (one c and one zoom drive everything through expressions)"
+
 [examples.prism_heat]
 kind = "physics"
 tier = "technique"
