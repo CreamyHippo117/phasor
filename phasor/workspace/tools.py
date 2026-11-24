@@ -40,6 +40,7 @@ VERBS = (
     "settle",
     "orbit",
     "orbit_reveal",
+    "lift",
     "transform",
     "become",
     "write",
@@ -321,7 +322,8 @@ class Workspace:
         """Animate with a choreography verb starting at a marker (or seconds). Timing comes
         from the theme. Returns when it starts and ends so the next step can follow it.
         ``orbit`` swings the 3D camera ``value`` degrees (default 360), until marker ``until``
-        if given; ``morph`` too runs until ``until`` if given. ``transform`` and
+        if given; ``lift`` tips a flat 3D camera over to elevation ``value`` (default 32);
+        ``morph`` too runs until ``until`` if given. ``transform`` and
         ``become`` take ``targets=[from, to]``; ``sweep`` takes
         ``path`` and ``value``; ``circumscribe`` takes one target and ``value`` "circle" or
         "box"."""
@@ -340,6 +342,8 @@ class Workspace:
             args: tuple = (path, value, until) if verb == "morph" else (path, value)
         elif verb == "orbit":
             args = (360.0 if value is None else float(value), until)
+        elif verb == "lift":
+            args = (32.0 if value is None else float(value), 35.0, until)
         elif verb == "focus_pull":
             if len(targets) != 1:
                 raise ToolError("focus_pull needs exactly one target id")

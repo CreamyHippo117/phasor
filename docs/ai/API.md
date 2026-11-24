@@ -281,7 +281,7 @@ assert s4.engine.lint(strict=True) == []
 
 Durations, easing and stagger come from the theme's `[motion]` table. Chain with `then()`:
 `s.at("loop_draw").trace("loop").then().reveal("loop.label")`. Several ids stagger.
-`orbit_reveal` arrives with 3D (Milestone 6).
+`orbit_reveal` arrives with 3D (Milestone 6); `lift` tips a flat 3D camera into depth (see the 3D section).
 
 Dimming uses each object's `dim` factor (drawn opacity = `opacity` x `dim`), so dimming and
 revealing never fight, whatever order you write them in.
@@ -1468,6 +1468,31 @@ assert sheet["on_screen_fraction"] == 1.0 and sheet["semantic"]["sheets"] == 2
 
 - `orbit(degrees, until=None)` turns the camera (theme `[motion.orbit]` time per turn, or
   until a marker); `orbit_reveal(*ids)` reveals while swinging a little.
+- **Lift: a flat picture tipping up into 3D with no cut.** `use_camera("orbit", flat=h)`
+  gives a 3D camera that shows exactly what the 2D camera of height `h` shows (it looks down
+  from far away through a 1.5 degree field of view; its `distance` is an expression of its
+  `fov` that keeps `h` world units framed). `lift(elevation=32, fov=35, until=None)` then
+  widens the field of view, which brings the camera closer with nothing moving on the plane
+  (a dolly zoom: depth fades in), and tips the camera over to `elevation` (theme
+  `[motion.lift]`, or until a marker). Grow the picture's height alongside it (a
+  `pde.Surface`'s `height`) and the flat picture rises into its landscape. The distance
+  stays tied to `fov` afterwards: zoom by morphing `fov`. Example: `examples/prism_lift.py`.
+
+```python
+from phasor import Scene, expr
+from phasor.domains import pde
+
+lift = Scene("lift", passes=None)
+lift.use_camera("orbit", flat=7.5)  # looks like a 2D view 7.5 units tall
+lift.add(pde.Surface(id="drum", kind="wave", mode=(2, 3), height=0.01, time=expr("t / 4")))
+lift.marker("go", 1.0)
+lift.marker("landed", 6.0)
+lift.at("go").lift(until="landed")  # depth fades in, then the camera tips over to 32 degrees
+lift.at("go", 1.0).morph("drum.height", 1.6, until="landed")  # and the picture rises
+el = lift.engine
+assert el.state_at(0.0).values["camera.elevation"] == 89.0
+assert abs(el.state_at(6.0).values["camera.elevation"] - 32.0) < 1e-6
+```
 - `focus_pull(id)` in 3D aims at the object and comes close enough to fill the frame.
 - With camera goals, a camera parameter that is animated but never set is the solver's
   until its first motion: a `focus_pull` or `orbit` at a marker starts from wherever the

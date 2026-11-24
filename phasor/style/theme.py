@@ -260,6 +260,7 @@ VERBS = (
     "settle",
     "orbit",
     "orbit_reveal",
+    "lift",
     "transform",
     "become",
     "write",

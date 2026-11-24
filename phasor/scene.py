@@ -136,6 +136,12 @@ class At:
         """Move a parameter like a released spring."""
         return self._verb("settle", path, value)
 
+    def lift(self, elevation: float = 32.0, fov: float = 35.0, until: str | None = None) -> At:
+        """Tip a flat picture up into 3D with no cut (the camera must start flat:
+        ``s.use_camera("orbit", flat=height)``): depth fades in, then the camera tips over
+        to ``elevation``. The theme's lift time, or until the marker ``until``."""
+        return self._verb("lift", elevation, fov, until)
+
     def orbit(self, degrees: float = 360.0, until: str | None = None) -> At:
         """Swing the 3D camera ``degrees`` around its target, over the theme's time per turn
         or until the marker ``until``."""
@@ -252,11 +258,22 @@ class Scene:
         self._apply([*ops, AddObject(object=spec)])
         return obj
 
-    def use_camera(self, kind: str = "orbit", **params: Any) -> None:
+    def use_camera(self, kind: str = "orbit", *, flat: float | None = None, **params: Any) -> None:
         """Choose the camera: ``"orbit"`` (3D perspective around ``target``; ``azimuth``,
         ``elevation``, ``distance``, ``fov``, ``drift``) or ``"ortho"`` (2D, the default).
         Parameters you leave out are free for the camera solver when you give it goals
-        (``s.constrain("camera keep_visible(surface)")``)."""
+        (``s.constrain("camera keep_visible(surface)")``).
+
+        ``flat=height``: a 3D camera that starts out showing the same picture as the 2D
+        camera with that ``height`` (looking down from far away through a very narrow field
+        of view, x to the right and y up), ready for ``lift`` to tip it into 3D."""
+        if flat is not None:
+            if kind != "orbit":
+                raise ValueError("flat= is for the orbit camera: use_camera('orbit', flat=6)")
+            cam = self.engine.document.timeline.camera
+            params = {"azimuth": -90.0, "elevation": _verbs.FLAT_ELEVATION,
+                      "fov": _verbs.FLAT_FOV, "drift": 0.0, **params,
+                      "distance": expr(_verbs.flat_distance(cam, flat))}  # fmt: skip
         self._apply(SetCamera(kind=kind, params=params))
 
     def set(self, path: str, value: Any) -> None:

@@ -217,6 +217,54 @@ def test_a_label_does_not_cut_a_box_out_of_glass_behind_it():
     assert darker < 0.02
 
 
+def _tilted_equation(elevation: float, blocker: bool = False):
+    """A world-layer equation at z = 0 over a domain-coloured plane at z = 0, tilted: the
+    text faces the camera, so the half below its anchor dips under the plane."""
+    from phasor import Equation
+
+    s = Scene("tilted_eq", passes="auto")
+    fov = 35.0
+    s.use_camera("orbit", target=(0, 0, 0), azimuth=-90.0, elevation=elevation, fov=fov,
+                 distance=4.5 / (2 * math.tan(math.radians(fov / 2))), drift=0.0)  # fmt: skip
+    s.add(cx.DomainColoring(id="plane", function="(z**5 - 1)/(z**2 + 0.6j)", size=(8.0, 4.5)))
+    s.add(Equation(id="f_eq", pos=(0.0, 1.85, 0.0),
+                   parts=(r"$f(z) = \dfrac{z^5 - 1}{z^2 + 0.6\,i}$",)))  # fmt: skip
+    if blocker:  # a solid disc above the plane, between the camera and the equation
+        eye = s.engine.state_at(0).camera.eye
+        at = np.array([0.0, 1.85, 0.0]) + (eye - np.array([0.0, 1.85, 0.0])) * 0.3
+        s.add(Dot(id="blocker", pos=tuple(float(x) for x in at), r=0.5))
+    return s.engine
+
+
+def _seen_share(e, object_id: str, size=(640, 360)) -> float:
+    # At the inspector's own size (480 x 270) this equation is a few dozen pixels and the
+    # loss hardly shows; measure at a real output size.
+    st = e.state_at(1.0)
+    runner = e.pass_runner()
+    solo = runner.solo_mask(st, size, object_id)
+    return float((runner.id_buffer(st, size)[solo] == st[object_id].index).sum() / solo.sum())
+
+
+@pytest.mark.gl
+@pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
+@pytest.mark.parametrize("elevation", [20.0, 35.0, 60.0])
+def test_text_is_not_cut_by_the_plane_it_stands_on(elevation):
+    # A billboard centered on its anchor pokes below the anchor's level when the camera
+    # tilts; that part is depth-tested as if it stood at the anchor's level (as it does
+    # top-down), so the plane the text sits on does not swallow its lower half.
+    assert _seen_share(_tilted_equation(elevation), "f_eq") > 0.97
+
+
+@pytest.mark.gl
+@pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
+@pytest.mark.parametrize("elevation", [10.0, 35.0])
+def test_text_is_still_hidden_by_what_is_in_front_of_it(elevation):
+    # The blocker is 30% of the way to the eye, well in front of the pulled slab (whose
+    # depth is the text's extent below its origin times cot(elevation)); an object inside
+    # that slab no longer hides the lower part of the text, the fix's known cost.
+    assert _seen_share(_tilted_equation(elevation, blocker=True), "f_eq") < 0.5
+
+
 @pytest.mark.parametrize("doc_pos", [(-5, -5, 0), (4, 3, 1), (8, 8, 0)])
 def test_baked_3d_label_lands_exactly_where_the_placer_put_it(doc_pos):
     """The bake stores each label's screen offset from its anchor at every key time; reading

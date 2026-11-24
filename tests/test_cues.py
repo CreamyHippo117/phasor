@@ -128,8 +128,7 @@ def test_cli_cues_to_stdout_and_to_a_file(tmp_path, capsys):
     motions = [(r["name"], r["start"], r["end"]) for r in rows if r["kind"] == "motion"]
     assert motions == [
         ("reveal drum", "0.000", "0.600"),
-        ("morph camera", "3.000", "5.500"),  # the field of view widens
-        ("morph camera", "5.500", "10.000"),  # then the camera tilts over
+        ("lift camera", "3.000", "10.000"),  # depth fades in, then the camera tips over
         ("morph drum", "6.500", "10.000"),
         ("orbit camera", "10.000", "16.000"),
     ]

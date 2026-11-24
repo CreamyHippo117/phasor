@@ -20,12 +20,12 @@ timing from the theme `[motion]`, docs, an example, tests, a storyboard golden.
 
 | # | What | Status | Prism version |
 |---|---|---|---|
-| T1 | **Lift (2D -> 3D)**: a flat picture tilts up and becomes a landscape (a heat map into its surface, domain colouring into the \|f(z)\| surface, a spectrogram into terrain, a pole-zero plot into \|H(z)\| with the unit circle cut through it) | **prototype**: `examples/prism_lift.py`, built from existing pieces, no engine change | the flat picture glowing, then the landscape under its net of glowing lines |
+| T1 | **Lift (2D -> 3D)**: a flat picture tilts up and becomes a landscape (a heat map into its surface, domain colouring into the \|f(z)\| surface, a spectrogram into terrain, a pole-zero plot into \|H(z)\| with the unit circle cut through it) | **done**: `s.use_camera("orbit", flat=h)` + `s.at(m).lift()`; `examples/prism_lift.py` | the flat picture glowing, then the landscape under its net of glowing lines |
 | T2 | **Pull back / dive**: zoom out until the scene is one point in a bigger space, glide, zoom into another point (one filter -> the map of all filters over cutoff and Q; a Julia set -> its point on the Mandelbrot set -> another Julia set) | **example**: `examples/prism_dive.py` (Douady rabbit -> its c on the Mandelbrot set -> c glides to seahorse valley -> dive into its double spiral). The zoom is the fractals' own `zoom`, driven by one `Value`; one `c` drives everything | the big space dark with faint structure, the current point a beacon |
 | T3 | **Reshape while out**: zoomed out, the space itself bends (a line rolls up into the unit circle: sampling -> aliasing; a time axis winds into the winding picture), then zoom back in | plan; needs per-object "embedding" morphs (a line object's points morphed onto a circle already works with `morph`/`transform`) | the bending axis as a glowing stroke |
 | T4 | **Fly through**: the camera passes through an object into the next idea (through the wall of the room into the spectrum of what was recorded there) | plan; needs the near plane and fog checked so the wall dissolves rather than clips | the wall as faint light the camera passes through |
 
-## How the lift works (T1, prototype)
+## How the lift works (T1)
 
 - The scene uses the **orbit camera from t = 0**, looking almost straight down
   (`azimuth=-90`, `elevation=89`: x right, y up, as in 2D) with a very narrow field of view
@@ -41,15 +41,11 @@ timing from the theme `[motion]`, docs, an example, tests, a storyboard golden.
 - Measured: the drum's corners stay within 1.8 px at 1080p through the dolly. The remaining
   drift is the 1 degree of tilt that `elevation <= 89` (`OrbitCameraParams`) leaves.
 
-### Open points before it becomes a verb
+### Notes and open points
 
-- **A `lift` verb** (`s.at("m").lift(elevation=32, until="landed")`): it would write the
-  distance expression and the two morphs. That touches `time/verbs.py`, needs theme
-  `[motion]` timing and order-independence tests, so it waits for the owner's OK.
-- **Text in a lifted scene**: tilted, a world-layer equation at z = 0 lost its lower half
-  (it went below the plane and the depth test dropped it). The fix is
-  `pending/text_depth.patch`, waiting for the owner's OK; until then put text in lifted
-  scenes on the overlay layer.
+- **Text in a lifted scene**: fixed (owner OK, 2026-11-24). Text below its anchor is
+  depth-tested where its view ray meets the anchor's horizontal plane, so the plane it
+  stands on no longer swallows it (`render/passes.py`, `tests/test_camera3d.py`).
 - **Drift**: keep `drift=0` while flat (near top-down, azimuth sway rotates the whole
   picture); orbit after landing instead.
 - **Plane larger than the frame** for domain colouring: tilted, a frame-sized plane shows its
@@ -61,8 +57,8 @@ timing from the theme `[motion]`, docs, an example, tests, a storyboard golden.
   `s.add(...)`, so a camera expression that reads an object can't be rebuilt from Python and
   fails `test_every_example_round_trips_through_its_python_code`. `prism_dive` zooms the
   fractals instead. Fixing the write order would let a camera follow an object.
-- **The lift verb** is ready as `pending/lift_verb.patch` (with pictures), waiting for the
-  owner's OK.
+- **The lift verb** is in (owner OK, 2026-11-24): `use_camera("orbit", flat=h)` and
+  `at(...).lift(elevation, fov, until)`; `tests/test_lift.py`.
 - **A true ortho <-> perspective blend** (a 2D scene converted without opting in to the
   orbit camera) would change contract 4 and the schema: needs owner approval. The
   prototype doesn't need it.
@@ -80,4 +76,4 @@ The owner does the music. On screen:
 
 ## Order
 
-Done: T1 prototype, cue sheet, T2 example. Next: T1 verb (after the owner's OK), T3, T4.
+Done: T1 (verb and example), cue sheet, T2 example. Next: T3, T4.
