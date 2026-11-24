@@ -45,6 +45,7 @@ REQUIRED = {
     "path": {"subpaths": [[[0, 0, 0], [0.5, 1, 0], [1.5, 1, 0], [2, 0, 0]]]},
     "svg": {"path": "examples/assets/emblem.svg"},  # relative: tests run from the repo root
     "sound": {"path": "examples/assets/chime.wav"},
+    "notes": {"notes": [[60, 0, 1, 100], [67, 0.5, 1, 90]], "show": True},  # its piano roll
     "video": {"path": "examples/assets/clip.mp4"},  # relative: tests run from the repo root
     "table": {"cells": [["x", "$x^2$"], ["2", "4"]]},
     "code": {"code": "def f(x):\n    return x * x"},

@@ -47,7 +47,7 @@ Each suite on its own (`-m "not slow"`): test_midi 87 (+1 `gl`+`slow` golden, pa
 test_docs 5, test_kit + test_layers + test_contracts 28, test_lint + test_sound 72,
 test_narration + test_narration_snap + test_narration_audit + test_audio_inputs +
 test_style_freedom + test_pycode 160 (2 skipped: espeak-ng), test_mcp + test_pycode 44,
-test_final `-k "not slow"`: see the commit message. ruff check, ruff format --check and
+test_final `-k "not slow"` 475 passed, 8 skipped + the 2 it found (`notes` drew nothing in the type sweep: it now gets `show=True` there) fixed and rerun (7 passed). ruff check, ruff format --check and
 lint-imports (2 contracts kept) clean. The full suite was not run (CI).
 
 Checked against something other than phasor's own writer: the SMF 1.0 specification's
@@ -93,6 +93,8 @@ chunk by chunk in the tests.
   release reaching 0 and determinism are checked numerically.
 - Windows and macOS (no POSIX-only calls in the tests; `os.utime(ns=...)` only; the
   subprocess determinism test uses `sys.executable`), CUDA (nothing here touches kernels).
-- A render to mp4 with notes was not muxed and decoded in this milestone (the mixer path is
-  the M20/M22 one, which was).
+- (Checked, not untested:) `s.render(..., preset="draft")` of the example: 132 frames "with
+  sound"; the mp4's AAC track decoded with PyAV lines up with `audio_track` at lag 0 (8 kHz),
+  and the notes alone (decoded minus the narration-only mix) are silent 0.15 s before
+  `glide` (0.0005) and sound from it (0.08). Heard by no one.
 - An independent audit and contract review by a model that did not write the code.
