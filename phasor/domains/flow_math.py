@@ -317,12 +317,37 @@ def _numbers(term: dict, key: str, n: int | None, default=None) -> list[float]:
     return [float(a) for a in flat]
 
 
-def term_exprs(term: dict, dim: int) -> tuple[sp.Expr, ...]:
+def parse_term(text: str) -> dict[str, Any]:
+    """A source written as text, ``vortex(pos=(0, 0), strength=2)``, as a table: the kind
+    and its keyword values (numbers and tuples of numbers only; read with the AST, never
+    run)."""
+    if not isinstance(text, str) or len(text) > 500:
+        raise FunctionError("a term is text of at most 500 characters, "
+                            "such as 'vortex(pos=(0, 0), strength=2)'")  # fmt: skip
+    try:
+        tree = ast.parse(text.strip(), mode="eval").body
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        raise FunctionError(f"cannot read the term {text!r}") from None
+    if not (isinstance(tree, ast.Call) and isinstance(tree.func, ast.Name) and not tree.args):
+        raise FunctionError(f"write a term as kind(name=value, ...), not {text!r}; kinds: "
+                            f"{', '.join(TERM_KINDS)}")  # fmt: skip
+    out: dict[str, Any] = {"kind": tree.func.id}
+    for kw in tree.keywords:
+        try:
+            out[kw.arg] = ast.literal_eval(kw.value)
+        except (ValueError, TypeError, SyntaxError, RecursionError, MemoryError):
+            raise FunctionError(f"{text!r}: {kw.arg} must be a number or numbers") from None
+    return out
+
+
+def term_exprs(term: dict | str, dim: int) -> tuple[sp.Expr, ...]:
     """One source of a field, to be added to the others (advice section 2.2):
-    ``{"kind": "uniform", "v": [..]}``; ``source`` / ``sink`` ``{"pos", "strength", "core"}``
-    (radial, 1/r in 2D and 1/r^2 in 3D, softened by the core radius so it is finite);
-    ``vortex`` (about the z axis through ``pos``); ``linear`` ``{"A": [[..]], "pos"}``
-    (A (x - pos))."""
+    ``uniform(v=(1, 0))``; ``source`` / ``sink`` ``(pos=, strength=, core=)`` (radial, 1/r in
+    2D and 1/r^2 in 3D, softened by the core radius so it is finite); ``vortex`` (about the
+    z axis through ``pos``); ``linear(A=((0, 1), (-1, 0)), pos=)`` (A (x - pos)). Text
+    (``parse_term``) or the same as a table."""
+    if isinstance(term, str):
+        term = parse_term(term)
     if not isinstance(term, dict):
         raise FunctionError(f"a term is a table such as {{'kind': 'vortex', ...}}, not {term!r}")
     kind = term.get("kind")

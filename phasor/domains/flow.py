@@ -32,7 +32,6 @@ path is not reproducible across machines after that).
 from __future__ import annotations
 
 import functools
-import json
 import math
 from collections import OrderedDict
 from typing import Any, ClassVar, Literal
@@ -142,8 +141,8 @@ class Variable(ObjectBase):
 
 
 @functools.lru_cache(maxsize=128)
-def _build(equations: tuple[str, ...], terms_json: str, names: tuple[str, ...]) -> fm.System:
-    return fm.build(equations, json.loads(terms_json), names)
+def _build(equations: tuple[str, ...], terms: tuple[str, ...], names: tuple[str, ...]) -> fm.System:
+    return fm.build(equations, terms, names)
 
 
 class Resolved:
@@ -154,7 +153,7 @@ class Resolved:
         p = obj.params
         self.id = obj.id
         consts = fm.parse_constants(p.constants)
-        self.sys = _build(tuple(p.equations), _terms_json(p.terms), tuple(sorted(consts)))
+        self.sys = _build(tuple(p.equations), tuple(p.terms), tuple(sorted(consts)))
         over = {}
         for o in state.objects:  # a Variable of the same name overrides a constant
             if isinstance(o.impl, Variable) and o.params.name in consts:
@@ -192,15 +191,13 @@ class Resolved:
         return Bounds.of_points(self.world(np.stack([self.lo, self.hi])))
 
 
-def _terms_json(terms) -> str:
-    return json.dumps([dict(t) for t in terms], sort_keys=True)
-
-
 @register
 class System(ObjectBase):
     """x' = F(x): ``equations`` (one formula per coordinate, 2 or 3; ``x, y`` or ``x, y,
-    z``) plus ``terms`` (sources that add: ``uniform``, ``source``, ``sink``, ``vortex``,
-    ``linear``). Named numbers in the formulas get a value in ``constants`` ("rho=28,
+    z``) plus ``terms`` (sources that add, as text: ``uniform(v=(1, 0))``,
+    ``source(pos=(1, 0), strength=1, core=0.1)``, ``sink``, ``vortex``,
+    ``linear(A=((0, 1), (-1, 0)))``). Named numbers in the formulas get a value in
+    ``constants`` ("rho=28,
     beta=2.67"); a ``Variable`` of the same name overrides it. ``window`` is (lo, hi) per
     axis; ``pos`` is where the coordinate origin sits in the world and ``scale`` world units
     per unit. The flow time is ``tau + rate * t``; ``dt`` the fixed RK4 step. Draws the
@@ -217,7 +214,7 @@ class System(ObjectBase):
 
     class Params(ParamsBase):
         equations: tuple[str, ...] = ("y", "-sin(x) - 0.3*y")
-        terms: tuple[dict[str, Any], ...] = ()
+        terms: tuple[str, ...] = ()  # "vortex(pos=(0, 0), strength=2)", ...
         constants: str = ""
         window: tuple[tuple[float, float], ...] = ((-4.0, 4.0), (-3.0, 3.0))
         tau: float = Field(0.0, ge=-MAX_TAU, le=MAX_TAU)
@@ -245,7 +242,7 @@ class System(ObjectBase):
                 if bad:
                     raise fm.FunctionError(f"{sorted(bad)} are coordinates or constants, "
                                            "not names to give values")  # fmt: skip
-                _build(tuple(self.equations), _terms_json(self.terms), tuple(sorted(consts)))
+                _build(tuple(self.equations), tuple(self.terms), tuple(sorted(consts)))
             except fm.FunctionError as e:
                 msg = str(e)
                 if "unknown name" in msg:
@@ -637,6 +634,7 @@ class FlowSet(_Child):
             clamped.append("trail")
         sim = fm.FlowSim(r.sys, r.vals, r.dt, points=pts, loops=loops, samples=p.samples,
                          h_max=p.h_max if p.h_max > 0 else 0.01 * r.diag, refine_every=10,
+                         cap=fm.MAX_SET_POINTS,
                          max_step=r.max_step, escape=(tuple(map(float, r.escape[0])),
                                                       r.escape[1]), trail=trail,
                          direction=-1.0 if r.tau < 0 else 1.0)  # fmt: skip
@@ -975,6 +973,7 @@ class Manifold(_Child):
         if key not in _MAN:
             _MAN[key] = fm.manifolds(r.sys, r.vals, c["at"], which=p.which, dt=r.dt,
                                      steps=min(steps, fm.MAX_PROBE_STEPS), escape=r.escape,
+                                     eps=1e-3 * r.diag,
                                      max_step=r.max_step)  # fmt: skip
             while len(_MAN) > 64:
                 _MAN.popitem(last=False)

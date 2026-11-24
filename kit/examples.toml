@@ -137,6 +137,11 @@ kind = "physics"
 tier = "technique"
 teaches = "A damped pendulum's phase portrait: trajectories flowing, then its rest points and their stability"
 
+[examples.lorenz_explorer]
+kind = "physics"
+tier = "technique"
+teaches = "A 3D flow from formulas: a cone field, classified equilibria, a ball of initial conditions folding, an equilibrium's card (the Explorer's objects)"
+
 [examples.game_tree]
 kind = "basics"
 tier = "technique"

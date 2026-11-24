@@ -48,8 +48,16 @@ REQUIRED = {
     "table": {"cells": [["x", "$x^2$"], ["2", "4"]]},
     "code": {"code": "def f(x):\n    return x * x"},
     "code_line": {"text": "return x * x", "classes": "kkkkkkpppppp"},
-    **{t: {"system": "sys"} for t in ("flow_arrows", "flow_tracer", "flow_set",
-                                    "flow_equilibria", "flow_equilibrium_view")},
+    **{
+        t: {"system": "sys"}
+        for t in (
+            "flow_arrows",
+            "flow_tracer",
+            "flow_set",
+            "flow_equilibria",
+            "flow_equilibrium_view",
+        )
+    },
     "flow_manifold": {"system": "sys", "near": [3.14, 0.0]},  # a saddle: it has manifolds
 }
 # Types that point at another object: the scene gets a curve called "guide" for them.
