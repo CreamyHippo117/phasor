@@ -16,7 +16,7 @@ CUDA untested; nobody has listened to the audio (its samples and timing were che
 | --- | --- | --- |
 | Speech and pauses | `phasor/time/speech.py` (pure NumPy) | `detect(read, frames, rate)`: 10 ms frames read a chunk at a time (2^18 samples), a noise floor that follows the room (10th percentile per 1.5 s window, median of 3 windows), start/stop thresholds above it (hysteresis), pauses under 0.15 s closed, speech under 0.08 s dropped; `quality` 0..1 and `flags` (`silence`, `constant_noise`, `low_snr`, `clipping`, `music` (a tonal floor), `no_pauses`, `short`, `cut`, `unreliable`); at most `MAX_SECONDS` (3 h) looked at; NaN/inf samples ignored; any rate 1-384 kHz, stereo mixed down |
 | Sentence alignment | `speech.align` | dynamic programming over the detected segments: sentence *i* covers a run of segments whose speech length matches its text (`estimate_duration`) at the speaking rate measured over the whole recording (log-ratio cost), breaks are rewarded on long gaps and long gaps inside a sentence cost; a `[[pause]]` asks for a long gap; leading/trailing noise segments may be skipped; fewer segments than sentences: the longest is split at a quiet dip. Per-sentence confidence. `phrases` (no script), `pieces` (where `[[markers]]` inside a sentence fall: in proportion to their text, moved onto a speech onset within a quarter of the sentence) |
-| Snap plan | `speech.plan_snap` | an order-keeping DP matching of hand-placed markers to boundaries (cost: the smaller of the distance in place-in-scene vs place-in-narration, and plain distance; at most `[narration] snap_reach` = 0.1 of the narration's length; phrase boundaries cost a quarter reach more); unmatched markers interpolated piecewise linearly between anchors; owned (`[[...]]`) markers fixed and never crossed; spans never shorter than what the motions anchored at the marker need (at least the theme's shortest verb) unless `allow_short`, else the least sure anchor of the offending span is dropped; repeated on its own result to a fixed point (idempotent); `anchors` pin |
+| Snap plan | `speech.plan_snap` | an order-keeping DP matching of hand-placed markers to boundaries (cost: distance in the markers' own seconds; the scene stretched to the narration's length is tried too and used only when it fits clearly better (half the cost); at most `[narration] snap_reach` = 0.1 of the narration's length; phrase boundaries cost a quarter reach more); unmatched markers interpolated piecewise linearly between anchors; owned (`[[...]]`) markers fixed and never crossed; spans never shorter than what the motions anchored at the marker need (at least the theme's shortest verb) unless `allow_short`, else the least sure anchor of the offending span is dropped; repeated on its own result to a fixed point (idempotent); `anchors` pin |
 | Schema | `core/schema.py`, `core/migrate.py` | `NarrationBlock.audio_span: (a, b) | None`: the part of `audio` a block plays (None: the whole file, as before); finite, 0 <= a <= b <= 3 h; `SCHEMA_VERSION` 10, migration 9 -> 10 (blocks get `None`) |
 | Mixing | `time/narration.py` | the `Source` protocol (rate, frames, `read(skip, count)`) and `WavSource`; `Clip.source` (Milestone 23's synthesizer plugs in here); `_Planned` reads through a source with a `skip`; `mix_track(..., resolve=)`: span blocks are mixed a chunk at a time like clips (their samples count toward `MAX_MIX_SAMPLES`, capped by the track's 3 h, not `MAX_CLIP_FRAMES`); a missing/bad recording is said in `problems`, not raised; the whole-file (TTS) branch is untouched; `place_recorded` builds the narration from found sentences (0.03 s pre-roll, 0.05 s post-roll, never overlapping) |
 | Decoding | `phasor/domains/audio.py` | `readable_wav`: a WAV as it is (PyAV never imported); `.mp4 .m4a .m4v .mov .mp3 .aac .ogg .oga .opus .flac .webm .mkv` decoded once with PyAV to 16-bit mono WAV (8-48 kHz) in `files.user_cache("audio")` (`PHASOR_AUDIO_CACHE`), named by resolved path + mtime + size + a digest of the first and last 64 KiB + decoder version; opened non-blocking and checked regular (a FIFO never blocks); bounded by 4 GiB, 3 h of sound, 600 s of work; written to a temp name and renamed; any PyAV error a `ValueError`; `info`, `speech` (cached per file version), `narration_boundaries` |
@@ -25,6 +25,7 @@ CUDA untested; nobody has listened to the audio (its samples and timing were che
 | Lint | `inspect/lint.py` `narration_rules` | `missing_file` / `bad_file` / `missing_extra` for the recording (a probe injected by the engine: this layer decodes nothing); `narration_drift`: a marker the snap plan (injected, the same function) would move by more than `[lint] narration_drift` = 0.3 s; times = the marker's; no fix (hint: the snap). Sound: `missing_extra` for a non-WAV clip without PyAV; `bad_file`'s hint for sound files |
 | Sound | `domains/media.py` | `Sound.path` takes any of the sound extensions; semantics from `domains.audio.info`; without PyAV a non-WAV clip reports `needs: "av"` (no `bad_file`); `extras.EXTRAS["av"]` |
 | Engine | `engine.py` | `audio_track` passes `resolve=readable_wav`; `file_stamps` includes the recordings narration is cut from (lint re-reads on change) |
+| Editor, code view | `gui/controller.py`, `gui/window.py`, `engine.timeline`, `core/pycode.py` | the timeline's narration blocks carry `span`; `Editor.waveform(audio, bins, span)` reads only that part (any format `domains.audio` reads; a hostile file is an empty list), so a recording is drawn block by block, never whole per block; the generated script writes a recorded narration as `s.narrate(script, audio=...)` (it rebuilds the same document) |
 | Mux fix | `render/encode.py` | `mux_audio` gives the AAC frame a time (`pts` 0), so the encoder's 1024-sample priming is written as a skip; before, an 8 kHz narration was heard 0.13 s late (found by this milestone's end-to-end render; measured with ffmpeg and PyAV) |
 | Theme | 4 theme files, `style/theme.py` | `[narration] phrase_pause`, `snap_reach`; `[lint] narration_drift` |
 | Docs, example | `docs/ai/API.md`, `docs/ai/MCP.md`, `llms.txt`, `SPEC.md`, `kit/examples.toml` | "Narration from a recording, and snapping the scene to it" (a running block); `snap_to_narration` tool; `examples/narrated_from_audio.py` with `examples/assets/narration_demo.wav` (150 KB, 9.4 s, 8 kHz, synthetic) |
@@ -44,6 +45,14 @@ Formant-shaped word bursts (`tests/test_speech.recording`), words 0.18-0.45 s wi
   TTS clips do); detection lateness at low SNR partly cancels it. Stated tolerance: 50 ms,
   tested at 30 and 15 dB (`test_snapped_markers_land_within_the_stated_tolerance_with_noise`).
 
+- Long scenes (21 min, 300 sentences about 4 s apart, a hand marker every 10th sentence):
+  markers within 1 s of their sentence: median 22 ms, max 27 ms; within 2 s (half the
+  spacing): one of 30 went to a neighbouring sentence (4.7 s off); markers laid out on a
+  clock 3% or 10% off the recording's: most go to the wrong sentence (median 19 s, 61 s).
+  Matching sparse markers to dense sentences by time alone cannot tell which sentence was
+  meant once the error passes half the spacing; the confidence (0.6 here) does not show it.
+  Use `anchors` for such scenes (Deferred 6). Planning took 0.3 s.
+
 ## Bounds measured (wall clock, `tracemalloc` peak)
 
 - `detect` on a 60-minute 16 kHz WAV streamed from disk: 1.1 s, 24 MiB.
@@ -58,6 +67,18 @@ Formant-shaped word bursts (`tests/test_speech.recording`), words 0.18-0.45 s wi
 - 400 overlapping blocks over one file: bounded by `MAX_MIX_SAMPLES`, said, under 64 MiB (test).
 
 ## Verification
+
+Gate (the `phasor-milestone-gate` steps, run by the authoring model):
+
+| Step | Result | Evidence |
+| --- | --- | --- |
+| ruff check, ruff format --check, lint-imports | pass | clean; 2 contracts kept |
+| Focused tests | pass | 23 files `-m "not slow"`: 628 passed, 7 skipped (espeak-ng, CUDA, Windows-only); after the last changes the touched suites again: 274 passed, 3 skipped; `test_final -k "not slow"`: 418 passed + the one failure it found (the generated script dropped a recorded narration) fixed and rerun; slow golden 1 passed |
+| Full suite | not verified here | not run (over an hour; CI runs it) |
+| `phasor doctor` | pass | tier B (OpenGL llvmpipe, no CUDA), PyAV 19.0.2, ffmpeg 6.1.1, all extras |
+| Exit demo | pass on Linux | WAV: `examples/narrated_from_audio.py` (markers 30 ms before the true starts, lint clean), rendered with 2 workers "with sound", track onset 0.60 s; mp4: a scene narrated from `talk.mp4` (a video file with a sound track) rendered with 2 workers, onsets in the video 0.62 / 3.65 / 6.35 s vs true 0.60 / 3.64 / 6.33 s |
+| Contract audit | not verified here | no independent model was available; the author's own review: writes only through `Engine.apply` (`snap_to_narration` applies one `SetMarker` list); `state_at` unchanged; decoding only in `domains` (lint and mix receive injected functions); `Sound` keeps every member; one WAV reader (`parse_wav`), one way to read sound files (`domains.audio.readable_wav`) |
+| Docs and artifacts | pass | API.md (running block), MCP.md (`json calls` block runs), llms.txt regenerated, example + asset, golden looked at, this file |
 
 - `uv run ruff check .`, `ruff format --check .`, `lint-imports` (2 contracts kept): clean.
 - New tests: `tests/test_speech.py` (28), `tests/test_audio_inputs.py` (21),
@@ -85,7 +106,11 @@ Formant-shaped word bursts (`tests/test_speech.recording`), words 0.18-0.45 s wi
    already on their words and are fixed points. A marker sitting on a phrase onset is a valid
    snap target too ("speech resumes after a pause").
 6. `render/encode.py` (not this milestone's area): the AAC priming fix above, with a test at 8,
-   22.05 and 48 kHz.
+   22.05 and 48 kHz. Every render with sound now starts its track 1024 samples earlier than
+   before (21 ms at 48 kHz): correct per ffmpeg and PyAV, not heard in a player.
+8. A render worker's file check (`file_stamps`) now includes the recording a narration is cut
+   from: re-recording it while a render runs stops the render (as for any file the scene
+   names).
 7. `render/cpu/backend.cache_dir` now uses `core/files.user_cache` (factored out, same paths).
 
 ## Deferred
@@ -98,6 +123,13 @@ Formant-shaped word bursts (`tests/test_speech.recording`), words 0.18-0.45 s wi
    phonetic; mid-sentence `[[markers]]` are less exact than sentence starts.
 5. The music detector is a heuristic (a tonal floor); speech over loud broadband music may not
    be flagged.
+6. Associating hand markers with sentences by the narration they were laid out against (an
+   estimated narration of the same script, replaced by the recording: block k is the same
+   sentence), instead of by time alone; until then long scenes laid out on another clock need
+   `anchors`.
+7. The in-process caches (`domains.audio._info`, `_speech`) are keyed by path, mtime and size
+   only (the on-disk decode cache adds a content digest): a file rewritten with the same size
+   and modification time is served stale until the process restarts.
 
 ## Untested
 

@@ -525,17 +525,26 @@ def _plan_once(hand, owned, boundaries, vend, nend, reach, need, anchors, allow_
             hi = np.where(h < hand[k], np.minimum(hi, b.t), hi)
     match: dict[int, int] = {}
     pinned = {i for i, k in enumerate(names) if k in anchors}
+    scale = 1.0  # the frame markers are read in: their own seconds, or stretched to the voice
     if len(c) and len(h):
         extra = np.array([_PHRASE_COST * reach if b.kind == "phrase" else 0.0 for b in bounds])
 
-        def cost(i: int) -> np.ndarray:  # a row at a time: memory is one row, not K x N
-            if i in pinned:  # a pinned marker matches its boundary only
-                return np.full(len(c), np.inf)
-            row = np.minimum(np.abs(h[i] / vend - c / nend), np.abs(h[i] - c) / nend) + extra
-            row[(c <= lo[i]) | (c >= hi[i]) | (row > reach)] = np.inf
-            return row
+        def costs(k: float):
+            def cost(i: int) -> np.ndarray:  # a row at a time: memory is one row, not K x N
+                if i in pinned:  # a pinned marker matches its boundary only
+                    return np.full(len(c), np.inf)
+                row = np.abs(k * h[i] - c) / nend + extra
+                row[(c <= lo[i]) | (c >= hi[i]) | (row > reach)] = np.inf
+                return row
 
-        match = _dp(cost, len(h), len(c), reach, pinned)
+            return cost
+
+        match, total = _dp(costs(1.0), len(h), len(c), reach, pinned)
+        stretch = nend / vend
+        if abs(stretch - 1.0) > 0.02:  # the scene and the voice differ in length: try both
+            other, alt = _dp(costs(stretch), len(h), len(c), reach, pinned)
+            if alt < 0.5 * total:  # only when clearly better: dense sentences fit anything
+                match, scale = other, stretch
     detail: dict[str, Move] = {}
     anchor_pts: list[tuple[float, float, str, float]] = []  # (old, new, name, confidence)
     for i, k in enumerate(names):
@@ -545,7 +554,7 @@ def _plan_once(hand, owned, boundaries, vend, nend, reach, need, anchors, allow_
             anchor_pts.append((h[i], b.t, k, 2.0))
         elif i in match:
             b = bounds[match[i]]
-            off = min(abs(h[i] - b.t) / nend, abs(h[i] / vend - b.t / nend))
+            off = abs(scale * h[i] - b.t) / nend
             conf = round(b.confidence * max(0.0, 1.0 - float(off) / reach), 3)
             detail[k] = Move(k, h[i], b.t, f"{b.label}", conf, b.kind)
             anchor_pts.append((h[i], b.t, k, conf))
@@ -570,10 +579,10 @@ def _plan_once(hand, owned, boundaries, vend, nend, reach, need, anchors, allow_
 
 
 def _dp(cost: Callable[[int], np.ndarray], k: int, n: int, skip: float,
-        pinned: set[int]) -> dict[int, int]:  # fmt: skip
+        pinned: set[int]) -> tuple[dict[int, int], float]:  # fmt: skip
     """An order-keeping matching of ``k`` rows (markers) to ``n`` columns (boundaries), each
     used once, minimising the matched costs (``cost(i)``: row ``i``) plus ``skip`` per
-    unmatched row."""
+    unmatched row. Also that total."""
     F = np.zeros(n + 1)  # F[j]: best cost so far using columns < j
     choice = np.zeros((k, n + 1), np.int8)  # 0 skip row, 1 match (i, j-1), 2 carry from j-1
     for i in range(k):
@@ -596,7 +605,7 @@ def _dp(cost: Callable[[int], np.ndarray], k: int, n: int, skip: float,
         if choice[i, j] == 1:
             out[i] = j - 1
             j -= 1
-    return out
+    return out, float(F[n])
 
 
 def _interpolate(names, h, anchor_pts, fixed) -> dict[str, float]:

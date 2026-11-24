@@ -947,7 +947,8 @@ class Engine:
     def timeline(self) -> dict[str, Any]:
         """What a timeline panel shows: the duration, the markers, for every animated
         parameter its spans in resolved seconds (``{"d.pos": [[1.0, 2.0], ...]}``) and the
-        spoken narration blocks (text, start, duration, audio file)."""
+        spoken narration blocks (text, start, duration, audio file, and for a recording the
+        ``span`` of it the block plays)."""
         c = self._snap.compiled
         lanes = {
             path: [[seg.t0, seg.t1] for seg in node.segments]
@@ -956,7 +957,8 @@ class Engine:
         }
         markers = dict(sorted(c.time_map.markers.items(), key=lambda kv: kv[1]))
         nar = self._snap.compiled.doc.narration
-        blocks = [{"text": b.text, "start": b.start, "duration": b.duration, "audio": b.audio}
+        blocks = [{"text": b.text, "start": b.start, "duration": b.duration, "audio": b.audio,
+                   **({"span": list(b.audio_span)} if b.audio_span else {})}
                   for b in (nar.blocks if nar else ()) if b.text]  # fmt: skip
         return {"duration": c.duration, "markers": markers, "lanes": lanes, "narration": blocks}
 

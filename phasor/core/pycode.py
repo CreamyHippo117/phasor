@@ -4,7 +4,8 @@
 their parameters, style roles and tags, the camera, markers, animations (as ``at(...).to``),
 constraints and controls. An object of a type defined in the scene's folder, or with
 updaters, is written as the document's own ``add_object`` op (ADR 0005). Narration blocks
-are not reproduced (their audio belongs to the voice module): a comment says so. Running the
+are not reproduced (their audio belongs to the voice module): a comment says so; a narration
+read from a recording (M22) is, as ``s.narrate(script, audio=...)``. Running the
 result and diffing it with the document gives no differences except narration
 (``tests/test_pycode.py``).
 """
@@ -128,7 +129,11 @@ def document_to_python(doc: Document) -> str:
     for name, t in doc.timeline.markers.items():
         if name not in owned:
             lines.append(f"s.marker({name!r}, {float(t)!r})")
-    if doc.narration is not None:
+    if doc.narration is not None and doc.narration.voice.startswith("file:"):
+        # a recording (M22): narrating from the same file finds the same sentences again
+        audio = doc.narration.voice[len("file:") :]
+        lines.append(f"s.narrate({doc.narration.script!r}, audio={audio!r})")
+    elif doc.narration is not None:
         lines.append("# (narration is not reproduced here: record it with s.narrate(...))")
     for path, segs in doc.timeline.tracks.items():
         for seg in segs:

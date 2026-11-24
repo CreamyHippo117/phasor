@@ -490,7 +490,7 @@ def narration_rules(c: Compiled, probe: Callable[[Any, str], Any] | None = None,
     th = float(c.theme.lint["narration_drift"])
     try:
         moves = plan()
-    except ValueError:
+    except Exception:  # whatever the plan meets (a hostile document): no drift said, no crash
         return out
     for m in moves:
         d = abs(m.t1 - m.t0)

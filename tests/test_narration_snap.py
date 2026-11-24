@@ -464,3 +464,61 @@ def test_the_workspace_tools_narrate_from_a_file_and_snap(tmp_path):
         ws.snap_to_narration(anchors={"nope": 0})
     with pytest.raises(ToolError):
         ws.narrate(SCRIPT, audio="../../elsewhere.wav")
+
+
+def test_the_editor_draws_each_block_of_a_recording_from_its_own_part(tmp_path):
+    from phasor.gui.controller import Editor
+    from phasor.workspace.tools import Workspace
+
+    ws = Workspace(tmp_path)
+    ws.scene_new("talk")
+    base = Path(ws.engine.base_dir)
+    talk(base)
+    ws.narrate(SCRIPT, audio="talk.wav")
+    ed = Editor(ws)
+    blocks = ed.timeline()["narration"]
+    assert all(b["audio"] == "talk.wav" and len(b["span"]) == 2 for b in blocks)
+    waves = [ed.waveform(b["audio"], 20, b["span"]) for b in blocks]
+    assert all(len(w) == 20 and max(w) > 0.1 for w in waves)
+    assert (
+        ed.waveform("talk.wav", 20, (0.0, 0.3))
+        and max(ed.waveform("talk.wav", 20, (0.0, 0.3))) < 0.05
+    )
+    assert ed.waveform("gone.wav", 20, (0.0, 1.0)) == []
+    (base / "bad.mp4").write_bytes(b"nope" * 100)
+    assert ed.waveform("bad.mp4", 20, (0.0, 1.0)) == []
+
+
+def test_a_recorded_narration_saves_and_reopens_the_same(tmp_path):
+    from phasor.engine import Engine
+
+    talk(tmp_path)
+    s = scene(tmp_path)
+    s.narrate(SCRIPT, audio="talk.wav")
+    s.snap_to_narration()
+    path = tmp_path / "snap.phasor.json"
+    s.save(path)
+    e = Engine.open(path)
+    assert e.document == s.engine.document
+    a, b = s.engine.audio_track(), e.audio_track()
+    assert a[1] == b[1] and np.array_equal(a[0], b[0])
+    assert e.snap_to_narration(dry_run=True)["moves"] == []
+    assert sorted(i.code for i in e.lint()) == sorted(i.code for i in s.engine.lint())
+
+
+def test_odd_markers_and_narrations_plan_cleanly(tmp_path):
+    from phasor.time import speech as sp
+
+    b = [sp.Boundary(0.0, "sentence", "a"), sp.Boundary(0.0, "sentence", "b")]
+    for hand in ({"a": 1e9}, {"a": 2.0, "b": 2.0, "c": 2.0}, {}, {"a": 0.0}):
+        moves = sp.plan_snap(hand, {}, b, visual_end=0.0, narration_end=0.0, reach=0.1,
+                             need={})  # fmt: skip
+        assert {m.marker for m in moves} == set(hand)
+        assert all(np.isfinite(m.t1) for m in moves)
+    talk(tmp_path)
+    s = scene(tmp_path)
+    s.narrate(SCRIPT, audio="talk.wav")
+    s.marker("far", 100.0)
+    s.marker("twin", 4.0)
+    assert isinstance(s.snap_to_narration(dry_run=True)["moves"], list)
+    assert isinstance(s.engine.lint(), list)
