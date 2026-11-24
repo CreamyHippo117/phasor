@@ -11,16 +11,16 @@
       "frames": 30,
       "gl_renderer": "llvmpipe (LLVM 20.1.2, 256 bits)",
       "load_average": [
-        3.08,
-        3.89,
-        3.64
+        7.11,
+        4.9,
+        4.11
       ],
       "motions": {
         "pan": {
           "batch_uploads_per_frame": 0.0,
-          "fps": 13.9,
-          "ms_mean": 73.78,
-          "ms_median": 71.9
+          "fps": 11.8,
+          "ms_mean": 85.16,
+          "ms_median": 84.49
         }
       },
       "platform": "Linux-6.18.44-fc-v819-x86_64-with-glibc2.39",
@@ -37,22 +37,22 @@
       "frames": 30,
       "gl_renderer": "llvmpipe (LLVM 20.1.2, 256 bits)",
       "load_average": [
-        3.0,
-        3.85,
-        3.63
+        6.7,
+        4.85,
+        4.1
       ],
       "motions": {
         "flow": {
           "batch_uploads_per_frame": 4.0,
-          "fps": 19.3,
-          "ms_mean": 51.36,
-          "ms_median": 51.94
+          "fps": 15.6,
+          "ms_mean": 64.39,
+          "ms_median": 64.18
         },
         "pan": {
           "batch_uploads_per_frame": 0.0,
-          "fps": 23.4,
-          "ms_mean": 44.08,
-          "ms_median": 42.75
+          "fps": 18.1,
+          "ms_mean": 55.89,
+          "ms_median": 55.31
         }
       },
       "platform": "Linux-6.18.44-fc-v819-x86_64-with-glibc2.39",
@@ -69,22 +69,22 @@
       "frames": 30,
       "gl_renderer": "llvmpipe (LLVM 20.1.2, 256 bits)",
       "load_average": [
-        3.0,
-        3.85,
-        3.63
+        6.7,
+        4.85,
+        4.1
       ],
       "motions": {
         "flow": {
           "batch_uploads_per_frame": 0.0,
-          "fps": 19.2,
-          "ms_mean": 52.6,
-          "ms_median": 52.1
+          "fps": 15.4,
+          "ms_mean": 65.18,
+          "ms_median": 64.87
         },
         "pan": {
           "batch_uploads_per_frame": 0.0,
-          "fps": 19.7,
-          "ms_mean": 50.6,
-          "ms_median": 50.84
+          "fps": 16.1,
+          "ms_mean": 62.42,
+          "ms_median": 62.17
         }
       },
       "platform": "Linux-6.18.44-fc-v819-x86_64-with-glibc2.39",
@@ -101,22 +101,22 @@
       "frames": 30,
       "gl_renderer": "llvmpipe (LLVM 20.1.2, 256 bits)",
       "load_average": [
-        2.92,
-        3.82,
-        3.62
+        6.64,
+        4.87,
+        4.11
       ],
       "motions": {
         "flow": {
           "batch_uploads_per_frame": 4.0,
-          "fps": 19.2,
-          "ms_mean": 63.38,
-          "ms_median": 52.0
+          "fps": 16.9,
+          "ms_mean": 60.02,
+          "ms_median": 59.15
         },
         "pan": {
           "batch_uploads_per_frame": 0.0,
-          "fps": 20.2,
-          "ms_mean": 50.88,
-          "ms_median": 49.4
+          "fps": 17.2,
+          "ms_mean": 58.51,
+          "ms_median": 58.22
         }
       },
       "platform": "Linux-6.18.44-fc-v819-x86_64-with-glibc2.39",
@@ -133,22 +133,22 @@
       "frames": 30,
       "gl_renderer": "llvmpipe (LLVM 20.1.2, 256 bits)",
       "load_average": [
-        3.29,
-        3.86,
-        3.64
+        6.32,
+        4.9,
+        4.13
       ],
       "motions": {
         "flow": {
           "batch_uploads_per_frame": 2.0,
-          "fps": 3.1,
-          "ms_mean": 330.64,
-          "ms_median": 326.26
+          "fps": 2.8,
+          "ms_mean": 362.4,
+          "ms_median": 363.11
         },
         "orbit": {
           "batch_uploads_per_frame": 0.0,
-          "fps": 4.2,
-          "ms_mean": 239.38,
-          "ms_median": 236.91
+          "fps": 3.5,
+          "ms_mean": 291.63,
+          "ms_median": 282.42
         }
       },
       "platform": "Linux-6.18.44-fc-v819-x86_64-with-glibc2.39",
@@ -165,22 +165,22 @@
       "frames": 30,
       "gl_renderer": "llvmpipe (LLVM 20.1.2, 256 bits)",
       "load_average": [
-        3.15,
-        3.79,
-        3.62
+        6.76,
+        5.12,
+        4.22
       ],
       "motions": {
         "flow": {
           "batch_uploads_per_frame": 0.0,
           "fps": 2.8,
-          "ms_mean": 354.2,
-          "ms_median": 356.97
+          "ms_mean": 377.22,
+          "ms_median": 356.07
         },
         "orbit": {
           "batch_uploads_per_frame": 0.0,
-          "fps": 4.2,
-          "ms_mean": 245.23,
-          "ms_median": 236.27
+          "fps": 2.9,
+          "ms_mean": 345.32,
+          "ms_median": 339.84
         }
       },
       "platform": "Linux-6.18.44-fc-v819-x86_64-with-glibc2.39",
@@ -197,22 +197,22 @@
       "frames": 30,
       "gl_renderer": "llvmpipe (LLVM 20.1.2, 256 bits)",
       "load_average": [
-        3.19,
-        3.78,
-        3.62
+        6.65,
+        5.15,
+        4.24
       ],
       "motions": {
         "flow": {
           "batch_uploads_per_frame": 2.0,
-          "fps": 4.4,
-          "ms_mean": 225.59,
-          "ms_median": 228.85
+          "fps": 4.5,
+          "ms_mean": 222.56,
+          "ms_median": 220.74
         },
         "orbit": {
           "batch_uploads_per_frame": 0.0,
-          "fps": 7.7,
-          "ms_mean": 131.16,
-          "ms_median": 130.11
+          "fps": 6.4,
+          "ms_mean": 159.78,
+          "ms_median": 156.18
         }
       },
       "platform": "Linux-6.18.44-fc-v819-x86_64-with-glibc2.39",
@@ -229,22 +229,22 @@
       "frames": 30,
       "gl_renderer": "llvmpipe (LLVM 20.1.2, 256 bits)",
       "load_average": [
-        3.0,
-        3.69,
-        3.59
+        5.25,
+        4.92,
+        4.19
       ],
       "motions": {
         "flow": {
           "batch_uploads_per_frame": 1.0,
           "fps": 2.9,
-          "ms_mean": 345.3,
-          "ms_median": 343.78
+          "ms_mean": 347.8,
+          "ms_median": 349.63
         },
         "orbit": {
           "batch_uploads_per_frame": 0.0,
-          "fps": 3.5,
-          "ms_mean": 284.32,
-          "ms_median": 283.89
+          "fps": 3.2,
+          "ms_mean": 308.8,
+          "ms_median": 310.96
         }
       },
       "platform": "Linux-6.18.44-fc-v819-x86_64-with-glibc2.39",
@@ -261,22 +261,22 @@
       "frames": 30,
       "gl_renderer": "llvmpipe (LLVM 20.1.2, 256 bits)",
       "load_average": [
-        2.93,
-        3.63,
-        3.57
+        4.91,
+        4.87,
+        4.19
       ],
       "motions": {
         "flow": {
           "batch_uploads_per_frame": 0.0,
-          "fps": 2.4,
-          "ms_mean": 414.71,
-          "ms_median": 418.74
+          "fps": 2.5,
+          "ms_mean": 413.39,
+          "ms_median": 407.3
         },
         "orbit": {
           "batch_uploads_per_frame": 0.0,
-          "fps": 3.0,
-          "ms_mean": 346.07,
-          "ms_median": 335.94
+          "fps": 2.4,
+          "ms_mean": 407.25,
+          "ms_median": 409.95
         }
       },
       "platform": "Linux-6.18.44-fc-v819-x86_64-with-glibc2.39",
@@ -293,29 +293,29 @@
       "frames": 30,
       "gl_renderer": "llvmpipe (LLVM 20.1.2, 256 bits)",
       "load_average": [
-        2.85,
-        3.59,
-        3.56
+        4.92,
+        4.87,
+        4.2
       ],
       "motions": {
         "flow": {
           "batch_uploads_per_frame": 1.0,
-          "fps": 6.2,
-          "ms_mean": 166.03,
-          "ms_median": 161.98
+          "fps": 6.0,
+          "ms_mean": 164.44,
+          "ms_median": 167.39
         },
         "orbit": {
           "batch_uploads_per_frame": 0.0,
-          "fps": 10.9,
-          "ms_mean": 91.85,
-          "ms_median": 91.51
+          "fps": 10.3,
+          "ms_mean": 99.38,
+          "ms_median": 96.98
         }
       },
       "platform": "Linux-6.18.44-fc-v819-x86_64-with-glibc2.39",
       "quality": "interactive"
     }
   ],
-  "commit": "83c5f6b",
+  "commit": "04e9abb",
   "machine": "vm",
-  "when": "2026-11-24T22:28:56+00:00"
+  "when": "2026-11-24T23:46:55+00:00"
 }

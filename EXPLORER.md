@@ -51,7 +51,7 @@ Two kinds of state:
 | --- | --- | --- | --- | --- |
 | 26 | Flow core, headless: parser hardening, `flow_math`, batched RK4 + `Simulation`, equilibria, 3D classification, 1D manifolds, set refinement, objects (`Variable`, `System`, `FieldArrows`, `Tracer`, `FlowSet`, `Equilibria`, `EquilibriumView`, `Manifold`), presets, docs, examples, goldens | none | cloud | DONE (independently audited, 4 blockers fixed; `MILESTONE_26.md`) |
 | 27 | Rows, variables, AI tools: `normalize_row`, row classifier, `source` params, auto `Control`, `explorer_state/edit/preset`, `find_equilibria`, `flow_probe`, `sweep_parameter`, MCP.md, llms.txt, skill | 26 interfaces | cloud | DONE (independently audited, 2 blockers fixed; `MILESTONE_27.md`); the panel's typed-row lock is in place, rows for graphs/curves/surfaces are saved but not drawn yet |
-| 28 | World-space batches `ctx.points3d/lines3d/arrows3d` (GL + software), flow objects moved onto them, thinning while dragging | M21 | cloud; PC timing | built (`MILESTONE_28.md`), awaiting audit; PC timing in `pc_tasks/12_world_batches.md` |
+| 28 | World-space batches `ctx.points3d/lines3d/arrows3d` (GL + software), flow objects moved onto them, thinning while dragging | M21 | cloud; PC timing | built, independently audited (1 blocker + 5 should-fix fixed; `MILESTONE_28.md`); PC timing in `pc_tasks/12_world_batches.md` |
 | 29 | The Explorer panel in the M25 window: transport, click/drag tools, equilibrium card, R2/R3 | 27, M25 | cloud; PC feel | planned |
 | 30 | Analysis pack: Poincare section, Lyapunov, time-series strip, twin tracers, divergence map, bifurcation sweep, limit cycles | 26, 27 | cloud | planned |
 | 31 | Scale and handoff: CUDA flow kernel, 1e5-1e6 points, basins/FTLE kernels, record marks -> scene, export dialog | 28, 29 | PC | planned |
@@ -104,4 +104,4 @@ delete-and-retype (`retired_ids`); parse every formula in `examples/`, `showcase
 
 ## Status
 
-Planned 2026-11-24. 26 flow core DONE (audited, merged); 27 rows and AI tools DONE (audited, merged); 30 analysis pack built and under audit; 28 (world-space batches) built, awaiting audit and the PC's numbers; 29 after Milestone 25. 29 waits for Milestone 25.
+Planned 2026-11-24. 26 flow core DONE (audited, merged); 27 rows and AI tools DONE (audited, merged); 30 analysis pack built and under audit; 28 (world-space batches) built and audited, awaiting the PC's numbers; 29 after Milestone 25. 29 waits for Milestone 25.

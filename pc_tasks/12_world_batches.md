@@ -16,10 +16,11 @@ the numbers are wall clock.
 git pull
 uv sync --extra gl --extra encode --extra gui --extra mcp --extra gpu --extra boolean --extra svg --extra code
 uv run phasor doctor
-uv run pytest -q tests/test_batches.py tests/test_flow.py
+uv run pytest -q tests/test_batches.py tests/test_batches_audit.py tests/test_flow.py
 ```
 
-Record: pass/fail counts; the GL renderer `phasor doctor` names (it must be the NVIDIA card,
+Record: pass/fail counts; `phasor doctor`'s `batches` line (storage blocks in the vertex
+shader and the block size; it must say "in the vertex shader"); the GL renderer it names (it must be the NVIDIA card,
 not "Microsoft Basic Render Driver" or llvmpipe). If any test in `test_batches.py` fails,
 stop and paste the failure: in particular `test_the_vertex_shader_equals_the_cpu_expansion`
 and `test_gl_and_cpu_expanded_pictures_agree` compare the NVIDIA shader with the NumPy
@@ -75,17 +76,17 @@ Python to dominate, which says what Milestone 29/31 should cache next.
 
 Expected numbers are the advice's estimates (`docs/decisions/explorer_advice_2026-11-24.md`
 section 1.5), not measurements. Cloud numbers: this box on 2026-11-24, 640x360, 30 frames,
-load average 3.1-3.9 on 4 cores (`benchmarks/2026-11-24_explorer_view_cpu_640x360.json`).
+load average 4.9-7.1 on 4 cores, at the audit-fix commit (`benchmarks/2026-11-24_explorer_view_cpu_640x360.json`).
 
 | Case (640x360) | Motion | Cloud, shader (llvmpipe) | Cloud, cpu-built | Cloud, interactive | Advice expects on PC | PC shader | PC cpu-built | PC interactive |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 2D portrait, strokes (today's path) | pan | 13.9 fps | (same path) | - | 15-20 fps | | | |
-| 2D field, 2500 arrows + 2000 points | pan | 23.4 fps | 19.7 fps | 20.2 fps | 60+ fps | | | |
-| 2D field, 2500 arrows + 2000 points | flow | 19.3 fps | 19.2 fps | 19.2 fps | 60+ fps | | | |
-| 3D Lorenz, 4913 cones + 10^4 tracers, 8-step trails | orbit | 4.2 fps | 4.2 fps | 7.7 fps | 60+ fps | | | |
-| 3D Lorenz, 4913 cones + 10^4 tracers, 8-step trails | flow | 3.1 fps | 2.8 fps | 4.4 fps | 60+ fps | | | |
-| 3D Lorenz, 343 cones + 10^5 tracers | orbit | 3.5 fps | 3.0 fps | 10.9 fps | 60 fps plausible | | | |
-| 3D Lorenz, 343 cones + 10^5 tracers | flow | 2.9 fps | 2.4 fps | 6.2 fps | needs the CUDA flow kernel (M31) | | | |
+| 2D portrait, strokes (today's path) | pan | 11.8 fps | (same path) | - | 15-20 fps | | | |
+| 2D field, 2500 arrows + 2000 points | pan | 18.1 fps | 16.1 fps | 17.2 fps | 60+ fps | | | |
+| 2D field, 2500 arrows + 2000 points | flow | 15.6 fps | 15.4 fps | 16.9 fps | 60+ fps | | | |
+| 3D Lorenz, 4913 cones + 10^4 tracers, 8-step trails | orbit | 3.5 fps | 2.9 fps | 6.4 fps | 60+ fps | | | |
+| 3D Lorenz, 4913 cones + 10^4 tracers, 8-step trails | flow | 2.8 fps | 2.8 fps | 4.5 fps | 60+ fps | | | |
+| 3D Lorenz, 343 cones + 10^5 tracers | orbit | 3.2 fps | 2.4 fps | 10.3 fps | 60 fps plausible | | | |
+| 3D Lorenz, 343 cones + 10^5 tracers | flow | 2.9 fps | 2.5 fps | 6.0 fps | needs the CUDA flow kernel (M31) | | | |
 
 Also record for 1920x1080 (the second command) in the same shape.
 
