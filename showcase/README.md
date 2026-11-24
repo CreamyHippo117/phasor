@@ -18,6 +18,7 @@ render only those: `uv run python showcase/render_all.py prism_primes deep_zoom`
 | `prism_transitions` | transitions: a constant drifting, one function blending into another, equations solved |
 | `prism_heat` | heat maps in the prism look: a hot spot, a vibrating drum, a chirp |
 | `prism_spectrogram` | a spectrogram of a formula, the playhead a glowing line sweeping it |
+| `sampling` | sampling and aliasing: samples of a fast wave as beacons, the slow wave they also fit |
 | `prism_drum_3d` | a vibrating drum in 3D, a net of glowing lines, orbiting |
 | `point_cloud` | a million polynomial roots as glowing points, falling toward z = i |
 | `prism_fractal` | fractals in the prism look: a morphing Julia set, then a dive, edges glowing |

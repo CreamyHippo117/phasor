@@ -216,3 +216,8 @@ teaches = "The logistic map's bifurcation diagram as a glowing point cloud: a sw
 kind = "physics"
 tier = "technique"
 teaches = "Wave fields on the GPU: two sources interfering, then a phased array steering its beam"
+
+[examples.sampling]
+kind = "fourier_linalg"
+tier = "technique"
+teaches = "Sampling and aliasing: samples of a fast wave as beacons, and the slow wave they also fit once the rate falls below Nyquist"

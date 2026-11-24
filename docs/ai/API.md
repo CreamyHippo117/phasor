@@ -830,9 +830,10 @@ expression.
 **`fourier`**: `Epicycles(points=..., terms=N, phase=0..1)` (a closed curve drawn by N rotating
 circles; `phase` animates the tip), `PartialSum(kind="square"|"sawtooth"|"triangle", terms=N)`
 (the Gibbs overshoot is in the semantics), `Spectrum(frequencies=, amplitudes=, window=)` (bars
-per bin; `leakage` in the semantics), `Spectrogram(...)` (any signal, backdrop; below). The maths is
+per bin; `leakage` in the semantics), `Spectrogram(...)` (any signal, backdrop; below), `Sampling(...)` (samples and their alias; below). The maths is
 `phasor.domains.fourier_math`: `epicycle_coefficients`, `series_partial_sum`, `window`,
-`spectrum`, `leakage`, `spectrogram`, `dominant_frequency`, `sampled`, `convolve`.
+`spectrum`, `leakage`, `spectrogram`, `dominant_frequency`, `sampled`, `convolve`,
+`alias_frequency`, `alias_signed`, `nyquist`, `sample_times`.
 
 `fourier.Winding` draws a sum of real sine tones wound clockwise at `freq` (Hz). Its
 centroid is the mean of the wound samples, equal to the complex DFT divided by the sample
@@ -1793,6 +1794,31 @@ s.marker("end", 4.0)
 sem = s.engine.inspect(2.0, id="sg")["objects"][0]["semantic"]
 assert sem["source"] == "formula" and abs(sem["dominant_frequency"] - 600) < 50
 # from a file next to the scene: Spectrogram(id="sg", wav="voice.wav", fmax=4000)
+```
+
+**Sampling and aliasing.** `fourier.Sampling` samples the wave `sin(2 pi f t + phase)` at `fs`
+samples a second for `duration` seconds: each sample is a beacon (the `beacon` role) on a stem,
+the true wave is the `color` role (cyan in the prism looks). When `fs` is below twice `frequency`
+(Nyquist) the samples also lie exactly on a slower wave at the alias frequency `|f - k fs|`
+nearest zero, drawn in the `alias` role (amber); above Nyquist there is no alias and only
+the true wave shows. `fs` can be a track or an expression, or swept with
+`s.at("m").sweep("wave.fs", 9.0)`: the rate falls through Nyquist and the alias appears.
+`progress` (0..1) takes the samples one after another. `pos` is the centre of the plot and `size`
+its (width, height); `fs * duration` is at most 4000. A backdrop: labels may sit on it. The
+semantics report `frequency_hz`, `sample_rate_hz`, `nyquist_hz`, `alias_hz`, `aliasing`,
+`duration_s`, `sample_count` and `samples_per_cycle`. The two hues are always drawn as the
+roles say, even in `prism_everywhere`, because here the hue means which wave it is. Example:
+`examples/sampling.py`.
+
+```python
+from phasor import Scene
+from phasor.domains.fourier import Sampling
+
+s = Scene("alias", look="prism", passes=None)
+s.add(Sampling(id="wave", frequency=7.0, fs=10.0, duration=1.0))
+sem = s.engine.inspect(0.0, id="wave")["objects"][0]["semantic"]
+assert sem["aliasing"] and sem["nyquist_hz"] == 5.0
+assert abs(sem["alias_hz"] - 3.0) < 1e-9  # |7 - 10| = 3
 ```
 
 **Fractal cloud mode (the Buddhabrot).** `cx.Fractal(kind="buddhabrot")` draws not the escape
