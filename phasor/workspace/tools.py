@@ -32,6 +32,7 @@ from phasor.style.theme import ROLE_GROUPS, available_themes
 from phasor.time import verbs as _verbs
 from phasor.workspace import docs
 from phasor.workspace import explorer as _explorer
+from phasor.workspace import jobs as _jobs
 
 VERBS = (
     "reveal",
@@ -116,7 +117,7 @@ class Workspace:
         self.script_var = "s"
         self.script_lines: dict[str, int] = {}
         self.script_disk: tuple[str, tuple[int, int]] | None = None
-        self._jobs: dict[str, Any] = {}  # render jobs (``render_start``)
+        self._jobs = _jobs.Jobs()  # render jobs (``render_start``)
 
     # ------------------------------------------------------------ plumbing
 
@@ -818,6 +819,16 @@ class Workspace:
         or a marker name (a draft of one stretch: ``start="intro", end="proof"``). A draft
         is written to ``<scene>.draft.mp4`` by default."""
         from phasor.render.encode import EncodeError
+
+        e = self.engine
+        target = self._render_target(preset, out, frame)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            return e.render(target, preset=preset, start=start, end=end, frame=frame)
+        except (RuntimeError, EncodeError, OSError, ValueError) as err:
+            raise ToolError(str(err)) from err
+
+    def _render_target(self, preset: str, out: str | None, frame: Any) -> Path:
         from phasor.render.job import PRESETS
 
         if not isinstance(preset, str) or preset not in PRESETS:
@@ -825,12 +836,75 @@ class Workspace:
         e = self.engine
         stem = file_stem(e.document.meta.title) + (".draft" if preset == "draft" else "")
         default = self.out_dir / (f"{stem}.png" if frame is not None else f"{stem}.mp4")
-        target = self._inside(out) if out else default
-        target.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            return e.render(target, preset=preset, start=start, end=end, frame=frame)
-        except (RuntimeError, EncodeError, OSError, ValueError) as err:
+        return self._inside(out) if out else default
+
+    def render_start(
+        self, preset: str = "draft", out: str | None = None, start: float | str | None = None,
+        end: float | str | None = None, fps: float | None = None,
+        frame: float | str | None = None, overwrite: bool | None = None,
+    ) -> dict[str, Any]:  # fmt: skip
+        """Start a render that runs while you go on: returns at once with a ``job`` id; ask
+        ``render_status`` how far it is, ``render_cancel`` to stop it (nothing is left
+        behind). ``preset`` as for ``render`` (default ``draft``, written to
+        ``<scene>.draft.mp4``, never over the real render). It renders the scene as it is
+        now; later edits do not reach it. An existing file is replaced only with
+        ``overwrite`` (a draft's own default file always is), and only when the render
+        finished: until then the old file stays."""
+        from phasor.render.job import resolve_time
+        from phasor.render.presets import check_fps
+
+        target = self._render_target(preset, out, frame)
+        e = self.engine
+        if not isinstance(overwrite, bool | type(None)):
+            raise ToolError(f"overwrite must be true or false, not {overwrite!r}")
+        replace = overwrite if overwrite is not None else (preset == "draft" and not out)
+        if target.exists() and not replace:
+            raise ToolError(f"{target.name} exists: pass overwrite=true to replace it (it is "
+                            "replaced only when the new render finished)")  # fmt: skip
+        if target.suffix.lower() not in (".mp4", ".mov", ".png"):
+            raise ToolError(f"{target.name}: a render job writes a .mp4, .mov or (with frame) "
+                            "a .png")  # fmt: skip
+        if (target.suffix.lower() == ".png") != (frame is not None):
+            raise ToolError("a .png is one frame (pass frame); a video ends in .mp4 or .mov")
+        try:  # a bad time or rate is said now, not by a job that fails later
+            for what, v in (("start", start), ("end", end), ("frame", frame)):
+                resolve_time(e, v, what)
+            if fps is not None:
+                check_fps(fps)
+        except ValueError as err:
             raise ToolError(str(err)) from err
+        target.parent.mkdir(parents=True, exist_ok=True)
+        snap = self._guard(e.snapshot)  # the scene now; the job thread never reads ``e``
+        job = _jobs.RenderJob(snap, target, preset=preset, start=start, end=end, fps=fps,
+                              frame=frame)  # fmt: skip
+        try:
+            self._jobs.start(job)
+        except ValueError as err:
+            raise ToolError(str(err)) from err
+        return job.status()
+
+    def render_status(self, job: str | None = None) -> dict[str, Any]:
+        """Where a render job is: ``state`` (running, cancelling, done, failed, cancelled),
+        ``frame`` of ``frames``, ``progress`` 0-1, ``seconds``, the ``path`` it writes, and
+        ``error`` or ``result`` at the end. Without ``job``: every job (``jobs``)."""
+        if job is None:
+            return {"jobs": [j.status() for j in self._jobs.all()]}
+        try:
+            return self._jobs.get(job).status()
+        except KeyError as err:
+            raise ToolError(str(err.args[0])) from err
+
+    def render_cancel(self, job: str) -> dict[str, Any]:
+        """Stop a render job between two frames; its partial file is removed and an earlier
+        file of that name stays as it was. Returns its status (``cancelled``, or ``done``
+        when it had already finished)."""
+        try:
+            j = self._jobs.get(job)
+        except KeyError as err:
+            raise ToolError(str(err.args[0])) from err
+        if j.running:
+            j.cancel()
+        return j.status()
 
     def export_midi(self, out: str | None = None, overwrite: bool = False) -> dict[str, Any]:
         """Write the scene's MIDI notes (every ``notes`` object, as heard, at its times in

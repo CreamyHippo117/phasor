@@ -11,6 +11,7 @@ import pytest
 
 from phasor import load
 from phasor.core import io
+from phasor.core.issues import DocumentError
 from phasor.core.pycode import (
     TWEAKS_END,
     TWEAKS_HEADER,
@@ -87,8 +88,8 @@ def test_scene_tweaks_land_in_the_overrides_and_orphans_are_kept(tmp_path):
     assert any(i.code == "orphan_override" for i in e.lint())
     assert e.document.object("pole").style["color"] == "highlight"
     assert [c.rule for c in e.overrides.constraints] == ["note near pole"]
-    with pytest.raises(Exception):  # a tweak with a bad value is an error at its line
-        path.write_text(SCRIPT + "s.tweak('pole.r', -4)\n", encoding="utf-8")
+    path.write_text(SCRIPT + "s.tweak('pole.r', -4)\n", encoding="utf-8")
+    with pytest.raises(DocumentError):  # a tweak with a bad value is an error at its line
         load(path, passes=None)
 
 

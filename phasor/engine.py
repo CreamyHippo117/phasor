@@ -380,6 +380,16 @@ class Engine:
         engine._snap.frozen = True
         return engine
 
+    def snapshot(self) -> Engine:
+        """A private, frozen copy of the scene as it is now, for a render on another thread
+        (the app's render jobs): with this engine's bake when it has one (never baked again,
+        as a render worker's, ADR 0003), else a fork that bakes itself when first drawn, on
+        that thread. Edits made here afterwards never reach it."""
+        self._snap.refresh()  # a file that changed: its bake is gone (made again there)
+        if self._snap.bake is not None:
+            return Engine.from_payload(self.worker_payload(), passes=self._passes)
+        return self.fork()
+
     def fork(self, *, allow_scripts: bool | None = None) -> Engine:
         """A private copy of this engine's current scene (document and overrides) with its own
         history: edit it freely (a player moving sliders) and this one never changes. It has
