@@ -501,7 +501,7 @@ the theme's `[lint]` table.
 ## Storyboards: look at the whole scene at once
 
 ```python no-run
-# no-run: needs OpenGL 4.3
+# no-run: needs OpenGL 4.1
 board = engine.storyboard(marks=True)  # start, every marker, end; or pass a list of times
 save_png("out/board.png", board["image"])  # one contact sheet, captions show time and marker
 board["frames"]  # [{"t", "marker", "objects": brief inspector lines}]
@@ -540,7 +540,7 @@ engine.inspect(3.0, id="pole_i", detail="full")  # adds projected feature points
 ## Stills and files
 
 ```python no-run
-# no-run: needs OpenGL 4.3 and writes files
+# no-run: needs OpenGL 4.1 and writes files
 from phasor import load
 from phasor.render.output import save_png
 
@@ -1609,7 +1609,7 @@ Example: `examples/strange_attractor.py`.
 
 | Command | Status | Purpose |
 | --- | --- | --- |
-| `phasor doctor [--json] [--require A\|B\|C]` | M0 | Prove CUDA, NVRTC, OpenGL 4.3, encoders and, without CUDA, the C++ compiler for CPU kernels (name, version, threads); print tier |
+| `phasor doctor [--json] [--require A\|B\|C]` | M0 | Prove CUDA, NVRTC, OpenGL 4.1, encoders and, without CUDA, the C++ compiler for CPU kernels (name, version, threads); print tier |
 | `phasor inspect SCENE [--t T] [--id ID] [--detail brief\|standard\|full] [--allow-scripts]` | M1 | What is on screen at time t |
 | `phasor lint SCENE [--fix] [--strict] [--json] [--step S] [--allow-scripts]` | M2 | Lint; exit 1 on errors (`--strict`: on warnings too). `--fix` applies suggested fixes and saves them |
 | `phasor storyboard SCENE [-o PNG] [--t T]... [--marks] [--json] [--allow-scripts]` | M2 | Keyframe contact sheet plus what the inspector sees |
@@ -1710,7 +1710,7 @@ report = run_doctor()  # never raises; each probe fails on its own
 assert report.tier in {"A", "B", "C"}
 ```
 
-Tiers: **A** CUDA kernels and GL 4.3. **B** GL 4.3 only. **C** no usable GL: the inspector
+Tiers: **A** CUDA kernels and GL 4.1. **B** GL 4.1 only. **C** no usable GL: the inspector
 runs in analytic mode, stills are unavailable.
 
 ## Filtering: poles and zeros, response, signal and spectrum

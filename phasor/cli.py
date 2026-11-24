@@ -298,7 +298,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--version", action="version", version=f"phasor {__version__}")
     sub = p.add_subparsers(dest="command", required=True, metavar="COMMAND")
 
-    d = sub.add_parser("doctor", help="check CUDA, NVRTC, OpenGL 4.3 and encoders; print tier")
+    d = sub.add_parser("doctor", help="check CUDA, NVRTC, OpenGL 4.1 and encoders; print tier")
     d.add_argument("--json", action="store_true", help="machine-readable output")
     d.add_argument(
         "--require",
