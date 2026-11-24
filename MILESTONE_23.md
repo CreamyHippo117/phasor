@@ -55,6 +55,14 @@ determinism are checked numerically).
 
 ## Verification
 
+After the audit fixes, each run on its own (`-m "not slow"`): test_midi + test_midi_audit
+120, the golden (against the stored picture) 1, test_sound + test_lint + test_mcp 111,
+test_narration + test_narration_snap + test_narration_audit + test_audio_inputs 113
+(2 skipped: espeak-ng), test_layers + test_contracts + test_style_freedom + test_pycode +
+test_kit + test_engine + test_proc 107, test_final `-k "notes and not slow"` 7, test_docs 5;
+`tests/mix_baseline.py` prints the five pre-M23 hashes unchanged; ruff check, ruff format
+--check and lint-imports clean.
+
 Before the audit fixes, each suite on its own (`-m "not slow"`): test_midi 90 (+1 `gl`+`slow`
 golden, passed against the stored picture without `PHASOR_UPDATE_GOLDEN`), test_docs 5,
 test_lint + test_sound + test_mcp 111, test_engine + test_proc + test_windows_robust 38
