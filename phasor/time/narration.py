@@ -19,10 +19,10 @@ from __future__ import annotations
 
 import re
 import wave
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import numpy as np
 
@@ -348,10 +348,11 @@ def read_sound(path: str | Path, max_frames: int = MAX_CLIP_FRAMES,
     return _frames(path, info, max(0, int(skip)), max(0, int(max_frames))), info.rate
 
 
-def _frames(path: str | Path, info: WavInfo, skip: int, count: int) -> np.ndarray:
-    """Frames ``skip`` to ``skip + count`` of the clip (cut at ``MAX_CLIP_FRAMES`` and at what
-    the file holds) as mono float32."""
-    want = max(0, min(count, info.frames - skip, MAX_CLIP_FRAMES - skip))
+def _frames(path: str | Path, info: WavInfo, skip: int, count: int,
+            limit: int = MAX_CLIP_FRAMES) -> np.ndarray:  # fmt: skip
+    """Frames ``skip`` to ``skip + count`` of the clip (cut at ``limit``, by default
+    ``MAX_CLIP_FRAMES``, and at what the file holds) as mono float32."""
+    want = max(0, min(count, info.frames - skip, limit - skip))
     frame = info.width * info.channels
     chunks: list[np.ndarray] = []
     try:
@@ -388,14 +389,56 @@ def _pcm(raw: bytes, info: WavInfo) -> np.ndarray:
     return x.reshape(-1, info.channels).mean(axis=1)
 
 
+class Source(Protocol):
+    """Mono samples a clip plays: a WAV file (``WavSource``), or anything else that can say
+    its rate and length and hand out float32 samples in -1..1 a window at a time (Milestone
+    23's synthesizer). ``frames`` is already bounded; ``read`` never returns more than asked
+    and may return fewer (the end; a file cut short on disk raises ``ValueError``)."""
+
+    @property
+    def rate(self) -> int: ...
+
+    @property
+    def frames(self) -> int: ...
+
+    def read(self, skip: int, count: int) -> np.ndarray: ...
+
+
+@dataclass(frozen=True)
+class WavSource:
+    """A PCM WAV file as a ``Source``: read a chunk at a time (``_frames``), at most ``limit``
+    frames from its start."""
+
+    path: Path
+    info: WavInfo
+    limit: int = MAX_CLIP_FRAMES
+
+    @property
+    def rate(self) -> int:
+        return self.info.rate
+
+    @property
+    def frames(self) -> int:
+        return max(0, min(self.info.frames, self.limit))
+
+    def read(self, skip: int, count: int) -> np.ndarray:
+        return _frames(self.path, self.info, skip, count, self.limit)
+
+
 @dataclass(frozen=True)
 class Clip:
-    """A sound clip to mix in (``media.Sound``): a WAV file in the scene's folder, from
-    ``start`` seconds, ``gain`` dB louder."""
+    """A sound clip to mix in (``media.Sound``): a file in the scene's folder (``path``), from
+    ``start`` seconds, ``gain`` dB louder. ``source``: samples already opened (a type that
+    makes its own sound); None reads the file at ``path`` (a WAV, or through the mix's
+    ``resolve``: another format decoded to a WAV)."""
 
     path: str
     start: float
     gain: float = 0.0
+    source: Source | None = None
+
+
+Resolve = Callable[[Path], Path]  # a file in the scene's folder -> a PCM WAV of its sound
 
 
 def mix_track(
@@ -406,6 +449,7 @@ def mix_track(
     problems: list[str] | None = None,
     start: float = 0.0,
     end: float | None = None,
+    resolve: Resolve | None = None,
 ) -> tuple[np.ndarray, int] | None:
     """The narration and any sound clips as one mono int16 track, each block's audio placed
     at its start, each clip at its ``start`` and cut where the scene (``duration``) ends.
@@ -418,30 +462,43 @@ def mix_track(
     nothing has audio. A clip that is missing, outside the folder, unreadable or past those
     bounds is left out and said in ``problems`` (lint names it too: ``missing_file``,
     ``bad_file``, ``sound_limit``); narration audio that cannot be read raises, as it always
-    has."""
+    has. A narration block with an ``audio_span`` (a recording cut into sentences, M22) plays
+    that part of its file, read a chunk at a time like a clip (its samples count towards
+    ``MAX_MIX_SAMPLES``); one that cannot be read is left out and said. ``resolve`` turns a
+    file that is not a WAV (an mp4's sound) into one (``domains.audio``: this layer decodes
+    nothing)."""
     from phasor.core import files
 
     root = Path(base_dir).resolve()
     spoken = []
+    cut: list[NarrationBlock] = []
     for b in narration.blocks if narration is not None else ():
         if not b.audio:
             continue
         path = (root / b.audio).resolve()
         if root not in path.parents:  # a document must not read files outside its folder
             raise ValueError(f"narration audio {b.audio!r} is outside the scene's folder")
-        spoken.append((b.start, read_wav(path)))
-    rates = {rate for _, (_, rate) in spoken}
+        if b.audio_span is None:
+            spoken.append((b.start, read_wav(path)))
+        else:
+            cut.append(b)
+    opened = _open_spans(root, files, cut, resolve, problems)
+    rates = {rate for _, (_, rate) in spoken} | {src.rate for src in opened.values()}
     if len(rates) > 1:
         raise ValueError(f"narration clips have different sample rates: {sorted(rates)}")
     rate = rates.pop() if rates else SOUND_RATE
     scene_end = max(float(duration), 0.0)
     lo = max(float(start), 0.0)
-    hi = max([scene_end] + [t + len(s) / rate for t, (s, _) in spoken]) if end is None else end
+    ends = [t + len(s) / rate for t, (s, _) in spoken]
+    ends += [b.start + b.duration for b in cut if str(b.audio) in opened]
+    hi = max([scene_end, *ends]) if end is None else end
     hi = min(max(float(hi), lo), lo + MAX_TRACK_SECONDS)
     g0 = round(lo * rate)  # the window's first sample, on the scene's sample grid
     size = max(0, int(np.ceil(hi * rate - 1e-6)) - g0)  # to the grid sample at or after hi
     stop = min(g0 + size, int(np.ceil(scene_end * rate)))  # clips stop where the scene ends
-    plan = _plan_clips(root, files, clips, rate, g0, stop, problems)
+    work = [0]
+    plan = _plan_spans(cut, opened, rate, g0, g0 + size, work, problems)
+    plan += _plan_clips(root, files, clips, rate, g0, stop, problems, resolve, work)
     if not spoken and not plan:
         return None
     out = np.empty(size, np.int16)
@@ -458,6 +515,48 @@ def mix_track(
     return out, rate
 
 
+def _open_spans(root: Path, files: Any, blocks: Sequence[NarrationBlock],
+                resolve: Resolve | None, problems: list[str] | None
+                ) -> dict[str, Source]:  # fmt: skip
+    """The file each recorded block cuts, opened once per file (its header checked)."""
+    out: dict[str, Source] = {}
+    bad: set[str] = set()
+    for b in blocks:
+        name = str(b.audio)
+        if name in out or name in bad:
+            continue
+        try:
+            file = files.regular_file(root, name)
+            wav = Path(resolve(file) if resolve is not None else file)
+            info = wav_info(wav)
+        except Exception as e:  # whatever a hostile file provokes: left out, said
+            bad.add(name)
+            if problems is not None:
+                problems.append(f"narration audio {name!r} left out: {e}")
+            continue
+        out[name] = WavSource(wav, info, int(MAX_TRACK_SECONDS * info.rate) + 1)
+    return out
+
+
+def _plan_spans(blocks: Sequence[NarrationBlock], opened: Mapping[str, Source], rate: int,
+                g0: int, g1: int, work: list[int], problems: list[str] | None
+                ) -> list[_Planned]:  # fmt: skip
+    """Each recorded block with samples in the window [g0, g1), within ``MAX_MIX_SAMPLES``."""
+    plan: list[_Planned] = []
+    for b in blocks:
+        src = opened.get(str(b.audio))
+        if src is None or b.audio_span is None:
+            continue
+        first = round(b.start * rate)
+        skip = round(b.audio_span[0] * src.rate)
+        count = max(0, min(round(b.duration * rate), src.frames - skip))
+        p = _budget(_Planned(src, f"narration audio {b.audio!r}", first, count, 1.0, 1.0, True,
+                             skip), g0, g1, rate, work, problems)  # fmt: skip
+        if p is not None:
+            plan.append(p)
+    return plan
+
+
 MAX_SOUNDS = 256  # sound clips mixed into one track; the rest are left out (lint sound_limit)
 MAX_MIX_SAMPLES = 1 << 30  # clip samples mixed in all (6 hours at 48 kHz: 2 full tracks)
 _OUT_CHUNK = 1 << 20  # track samples mixed at a time
@@ -466,18 +565,22 @@ _OUT_CHUNK = 1 << 20  # track samples mixed at a time
 @dataclass
 class _Planned:
     """A clip placed on the track's sample grid: output sample ``j`` (at the track's rate) is
-    global sample ``first + j``, read from source position ``j * ratio``; ``count`` of them
-    (cut where the scene ends and at what the file holds)."""
+    global sample ``first + j``, read from source position ``skip + j * ratio``; ``count`` of
+    them (cut where the scene ends and at what the source holds)."""
 
-    path: Path
+    source: Source
     name: str
-    info: WavInfo
     first: int
     count: int
     ratio: float  # source samples per track sample
     gain: float
     same_rate: bool
+    skip: int = 0  # source samples before the clip's first (a part of a recording)
     failed: bool = False
+
+    @property
+    def label(self) -> str:
+        return self.name if self.name.startswith("narration") else f"sound {self.name!r}"
 
     def mix(self, buf: np.ndarray, g: int, problems: list[str] | None) -> None:
         """Add the part of the clip that falls in ``buf`` (global samples ``g`` on)."""
@@ -486,28 +589,51 @@ class _Planned:
             return
         try:
             if self.same_rate:
-                y = _frames(self.path, self.info, j0, j1 - j0)
+                y = self.source.read(self.skip + j0, j1 - j0)
             else:
                 pos = np.arange(j0, j1) * self.ratio
                 s0 = int(pos[0])
-                s1 = min(self.info.frames, MAX_CLIP_FRAMES, int(pos[-1]) + 2)
-                x = _frames(self.path, self.info, s0, s1 - s0)
+                s1 = min(self.source.frames - self.skip, int(pos[-1]) + 2)
+                x = self.source.read(self.skip + s0, s1 - s0)
                 y = np.interp(pos, np.arange(s0, s0 + len(x)), x).astype(np.float32)
         except Exception as e:  # changed or cut on disk since it was checked: said
             self.failed = True
             if problems is not None:
-                problems.append(f"sound {self.name!r} left out from sample {g + j0}: {e}")
+                problems.append(f"{self.label} left out from sample {g + j0}: {e}")
             return
         y = y * self.gain
         _add(buf, y * 32768.0, self.first + j0 - g)
 
 
+def _budget(p: _Planned, g0: int, stop: int, rate: int, work: list[int],
+            problems: list[str] | None) -> _Planned | None:  # fmt: skip
+    """``p`` cut where ``stop`` is and to the ``MAX_MIX_SAMPLES`` left (``work[0]`` are used);
+    None when none of it falls in [g0, stop). What is cut is said in ``problems``."""
+    p.count = min(p.count, stop - p.first)
+    mixed = min(p.first + p.count, stop) - max(p.first, g0)
+    if mixed <= 0:  # it ended before the window
+        return None
+    if work[0] + mixed > MAX_MIX_SAMPLES:
+        room = MAX_MIX_SAMPLES - work[0]
+        if problems is not None:
+            what = "left out" if room <= 0 else f"cut after {room / rate:g} s"
+            problems.append(f"{p.label} {what}: a track mixes at most "
+                            f"{MAX_MIX_SAMPLES} clip samples in all")  # fmt: skip
+        if room <= 0:
+            return None
+        p.count = max(p.first, g0) + room - p.first
+        mixed = room
+    work[0] += mixed
+    return p
+
+
 def _plan_clips(root: Path, files: Any, clips: Sequence[Clip], rate: int, g0: int, stop: int,
-                problems: list[str] | None) -> list[_Planned]:  # fmt: skip
+                problems: list[str] | None, resolve: Resolve | None = None,
+                work: list[int] | None = None) -> list[_Planned]:  # fmt: skip
     """Each clip that has samples in [g0, stop): checked (its header) before anything is
     mixed, within ``MAX_SOUNDS`` and ``MAX_MIX_SAMPLES``; the rest said in ``problems``."""
     plan: list[_Planned] = []
-    work = 0
+    work = [0] if work is None else work
     for k, c in enumerate(clips):
         if k >= MAX_SOUNDS:
             if problems is not None:
@@ -518,32 +644,22 @@ def _plan_clips(root: Path, files: Any, clips: Sequence[Clip], rate: int, g0: in
         if not first < stop:
             continue
         try:
-            file = files.regular_file(root, c.path)
-            info = wav_info(file)
+            src = c.source
+            if src is None:
+                file = files.regular_file(root, c.path)
+                wav = Path(resolve(file) if resolve is not None else file)
+                src = WavSource(wav, wav_info(wav))
         except Exception as e:  # whatever a hostile file provokes: left out, said
             if problems is not None:
                 problems.append(f"sound {c.path!r} left out: {e}")
             continue
-        held = min(info.frames, MAX_CLIP_FRAMES)
-        same = info.rate == rate
-        count = held if same else int(held * rate / info.rate)
-        count = min(count, stop - first)
-        mixed = min(first + count, stop) - max(first, g0)
-        if mixed <= 0:  # it ended before the window
-            continue
-        if work + mixed > MAX_MIX_SAMPLES:
-            room = MAX_MIX_SAMPLES - work
-            if problems is not None:
-                what = "left out" if room <= 0 else f"cut after {room / rate:g} s"
-                problems.append(f"sound {c.path!r} {what}: a track mixes at most "
-                                f"{MAX_MIX_SAMPLES} clip samples in all")  # fmt: skip
-            if room <= 0:
-                continue
-            count = max(first, g0) + room - first
-            mixed = room
-        work += mixed
-        plan.append(_Planned(file, c.path, info, first, count, info.rate / rate,
-                             float(10 ** (c.gain / 20)), same))  # fmt: skip
+        same = src.rate == rate
+        count = src.frames if same else int(src.frames * rate / src.rate)
+        p = _budget(_Planned(src, c.path, first, count, src.rate / rate,
+                             float(10 ** (c.gain / 20)), same), g0, stop, rate, work,
+                    problems)  # fmt: skip
+        if p is not None:
+            plan.append(p)
     return plan
 
 

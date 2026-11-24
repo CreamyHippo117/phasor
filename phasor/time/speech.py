@@ -90,7 +90,7 @@ def detect(read: Reader, frames: int, rate: int) -> Speech:
     hop = max(1, round(rate * FRAME))
     n = frames // hop
     energy, clipped = _energies(read, n, hop)
-    seconds = n * hop / rate
+    seconds = round(n * hop / rate, 4)
     if n < 10:
         return Speech((), (), (), seconds, 0.0, (*flags, "short", "silence"), -120.0, -120.0)
     db = 10 * np.log10(energy + 1e-12)
@@ -135,7 +135,7 @@ def detect(read: Reader, frames: int, rate: int) -> Speech:
         flags.append("unreliable")
     if not segments:
         quality = 0.0
-    return Speech(segments, pauses, dips, round(seconds, 4), round(quality, 3), tuple(flags),
+    return Speech(segments, pauses, dips, seconds, round(quality, 3), tuple(flags),
                   round(base, 2), round(level, 2))  # fmt: skip
 
 

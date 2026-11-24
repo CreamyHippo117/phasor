@@ -512,9 +512,11 @@ class Engine:
                     end: float | None = None):  # fmt: skip
         """The narration and the scene's sound clips (``media.Sound``: any object whose
         type has ``audio_clip``) as one mono int16 track covering the scene, and its sample
-        rate; None when nothing has audio. A clip that cannot be read is left out and said
-        in ``problems``. ``start``/``end``: only that window of the scene (a render of part of
-        it reads and mixes only that part)."""
+        rate; None when nothing has audio. Sound files that are not WAV (an mp4's sound, M22)
+        are decoded once into the user's cache (``domains.audio``). A clip that cannot be
+        read is left out and said in ``problems``. ``start``/``end``: only that window of
+        the scene (a render of part of it reads and mixes only that part)."""
+        from phasor.domains.audio import readable_wav
         from phasor.time.narration import mix_track
 
         state = self.state_at(0.0)
@@ -526,7 +528,8 @@ class Engine:
         n = self.document.narration
         if n is None and not clips:
             return None
-        return mix_track(n, self.base_dir, self.duration, clips, problems, start, end)
+        return mix_track(n, self.base_dir, self.duration, clips, problems, start, end,
+                         resolve=readable_wav)  # fmt: skip
 
     def _lint(self, snap: _Snapshot, step: float) -> tuple[Issue, ...]:
         snap.refresh()
