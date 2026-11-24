@@ -7,8 +7,11 @@ narration smartly". Built 2026-11-24 in a worktree branched from `claude/eloquen
 stated tolerance (50 ms); motions follow; the audio mixes into the render**
 (`examples/narrated_from_audio.py`, `tests/test_narration_snap.py`).
 
-Status: **built; focused gates green on Linux; no independent audit yet.** Windows, macOS and
-CUDA untested; nobody has listened to the audio (its samples and timing were checked).
+Status: **built; audited independently (2026-11-24): 3 blockers + 9 should-fix items and the
+nits fixed, each with a regression test that fails on the audited head (`bf178df`) and
+passes now (`tests/test_narration_audit.py`); focused gates green on Linux.** Windows, macOS
+and CUDA untested; nobody has listened to the audio (its samples and timing were checked);
+no real human voice was used (synthetic speech-like signals only).
 
 ## Built
 
@@ -30,28 +33,29 @@ CUDA untested; nobody has listened to the audio (its samples and timing were che
 | Theme | 4 theme files, `style/theme.py` | `[narration] phrase_pause`, `snap_reach`; `[lint] narration_drift` |
 | Docs, example | `docs/ai/API.md`, `docs/ai/MCP.md`, `llms.txt`, `SPEC.md`, `kit/examples.toml` | "Narration from a recording, and snapping the scene to it" (a running block); `snap_to_narration` tool; `examples/narrated_from_audio.py` with `examples/assets/narration_demo.wav` (150 KB, 9.4 s, 8 kHz, synthetic) |
 
-## Accuracy (synthetic ground truth, this machine)
+## Accuracy (synthetic ground truth, this machine; after the audit)
 
-Formant-shaped word bursts (`tests/test_speech.recording`), words 0.18-0.45 s with gaps of
-0.04-0.3 s (comma-length gaps overlap sentence pauses of 0.35-0.8 s), white noise at the SNR.
+Formant-shaped word bursts (`tests/test_speech.recording`, `tests/test_narration_audit.speech`),
+words 0.18-0.45 s, word gaps 0.04-0.3 s, sentence pauses 0.35-0.8 s, white noise at the SNR;
+variants below. Only what is listed was measured.
 
-- `align` alone (sentence start found vs true, 12 sentences, 3 seeds): 40 dB median 2 ms,
-  max 8 ms; 20 dB median 14 ms, max 24 ms; 10 dB median 30 ms, max 47 ms (flagged
-  `low_snr`, `unreliable`).
+- Sentence starts (`align`, 6 sentences x 5 seeds unless said; > 250 ms counts as wrong):
+  baseline, fast speaker, 2-word sentences, lengths 1 to 20 words, 3 x 40 words, one 70-word
+  sentence, one or two mid-sentence pauses of 0.6 to 1.5 s, 12 dB SNR: 0 wrong, max 37 ms.
+  Still wrong and **flagged** (`alignment_doubtful`, confidence at most 0.3): a reader who
+  does not pause between sentences (0.05-0.12 s, word gaps up to 0.3 s): 25 of 30 wrong, all
+  5 runs flagged; a slow speaker (word gaps 0.15-0.6 s as long as sentence pauses): 2 of 30
+  wrong, flagged (with 2 false alarms in 5 correct runs).
 - End to end (`narrate(script, audio=)` + `snap_to_narration()`, 4 hand markers, 10 seeds):
-  40 dB median 28 ms, max 33 ms; 30 dB median 21 ms, max 27 ms; 20 dB median 15 ms, max
-  22 ms; 10 dB median 5 ms but one marker of 40 off by 1.44 s (the run said `unreliable`).
-  These include the deliberate 0.03 s pre-roll (markers land 30 ms before the voice, as the
-  TTS clips do); detection lateness at low SNR partly cancels it. Stated tolerance: 50 ms,
-  tested at 30 and 15 dB (`test_snapped_markers_land_within_the_stated_tolerance_with_noise`).
-
-- Long scenes (21 min, 300 sentences about 4 s apart, a hand marker every 10th sentence):
-  markers within 1 s of their sentence: median 22 ms, max 27 ms; within 2 s (half the
-  spacing): one of 30 went to a neighbouring sentence (4.7 s off); markers laid out on a
-  clock 3% or 10% off the recording's: most go to the wrong sentence (median 19 s, 61 s).
-  Matching sparse markers to dense sentences by time alone cannot tell which sentence was
-  meant once the error passes half the spacing; the confidence (0.6 here) does not show it.
-  Use `anchors` for such scenes (Deferred 6). Planning took 0.3 s.
+  40 dB median 28 ms, max 33 ms; 30 dB 21 / 27 ms; 20 dB 15 / 22 ms; 10 dB 5 / 20 ms
+  (flagged `low_snr`, `unreliable`). These include the deliberate 0.03 s pre-roll.
+  Stated tolerance: 50 ms, tested at 30 and 15 dB.
+- The scene on another clock (24 sentences, a marker on every second): scale x0.8 to x1.25,
+  an offset of +2 s, drift x1.1 in the second half: 12 of 12 on their sentence, not flagged.
+  Drift x0.9 in the second half, and x0.8 with only 3 markers on 6 sentences: two readings
+  fit almost equally, so the result is `ambiguous_timing`, `unreliable`, nothing moves.
+  Sentences all of one length (a pathological script) with markers 0.5-2 s off: ambiguous,
+  nothing moves (before: confident, markers 12 s off).
 
 ## Bounds measured (wall clock, `tracemalloc` peak)
 
@@ -68,7 +72,15 @@ Formant-shaped word bursts (`tests/test_speech.recording`), words 0.18-0.45 s wi
 
 ## Verification
 
-Gate (the `phasor-milestone-gate` steps, run by the authoring model):
+After the audit fixes (2026-11-24), each suite on its own (`-m "not slow"`): test_speech 28,
+test_audio_inputs 21, test_narration_snap 31, test_narration_audit 38, test_sound 40,
+test_narration 23 (2 skipped: espeak-ng), test_style_freedom 42, test_docs 5, test_layers 9,
+test_lint 32, test_engine 30, test_mcp 39, test_render 22 (1 skipped: CUDA),
+test_gui_controller 20, test_pycode 5, test_final 419 (4 skipped) passed, 0 failed; the slow
+golden passed; ruff, ruff format and lint-imports clean. The full suite was not run (CI).
+
+Gate: **audited independently, 3 blockers + 9 should-fix (and the nits) fixed**; the
+pre-audit gate table, run by the authoring model:
 
 | Step | Result | Evidence |
 | --- | --- | --- |
@@ -112,10 +124,44 @@ Gate (the `phasor-milestone-gate` steps, run by the authoring model):
    from: re-recording it while a render runs stops the render (as for any file the scene
    names).
 8. `render/cpu/backend.cache_dir` now uses `core/files.user_cache` (factored out, same paths).
+9. Audit: the high-pass before detection is zero-phase, so a sudden onset in digital silence
+   is found up to about 20 ms early; the tone-burst tests allow 25 ms (was 20) and the
+   API.md example 80 ms (was 50). Real rooms have noise and do not show it.
+10. Audit: internal return types grew (`align` -> `Alignment`, `plan_snap` -> `SnapPlan`,
+    `narration_boundaries` 4 values, `_plan_once` 2); all are lists or tuples as before plus
+    attributes, and none is a documented public API outside this milestone.
+
+## Audit (independent, 2026-11-24): findings and fixes
+
+Principle: a confident wrong answer must never look like a right one. "Before" is the
+audited head `bf178df`; every row has a test in `tests/test_narration_audit.py` (37 tests; 36
+fail on the audited head, the 37th, `[40, 40, 40]` coverage, already passed there).
+
+| Finding | Before | Fix | After |
+| --- | --- | --- | --- |
+| B1 snap under clock mismatch | x0.9: 10/12 markers on the wrong sentence, x1.1 10/12, drift 4/12, +2 s offset 7/12; unreliable False, confidence >= 0.57 | `speech.fit_clock`: scale (0.6-1.6) and offset by a vote over offsets per scale, scored on every marker, a mild prior for no change (offset in sentence spacings); markers then matched by a Viterbi chain over the steps between markers (`_chain`), so drift lands; a close second reading that moves markers elsewhere makes the plan `ambiguous`: nothing moves, flag `ambiguous_timing`, `unreliable`; `SnapPlan.fit` -> result `alignment` | 0/12 at x0.8, x0.9, x1.05, x1.1, x1.25, +2 s, drift x1.1; drift x0.9 ambiguous (flagged, kept) |
+| B2 speech dropped | a 100-word sentence lost 7.5 s + 2 s; a script without full stops lost 10.6 s | no skipping of segments at the ends; the width a sentence may span grows with the longest sentence | every detected segment inside a block; 100% of the energy kept |
+| B3 misleading pauses | two 1.2 s mid-sentence pauses: 16/30 starts > 250 ms off (4.6 s), confidence 0.6-0.85; run-on 25/30; slow 4/30 | sentence length counted in words only (punctuation pauses are silence); length weighted 2x against gaps; long segments cut at quiet dips (a break there costs more); `Alignment.doubtful` when a sentence is 1.8x off its text, the median misfit is large, or sentence breaks are hardly longer than gaps inside sentences; confidences then <= 0.3; flag `alignment_doubtful` | mid-sentence pauses 0/30; run-on and slow: still wrong, all flagged (accuracy above) |
+| S1 anchors reorder | `{"poles": 3}` crossed owned markers | `engine._check_pins`: refused with a clear `ValueError` | refused |
+| S2 Scene snap refused silently | returned `applied: False` | `Scene.snap_to_narration` raises `DocumentError` | raises |
+| S3 DC and hum | DC 0.1: no speech; DC 0.02, hum 0.03: music | `_highpass` (mean removed, 60-100 Hz linear step, zero-phase FFT with 4096-sample overlap), music flatness above 100 Hz, floor never below -80 dBFS | DC 0.1/0.5, hum 0.08/0.3: same segments, no flags |
+| S4 float WAV | "format 3 (compressed)" | `parse_wav` reads 32/64-bit float (plain and extensible); 16-bit float, ADPCM still refused | read exactly |
+| S5 track size | block at 10700 s in a 5 s scene: 979 MiB; 192 kHz MemoryError | recording blocks more than `SPAN_MARGIN` (60 s) past the scene are left out and said (lint `sound_limit`); the track at most `MAX_TRACK_SAMPLES` (3 h at 48 kHz) | nothing allocated |
+| S6 decode bomb, cache | 1.3 MB Opus -> 330 MB; never pruned | output at most 64x the file (and 256 MiB); cache pruned oldest first to 4 GiB | refused in 7 s, 149 MiB peak |
+| S7 doubt in the result | only detection quality; missing file quality 1.0 | result `alignment` (clock fit + `speech`: rate, misfit, worst, doubtful); missing recording: quality 0, `unreadable`, unreliable | |
+| S8 lint re-aligned | 1000 sentences 11 s per lint | `domains.audio.aligned` cached by file stamp + script | a 25-min, 300-sentence lint: narration rules no longer visible in the cost |
+| S9 Windows replace | PermissionError, cached | a held destination that exists is success; `OSError` never cached | (by reading; untested on Windows) |
+| Nits | | docstring fixed; PyAV errors "cannot be decoded: <reason>"; the cache folder error names `PHASOR_AUDIO_CACHE`; a decode cut at 3 h is `<key>.cut.wav` and detection flags `cut`; same-size same-mtime middle edits documented | |
+
+Also changed by the audit work: `place_recorded` / `from_audio` use the cached alignment;
+`narration_boundaries` returns the alignment too (4 values); `align` returns an `Alignment`
+(a list of `Placed` with `rate`, `misfit`, `worst`, `doubtful`); `plan_snap` returns a
+`SnapPlan` (a list of `Move` with `fit`). Measured cost: `align` of 2000 sentences over
+16000 segments 34.5 s (once per recording and script, then cached).
 
 ## Deferred
 
-1. The decode cache is never pruned (each version of each file stays until removed by hand).
+1. (Done in the audit: the decode cache is pruned.)
 2. `Engine._bring_files` does not copy narration audio (recordings or TTS clips) when a scene
    is saved into another folder (pre-existing for TTS).
 3. The app button (Milestone 25); MIDI clips through `Source` (Milestone 23).
@@ -125,8 +171,8 @@ Gate (the `phasor-milestone-gate` steps, run by the authoring model):
    be flagged.
 6. Associating hand markers with sentences by the narration they were laid out against (an
    estimated narration of the same script, replaced by the recording: block k is the same
-   sentence), instead of by time alone; until then long scenes laid out on another clock need
-   `anchors`.
+   sentence), instead of by time alone; until then scenes whose timing fits two ways are
+   flagged ambiguous and need `anchors`.
 7. The in-process caches (`domains.audio._info`, `_speech`) are keyed by path, mtime and size
    only (the on-disk decode cache adds a content digest): a file rewritten with the same size
    and modification time is served stale until the process restarts.
