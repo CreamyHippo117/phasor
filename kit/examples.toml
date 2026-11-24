@@ -102,6 +102,11 @@ kind = "complex"
 tier = "technique"
 teaches = "Smooth transitions: a constant drifting (zeros and poles glide), one function blending into another, equations rearranging as they are solved (keys, arcs, morph until a marker)"
 
+[examples.prism_lift]
+kind = "physics"
+tier = "technique"
+teaches = "A spatial transition with no cut: a flat heat map gains depth by a dolly zoom (camera.distance as an expression of camera.fov), tips over and rises into a 3D landscape"
+
 [examples.prism_heat]
 kind = "physics"
 tier = "technique"
