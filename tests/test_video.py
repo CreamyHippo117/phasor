@@ -436,7 +436,10 @@ def test_five_clips_played_together_each_decode_on_without_seeking(tmp_path, mon
     assert len(mm._DECODERS) == 6 <= mm.MAX_OPEN
 
 
-@pytest.mark.skipif(not hasattr(os, "fork"), reason="no fork on this system")
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"),
+    reason="forking a process with threads is safe to test on Linux only",
+)
 def test_a_forked_process_decodes_after_its_parent_did(tmp_path):
     """A render worker forked after the parent decoded: swscale's thread pool, inherited
     mid-use, deadlocked the child's first conversion (audit, S4). Each decoder now converts

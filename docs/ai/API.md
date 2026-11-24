@@ -1300,7 +1300,10 @@ camera.
   `ray_segments` (what has been reached by a distance), `sphere_wall_arcs`, `front_visible`.
 
 An object type that reads files lists the parameters that name them in `Files = ("path",)`
-(`phasor.core.files`): validated to stay in the folder, checked by `missing_file`.
+(`phasor.core.files`): validated to stay in the folder, checked by `missing_file`. A type
+that reads some parameters as one value for the whole scene lists them in `Fixed` (as
+`Image` and `Video` do `start`, `trim`, `speed`, `fps`): a track, an expression or an
+updater on one is the validation error `bad_param`.
 
 ```python
 from phasor import Scene, ac, expr

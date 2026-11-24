@@ -188,5 +188,5 @@ test_layers 9; test_open_contract 71; test_pycode 5; test_final `-k "not slow"` 
 | contract audit | done by the authoring model (no tool to start a fresh reviewer) | one write path (`from_video` uses `Engine.apply`); state depends on (document, t, files named in `Files`); `av` only in `domains`; `Video` registers with Params and draw; render workers open their own decoders and refuse changed files (existing frozen stamps); colour linear once |
 | docs and artifacts | pass | API.md rows and section (blocks run), examples, goldens (software only; no GPU goldens), this file |
 
-MILESTONE 24: DONE (on Linux, gate by the authoring model, not independent; untested on
-Windows, macOS, CUDA).
+MILESTONE 24: DONE (on Linux; gate first by the authoring model, then audited independently
+and the findings fixed, see "After the audit"; untested on Windows, macOS, CUDA).
