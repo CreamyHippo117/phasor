@@ -363,7 +363,7 @@ def control_rules(c: Compiled) -> list[Issue]:
     return out
 
 
-DRAWLESS = ("value", "sound")  # semantic kinds of types that draw nothing
+DRAWLESS = ("value", "sound", "variable")  # semantic kinds of types that draw nothing
 
 
 def file_rules(c: Compiled) -> list[Issue]:
@@ -700,6 +700,22 @@ def run(
                 f.add("truncated", (e["id"],), t, why=sem["truncated"], file=sem.get("file"))
             if sem.get("clamped"):
                 f.add("clamped", (e["id"],), t, why=sem["clamped"])
+            budget = sem.get("budget")
+            if isinstance(budget, dict):  # the flow objects (Milestone 26)
+                work = budget.get("points", 0) * budget.get("steps", 0)
+                why = [f"clamped: {', '.join(budget['clamped'])}"] if budget.get("clamped") else []
+                if work > th["flow_work"]:
+                    why.append(f"{work:,} point-steps (the theme's flow_work is "
+                               f"{th['flow_work']:,.0f})")  # fmt: skip
+                if budget.get("arrows", 0) > th["flow_arrows"]:
+                    why.append(f"{budget['arrows']:,} arrows (the theme's flow_arrows is "
+                               f"{th['flow_arrows']:,.0f})")  # fmt: skip
+                if why:
+                    f.add("flow_budget", (e["id"],), t, why="; ".join(why))
+            if sem.get("too_fast"):
+                f.add("flow_too_fast", (e["id"],), t, n=sem["too_fast"])
+            if sem.get("under_resolved_since") is not None:
+                f.add("set_under_resolved", (e["id"],), t, since=sem["under_resolved_since"])
             if sem.get("unknown_language"):
                 f.add("unknown_language", (e["id"],), t, language=sem["unknown_language"])
             if sem.get("plain_without"):  # a type that draws without its extra, plainer
@@ -829,6 +845,22 @@ def run(
                          f"({info['why']}); only the first part is shown", "warning", ids,
                          times=ts, fix_hint="shorten the file, or split it into several "
                          "objects")  # fmt: skip
+        if code == "flow_budget":
+            return Issue(code, f"{ids[0]!r} is past its budget {when}: {info['why']}",
+                         "warning", ids, times=ts, fix_hint="fewer points or arrows, a "
+                         "shorter flow time, or a larger dt; past a hard limit the work is "
+                         "cut and less is drawn than asked")  # fmt: skip
+        if code == "flow_too_fast":
+            return Issue(code, f"{ids[0]!r}: {info['n']} point(s) moved further in one step "
+                         f"than the window allows even after sub-steps {when}, and were "
+                         "stopped", "warning", ids, times=ts, fix_hint="use a smaller dt "
+                         "on the system, or a wider window (a stiff field: 1e6*x)")  # fmt: skip
+        if code == "set_under_resolved":
+            return Issue(code, f"{ids[0]!r}: its outline reached flow_math.MAX_SET_POINTS "
+                         f"points at flow time {info['since']:g} and is drawn as points from "
+                         f"there on {when}", "warning", ids, times=ts,
+                         fix_hint="a shorter flow time, a larger h_max, or a filled set "
+                         "(fill='filled') for long chaotic runs")  # fmt: skip
         if code == "clamped":
             return Issue(code, f"{ids[0]!r} is not drawn as asked {when}: {info['why']}",
                          "warning", ids, times=ts, fix_hint="ask for what can be drawn: "

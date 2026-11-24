@@ -4,6 +4,7 @@ and every formula the repo's examples and docs use still reads exactly as before
 
 from __future__ import annotations
 
+import contextlib
 import json
 import time
 
@@ -118,7 +119,6 @@ def test_every_formula_in_the_repo_reads_as_it_did_before_the_hardening():
     known = {r["s"] for r in rows}
     for s, names in candidates():
         if s not in known:
-            try:
+            # a string that is not a formula must still fail cleanly
+            with contextlib.suppress(FunctionError):
                 parse_expression(s, names)
-            except FunctionError:
-                pass  # a string that is not a formula; it must still fail cleanly

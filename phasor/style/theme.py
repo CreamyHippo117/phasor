@@ -87,6 +87,8 @@ _TABLES = {
         "off_palette",
         "off_scale",
         "tick_gap",
+        "flow_work",
+        "flow_arrows",
     ),
     "life": (
         "glow",

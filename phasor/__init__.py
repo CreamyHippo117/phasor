@@ -41,6 +41,7 @@ _MODULES = {  # domain modules: ``from phasor import cx``
     "cloud": "phasor.domains.cloud",
     "nw": "phasor.domains.network",
     "dyn": "phasor.domains.dynamics",
+    "flow": "phasor.domains.flow",
     "shapes": "phasor.domains.shapes",
     "dg": "phasor.domains.diagrams",
 }

@@ -13,6 +13,8 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 from numpy.random import Generator  # the type only; generators come from core.rng
 
+from phasor.domains.flow_math import PRESETS  # one table of the classic constants
+
 ROOT_CHUNK = 2048  # polynomials per batched eigenvalue solve (one thread's share)
 # LAPACK lets go of the GIL, so the chunks solve side by side: a million complex roots
 # (2^16 polynomials of degree 16) in about 0.5 s on 16 threads instead of 4.4 s on one
@@ -20,7 +22,7 @@ ROOT_THREADS = max(1, min(16, os.cpu_count() or 1))
 ATTRACTORS = {  # kind -> the classic constants
     "clifford": (-1.4, 1.6, 1.0, 0.7),
     "dejong": (-2.0, -2.0, -1.2, 2.0),
-    "lorenz": (10.0, 28.0, 8.0 / 3.0),
+    "lorenz": tuple(v[0] for v in PRESETS["lorenz"].variables.values()),  # sigma, rho, beta
 }
 ORBITS = 2048  # orbits an attractor runs side by side
 TRANSIENT = 64  # first iterates of each orbit, dropped (not yet on the attractor)

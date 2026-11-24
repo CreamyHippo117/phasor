@@ -2,6 +2,10 @@
 trajectories (RK4), nullclines, fixed points (Newton) and their classification from the
 Jacobian's eigenvalues. Pure NumPy and SymPy, no drawing.
 
+A thin 2D front of the flow core (``flow_math``, Milestone 26): the field, its Jacobian,
+the stepping, Newton and the classification all live there; this module keeps the planar
+names and results the ``dyn`` objects have always used.
+
 Formulas are read with the whitelist parser (never evaluated as Python). Named constants
 (``constants={"mu": 1.5}``) may appear in them.
 """
@@ -14,7 +18,9 @@ from dataclasses import dataclass
 import numpy as np
 import sympy as sp
 
-from phasor.render.gpu.codegen import FunctionError, parse_expression
+from phasor.domains import flow_math as fm
+from phasor.domains.flow_math import KINDS, FunctionError, classify, parse_constants
+from phasor.render.gpu.codegen import parse_expression
 
 __all__ = [
     "KINDS",
@@ -23,12 +29,9 @@ __all__ = [
     "classify",
     "fixed_points",
     "nullcline_segments",
+    "parse_constants",
     "trajectories",
 ]  # fmt: skip
-
-KINDS = ("stable node", "unstable node", "saddle", "stable spiral", "unstable spiral", "centre",
-         "degenerate", "non-hyperbolic")  # fmt: skip
-_EPS = 1e-9
 
 
 @dataclass(frozen=True)
@@ -54,16 +57,16 @@ class System:
             out.append(e)
         return cls(f, g, out[0], out[1])
 
+    @property
+    def flow(self) -> fm.System:
+        """The same field as a ``flow_math.System`` (constants already substituted)."""
+        return fm.System.from_exprs((self.f, self.g), (self.f_source, self.g_source))
+
     def _fn(self):
-        x, y = _xy()
-        fns = [sp.lambdify((x, y), e, "numpy") for e in (self.f, self.g)]
+        fields = self.flow.fn.fields
 
         def call(px, py):
-            px = np.asarray(px, dtype=np.float64)
-            py = np.asarray(py, dtype=np.float64)
-            with np.errstate(all="ignore"):
-                return tuple(np.broadcast_to(np.asarray(fn(px, py), dtype=np.float64), px.shape)
-                             for fn in fns)  # fmt: skip
+            return tuple(fields([px, py]))
 
         return call
 
@@ -71,35 +74,12 @@ class System:
         return self._fn()(x, y)
 
     def jacobian_at(self, x: float, y: float) -> np.ndarray:
-        sx, sy = _xy()
-        jac = sp.Matrix([self.f, self.g]).jacobian([sx, sy])
-        return np.array(sp.N(jac.subs({sx: x, sy: y})), dtype=np.float64)
+        return self.flow.jacobian_exact((x, y))
 
     def jacobian(self):
         """A function ``(x, y) -> 2x2 matrix`` (evaluated, vectorised over scalars)."""
-        sx, sy = _xy()
-        jac = sp.Matrix([self.f, self.g]).jacobian([sx, sy])
-        fn = sp.lambdify((sx, sy), jac, "numpy")
-        return lambda x, y: np.array(fn(float(x), float(y)), dtype=np.float64)
-
-
-def parse_constants(text: str) -> dict[str, float]:
-    """``"mu=1.5, k=2"`` as ``{"mu": 1.5, "k": 2.0}`` (commas or semicolons between)."""
-    out: dict[str, float] = {}
-    for part in text.replace(";", ",").split(","):
-        if not part.strip():
-            continue
-        name, eq, value = part.partition("=")
-        name = name.strip()
-        if not eq or not name.isidentifier() or name in ("x", "y"):
-            raise FunctionError(f"cannot read the constant {part.strip()!r}: write name=number")
-        try:
-            out[name] = float(value)
-        except ValueError:
-            raise FunctionError(
-                f"cannot read the constant {part.strip()!r}: write name=number"
-            ) from None
-    return out
+        jac = self.flow.fn.jacobians
+        return lambda x, y: jac(np.array([[float(x), float(y)]]))[0]
 
 
 def _xy():
@@ -114,32 +94,11 @@ def trajectories(system: System, seeds, t_end: float, steps: int = 400,
     """RK4 paths from each seed: an array (S, steps + 1, 2). A path that leaves ``bounds``
     (or blows up) stays NaN from there on, so a drawing can cut it. ``direction=-1`` runs
     time backwards (toward where the flow came from)."""
-    fn = system._fn()
     seeds = np.asarray(seeds, dtype=np.float64).reshape(-1, 2)
-    h = direction * t_end / steps
-    out = np.full((len(seeds), steps + 1, 2), np.nan)
-    p = seeds.copy()
-    out[:, 0] = p
     x0, x1, y0, y1 = bounds
-
-    def vel(q):
-        a, b = fn(q[:, 0], q[:, 1])
-        return np.stack([a, b], axis=1)
-
-    alive = np.ones(len(seeds), dtype=bool)
-    for k in range(steps):
-        k1 = vel(p)
-        k2 = vel(p + h / 2 * k1)
-        k3 = vel(p + h / 2 * k2)
-        k4 = vel(p + h * k3)
-        q = p + h / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
-        alive &= np.isfinite(q).all(axis=1)
-        alive &= (q[:, 0] >= x0) & (q[:, 0] <= x1) & (q[:, 1] >= y0) & (q[:, 1] <= y1)
-        p = np.where(alive[:, None], q, 0.0)  # a dead path keeps finite arithmetic, drawn NaN
-        out[alive, k + 1] = p[alive]
-        if not alive.any():
-            break
-    return out
+    h = direction * t_end / steps
+    return fm.integrate(system.flow.fn, (), seeds, steps, h,
+                        box=((x0, y0), (x1, y1))).points  # fmt: skip
 
 
 # ------------------------------------------------------------------ nullclines
@@ -187,89 +146,7 @@ def fixed_points(system: System, bounds, grid: int = 9, tol: float = 1e-9) -> np
     """Points inside ``bounds`` where f = g = 0, by Newton's method from a grid of starts,
     sorted by x then y. Returns (K, 2)."""
     x0, x1, y0, y1 = bounds
-    jac = system.jacobian()
-    fn = system._fn()
-    found: list[np.ndarray] = []
-    pad_x, pad_y = (x1 - x0) * 1e-6, (y1 - y0) * 1e-6
-    for sx in np.linspace(x0, x1, grid):
-        for sy in np.linspace(y0, y1, grid):
-            p = np.array([sx, sy], dtype=np.float64)
-            ok = False
-            for _ in range(60):
-                a, b = fn(p[0], p[1])
-                r = np.array([float(a), float(b)])
-                if not np.isfinite(r).all():
-                    break
-                if np.abs(r).max() < tol:
-                    ok = True
-                    break
-                try:
-                    step = np.linalg.solve(jac(*p), r)
-                except np.linalg.LinAlgError:
-                    break
-                if not np.isfinite(step).all():
-                    break
-                n = float(np.linalg.norm(step))
-                cap = max(x1 - x0, y1 - y0)
-                if n > cap:  # a long jump: damp it
-                    step *= cap / n
-                p = p - step
-            if not ok:
-                continue
-            if not (x0 - pad_x <= p[0] <= x1 + pad_x and y0 - pad_y <= p[1] <= y1 + pad_y):
-                continue
-            if not any(np.linalg.norm(p - q) < 1e-6 * max(1.0, np.linalg.norm(q)) for q in found):
-                found.append(p)
-    pts = np.array(found, dtype=np.float64).reshape(-1, 2)
-    if len(pts):
-        pts = pts[np.lexsort((np.round(pts[:, 1], 7), np.round(pts[:, 0], 7)))]
-    return pts
-
-
-def classify(J) -> dict:
-    """The type of a fixed point from its Jacobian: ``kind`` (one of ``KINDS``), ``stable``
-    (all real parts negative: True; some positive: False; centre: None), the eigenvalues as
-    (re, im) pairs, trace, determinant, and real eigen-directions (unit vectors) with their
-    eigenvalues."""
-    J = np.asarray(J, dtype=np.float64)
-    tr, det = float(np.trace(J)), float(np.linalg.det(J))
-    vals, vecs = np.linalg.eig(J)
-    scale = max(float(np.abs(J).max()), 1.0)
-    tol = 1e-7 * scale
-    re, im = vals.real, vals.imag
-    if np.abs(vals).min() < tol:
-        kind, stable = "non-hyperbolic", None
-    elif abs(im[0]) > tol:  # a complex pair
-        if abs(re[0]) <= tol:
-            kind, stable = "centre", None
-        else:
-            kind = "stable spiral" if re[0] < 0 else "unstable spiral"
-            stable = bool(re[0] < 0)
-    elif re[0] * re[1] < 0:
-        kind, stable = "saddle", False
-    else:
-        stable = bool(re.max() < 0)
-        defective = abs(re[0] - re[1]) < tol and np.linalg.matrix_rank(J - re[0] * np.eye(2),
-                                                                      tol=tol) > 0  # fmt: skip
-        kind = "degenerate" if defective else ("stable node" if stable else "unstable node")
-    real_dirs = []
-    for k in range(2):
-        if abs(im[k]) <= tol:
-            v = vecs[:, k].real
-            v = v / max(float(np.linalg.norm(v)), 1e-12)
-            if v[0] < -1e-12 or (abs(v[0]) <= 1e-12 and v[1] < 0):
-                v = -v
-            real_dirs.append((float(re[k]), v))
-    if kind == "degenerate" and len(real_dirs) == 2:  # one direction, found twice
-        real_dirs = real_dirs[:1]
-    return {
-        "kind": kind,
-        "stable": stable,
-        "eigenvalues": [(float(a), float(b)) for a, b in zip(re, im, strict=True)],
-        "trace": tr,
-        "det": det,
-        "directions": real_dirs,
-    }
+    return fm.equilibria(system.flow, (), (x0, y0), (x1, y1), grid, singular="drop")["points"]
 
 
 def eigenvalue_label(c: dict) -> str:

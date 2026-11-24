@@ -269,3 +269,70 @@ def disc_batch(ctx: DrawContext, cam: Camera, centers, radius, *, colors, glow: 
     per_vertex = np.repeat(cols[:, None, :], seg + 1, axis=1).reshape(-1, 4)
     ctx.triangles(pos.reshape(-1, 3), tris, color=(1.0, 1.0, 1.0, opacity), glow=glow,
                   colors=np.ascontiguousarray(per_vertex))  # fmt: skip
+
+
+def _colors_per(cols, n: int) -> np.ndarray:
+    cols = np.asarray(cols, dtype=np.float64)
+    return np.array(np.broadcast_to(cols if cols.ndim == 2 else cols[None], (n, 4)))
+
+
+def arrow_batch(ctx: DrawContext, cam: Camera, tails, tips, width, *, colors, glow: float = 1.0,
+                head: float = 0.35, opacity: float = 1.0) -> None:  # fmt: skip
+    """Many flat arrows facing the camera in one draw call (a field of thousands): ``tails``
+    and ``tips`` (N, 3), ``width`` the shaft width in world units (one, or one per arrow),
+    ``colors`` one RGBA or (N, 4). The head takes ``head`` of each arrow's length."""
+    a = np.asarray(tails, dtype=np.float64).reshape(-1, 3)
+    b = np.asarray(tips, dtype=np.float64).reshape(-1, 3)
+    if len(a) == 0:
+        return
+    d = b - a
+    length = np.linalg.norm(d, axis=1, keepdims=True)
+    view = ((a + b) / 2 - cam.eye) if cam.perspective else np.broadcast_to(cam.forward, a.shape)
+    side = np.cross(d, view)
+    n = np.linalg.norm(side, axis=1, keepdims=True)
+    side = np.where(n > 1e-12, side / np.maximum(n, 1e-12), cam.right)
+    w = np.broadcast_to(np.asarray(width, dtype=np.float64), (len(a),)).reshape(-1, 1) / 2
+    hw = np.maximum(w * 2.2, length * head * 0.45)  # the head's half-width
+    base = b - d * head
+    pos = np.stack([a - side * w, a + side * w, base + side * w, base - side * w,
+                    base - side * hw, base + side * hw, b], axis=1)  # fmt: skip
+    k = np.arange(len(a))[:, None] * 7
+    tris = np.concatenate([k + np.array([0, 1, 2]), k + np.array([0, 2, 3]),
+                           k + np.array([4, 5, 6])], axis=0)  # fmt: skip
+    per = np.repeat(_colors_per(colors, len(a))[:, None, :], 7, axis=1)
+    ctx.triangles(pos.reshape(-1, 3), tris, color=(1.0, 1.0, 1.0, opacity), glow=glow,
+                  colors=np.ascontiguousarray(per.reshape(-1, 4)))  # fmt: skip
+
+
+def cone_batch(ctx: DrawContext, bases, tips, radius, *, colors, glow: float = 1.0,
+               opacity: float = 1.0, segments: int = 8) -> None:  # fmt: skip
+    """Many solid cones in one draw call (a 3D field): ``bases`` and ``tips`` (N, 3),
+    ``radius`` of each base in world units (one, or one per cone), ``colors`` one RGBA or
+    (N, 4). The ring is drawn darker than the tip, so a cone reads as round from any side.
+    The geometry does not depend on the camera."""
+    a = np.asarray(bases, dtype=np.float64).reshape(-1, 3)
+    b = np.asarray(tips, dtype=np.float64).reshape(-1, 3)
+    if len(a) == 0:
+        return
+    d = b - a
+    d = d / np.maximum(np.linalg.norm(d, axis=1, keepdims=True), 1e-12)
+    pick = np.where((np.abs(d[:, 0]) < 0.9)[:, None], [[1.0, 0.0, 0.0]], [[0.0, 1.0, 0.0]])
+    u = np.cross(d, pick)
+    u /= np.maximum(np.linalg.norm(u, axis=1, keepdims=True), 1e-12)
+    v = np.cross(d, u)
+    r = np.broadcast_to(np.asarray(radius, dtype=np.float64), (len(a),))[:, None, None]
+    ang = np.linspace(0, 2 * np.pi, segments, endpoint=False)
+    ring = a[:, None, :] + r * (np.cos(ang)[None, :, None] * u[:, None, :]
+                                + np.sin(ang)[None, :, None] * v[:, None, :])  # fmt: skip
+    pos = np.concatenate([ring, b[:, None, :], a[:, None, :]], axis=1)  # (N, segments + 2, 3)
+    k = np.arange(segments)
+    side = np.stack([np.full(segments, segments), k, (k + 1) % segments], axis=1)
+    cap = np.stack([np.full(segments, segments + 1), (k + 1) % segments, k], axis=1)
+    one = np.concatenate([side, cap])
+    tris = (np.arange(len(a))[:, None, None] * (segments + 2) + one[None]).reshape(-1, 3)
+    cols = _colors_per(colors, len(a))
+    shade = np.r_[np.full(segments, 0.55), 1.0, 0.4]  # ring, tip, base centre
+    per = cols[:, None, :] * np.r_[shade][None, :, None]
+    per[..., 3] = cols[:, None, 3]
+    ctx.triangles(pos.reshape(-1, 3), tris, color=(1.0, 1.0, 1.0, opacity), glow=glow,
+                  colors=np.ascontiguousarray(per.reshape(-1, 4)))  # fmt: skip
