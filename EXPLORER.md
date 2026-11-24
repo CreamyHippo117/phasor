@@ -60,6 +60,38 @@ Parallel plan: 26 (maths first, then objects) and 27's parser/normaliser run at 
 26, 27's tools, 28 and 30 in parallel (they touch `workspace/`, `render/`, `domains/`).
 Window work (29) waits for M25.
 
+## Beyond vector fields: a scene workbench (owner, 2026-11-24)
+
+The owner's follow-up: not only fields, also **objects**. Example: build the 3D room scene
+with sound rays by dropping points, shapes (circle, rectangle, octagon, custom) and sources
+into space, then ask the AI for "a graph of when rays from source A reach source B" or "a
+circle of eight octagons". Code only, AI only, or a hybrid are all fine.
+
+Decision: **hybrid, and it costs no extra architecture**, because the explorer is a view of
+the one document. A row, a clicked-in shape, a line of code and an AI call are four ways to
+make the same objects through `Engine.apply`. So:
+
+- **Insert palette** (the `+ row` menu): every shipped type that has an example (points,
+  `shapes`, `Room3D`, sound sources, flow objects, graphs, text) with drag handles; placing
+  one is one patch. The palette is generated from the registry, not written by hand.
+- **Arrangements** are an op the AI and the person share: `arrange(ids_or_template, pattern)`
+  with `ring(n, r)`, `grid(r, c)`, `line`, `along(path)`, writing ordinary objects with
+  derived ids (`oct.1` ... `oct.8`), so "a circle of eights" is one undoable patch. Needs a
+  ring/grid pattern helper in `core` (grep first; `algebra.ring` and the Manim importer's
+  `arrange` are the only precedents).
+- **Measurements as tools**, numbers with provenance (like `find_equilibria`): `ray_arrivals(
+  source, receiver, ...)` returns arrival times, counts and the path for the room's rays, and
+  `graph_of(measure, over)` puts the answer on screen as a `Graph` row. Each is a
+  `Workspace` method on a fork, tested without the protocol. The acoustics maths already
+  exists in `domains/ac_math.py`; the tool only exposes it.
+- **Code view** shows the same document as a script (`core/pycode.py`); edits there and in
+  the panels meet in one history. A scene built by clicking can be converted to code once
+  (one-way for structure, per APP_PLAN).
+
+Milestones (after 29, so the panel and tools exist): **32 Insert palette and direct
+manipulation of any object type**; **33 Arrangements and measurement tools (rays, arrival
+graph first)**. Both cloud-testable; feel on the PC.
+
 ## Rules
 
 CLAUDE.md's contracts and the STUDIO.md rules (bounded inputs, lint not crash, Windows CI has
