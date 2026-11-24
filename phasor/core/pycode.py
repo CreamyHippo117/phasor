@@ -38,6 +38,7 @@ _ALIAS = {
     "phasor.domains.network": "nw",
     "phasor.domains.dynamics": "dyn",
     "phasor.domains.flow": "flow",
+    "phasor.domains.flow_analysis": "flow",  # flow.Section, ... (Milestone 30)
     "phasor.domains.shapes": "shapes",
     "phasor.domains.path": "shapes",  # shapes.Path
     "phasor.domains.svg": "shapes",  # shapes.SVG

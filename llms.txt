@@ -68,15 +68,21 @@
 - `equation`: flash, morph_from, morph, morph_kind, parts, colors, pos, write, drift, keys, from_parts, from_colors, from_keys, from_pos, from_id, arc, as_shapes, fill_opacity, stroke_opacity
 - `fixed_points`: flash, f, g, constants, pos, extent, rays, labels, ray_length, reveal, grid
 - `flow_arrows`: flash, system, counts, shape, length_by, size
+- `flow_bifurcation`: flash, pos, extent, system, variable, range, count, mode, coord, sample, normal, offset, x0, transient, sample_time, grid, marks, radius
+- `flow_divergence`: flash, smooth, isolines, hue_cycles, hue, fade, ambient, contrast, system, counts, z, disk_center, disk_radius
 - `flow_equilibria`: flash, system, grid, radius, reveal
 - `flow_equilibrium_view`: flash, system, near, radius, name, card, grid
+- `flow_limit_cycle`: flash, system, x0, transient, max_time, tol, progress
 - `flow_lines`: flash, fp, fq, fr, pos, extent, seeds, steps, length, both, progress
 - `flow_manifold`: flash, system, near, which, length, progress, grid
 - `flow_note`: flash, source, row, kind, visible, error
 - `flow_particles`: flash, fp, fq, fr, pos, extent, count, speed, lifetime, tail, seed
 - `flow_probe`: flash, system, source, row, kind, visible, x0, trail, dot, label
+- `flow_section`: flash, system, normal, offset, direction, seeds, of, transient, plane, radius
 - `flow_set`: flash, system, shape, center, size, points, count, fill, trail, samples, h_max, rings, radius
 - `flow_system`: flash, source, row, kind, visible, equations, terms, constants, window, tau, rate, dt, escape, pos, scale, frame, label
+- `flow_time_series`: flash, pos, extent, system, source, x0, components, span, labels
+- `flow_twins`: flash, system, x0, eps, lyapunov, transient, trail, dot
 - `fractal`: flash, kind, c, pos, size, max_iter, density, hue, center, zoom, steady, radius, ambient
 - `galois_diagram`: flash, primes, pos, width, height, gap
 - `graph`: flash, function, xmin, xmax, pos

@@ -1171,3 +1171,28 @@ class Manifold(_Child):
             run = b["points"][: max(2, round(p.progress * len(b["points"])))]
             _strips(ctx, r, [run], width=me.style["stroke"], anchor=mid, glow=me.style["glow"],
                     colors=me.style[b["which"]], opacity=p.opacity)  # fmt: skip
+
+
+# ---------------------------------------------------------------- the analysis pack
+
+# Milestone 30's objects live in ``flow_analysis`` and are reached from here (``flow.Section``);
+# importing this module registers them. (A partly imported module is fine here: Python finds
+# it in ``sys.modules`` when ``flow_analysis`` was imported first.)
+from phasor.domains import flow_analysis as _analysis  # noqa: E402
+
+_ANALYSIS = (
+    "BifurcationDiagram",
+    "DivergenceMap",
+    "LimitCycle",
+    "Section",
+    "TimeSeries",
+    "TwinProbes",
+    "lyapunov",
+)  # fmt: skip  (flow_analysis.__all__)
+__all__ += list(_ANALYSIS)
+
+
+def __getattr__(name: str):
+    if name in _ANALYSIS:
+        return getattr(_analysis, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
