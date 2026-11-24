@@ -122,18 +122,27 @@ def _field_syms() -> tuple[sp.Symbol, sp.Symbol, sp.Symbol]:
     return tuple(sp.Symbol(n, real=True) for n in "xyz")  # type: ignore[return-value]
 
 
+SIMPLIFY_OPS = 80  # sp.simplify has no time bound: only expressions this small are simplified
+
+
+def tidy(e: sp.Expr) -> sp.Expr:
+    """``sp.simplify(e)`` for a small expression; a large one is returned as it is (advice
+    section 5 item 3: simplify can take minutes on a long legal formula)."""
+    return sp.simplify(e) if sp.count_ops(e) <= SIMPLIFY_OPS else e
+
+
 def divergence(p: str, q: str, r: str) -> sp.Expr:
     x, y, z = _field_syms()
     P, Q, R = (_expr(s, ("x", "y", "z")) for s in (p, q, r))
-    return sp.simplify(sp.diff(P, x) + sp.diff(Q, y) + sp.diff(R, z))
+    return tidy(sp.diff(P, x) + sp.diff(Q, y) + sp.diff(R, z))
 
 
 def curl(p: str, q: str, r: str) -> tuple[sp.Expr, sp.Expr, sp.Expr]:
     x, y, z = _field_syms()
     P, Q, R = (_expr(s, ("x", "y", "z")) for s in (p, q, r))
-    return (sp.simplify(sp.diff(R, y) - sp.diff(Q, z)),
-            sp.simplify(sp.diff(P, z) - sp.diff(R, x)),
-            sp.simplify(sp.diff(Q, x) - sp.diff(P, y)))  # fmt: skip
+    return (tidy(sp.diff(R, y) - sp.diff(Q, z)),
+            tidy(sp.diff(P, z) - sp.diff(R, x)),
+            tidy(sp.diff(Q, x) - sp.diff(P, y)))  # fmt: skip
 
 
 def flow_lines(field, seeds: np.ndarray, steps: int, h: float, both: bool = False):
