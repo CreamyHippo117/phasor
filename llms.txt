@@ -34,6 +34,12 @@
 - `render`: Render a video (preset: preview 960x540@30, final, 4k) or one PNG (`frame`).
 - `docs_search`: Search the API reference, patterns, pitfalls and examples.
 - `object_types`: What a patch may add: object types (use these exact names in `add_object`) with their parameters and defaults and style keys (role group, default role), the role names each group accepts (style takes roles; color, text-size and stroke keys may instead hold an explicit value, checked by review), and the themes.
+- `explorer_state`: Call this first in the Explorer. The rows as typed (`id`, `kind`, `text`, `error`, `visible`, `version`, `locked` while the person types in one), each system (equations, LaTeX, variables, divergence, window, `dt`, flow time `tau`, and its equilibria with eigenvalues, kinds and the window and grid searched), the variables and their slider ranges, the camera and lint. `t` is the scene time (the playhead is the editor's, not the document's).
+- `explorer_edit`: Add, retype, remove, show, hide, recolour and reorder Explorer rows and set variables, as one undoable edit. Each entry: `{"text": "x' = sigma*(y - x)"}` adds a row; `{"id": "rho", "value": 24.74}` (also `min`, `max`, `step`), `{"id": ..., "text": ...}`, `{"id": ..., "remove": true}`, `"visible"`, `"color"` (a role), `"kind"` (over the guess), `"at"` (its place), a system's `window`, `dt`, `tau`, `rate`; `"version"` refuses the edit if the row changed since. Text is read like typing (`x^2`, `2x`, Greek letters, `x'`); a row that does not read is kept with its `error`. Names no variable defines get a slider. Returns the rows changed (ids, kinds, errors) and the lint delta: read them before you answer.
+- `explorer_preset`: Load a classic system as rows (`lorenz`, `rossler`, `van_der_pol`, `pendulum`, `hopf`, `saddle_node`, `pitchfork`, ... : the list is in the error for an unknown name): its ODE rows, a slider per variable with the preset's range, the window and `dt`. `replace` (default) removes the other rows in the same edit. Returns what `explorer_edit` returns.
+- `find_equilibria`: Every equilibrium Newton finds from a `grid` of starts per side of the `window` (default: the system's), each with eigenvalues, kind, subspace dimensions, trace and determinant; `variables` ({"rho": 24}) try other values on a fork: nothing in the scene changes. Quote the window and grid: none found there is not none exist.
+- `flow_probe`: Integrate one point `x0` (or up to 16) for flow time `T` (negative: backward) on a fork: `samples` positions (at most 64; only up to `chaotic_beyond`, then statistics), escaped and when, bounding box, final speed, a period estimate, the largest Lyapunov exponent with its spread, and the dt check (did `dt/2` agree).
+- `sweep_parameter`: Move one variable from `lo` to `hi` (`n` values, at most 64) on a fork: the equilibria at each (count, kinds, largest real part), and candidate bifurcations refined by bisection, each named by the local test that found it (saddle-node or pitchfork: the count changes; Hopf: a complex pair crosses). Global bifurcations (homoclinic, crises) are not detected; say so.
 
 ## Object types (use these names in add_object)
 
@@ -64,10 +70,11 @@
 - `flow_equilibrium_view`: flash, system, near, radius, name, card, grid
 - `flow_lines`: flash, fp, fq, fr, pos, extent, seeds, steps, length, both, progress
 - `flow_manifold`: flash, system, near, which, length, progress, grid
+- `flow_note`: flash, source, row, kind, visible, error
 - `flow_particles`: flash, fp, fq, fr, pos, extent, count, speed, lifetime, tail, seed
-- `flow_probe`: flash, system, x0, trail, dot, label
+- `flow_probe`: flash, system, source, row, kind, visible, x0, trail, dot, label
 - `flow_set`: flash, system, shape, center, size, points, count, fill, trail, samples, h_max, rings, radius
-- `flow_system`: flash, equations, terms, constants, window, tau, rate, dt, escape, pos, scale, frame, label
+- `flow_system`: flash, source, row, kind, visible, equations, terms, constants, window, tau, rate, dt, escape, pos, scale, frame, label
 - `fractal`: flash, kind, c, pos, size, max_iter, density, hue, center, zoom, steady, radius, ambient
 - `galois_diagram`: flash, primes, pos, width, height, gap
 - `graph`: flash, function, xmin, xmax, pos
@@ -119,7 +126,7 @@
 - `tracer`: flash, path, progress, trail, r
 - `transform_grid`: flash, matrix, pos, extent, spacing, square, basis
 - `value`: flash, value
-- `variable`: flash, name, value, min, max
+- `variable`: flash, source, row, kind, visible, name, value, min, max
 - `vector_field`: flash, p, q, pos, extent, spacing, color_by_size, length_by
 - `vector_field_3d`: flash, fp, fq, fr, pos, extent, counts, spacing, color_by_size, length_by
 - `video`: flash, pos, width, height, frame, fit, fill, backdrop, start, trim, speed, loop, path

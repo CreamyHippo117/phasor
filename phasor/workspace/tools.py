@@ -29,6 +29,7 @@ from phasor.style.looks import DEFAULT_THEME, available_looks, default_look, loa
 from phasor.style.theme import ROLE_GROUPS, available_themes
 from phasor.time import verbs as _verbs
 from phasor.workspace import docs
+from phasor.workspace import explorer as _explorer
 
 VERBS = (
     "reveal",
@@ -100,6 +101,9 @@ class Workspace:
         # Who changed the scene, in order: the editor's person ("you") and an attached AI ("ai").
         self.activity: list[dict[str, Any]] = []
         self.import_notes: list[str] = []  # what the last Manim import could not carry over
+        # Explorer rows the person is typing in (row id -> the text so far): an edit of one
+        # from anyone else is refused until they commit or leave it (``_explorer_typing``).
+        self._drafts: dict[str, str] = {}
         # Set on the thread that runs an attached AI's call (``workspace.remote``): that call
         # never makes new code run, whatever the person allowed (``_no_new_code``).
         self._caller = threading.local()
@@ -736,6 +740,162 @@ class Workspace:
             raise ToolError(str(err)) from err
 
     # ------------------------------------------------------------ learning
+
+    # ------------------------------------------------------------ the Explorer (Milestone 27)
+
+    def _explorer(self, fn):
+        try:
+            return self._guard(fn)
+        except (_explorer.EditError, TypeError) as e:
+            raise ToolError(str(e)) from e
+
+    def explorer_state(self, t: float = 0.0) -> dict[str, Any]:
+        """Call this first in the Explorer. The rows as typed (``id``, ``kind``, ``text``,
+        ``error``, ``visible``, ``version``, ``locked`` while the person types in one), each
+        system (equations, LaTeX, variables, divergence, window, ``dt``, flow time ``tau``,
+        and its equilibria with eigenvalues, kinds and the window and grid searched), the
+        variables and their slider ranges, the camera and lint. ``t`` is the scene time (the
+        playhead is the editor's, not the document's)."""
+        return self._explorer(lambda: _explorer.state(self.engine, t, self._drafts))
+
+    def _row_refusals(self, rows: Any) -> list[dict[str, Any]]:
+        """A row the person is typing in, or one changed since the ``version`` an edit names,
+        is not edited (the whole call is refused)."""
+        if not isinstance(rows, list | tuple):
+            return []
+        current = {e["id"]: e for e in _explorer.rows_of(self.engine.document)}
+        objects: dict[str, list[str]] = {}
+        for e in current.values():
+            objects.setdefault(e["object"], []).append(e["id"])
+        out = []
+        for ed in rows:
+            key = ed.get("id") if isinstance(ed, dict) else None
+            if not isinstance(key, str):
+                continue  # a new row, or an edit the planner refuses with its reason
+            keys = [key] if key in current else objects.get(key, [])
+            for k in keys:
+                if k in self._drafts:
+                    out.append({"code": "row_locked", "row": k, "version": current[k]["version"],
+                                "message": f"the person is typing in row {k!r}; read "
+                                "explorer_state again; retry once it is not locked"})  # fmt: skip
+            want = ed.get("version")
+            if want is not None and keys and current[keys[0]]["version"] != want:
+                out.append({"code": "row_changed", "row": key,
+                            "version": current[keys[0]]["version"],
+                            "message": f"row {key!r} changed since version {want}; read it "
+                            "again (explorer_state)"})  # fmt: skip
+        return out
+
+    def explorer_edit(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
+        """Add, retype, remove, show, hide, recolour and reorder Explorer rows and set
+        variables, as one undoable edit. Each entry: ``{"text": "x' = sigma*(y - x)"}`` adds
+        a row; ``{"id": "rho", "value": 24.74}`` (also ``min``, ``max``, ``step``), ``{"id":
+        ..., "text": ...}``, ``{"id": ..., "remove": true}``, ``"visible"``, ``"color"`` (a
+        role), ``"kind"`` (over the guess), ``"at"`` (its place), a system's ``window``,
+        ``dt``, ``tau``, ``rate``; ``"version"`` refuses the edit if the row changed since.
+        Text is read like typing (``x^2``, ``2x``, Greek letters, ``x'``); a row that does not read
+        is kept with its ``error``. Names no variable defines get a slider. Returns the rows
+        changed (ids, kinds, errors) and the lint delta: read them before you answer."""
+        e = self.engine
+        if e.scripted:
+            raise ToolError("Explorer rows edit a .phasor.json document; this scene is a script "
+                            "(edit the script, or start one with scene_new)")  # fmt: skip
+        refused = self._row_refusals(rows)
+        if refused:
+            return {"ok": False, "version": e.version, "errors": refused}
+        cam = e.document.cameras[0].kind if e.document.cameras else "ortho"
+        ops, report = self._explorer(lambda: _explorer.plan(e.document, rows, cam))
+        return self._explorer_commit_ops(ops, report)
+
+    def _explorer_commit_ops(self, ops: list[dict[str, Any]], report: dict[str, Any]) -> dict:
+        e = self.engine
+        if not ops:
+            return {"ok": True, "version": e.version, "errors": [], "changed": False, **report}
+        r = self.scene_edit(ops)
+        if r.get("ok"):
+            now = {x["object"]: x for x in _explorer.rows_of(e.document)}
+            for row in report["rows"]:
+                if row["id"] in now:
+                    row["version"] = now[row["id"]]["version"]
+        return {**r, "changed": bool(r.get("ok")), **report}
+
+    def explorer_preset(self, name: str, replace: bool = True) -> dict[str, Any]:
+        """Load a classic system as rows (``lorenz``, ``rossler``, ``van_der_pol``,
+        ``pendulum``, ``hopf``, ``saddle_node``, ``pitchfork``, ... : the list is in the
+        error for an unknown name): its ODE rows, a slider per variable with the preset's
+        range, the window and ``dt``. ``replace`` (default) removes the other rows in the same
+        edit. Returns what ``explorer_edit`` returns."""
+        e = self.engine
+
+        def go():
+            edits = _explorer.preset_edits(name, _explorer.rows_of(e.document), replace)
+            return self.explorer_edit(edits)
+
+        return self._explorer(go)
+
+    def find_equilibria(self, window: list[list[float]] | None = None, grid: int = 9,
+                        variables: dict[str, float] | None = None, system: str | None = None,
+                        t: float = 0.0) -> dict[str, Any]:  # fmt: skip
+        """Every equilibrium Newton finds from a ``grid`` of starts per side of the ``window``
+        (default: the system's), each with eigenvalues, kind, subspace dimensions, trace and
+        determinant; ``variables`` ({"rho": 24}) try other values on a fork: nothing in the
+        scene changes. Quote the window and grid: none found there is not none exist."""
+        return self._explorer(lambda: _explorer.find_equilibria(
+            self.engine, window, grid, variables, system, t))  # fmt: skip
+
+    def flow_probe(self, x0: list[float] | list[list[float]], T: float = 10.0,
+                   samples: int = 16, variables: dict[str, float] | None = None,
+                   system: str | None = None, t: float = 0.0) -> dict[str, Any]:  # fmt: skip
+        """Integrate one point ``x0`` (or up to 16) for flow time ``T`` (negative: backward)
+        on a fork: ``samples`` positions (at most 64; only up to ``chaotic_beyond``, then
+        statistics), escaped and when, bounding box, final speed, a period estimate, the
+        largest Lyapunov exponent with its spread, and the dt check (did ``dt/2`` agree)."""
+        return self._explorer(lambda: _explorer.flow_probe(
+            self.engine, x0, T, samples, variables, system, t))  # fmt: skip
+
+    def sweep_parameter(self, name: str, lo: float, hi: float, n: int = 17,
+                        measure: str = "equilibria", window: list[list[float]] | None = None,
+                        grid: int = 9, variables: dict[str, float] | None = None,
+                        system: str | None = None, t: float = 0.0) -> dict[str, Any]:  # fmt: skip
+        """Move one variable from ``lo`` to ``hi`` (``n`` values, at most 64) on a fork: the
+        equilibria at each (count, kinds, largest real part), and candidate bifurcations
+        refined by bisection, each named by the local test that found it (saddle-node or
+        pitchfork: the count changes; Hopf: a complex pair crosses). Global bifurcations
+        (homoclinic, crises) are not detected; say so."""
+        return self._explorer(lambda: _explorer.sweep_parameter(
+            self.engine, name, lo, hi, n, measure, window, grid, variables, system, t))  # fmt: skip
+
+    # Not tools: the editor's own (an attached AI cannot call a name starting with _).
+
+    def _explorer_typing(self, row: str, text: str) -> str:
+        """The person is typing ``text`` in ``row``: it is locked to them until
+        ``_explorer_commit`` or ``_explorer_leave``. Returns the row's version."""
+        current = {e["id"]: e for e in _explorer.rows_of(self.engine.document)}
+        if row not in current:
+            raise ToolError(f"no row {row!r}")
+        self._drafts[row] = text
+        return current[row]["version"]
+
+    def _explorer_leave(self, row: str) -> None:
+        self._drafts.pop(row, None)
+
+    def _explorer_commit(self, row: str, text: str) -> dict[str, Any]:
+        """The person's row is done: unlock it and commit its text (one undoable edit)."""
+        self._drafts.pop(row, None)
+        return self.explorer_edit([{"id": row, "text": text}])
+
+    def _explorer_preview(self, rows: list[dict[str, Any]]):
+        """A fork of the scene with ``rows`` applied (what typing or a drag shows before the
+        commit); the open scene and its history are untouched."""
+        e = self.engine
+        cam = e.document.cameras[0].kind if e.document.cameras else "ortho"
+        ops, _ = self._explorer(lambda: _explorer.plan(e.document, rows, cam))
+        fork = e.fork()
+        if ops:
+            r = fork.apply(self._with_defaults(ops), origin="tweak")
+            if not r.ok:
+                raise ToolError("; ".join(i.message for i in r.errors), list(r.errors))
+        return fork
 
     def docs_search(self, query: str, limit: int = 5) -> dict[str, Any]:
         """Search the API reference, patterns, pitfalls and examples."""

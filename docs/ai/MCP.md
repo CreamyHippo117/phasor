@@ -43,6 +43,8 @@ a variant and compare.
 | `diff`, `checkpoint`, `restore`, `undo`, `redo` | compare and branch |
 | `render` | a video (`preview`, `final`, `4k`) or one PNG with `frame` |
 | `docs_search` | find the API, a pattern or an example |
+| `explorer_state`, `explorer_edit`, `explorer_preset` | the Explorer: its rows, systems, equilibria and sliders in one call; add, retype, hide, recolour or remove rows and set variables (one undoable edit); load a classic system |
+| `find_equilibria`, `flow_probe`, `sweep_parameter` | the Explorer's numbers, on a fork (nothing changes): equilibria with eigenvalues, a path's behaviour (period, escape, Lyapunov exponent, the dt check), candidate bifurcations along a variable |
 
 ## Patch operations
 
@@ -254,3 +256,37 @@ person: only they can trust a scene's code (in the editor).
   a placeholder box, and its parameters and overrides stay as they are. Edit its parameters
   as usual; do not remove it to make the issue go away. A `value` object is a number with
   nothing to draw: animate its `value` and read it with `{"expr": "speed.value"}`.
+
+## The Explorer (rows, sliders and numbers)
+
+The Explorer is a list of typed rows on one document: `x' = sigma*(y - x)` (an ODE row; the
+`x' y' z'` rows form one system), `rho = 28` (a variable with a slider), `(y, -x)` (a vector
+field), `(1, 0.5)` (a point that follows the flow), and graphs or curves (read, not drawn
+yet). Work like this:
+
+1. `explorer_state` first: the rows as typed (`id`, `kind`, `text`, `error`, `locked`), each
+   system with its equilibria (eigenvalues, kinds, the window and grid searched), the
+   variables and their slider ranges, lint.
+2. Answer with numbers and where they came from: `find_equilibria` (window, grid),
+   `flow_probe` (`T`, `dt`, the dt check, `chaotic_beyond`: no positions after it),
+   `sweep_parameter` (candidate bifurcations, each named by the local test that found it).
+   They run on a fork: the scene does not change. Say what was not checked (outside the
+   window; global bifurcations; a Lyapunov estimate that did not converge).
+3. Change things only with `explorer_edit` (or `explorer_preset`): each call is one undo
+   step. Read its `rows` (ids, kinds, errors) and `lint_delta` before you answer. A row the
+   person is typing in is `locked`: the edit is refused with `row_locked` and the row's
+   `version`; read `explorer_state` again and retry later.
+
+```json calls
+{"tool": "explorer_preset", "name": "pendulum"}
+{"tool": "explorer_edit", "rows": [{"id": "gamma", "value": 0.5}, {"text": "(1.5, 1.5)"}]}
+{"tool": "explorer_state"}
+{"tool": "find_equilibria", "grid": 7}
+{"tool": "flow_probe", "x0": [1.5, 1.5], "T": 5, "samples": 6}
+{"tool": "sweep_parameter", "name": "gamma", "lo": 0, "hi": 1, "n": 5}
+```
+
+Rows are read the way people write: `x^2`, `2x`, `x y`, `sin(x)` (not `sin x`), Greek
+letters (`σ` is `sigma`), `x'` or `dx/dt`. A run of letters is one name (`rho`), so a
+product needs a space or `*`. A name no row defines gets a slider (value 1, range -10..10)
+when the edit is committed. A row that does not read is kept, with its `error` in words.

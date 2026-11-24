@@ -2072,6 +2072,45 @@ reported only up to `flow_math.SAFE_TAU` (10). The numerics (`flow_math`: `Syste
 `dyn` is a 2D front of the same core. Examples: `examples/lorenz_explorer.py` (3D) and `examples/pendulum_flow.py` (2D, a
 slider, separatrices, a probe).
 
+### Explorer rows (Milestone 27)
+
+The Explorer's typed rows are a view of the document (`phasor.workspace.explorer`; the AI
+reaches them through the `explorer_*` tools in `MCP.md`). Each row is an object that keeps
+the text as typed in `source`, its place in `row`, a kind chosen over the guess in `kind`,
+and `visible`: `name = number` is a `flow.Variable` with a `Control` on `<id>.value`;
+`x' = ...` rows together are one `flow.System` (a line of `source` per row) with
+`<id>.field` and `<id>.eq`; `(P, Q)` is a System with its field; `(a, b)` is a `flow.Probe`
+on the system of its dimension. Anything else is a `flow.Note(source=, kind=, error=)`: it
+draws nothing and keeps the text, with the error in plain words for a row that does not
+read (graphs, curves, surfaces, heat maps and implicit curves are read but not drawn yet).
+`explorer.plan(document, edits)` gives the ops of one commit (a kind change removes and adds
+in the same patch; ids by meaning, never reused); `explorer.rows_of(document)` reads the list
+back.
+
+```python
+from phasor import Scene
+from phasor.workspace import explorer
+
+s = Scene("rows", passes=None)
+ops, report = explorer.plan(
+    s.engine.document,
+    [
+        {"text": "x' = y"},
+        {"text": "y' = -sin(x) - g y"},
+        {"text": "(1, 0.5)"},
+        {"text": "y = x^2"},
+        {"text": "q = 9^9^9"},
+    ],
+)
+assert s.engine.apply(ops, origin="script").ok  # a Scene is a script
+assert report["new_variables"] == ["g"]  # a slider for the free name, at commit time
+rows = {r["id"]: r for r in explorer.rows_of(s.engine.document)}
+assert rows["system:y"]["text"] == "y' = -sin(x) - g*y"
+assert rows["point"]["kind"] == "point" and rows["graph"]["drawn"] is False
+assert "too large" in rows["row"]["error"]
+assert s.engine.document.controls[0].path == "g.value"
+```
+
 ## Command line
 
 | Command | Status | Purpose |

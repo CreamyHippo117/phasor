@@ -390,7 +390,7 @@ def control_rules(c: Compiled) -> list[Issue]:
     return out
 
 
-DRAWLESS = ("value", "sound", "variable")  # semantic kinds of types that draw nothing
+DRAWLESS = ("value", "sound", "variable", "flow_note")  # semantic kinds of types that draw nothing
 
 
 def file_rules(c: Compiled) -> list[Issue]:

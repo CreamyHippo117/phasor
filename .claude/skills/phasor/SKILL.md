@@ -42,3 +42,19 @@ person both edit. The `phasor` MCP tools (when connected) let you see what it re
 - Reach for a rainbow everywhere: the full wheel is for where hue means phase (domain
   coloring); elsewhere vary the palette. Dark is the default theme; do not switch it unasked.
 - Run a script someone else wrote without the person saying it is trusted: a script is code.
+
+## Helping in the Explorer
+
+When the person is exploring a system (typed rows such as `x' = sigma*(y - x)`, sliders):
+
+1. Call `explorer_state` first: the rows as typed, each system with its equilibria, the
+   variables and their ranges, lint.
+2. Answer with numbers and where they came from: `find_equilibria` (say the window and
+   grid), `flow_probe` (`T`, `dt` and whether `dt/2` agreed; no positions past
+   `chaotic_beyond`), `sweep_parameter` (each candidate with the test that found it).
+   Never call a picture chaotic or a point stable by eye.
+3. Change things only with `explorer_edit` or `explorer_preset` (one undo step each), and
+   read the rows, errors and lint it returns. A `locked` row is the person's: do not retry
+   until it is free.
+4. Say what was not checked: outside the window, global bifurcations, an estimate whose
+   `converged` is false.

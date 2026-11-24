@@ -152,6 +152,11 @@ kind = "physics"
 tier = "technique"
 teaches = "A 3D flow from formulas: a cone field, classified equilibria, a ball of initial conditions folding, an equilibrium's card (the Explorer's objects)"
 
+[examples.explorer_rows]
+kind = "physics"
+tier = "technique"
+teaches = "Explorer rows as objects: typed ODE rows, a variable with a slider, a point on the flow, a kept graph and an error row (explorer.plan, one patch)"
+
 [examples.pendulum_flow]
 kind = "physics"
 tier = "technique"

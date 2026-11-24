@@ -62,6 +62,7 @@ __all__ = [
     "FieldArrows",
     "FlowSet",
     "Manifold",
+    "Note",
     "Probe",
     "System",
     "Variable",
@@ -72,6 +73,23 @@ MAX_ARROWS = 20000  # arrows of one field (a grid is thinned to this)
 MAX_DRAWN_POINTS = 50000  # points of a set drawn as dots (a stride past this)
 CHECKPOINT_EVERY = 50  # set steps between cached checkpoints
 MAX_TAU = 1e5
+MAX_ROW_SOURCE = 8000  # characters of a row's stored text (above the rows layer's own cap)
+MAX_ROWS = 10000
+ROW_KINDS = (
+    "variable",
+    "ode",
+    "point",
+    "vector_field",
+    "parametric_curve",
+    "parametric_surface",
+    "graph",
+    "sideways_graph",
+    "polar",
+    "surface",
+    "scalar_field",
+    "implicit_curve",
+    "error",
+)  # fmt: skip  (``rows.KINDS``)
 
 
 def _r(v: float, digits: int = 6) -> float | None:
@@ -100,6 +118,49 @@ def preset(name: str, **variables: float) -> dict[str, Any]:
             "window": p.window, "dt": p.dt}  # fmt: skip
 
 
+# ---------------------------------------------------------------- Explorer rows
+
+
+class RowFields(ParamsBase):
+    """What an Explorer row (Milestone 27, ``workspace/explorer.py``) keeps on its object:
+    ``source`` (the text as typed; for a ``System`` of ODE rows one line per row), ``row``
+    (its place in the list; -1: not a row), ``kind`` (a kind the person chose over the
+    guess, ``rows.KINDS``; empty: the guess) and ``visible`` (hidden rows draw nothing)."""
+
+    source: str = Field("", max_length=MAX_ROW_SOURCE)
+    row: int = Field(-1, ge=-1, le=MAX_ROWS)
+    kind: str = ""
+    visible: bool = True
+
+    @field_validator("kind")
+    @classmethod
+    def _kind(cls, v: str) -> str:
+        if v and v not in ROW_KINDS:
+            raise ValueError(f"a row kind is one of {', '.join(ROW_KINDS)}, not {v!r}")
+        return v
+
+
+@register
+class Note(ObjectBase):
+    """An Explorer row that draws nothing: a row that does not read (``error`` says why in
+    plain words) or one of a kind the Explorer does not draw yet. It keeps the text, so the
+    list is rebuilt from the document alone and nothing typed is lost."""
+
+    type: ClassVar[str] = "flow_note"
+    Life: ClassVar = frozenset()
+
+    class Params(RowFields):
+        error: str = Field("", max_length=MAX_ROW_SOURCE)
+
+    def semantics(self, state: SceneState) -> dict[str, Any]:
+        p = self.me(state).params
+        return {"kind": "flow_note", "row_kind": p.kind or None, "source": p.source,
+                "error": p.error or None, "row": p.row, "drawn": 0.0}  # fmt: skip
+
+    def draw(self, ctx: DrawContext, state: SceneState) -> None:
+        """Nothing: the row is text only."""
+
+
 # ---------------------------------------------------------------- Variable
 
 
@@ -112,7 +173,7 @@ class Variable(ObjectBase):
     type: ClassVar[str] = "variable"
     Life: ClassVar = frozenset()
 
-    class Params(ParamsBase):
+    class Params(RowFields):
         name: str = "a"
         value: float = 1.0
         min: float = -10.0
@@ -190,6 +251,7 @@ class Resolved:
         self.origin = np.asarray(p.pos, dtype=np.float64)
         self.scale = float(p.scale)
         self.key = self.sys.key(self.values)
+        self.visible = bool(p.visible)
 
     def run_key(self) -> tuple:
         """What an integration takes besides the field and the seeds: ``dt``, the escape
@@ -233,7 +295,7 @@ class System(ObjectBase):
         "stroke": ("stroke", "hairline"),
     }
 
-    class Params(ParamsBase):
+    class Params(RowFields):
         equations: tuple[str, ...] = ("y", "-sin(x) - 0.3*y")
         terms: tuple[str, ...] = ()  # "vortex(pos=(0, 0), strength=2)", ...
         constants: str = ""
@@ -311,6 +373,8 @@ class System(ObjectBase):
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
         me = self.me(state)
         p = me.params
+        if not p.visible:
+            return
         r = self.resolve(state)
         cam = state.camera_for(me)
         if p.frame:
@@ -349,6 +413,17 @@ class _Child(ObjectBase):
     def world_bounds(self, state: SceneState) -> Bounds:
         r = self._sys(state)
         return r.bounds() if r is not None else Bounds((0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+
+    def _hidden(self, state: SceneState) -> bool:
+        """A hidden Explorer row draws nothing: a row's own (a ``Probe``'s ``visible``), or,
+        for a part of a system that is not a row itself, its system's."""
+        p = self.me(state).params
+        if not getattr(p, "visible", True):
+            return True
+        if getattr(p, "row", -1) >= 0:
+            return False
+        r = self._sys(state)
+        return r is not None and not r.visible
 
     def features(self, state: SceneState) -> dict[str, np.ndarray]:
         r = self._sys(state)
@@ -418,6 +493,8 @@ class FieldArrows(_Child):
                                   clamped=["arrows"] if want > len(pts) else [])}  # fmt: skip
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
+        if self._hidden(state):
+            return
         r = self._sys(state)
         if r is None:
             return
@@ -489,7 +566,7 @@ class Probe(_Child):
         "glow": ("glow", "soft"),
     }
 
-    class Params(_ChildParams):
+    class Params(RowFields, _ChildParams):
         x0: tuple[float, ...] = (1.0, 0.0)
         trail: float = Field(0.0, ge=0)
         dot: bool = True
@@ -540,6 +617,8 @@ class Probe(_Child):
         return out
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
+        if self._hidden(state):
+            return
         run = self._run(state)
         if run is None:
             return
@@ -709,6 +788,8 @@ class FlowSet(_Child):
         return out
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
+        if self._hidden(state):
+            return
         run = self._run(state, with_trail=True)
         if run is None:
             return
@@ -830,6 +911,8 @@ class Equilibria(_Child):
                 "points": [_eq_semantic(c) for c in pts]}  # fmt: skip
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
+        if self._hidden(state):
+            return
         r = self._sys(state)
         if r is None:
             return
@@ -925,6 +1008,8 @@ class EquilibriumView(_Child):
                 "card": _card(p.name, c) if p.card else []}  # fmt: skip
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
+        if self._hidden(state):
+            return
         r, c = self._point(state)
         if r is None or c is None:
             return
@@ -1031,6 +1116,8 @@ class Manifold(_Child):
         return out
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
+        if self._hidden(state):
+            return
         r, _, br = self._branches(state)
         if r is None or not br:
             return
