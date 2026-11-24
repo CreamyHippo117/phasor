@@ -50,6 +50,8 @@ MAX_SOURCE = 2000  # characters
 MAX_NODES = 2000  # expression nodes
 MAX_DEPTH = 100  # nesting (a run of + and - or of * and / counts once)
 MAX_POWER = 700.0  # a power of two numbers whose size would pass e**700 is refused
+MAX_EXACT_BITS = 200_000  # an exact power of numbers holding more bits than this is refused
+MAX_SUM_POWER = 100  # a sum raised to a whole power past this is refused
 # Real-only functions for ``parse_expression`` (formulas of x, y, ...): not for
 # ``ComplexFunction``, whose kernels have no code for them. name -> (SymPy, argument counts).
 _REAL_FUNCS = {
@@ -96,16 +98,49 @@ def _tree(source: str) -> ast.Expression:
     return tree
 
 
+def _exact_bits(e: sp.Expr) -> int | None:
+    """The bits SymPy holds for an exact number (rationals, ``I``), or None for one it does
+    not keep exactly (a float, ``pi``)."""
+    bits = 0
+    for a in sp.preorder_traversal(e):
+        if a.is_Rational:
+            bits += int(a.p).bit_length() + int(a.q).bit_length()
+        elif a.is_Number or a.is_NumberSymbol or (a.is_Atom and not a.is_number):
+            return None
+    return bits
+
+
 def _power(base: sp.Expr, exponent: sp.Expr, source: str) -> sp.Expr:
-    """``base ** exponent``, refused when both are numbers and the answer would be huge or
-    tiny past any float: SymPy computes such a power exactly (``9**9**9`` never returns)."""
+    """``base ** exponent``, refused when SymPy would compute something enormous:
+
+    - two numbers whose power passes e**700 or e**-700 (``9**9**9``; the size of the base
+      is taken at 30 digits, so ``(1 + 10**-17)`` is not 1);
+    - an exact base (rationals, ``I``) to a whole power whose exact answer would hold more
+      than ``MAX_EXACT_BITS`` bits (``(1 + 10**-17)**(10**7)``, which is about 1 in float
+      but billions of digits exact);
+    - a sum to a whole power past ``MAX_SUM_POWER`` (``(x + y)**1000000``: expanding it, as
+      some readers of the formula do, never ends)."""
+    big = exponent.is_Integer and abs(int(exponent)) > MAX_SUM_POWER
+    if big and isinstance(base, sp.Add) and not base.is_number:
+        raise FunctionError(f"{_short(source)} raises a sum to a power past "
+                            f"{MAX_SUM_POWER}; write it another way")  # fmt: skip
     if base.is_number and exponent.is_number:
-        try:
-            b = abs(complex(base.evalf(15)))
-            x = abs(complex(exponent.evalf(15)))
-        except (TypeError, ValueError, OverflowError):
-            b, x = math.inf, math.inf
-        if b != 1.0 and b != 0.0 and x * abs(math.log(b)) > MAX_POWER:
+        if exponent.is_Rational and not exponent.is_Integer and exponent.q > 1:
+            whole = abs(int(exponent.p // exponent.q))  # SymPy computes the whole part exactly
+        elif exponent.is_Integer:
+            whole = abs(int(exponent))
+        else:
+            whole = None
+        bits = _exact_bits(base)
+        trivial = base in (sp.Integer(0), sp.Integer(1), sp.Integer(-1))
+        if whole is not None and bits is not None and not trivial and whole * bits > MAX_EXACT_BITS:
+            raise FunctionError(f"{_short(source)} has a power of numbers too large to compute")
+        try:  # the size of the base at 60 digits: 1 + 10**-17 is not 1 here
+            lb = 0.0 if base.is_zero else abs(float(sp.N(sp.log(sp.Abs(base)), 60)))
+            x = abs(complex(sp.N(exponent, 30)))
+        except (TypeError, ValueError, OverflowError, ZeroDivisionError):
+            lb, x = math.inf, math.inf
+        if x * lb > MAX_POWER:
             raise FunctionError(f"{_short(source)} has a power of numbers too large to compute")
     return base**exponent
 
@@ -211,17 +246,19 @@ def _emit(e: sp.Expr) -> str:
     raise FunctionError(f"no kernel code for {e!r}")
 
 
-def parse_expression(source: str, variables: tuple[str, ...]) -> sp.Expr:
+def parse_expression(source: str, variables: tuple[str, ...], *,
+                     extras: bool = False) -> sp.Expr:  # fmt: skip
     """A SymPy expression in the named ``variables`` (plus ``pi``, ``e``, ``i`` and the known
     functions), read with the same whitelist as ``ComplexFunction`` and never evaluated as
     Python. For domains whose functions are not of ``z`` (calculus: ``x``, ``x, y``).
-    Real formulas also know ``sign``, ``floor``, ``atan2(y, x)``, ``min`` and ``max`` (2 to
-    4 arguments); ``ComplexFunction`` does not. Text past ``MAX_SOURCE`` characters,
+    With ``extras=True`` (the flow core only) it also knows ``sign``, ``floor``,
+    ``atan2(y, x)``, ``min`` and ``max`` (2 to 4 arguments); every other reader, and
+    ``ComplexFunction``, refuses them as before. Text past ``MAX_SOURCE`` characters,
     ``MAX_NODES`` parts or ``MAX_DEPTH`` nesting, and powers of numbers too large to
     compute (``9**9**9``), are refused with a ``FunctionError``."""
     names = {**{k: v for k, v in _NAMES.items() if k not in ("z",)},
              **{v: sp.Symbol(v, real=True) for v in variables}}  # fmt: skip
-    return _read(source, names, _REAL_FUNCS)
+    return _read(source, names, _REAL_FUNCS if extras else None)
 
 
 @dataclass(frozen=True)

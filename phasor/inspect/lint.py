@@ -714,6 +714,9 @@ def run(
                     f.add("flow_budget", (e["id"],), t, why="; ".join(why))
             if sem.get("too_fast"):
                 f.add("flow_too_fast", (e["id"],), t, n=sem["too_fast"])
+            if sem.get("shadowed_by"):
+                f.add("duplicate_variable", (e["id"],), t, first=sem["shadowed_by"],
+                      name=sem.get("name"))  # fmt: skip
             if sem.get("under_resolved_since") is not None:
                 f.add("set_under_resolved", (e["id"],), t, since=sem["under_resolved_since"])
             if sem.get("unknown_language"):
@@ -850,6 +853,11 @@ def run(
                          "warning", ids, times=ts, fix_hint="fewer points or arrows, a "
                          "shorter flow time, or a larger dt; past a hard limit the work is "
                          "cut and less is drawn than asked")  # fmt: skip
+        if code == "duplicate_variable":
+            return Issue(code, f"{ids[0]!r} names the variable {info['name']!r}, which "
+                         f"{info['first']!r} already names; systems read {info['first']!r} "
+                         "and this one changes nothing", "warning", ids, times=ts,
+                         fix_hint=f"remove {ids[0]!r}, or give it another name")  # fmt: skip
         if code == "flow_too_fast":
             return Issue(code, f"{ids[0]!r}: {info['n']} point(s) moved further in one step "
                          f"than the window allows even after sub-steps {when}, and were "

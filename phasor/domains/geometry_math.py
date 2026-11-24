@@ -123,12 +123,20 @@ def _field_syms() -> tuple[sp.Symbol, sp.Symbol, sp.Symbol]:
 
 
 SIMPLIFY_OPS = 80  # sp.simplify has no time bound: only expressions this small are simplified
+SIMPLIFY_POWER = 16  # ... and with no power higher than this
 
 
 def tidy(e: sp.Expr) -> sp.Expr:
     """``sp.simplify(e)`` for a small expression; a large one is returned as it is (advice
-    section 5 item 3: simplify can take minutes on a long legal formula)."""
-    return sp.simplify(e) if sp.count_ops(e) <= SIMPLIFY_OPS else e
+    section 5 item 3: simplify can take minutes on a long legal formula). An operation
+    count misses a high power (``(x + y)**1000000`` counts 2, and simplify expands it), so
+    an exponent past ``SIMPLIFY_POWER`` skips it too."""
+    if sp.count_ops(e) > SIMPLIFY_OPS:
+        return e
+    for a in sp.preorder_traversal(e):
+        if isinstance(a, sp.Pow) and a.exp.is_number and abs(a.exp) > SIMPLIFY_POWER:
+            return e
+    return sp.simplify(e)
 
 
 def divergence(p: str, q: str, r: str) -> sp.Expr:

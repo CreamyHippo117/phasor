@@ -45,7 +45,8 @@ s.at("ball").reveal("lorenz.ball")
 s.at("fold").sweep("lorenz.tau", 5.0, show=False)  # the flow carries the ball, tau 0 -> 5
 s.at("card").reveal("lorenz.cplus")
 s.at("card").exit("lorenz.field")  # out of the way of the close-up
-s.at("card").focus_pull("lorenz.cplus", 1.2)  # zoom in on C+
+s.at("card").sweep("lorenz.ball.opacity", 0.35, show=False)  # the ball steps back
+s.at("card").focus_pull("lorenz.cplus", 0.5)  # zoom in on C+
 
 if __name__ == "__main__":
     e = s.engine

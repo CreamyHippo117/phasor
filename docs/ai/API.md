@@ -571,6 +571,7 @@ Each issue has `code`, `severity`, `message`, `ids`, `times`, `fix_hint`, and `f
 | `clamped` | warning | less is drawn than asked: an axis range past 100 ticks (drawn at a wider nice step), a span lost in rounding (no ticks), axis labels past one per axis or that cannot be typeset (left out), bars outside a chart's `y_range` (cut at it) |
 | `flow_budget` | warning | a flow object past its budget: a set or path whose points x steps pass the theme's `[lint] flow_work`, a field with more arrows than `[lint] flow_arrows`, or work cut at a hard limit (`flow_math.MAX_POINTS`, `MAX_PROBE_STEPS`, `MAX_STEPS`, `flow.MAX_ARROWS`, points x trail) |
 | `flow_too_fast` | warning | points of a flow that moved further in one step than the window allows even after 16 sub-steps (a stiff field such as `1e6*x`): they are stopped, not flung across the screen |
+| `duplicate_variable` | warning | a `flow.Variable` whose name an earlier `Variable` already has: systems read the first, so this one changes nothing |
 | `set_under_resolved` | warning | a `FlowSet` outline that reached `flow_math.MAX_SET_POINTS` (2^17) points: from that flow time it is drawn as points, not a curve |
 
 `engine.autofix()` applies every `fix` the linter offers (add `near` for a child label that
@@ -1910,9 +1911,10 @@ field and nullclines kept faint.
 `from phasor import flow`. A system x' = F(x) in 2 or 3 dimensions from formulas (Milestone
 26). The `System` holds the formulas once; its parts are children with dotted ids
 (`lorenz.field`) or name it with `system="lorenz"`. Formulas are read by the whitelist parser
-(never run as Python); real formulas also know `sign`, `floor`, `atan2(y, x)`, `min` and
-`max`. Text longer than 2000 characters, deeper than 100 levels or with a power of numbers
-too large to compute (`9**9**9`) is refused with a reason.
+(never run as Python); flow formulas also know `sign`, `floor`, `atan2(y, x)`, `min` and
+`max` (other domains do not). Text longer than 2000 characters, deeper than 100 levels, with
+a power of numbers too large to compute (`9**9**9`, `(1 + 10**-17)**(10**7)`) or a sum
+raised past the 100th power is refused with a reason, in every domain.
 
 - `flow.System(equations=("sigma*(y - x)", ...), constants="sigma=10, rho=28", window=((lo, hi), ...),
   tau=, rate=, dt=, terms=("vortex(pos=(0, 0), strength=2)", ...), pos=, scale=, frame=, label=)`:
@@ -1922,27 +1924,34 @@ too large to compute (`9**9**9`) is refused with a reason.
   `source`/`sink(pos=, strength=, core=)`, `vortex(pos=, strength=, core=)`,
   `linear(A=, pos=)`. Every named number needs a value in `constants`; world = `pos + scale *
   (x, y, z)`. Semantics: the equations and LaTeX, the variables and which come from a
-  `Variable`, the divergence (formula, min and max sampled on the window), linear or not.
+  `Variable`, the divergence (formula, or None where it has none in closed form, as with
+  `sign`; min and max measured on a 7-per-side grid), linear or not (None when unknown). A
+  formula past 120 operations per component gets a numeric Jacobian (central differences).
   `flow.preset("lorenz", rho=27.7)` gives the parameters of a classic
   (`flow_math.PRESETS`: lorenz, rossler, thomas, chua, halvorsen, aizawa, van_der_pol,
   pendulum, duffing, lotka_volterra, brusselator, fitzhugh_nagumo, sir, double_well, hopf,
   saddle_node, pitchfork and the linear zoo).
 - `flow.Variable(name=, value=, min=, max=)`: a named number; a System whose `constants`
   name it takes this value (a slider: point a `Control` at `<id>.value`). Draws nothing.
+  Two Variables of one name: the first is read, the second is lint `duplicate_variable`.
 - `flow.FieldArrows(counts=, shape="auto"|"arrow"|"cone", length_by=)`: the field on a grid,
   flat arrows in 2D and cones in 3D, coloured by size. At most `flow.MAX_ARROWS`.
-- `flow.Tracer(x0=, trail=, label=)`: one seed's path to the flow time (backward for a
+- `flow.Probe(x0=, trail=, label=)` (not the motion `Tracer`, which rides a curve): one seed's path to the flow time (backward for a
   negative one, stopped at the escape radius), the dot, a label such as `"phi^t(x0)"`.
 - `flow.FlowSet(shape="disk"|"ball"|"box"|"segment"|"circle"|"points", center=, size=,
   count=, fill="filled"|"boundary"|"both", trail=, h_max=)`: initial conditions carried as
   a set (a checkpointed `Simulation`). Filled sets are spread evenly without random
   numbers; an outline is refined so neighbours stay closer than `h_max`, every new point
   integrated from flow time 0 (never interpolated). A 3D ball's outline is latitude and
-  longitude rings. At most 2*10^5 points, 64 trail samples.
+  longitude rings. At most 2*10^5 points, 64 trail samples (recomputed when drawn, not
+  stored), `flow_math.MAX_WORK` (1e8) point-steps (an outline counted at its 2^17 cap).
+  Checkpoints stay in memory: nothing is written to `.phasor_cache`.
 - `flow.Equilibria(grid=, reveal=)`: every equilibrium Newton finds from `grid` starts per
   side in the window, classified from the exact Jacobian: in 2D `saddle`, `stable node`,
   `unstable node`, `stable spiral`, `unstable spiral`, `centre`, `degenerate`,
-  `non-hyperbolic` (as `dyn.FixedPoints`); in 3D also `saddle-focus`. Semantics carry the
+  `non-hyperbolic` (as `dyn.FixedPoints`); in 3D also `saddle-focus`; `undefined` where
+  the field is not finite around the point. A double or triple root (a bifurcation point)
+  is one point, not a cloud: Newton runs until its steps stop moving. Semantics carry the
   window and grid searched (none found is not none exist), `non_isolated`, and per point the
   eigenvalues, subspace dimensions (`dims`: s, u, c), trace, determinant.
 - `flow.EquilibriumView(near=, radius=, name=, card=)`: the equilibrium nearest `near`
@@ -1968,10 +1977,11 @@ assert seen["lorenz.ball"]["alive"] == 500
 ```
 
 Numbers in semantics are rounded to 6 digits. A chaotic path is reproducible on one machine
-only (Lorenz parts across machines near flow time 40), so positions of tracers and sets are
+only (Lorenz parts across machines near flow time 40), so positions of probes and sets are
 reported only up to `flow_math.SAFE_TAU` (10). The numerics (`flow_math`: `System`,
 `integrate`, `FlowSim`, `equilibria`, `classify`, `manifolds`) are plain NumPy and SymPy;
-`dyn` is a 2D front of the same core. Example: `examples/lorenz_explorer.py`.
+`dyn` is a 2D front of the same core. Examples: `examples/lorenz_explorer.py` (3D) and `examples/pendulum_flow.py` (2D, a
+slider, separatrices, a probe).
 
 ## Command line
 

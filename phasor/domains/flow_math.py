@@ -81,6 +81,9 @@ MAX_WORK = 1e8  # point-steps one set may compute in all (about 25 s here); then
 MAX_EQUILIBRIA = 64
 MAX_STARTS = 4096  # Newton starts (grid ** dim)
 NEWTON_ITERS = 60
+POLISH_ITERS = 150  # the flow core's Newton: room to creep into a double or triple root
+XTOL = 1e-12  # ... and converged once a step moves a point less than this (relative)
+MERGE = 1e-4  # singular-Jacobian points closer than this share of the window are one root
 MAX_SUBSTEPS = 16
 SAFE_TAU = 10.0  # semantics report positions only up to this flow time (chaos, see above)
 
@@ -127,11 +130,30 @@ def free_names(source: str) -> set[str]:
 
 @functools.lru_cache(maxsize=512)
 def _parse(source: str, names: tuple[str, ...]) -> sp.Expr:
-    return parse_expression(source, names)
+    return parse_expression(source, names, extras=True)
 
 
 def _sym(name: str) -> sp.Symbol:
     return sp.Symbol(name, real=True)
+
+
+JAC_OPS = 120  # a field past this many operations per component is differentiated numerically
+JAC_DEPTH = 24  # ... or nested deeper than this (towers of powers grow fast when differentiated)
+
+
+def _depth(e: sp.Expr) -> int:
+    best, stack = 0, [(e, 1)]
+    while stack:
+        node, d = stack.pop()
+        best = max(best, d)
+        stack.extend((a, d + 1) for a in node.args)
+    return best
+
+
+def _small(exprs) -> bool:
+    """Whether the exact Jacobian of ``exprs`` is cheap to build (advice 5.3: nothing that
+    runs while someone types may take seconds)."""
+    return all(sp.count_ops(e) <= JAC_OPS and _depth(e) <= JAC_DEPTH for e in exprs)
 
 
 class Compiled:
@@ -144,18 +166,16 @@ class Compiled:
         syms = [_sym(c) for c in COORDS[: self.dim]] + [_sym(v) for v in variables]
         self._syms = syms
         self._fns = [sp.lambdify(syms, e, "numpy") for e in exprs]
-        jac = sp.Matrix(exprs).jacobian(syms[: self.dim])
-        self.jac_expr = jac
-        self._jac: list | None = []
-        for e in jac:
-            if e.has(sp.Derivative, sp.DiracDelta, sp.Heaviside, sp.Subs):
-                self._jac = None  # not differentiable in closed form: central differences
-                break
-            try:
-                self._jac.append(sp.lambdify(syms, e, "numpy"))
-            except Exception:
-                self._jac = None
-                break
+        self.jac_expr: sp.Matrix | None = None
+        self._jac: list | None = None
+        if _small(exprs):  # a large formula: central differences, so typing never stalls
+            jac = sp.Matrix(exprs).jacobian(syms[: self.dim])
+            if not any(e.has(sp.Derivative, sp.DiracDelta, sp.Heaviside, sp.Subs) for e in jac):
+                self.jac_expr = jac  # not differentiable in closed form: central differences
+                try:
+                    self._jac = [sp.lambdify(syms, e, "numpy") for e in jac]
+                except Exception:
+                    self._jac = None
 
     def fields(self, coords, values=()) -> list[np.ndarray]:
         """Each component at the points ``coords`` (one array per coordinate, any shape)."""
@@ -282,17 +302,31 @@ class System:
         vals = self.values_of(values)
         sub = {_sym(c): float(v) for c, v in zip(COORDS, point, strict=False)}
         sub.update({_sym(n): v for n, v in zip(self.variables, vals, strict=True)})
-        try:
-            J = np.array(sp.N(self.fn.jac_expr.subs(sub)), dtype=np.float64)
-            if J.shape == (self.dim, self.dim) and np.isfinite(J).all():
-                return J
-        except (TypeError, ValueError):
-            pass
+        if self.fn.jac_expr is not None:
+            try:
+                J = np.array(sp.N(self.fn.jac_expr.subs(sub)), dtype=np.float64)
+                if J.shape == (self.dim, self.dim) and np.isfinite(J).all():
+                    return J
+            except (TypeError, ValueError):
+                pass
         return self.fn.jacobians(np.asarray(point, dtype=np.float64)[None], vals)[0]
 
-    def divergence(self) -> sp.Expr:
-        return sum((sp.diff(e, _sym(c)) for e, c in zip(self.exprs, COORDS, strict=False)),
-                   sp.Integer(0))  # fmt: skip
+    def divergence(self) -> sp.Expr | None:
+        """The divergence as a formula, or None where it has none in closed form (``sign``,
+        ``floor``) or the field is too large to differentiate quickly."""
+        J = self.fn.jac_expr
+        if J is None:
+            return None
+        return sum((J[k, k] for k in range(self.dim)), sp.Integer(0))
+
+    def linear(self) -> bool | None:
+        """Whether the field is affine in the coordinates: its Jacobian holds no coordinate
+        (decided without expanding anything); None when the Jacobian is not symbolic."""
+        J = self.fn.jac_expr
+        if J is None:
+            return None
+        coords = {_sym(c) for c in COORDS[: self.dim]}
+        return not any(e.free_symbols & coords for e in J)
 
     def latex(self) -> list[str]:
         return [sp.latex(e) for e in self.exprs]
@@ -573,8 +607,8 @@ class FlowSim:
     at ``samples`` parameters each and refined every ``refine_every`` steps where two
     neighbours are further apart than ``h_max``: the new parameter's point is integrated
     from flow time 0 (``_from_start``), never interpolated. Past ``cap`` curve points the
-    set stops growing and records the step (``under_resolved``). ``trail`` keeps the last
-    positions of the points (float32)."""
+    set stops growing and records the step (``under_resolved``). A trail is not part of
+    the state (``trail_from``): checkpoints hold positions only."""
 
     system: System
     values: tuple[float, ...]
@@ -587,7 +621,6 @@ class FlowSim:
     cap: int = MAX_SET_POINTS
     max_step: float | None = None
     escape: tuple | None = None  # (centre, radius)
-    trail: int = 0
     direction: float = 1.0  # -1: backward (bounded by ``escape``)
     max_work: float = MAX_WORK  # point-steps in all, refinement included; then it stops
 
@@ -601,7 +634,8 @@ class FlowSim:
             "h_max": self.h_max, "refine_every": self.refine_every, "cap": self.cap,
             "max_step": self.max_step, "escape": None if self.escape is None else
             [list(map(float, self.escape[0])), float(self.escape[1])],
-            "trail": self.trail, "direction": self.direction, "max_work": self.max_work,
+            "direction": self.direction, "max_work": self.max_work,
+            "sympy": sp.__version__,
             "method": "rk4",
             "dtype": "float64",
         }  # fmt: skip
@@ -620,8 +654,6 @@ class FlowSim:
                "q": q, "qc": np.zeros(len(q), np.int8), "n": np.array(0),
                "under": np.array(-1), "work": np.array(0.0),
                "halted": np.array(-1)}  # fmt: skip
-        if self.trail:
-            out["trail"] = np.repeat(pts[None].astype(np.float32), self.trail, axis=0)
         return out
 
     def _advance(self, p: np.ndarray, code: np.ndarray, dt: float):
@@ -634,6 +666,17 @@ class FlowSim:
             c = np.where((c == ALIVE) & far, ESCAPED, c)
         code = np.where(alive, c, code).astype(np.int8)
         return np.where(code[:, None] == ALIVE, q, np.nan), code
+
+    def trail_from(self, state, steps: int) -> np.ndarray:
+        """The positions of the points over ``steps`` more steps from ``state`` (steps + 1,
+        N, dim): the same steps the set takes (a point moves the same alone or in any
+        batch), computed when drawn instead of stored in every checkpoint."""
+        p, code = np.array(state["p"]), np.array(state["pc"])
+        out = [p]
+        for _ in range(steps):
+            p, code = self._advance(p, code, self.dt * self.direction)
+            out.append(p)
+        return np.stack(out)
 
     def _from_start(self, x0: np.ndarray, n: int, dt: float):
         p, code = x0.copy(), np.zeros(len(x0), np.int8)
@@ -659,9 +702,6 @@ class FlowSim:
         out["p"], out["pc"] = moved[:k], codes[:k]
         out["q"], out["qc"] = moved[k:], codes[k:]
         out["n"], out["work"] = np.array(n), np.array(work)
-        if self.trail:
-            out["trail"] = np.concatenate([state["trail"][1:],
-                                           out["p"][None].astype(np.float32)])  # fmt: skip
         if self.loops and self.h_max > 0 and n % self.refine_every == 0:
             out.update(self._refine(out, n, dt))
         return out
@@ -726,20 +766,35 @@ class FlowSim:
 def newton(fn: Compiled, vals, starts: np.ndarray, *, tol: float = 1e-9, cap: float,
            singular: str = "pinv") -> tuple[np.ndarray, np.ndarray]:  # fmt: skip
     """Newton's method from every start at once: ``(points, converged)``. A step longer
-    than ``cap`` is shortened. ``singular="pinv"``: a singular Jacobian takes the least-
-    squares step (finds lines of equilibria); ``"drop"``: that start gives up."""
+    than ``cap`` is shortened.
+
+    ``singular="pinv"`` (the flow core): a singular Jacobian takes the least-squares step
+    (finds lines of equilibria), and a start counts as converged only once the residual is
+    under ``tol`` *and* its steps have stopped moving it (up to ``POLISH_ITERS``): near a
+    double or triple root the residual is tiny long before the point is there.
+    ``"drop"`` (``dynamics_math``, unchanged): a singular start gives up, and the residual
+    alone decides, in ``NEWTON_ITERS`` steps."""
     p = np.asarray(starts, dtype=np.float64).copy()
     n, d = p.shape
+    polish = singular == "pinv"
     done = np.zeros(n, dtype=bool)
     live = np.ones(n, dtype=bool)
-    for _ in range(NEWTON_ITERS):
+    last = np.full(n, np.inf)  # the length of each start's last step
+    small = np.zeros(n, dtype=bool)  # residual under tol
+    for _ in range(POLISH_ITERS if polish else NEWTON_ITERS):
         act = np.flatnonzero(live & ~done)
         if not len(act):
             break
         r = fn.velocity(p[act], vals)
         fin = np.isfinite(r).all(axis=1)
         live[act[~fin]] = False
-        conv = fin & (np.abs(np.where(np.isfinite(r), r, 0)).max(axis=1) < tol)
+        under = fin & (np.abs(np.where(np.isfinite(r), r, 0)).max(axis=1) < tol)
+        small[act] = under
+        if polish:
+            still = last[act] <= XTOL * (1.0 + np.abs(p[act]).max(axis=1))
+            conv = under & (still | (np.abs(np.where(fin[:, None], r, 1)).max(axis=1) == 0))
+        else:
+            conv = under
         done[act[conv]] = True
         act, r = act[fin & ~conv], r[fin & ~conv]
         if not len(act):
@@ -770,7 +825,10 @@ def newton(fn: Compiled, vals, starts: np.ndarray, *, tol: float = 1e-9, cap: fl
         norm = np.linalg.norm(stepv, axis=1)
         stepv = np.where((norm > cap)[:, None], stepv * (cap / np.maximum(norm, 1e-300))[:, None],
                          stepv)  # fmt: skip
+        last[act] = np.minimum(norm, cap)
         p[act] = p[act] - stepv
+    if polish:  # out of steps with the residual under tol: converged as far as floats go
+        done |= live & small
     return p, done
 
 
@@ -779,13 +837,23 @@ def grid_starts(lo, hi, grid: int) -> np.ndarray:
     return np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1).reshape(-1, len(axes))
 
 
+def _singular(J: np.ndarray) -> np.ndarray:
+    """Which Jacobians (N, d, d) are singular relative to their size."""
+    d = J.shape[-1]
+    sc = np.maximum(np.abs(J).max(axis=(1, 2)), 1e-300)
+    with np.errstate(all="ignore"):
+        return ~(np.abs(np.linalg.det(J)) > 1e-9 * sc**d)
+
+
 def equilibria(system: System, values, lo, hi, grid: int = 9, *,
                singular: str = "pinv") -> dict[str, Any]:  # fmt: skip
     """Every equilibrium Newton finds from a ``grid`` of starts in the window ``lo..hi``,
-    clustered (relative tolerance) and sorted along x, then y, then z. At most
-    ``MAX_EQUILIBRIA``; more, or a line of them with a singular Jacobian, sets
-    ``non_isolated``. The window and grid are part of the answer: "none found" is not
-    "none exist"."""
+    clustered and sorted along x, then y, then z. At most ``MAX_EQUILIBRIA``; more, or three
+    or more separate points with a singular Jacobian (a line or plane of them), sets
+    ``non_isolated``. Points with a singular Jacobian closer than ``MERGE`` of the window
+    are one degenerate root (a saddle-node or pitchfork at its bifurcation, where Newton
+    only creeps in), not a line. The window and grid are part of the answer: "none found"
+    is not "none exist"."""
     vals = system.values_of(values) if isinstance(values, dict) else tuple(values)
     d = system.dim
     lo = np.asarray(lo, dtype=np.float64)
@@ -797,22 +865,37 @@ def equilibria(system: System, values, lo, hi, grid: int = 9, *,
         pts, ok = newton(fn, vals, grid_starts(lo, hi, grid), cap=float(span.max()),
                          singular=singular)  # fmt: skip
     pad = span * 1e-6
+    cand = [q for q in pts[ok] if ((q >= lo - pad) & (q <= hi + pad)).all()]
     found: list[np.ndarray] = []
-    for p in pts[ok]:
-        if not ((p >= lo - pad) & (p <= hi + pad)).all():
-            continue
-        if not any(np.linalg.norm(p - q) < 1e-6 * max(1.0, np.linalg.norm(q)) for q in found):
-            found.append(p)
+    if singular == "pinv" and cand:
+        cand_a = np.array(cand)
+        with np.errstate(all="ignore"):
+            res = np.abs(fn.velocity(cand_a, vals)).max(axis=1)
+            sing = _singular(fn.jacobians(cand_a, vals))
+        merge = MERGE * float(span.max())
+        reps: list[tuple[np.ndarray, bool, float]] = []
+        for q, sg, rq in zip(cand_a, sing, res, strict=True):
+            near = 1e-6 * max(1.0, float(np.linalg.norm(q)))
+            for k, (o, so, ro) in enumerate(reps):
+                gap = float(np.linalg.norm(q - o))
+                if gap < near or (sg and so and gap < merge):
+                    if rq < ro:  # keep the best of a cluster
+                        reps[k] = (q, sg, float(rq))
+                    break
+            else:
+                reps.append((q, bool(sg), float(rq)))
+        found = [q for q, _, _ in reps]
+    else:
+        for q in cand:
+            if not any(np.linalg.norm(q - o) < 1e-6 * max(1.0, np.linalg.norm(o)) for o in found):
+                found.append(q)
     out = np.array(found, dtype=np.float64).reshape(-1, d)
     if len(out):
         keys = tuple(np.round(out[:, k], 7) for k in reversed(range(d)))
         out = out[np.lexsort(keys)]
     non_isolated = len(out) > MAX_EQUILIBRIA
     if not non_isolated and len(out) >= 3:
-        J = fn.jacobians(out, vals)
-        sc = np.maximum(np.abs(J).max(axis=(1, 2)), 1e-300)
-        sing = np.abs(np.linalg.det(J)) <= 1e-9 * sc**d
-        non_isolated = int(sing.sum()) >= 3
+        non_isolated = int(_singular(fn.jacobians(out, vals)).sum()) >= 3
     return {"points": out[:MAX_EQUILIBRIA], "non_isolated": bool(non_isolated),
             "window": [[float(a), float(b)] for a, b in zip(lo, hi, strict=True)],
             "grid": grid, "starts": grid**d, "found": len(out)}  # fmt: skip
@@ -909,6 +992,11 @@ def classify(J) -> dict:
     real eigen-``directions``, the subspaces ``Es``, ``Eu``, ``Ec`` (orthonormal bases) and
     their ``dims``. Tolerances are relative to the Jacobian's size (``tolerance``)."""
     J = np.asarray(J, dtype=np.float64)
+    if J.shape in ((2, 2), (3, 3)) and not np.isfinite(J).all():
+        d = J.shape[0]  # the field is not finite around the point: nothing to say
+        return {"kind": "undefined", "stable": None, "eigenvalues": [], "trace": float("nan"),
+                "det": float("nan"), "directions": [], "tolerance": 0.0, "Es": [], "Eu": [],
+                "Ec": [], "dims": {"s": 0, "u": 0, "c": d}}  # fmt: skip
     if J.shape == (2, 2):
         return _classify2(J)
     if J.shape != (3, 3):

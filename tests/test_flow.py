@@ -205,7 +205,7 @@ def test_hostile_formulas_draw_and_finish(formula, passes):
     sc = Scene("hostile", passes=passes)
     sc.add(flow.System(id="h", equations=(formula, "-y + 0.5"), tau=1.0, window=((-2, 2), (-2, 2))))
     for child in (flow.FieldArrows(id="h.field"), flow.FlowSet(id="h.set", count=300),
-                  flow.Tracer(id="h.probe", x0=(0.5, 0.1)), flow.Equilibria(id="h.eq")):  # fmt: skip
+                  flow.Probe(id="h.probe", x0=(0.5, 0.1)), flow.Equilibria(id="h.eq")):  # fmt: skip
         sc.add(child)
     json.dumps(sc.engine.inspect(1.0))
     assert not [i for i in sc.engine.lint() if i.severity == "error"]
@@ -221,7 +221,7 @@ def _sim(**kw) -> fm.FlowSim:
     base = dict(system=s, values=s.values_of(LORENZ), dt=0.01,
                 points=fm.fill("ball", (1, 1, 20), 2.0, 64, 3),
                 loops=fm.curves("ball", (1, 1, 20), 2.0, 3, 2), samples=16, h_max=1.0,
-                refine_every=10, max_step=4.0, escape=((0.0, 0.0, 25.0), 300.0), trail=4)  # fmt: skip
+                refine_every=10, max_step=4.0, escape=((0.0, 0.0, 25.0), 300.0))  # fmt: skip
     base.update(kw)
     return fm.FlowSim(**base)
 
@@ -234,7 +234,7 @@ def test_every_parameter_of_a_set_is_in_its_cache_key():
         "points": fm.fill("ball", (1, 1, 20), 2.0, 65, 3),
         "loops": fm.curves("ball", (1, 1, 21), 2.0, 3, 2), "samples": 17, "h_max": 1.5,
         "refine_every": 11, "cap": 1000, "max_step": 3.0,
-        "escape": ((0.0, 0.0, 25.0), 301.0), "trail": 5, "direction": -1.0,
+        "escape": ((0.0, 0.0, 25.0), 301.0), "direction": -1.0, "max_work": 1e7,
     }  # fmt: skip
     base = sim_key(_sim())
     assert sim_key(_sim()) == base
@@ -268,7 +268,7 @@ def test_scrubbing_in_any_order_matches_a_fresh_run():
 
 
 def test_refined_points_are_true_images_of_initial_points():
-    sim = _sim(points=np.zeros((0, 3)), trail=0)
+    sim = _sim(points=np.zeros((0, 3)))
     st = SimRunner(sim, cache_dir=None).state_at(0.6)
     assert len(st["s"]) > 16 * len(sim.loops)  # it refined
     n = int(st["n"])
@@ -279,7 +279,7 @@ def test_refined_points_are_true_images_of_initial_points():
 
 
 def test_a_set_stops_growing_at_its_cap_and_says_when():
-    sim = _sim(points=np.zeros((0, 3)), cap=200, h_max=0.2, trail=0)
+    sim = _sim(points=np.zeros((0, 3)), cap=200, h_max=0.2)
     st = SimRunner(sim, cache_dir=None).state_at(1.0)
     assert len(st["s"]) <= 200 and int(st["under"]) > 0
 
@@ -304,7 +304,7 @@ def _scene(passes=None) -> Scene:
                       window=((-4, 4), (-3, 3)), tau=1.5))  # fmt: skip
     s.add(flow.Variable(id="gamma", name="gamma", value=0.3, min=0, max=2))
     s.add(flow.FieldArrows(id="pend.field"))
-    s.add(flow.Tracer(id="pend.probe", x0=(1.0, 0.5), label="phi^t(x0)"))
+    s.add(flow.Probe(id="pend.probe", x0=(1.0, 0.5), label="phi^t(x0)"))
     s.add(flow.FlowSet(id="pend.disk", center=(1.0, 0.5), size=0.4, count=200, fill="both",
                        trail=3))  # fmt: skip
     s.add(flow.Equilibria(id="pend.eq"))
@@ -391,7 +391,7 @@ def test_budgets_are_clamped_and_linted(passes):
     s = Scene("budget", passes=passes)
     s.add(flow.System(id="b3", **flow.preset("rossler")))
     s.add(flow.FieldArrows(id="b3.field", counts=200))  # 8e6 asked
-    s.add(flow.Tracer(id="b3.probe", x0=(1, 1, 1)))
+    s.add(flow.Probe(id="b3.probe", x0=(1, 1, 1)))
     s.set("b3.tau", 500.0)  # 25000 steps at dt 0.02: past MAX_PROBE_STEPS
     sem = {o["id"]: o["semantic"] for o in s.engine.inspect(0.0)["objects"]}
     assert sem["b3.field"]["arrows"] <= flow.MAX_ARROWS
@@ -428,7 +428,7 @@ def test_each_type_at_its_documented_maximum_is_bounded():
                        samples=4096, rings=8))  # fmt: skip
     s.add(flow.FieldArrows(id="m.field", counts=200))
     s.add(flow.Equilibria(id="m.eq", grid=64))
-    s.add(flow.Tracer(id="m.probe", x0=(1, 1, 1)))
+    s.add(flow.Probe(id="m.probe", x0=(1, 1, 1)))
     s.add(flow.Manifold(id="m.wu", near=(0, 0, 0), length=1e4))
     e = s.engine
     sem, took, peak = _peak(lambda: {o["id"]: o["semantic"] for o in e.inspect(0.0)["objects"]})
@@ -469,7 +469,7 @@ def test_memos_hold_every_input(path, value):
     sc.add(flow.System(id="p", equations=("y", "-sin(x) - gamma*y"), constants="gamma=0.3",
                        window=((-4, 4), (-3, 3)), tau=6.0))  # fmt: skip
     sc.add(flow.Variable(id="gamma", name="gamma", value=0.3, min=0, max=2))
-    sc.add(flow.Tracer(id="p.probe", x0=(2.5, 1.5)))
+    sc.add(flow.Probe(id="p.probe", x0=(2.5, 1.5)))
     sc.add(flow.Manifold(id="p.sep", near=(3.1, 0), length=6.0))
     sc.add(flow.Equilibria(id="p.eq"))
     e = sc.engine
@@ -504,5 +504,146 @@ def test_lorenz_explorer_golden_storyboard():
     from tests.test_beauty import _golden
 
     e = runpy.run_path(str(ROOT / "examples" / "lorenz_explorer.py"), run_name="x")["s"].engine
-    sheet = e.storyboard([2.0, 4.6, 9.0], size=(320, 180))["image"]
+    sheet = e.storyboard([2.0, 4.6, 9.0], size=(480, 270))["image"]
     _golden("lorenz_explorer", sheet, e.pass_runner().renderer_class())
+
+
+# ---------------------------------------------------------------- the audit's findings
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_a_system_with_sign_and_floor_inspects_and_lints(passes):
+    """Audit blocker 2: the divergence of sign/floor holds DiracDelta; it is measured
+    numerically instead of lambdified."""
+    sc = Scene("signs", passes=passes)
+    sc.add(flow.System(id="sg", equations=("sign(y) - floor(x)", "-x + max(x, 0)"), tau=1.0))
+    sc.add(flow.Equilibria(id="sg.eq"))
+    sc.add(flow.Probe(id="sg.probe", x0=(0.5, 0.5)))
+    sem = sc.engine.inspect(0.0, id="sg")["objects"][0]["semantic"]
+    assert sem["divergence"]["formula"] is None and sem["divergence"]["min"] is not None
+    assert sem["linear"] is None
+    json.dumps(sc.engine.inspect(0.0))
+    assert not [i for i in sc.engine.lint() if i.severity == "error"]
+
+
+def test_linearity_is_decided_without_expanding():
+    """Audit blocker 3: linearity came from sp.Poly, which expands (x + y)**N."""
+    sc = Scene("linear", passes=None)
+    sc.add(flow.System(id="a", equations=("2*x + y - 1", "x")))
+    sc.add(flow.System(id="b", equations=("(x + y)**100", "y")))
+    sc.add(flow.System(id="c", equations=("sigma*(y - x)", "x"), constants="sigma=3"))
+    start = time.perf_counter()
+    sem = {o["id"]: o["semantic"] for o in sc.engine.inspect(0.0)["objects"]}
+    assert time.perf_counter() - start < 60.0  # a guard against expansion, not a timer
+    assert (sem["a"]["linear"], sem["b"]["linear"], sem["c"]["linear"]) == (True, False, True)
+    with pytest.raises(Exception, match="sum to a power"):
+        sc.add(flow.System(id="d", equations=("(x + y)**1000000", "y")))
+
+
+@pytest.mark.parametrize(
+    ("name", "over", "count"),
+    [
+        ("saddle_node", {"mu": 0.0}, 1),
+        ("pitchfork", {"mu": 0.0}, 1),
+        ("lorenz", {"rho": 1.0}, 1),
+        ("hopf", {"mu": 0.0}, 1),
+    ],
+)
+def test_a_degenerate_equilibrium_is_one_point(name, over, count):
+    """Audit blocker 4: Newton stopped on the residual alone, so a double or triple root
+    came back as a cloud of 5 to 44 points."""
+    p = fm.PRESETS[name]
+    s = fm.System.parse(p.equations)
+    vals = {k: v[0] for k, v in p.variables.items()} | over
+    lo, hi = zip(*p.window, strict=True)
+    found = fm.equilibria(s, vals, lo, hi, 9)
+    assert len(found["points"]) == count and not found["non_isolated"]
+    assert np.abs(found["points"]).max() < 1e-4
+    one = fm.equilibria(fm.System.parse(("x**2", "-y")), {}, (-2, -2), (2, 2), 9)
+    assert len(one["points"]) == 1 and not one["non_isolated"]
+
+
+@pytest.mark.parametrize(
+    "eqs", [("y", "0"), ("y", "0", "0"), ("x*y", "x*y"), fm.PRESETS["sir"].equations]
+)
+def test_lines_of_equilibria_stay_non_isolated(eqs):
+    s = fm.System.parse(eqs)
+    vals = {"beta": 0.5, "gamma": 0.1}
+    d = len(eqs)
+    lo, hi = (0.0,) * d if eqs == fm.PRESETS["sir"].equations else (-2.0,) * d, (2.0,) * d
+    assert fm.equilibria(s, vals, lo, hi, 9)["non_isolated"]
+
+
+def test_sweeping_a_slider_through_a_bifurcation_counts_right():
+    """The preset sliders swept through mu = 0 and rho = 1: the count changes once, at the
+    bifurcation, and is never a cloud."""
+
+    def counts(name, var, values):
+        p = fm.PRESETS[name]
+        s = fm.System.parse(p.equations)
+        lo, hi = zip(*p.window, strict=True)
+        base = {k: v[0] for k, v in p.variables.items()}
+        return [len(fm.equilibria(s, base | {var: v}, lo, hi, 9)["points"]) for v in values]
+
+    mus = [-0.2, -0.05, 0.0, 0.05, 0.2]
+    assert counts("saddle_node", "mu", mus) == [0, 0, 1, 2, 2]
+    assert counts("pitchfork", "mu", mus) == [1, 1, 1, 3, 3]
+    assert counts("lorenz", "rho", [0.5, 0.9, 1.0, 1.1, 2.0]) == [1, 1, 1, 3, 3]
+
+
+def test_a_huge_formula_compiles_quickly_with_a_numeric_jacobian():
+    """Audit should-fix 6: the exact Jacobian of a long product took tens of seconds; past
+    ``JAC_OPS`` operations the Jacobian is central differences."""
+    sins = "*".join(f"sin(x+{k}*y)" for k in range(120))
+    tower = "**".join(["x"] * 99)
+    for eqs in ((sins, "y"), (tower, "y")):
+        start = time.perf_counter()
+        s = fm.System.parse(eqs)
+        assert s.fn.jac_expr is None
+        J = s.fn.jacobians(np.array([[0.3, 0.2]]), ())
+        assert J.shape == (1, 2, 2)
+        assert time.perf_counter() - start < 60.0  # a guard against minutes, not a timer
+    assert fm.System.parse(("y", "-x")).fn.jac_expr is not None
+
+
+def test_a_set_writes_nothing_to_disk_and_its_trail_is_not_checkpointed(tmp_path):
+    """Audit should-fix 7: a trail in every checkpoint and a folder per slider value made
+    gigabytes; checkpoints are positions only, in memory."""
+    sc = Scene("disk", passes=None)
+    sc.add(flow.System(id="lo", tau=1.0, **flow.preset("lorenz")))
+    sc.add(flow.FlowSet(id="lo.ball", shape="ball", center=(1, 1, 20), size=2, count=500,
+                        trail=8))  # fmt: skip
+    for rho in (20.0, 21.0, 22.0):
+        assert sc.engine.apply({"op": "set_param", "path": "lo.constants",
+                                "value": f"sigma=10, rho={rho}, beta=2.6"}).ok  # fmt: skip
+        sc.engine.inspect(0.0)
+    cache = Path(tmp_path / "cache")
+    assert not cache.exists() or not any(cache.rglob("*.npz"))
+    st = sc.engine.state_at(0.0)
+    sim, trail, _ = st["lo.ball"].impl._sim(st["lo.ball"].params, st["lo"].impl.resolve(st))
+    assert trail == 8 and "trail" not in sim.initial() and "sympy" in sim.params()
+    run = SimRunner(sim, cache_dir=None)
+    lines = sim.trail_from(run.state_at(0.9), 10)
+    assert np.array_equal(lines[-1], run.state_at(1.0)["p"], equal_nan=True)
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_two_variables_of_one_name_lint(passes):
+    sc = Scene("dupes", passes=passes)
+    sc.add(flow.System(id="sy", equations=("y", "-a*x"), constants="a=1"))
+    sc.add(flow.Variable(id="a1", name="a", value=2.0))
+    sc.add(flow.Variable(id="a2", name="a", value=3.0))
+    st = sc.engine.state_at(0.0)
+    assert st["sy"].impl.resolve(st).values == {"a": 2.0}  # the first wins
+    found = {(i.code, i.ids[0]) for i in sc.engine.lint()}
+    assert ("duplicate_variable", "a2") in found and ("duplicate_variable", "a1") not in found
+
+
+def test_the_pendulum_example_shows_its_parts():
+    e = runpy.run_path(str(ROOT / "examples" / "pendulum_flow.py"), run_name="x")["s"].engine
+    sem = {o["id"]: o["semantic"] for o in e.inspect(e.duration)["objects"]}
+    assert [p["kind"] for p in sem["pend.rest"]["points"]] == [
+        "stable spiral", "saddle", "stable spiral", "saddle", "stable spiral"]  # fmt: skip
+    assert {b["which"] for b in sem["pend.sep_right"]["branches"]} == {"stable", "unstable"}
+    assert sem["gamma"]["used_by"] == ["pend"] and sem["pend.probe"]["at"] is not None
+    assert e.lint(strict=True) == []

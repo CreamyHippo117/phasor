@@ -65,9 +65,9 @@
 - `flow_lines`: flash, fp, fq, fr, pos, extent, seeds, steps, length, both, progress
 - `flow_manifold`: flash, system, near, which, length, progress, grid
 - `flow_particles`: flash, fp, fq, fr, pos, extent, count, speed, lifetime, tail, seed
+- `flow_probe`: flash, system, x0, trail, dot, label
 - `flow_set`: flash, system, shape, center, size, points, count, fill, trail, samples, h_max, rings, radius
 - `flow_system`: flash, equations, terms, constants, window, tau, rate, dt, escape, pos, scale, frame, label
-- `flow_tracer`: flash, system, x0, trail, dot, label
 - `fractal`: flash, kind, c, pos, size, max_iter, density, hue, center, zoom, steady, radius, ambient
 - `galois_diagram`: flash, primes, pos, width, height, gap
 - `graph`: flash, function, xmin, xmax, pos

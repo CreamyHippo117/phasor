@@ -15,7 +15,7 @@ overrides one, so a slider moves it), the window, ``dt`` and the flow time ``tau
 ``system="lorenz"``) read the formulas from it, so they are written once:
 
 - ``FieldArrows``: the field as arrows (2D) or cones (3D) on a grid, coloured by size.
-- ``Tracer``: one seed's path up to the flow time, the moving dot and a label.
+- ``Probe``: one seed's path up to the flow time, the moving dot and a label.
 - ``FlowSet``: a set of initial conditions (disk, ball, box, segment, circle, points)
   advected as a set (a checkpointed ``Simulation``); its boundary is refined so it stays a
   curve, each new point integrated from flow time 0.
@@ -37,7 +37,6 @@ from collections import OrderedDict
 from typing import Any, ClassVar, Literal
 
 import numpy as np
-import sympy as sp
 from pydantic import Field, field_validator, model_validator
 
 from phasor.core.ids import parent_of
@@ -57,8 +56,17 @@ from phasor.domains.strokes import (
     with_alpha,
 )
 
-__all__ = ["Equilibria", "EquilibriumView", "FieldArrows", "FlowSet", "Manifold", "System",
-           "Tracer", "Variable", "preset"]  # fmt: skip
+__all__ = [
+    "Equilibria",
+    "EquilibriumView",
+    "FieldArrows",
+    "FlowSet",
+    "Manifold",
+    "Probe",
+    "System",
+    "Variable",
+    "preset",
+]  # fmt: skip
 
 MAX_ARROWS = 20000  # arrows of one field (a grid is thinned to this)
 MAX_DRAWN_POINTS = 50000  # points of a set drawn as dots (a stride past this)
@@ -66,8 +74,10 @@ CHECKPOINT_EVERY = 50  # set steps between cached checkpoints
 MAX_TAU = 1e5
 
 
-def _r(v: float, digits: int = 6) -> float:
-    """Rounded for semantics; never ``-0.0``."""
+def _r(v: float, digits: int = 6) -> float | None:
+    """Rounded for semantics; never ``-0.0``; None for a value that is not finite."""
+    if not math.isfinite(float(v)):
+        return None
     x = round(float(v), digits)
     return 0.0 if x == 0 else x
 
@@ -127,11 +137,17 @@ class Variable(ObjectBase):
 
     def semantics(self, state: SceneState) -> dict[str, Any]:
         p = self.me(state).params
-        used = sorted(o.id for o in state.objects if isinstance(o.impl, System)
-                      and p.name in o.impl.resolve(state).values)  # fmt: skip
-        return {"kind": "variable", "name": p.name, "value": _r(p.value), "min": _r(p.min),
-                "max": _r(p.max), "used_by": used, "drawn": 0.0,
-                "outside_range": not (p.min <= p.value <= p.max)}  # fmt: skip
+        first = next(o.id for o in state.objects
+                     if isinstance(o.impl, Variable) and o.params.name == p.name)  # fmt: skip
+        used = [] if first != self.id else sorted(
+            o.id for o in state.objects if isinstance(o.impl, System)
+            and p.name in o.impl.resolve(state).values)  # fmt: skip
+        out = {"kind": "variable", "name": p.name, "value": _r(p.value), "min": _r(p.min),
+               "max": _r(p.max), "used_by": used, "drawn": 0.0,
+               "outside_range": not (p.min <= p.value <= p.max)}  # fmt: skip
+        if first != self.id:  # the first Variable of a name is the one Systems read
+            out["shadowed_by"] = first
+        return out
 
     def draw(self, ctx: DrawContext, state: SceneState) -> None:
         """Nothing: a variable is only a number."""
@@ -268,14 +284,9 @@ class System(ObjectBase):
     def semantics(self, state: SceneState) -> dict[str, Any]:
         r = self.resolve(state)
         div = r.sys.divergence()
-        names = r.sys.variables
         sample = fm.grid_starts(r.lo, r.hi, 7)
-
-        xs = [sp.Symbol(c, real=True) for c in fm.COORDS[: r.dim]]
-        dfn = sp.lambdify(xs + [sp.Symbol(n, real=True) for n in names], div, "numpy")
-        with np.errstate(all="ignore"):
-            dv = np.broadcast_to(np.asarray(dfn(*sample.T, *r.vals), dtype=np.float64),
-                                 (len(sample),))  # fmt: skip
+        with np.errstate(all="ignore"):  # numeric, so sign and floor work too
+            dv = np.trace(r.sys.fn.jacobians(sample, r.vals), axis1=1, axis2=2)
         dv = dv[np.isfinite(dv)]
         return {
             "kind": "flow_system",
@@ -285,14 +296,12 @@ class System(ObjectBase):
             "variables": {k: _r(v) for k, v in r.values.items()},
             "from_variables": r.from_variable,
             "divergence": {
-                "formula": str(div),
+                "formula": None if div is None else str(div),
                 "min": _r(dv.min()) if len(dv) else None,
                 "max": _r(dv.max()) if len(dv) else None,
                 "sampled": "7 per side of the window",
             },
-            "linear": all(
-                e.is_polynomial(*xs) and sp.Poly(e, *xs).total_degree() <= 1 for e in r.sys.exprs
-            ),
+            "linear": r.sys.linear(),
             "window": [[_r(a), _r(b)] for a, b in zip(r.lo, r.hi, strict=True)],
             "tau": _r(r.tau),
             "dt": _r(r.dt),
@@ -440,7 +449,7 @@ class FieldArrows(_Child):
             arrow_batch(ctx, cam, a, b, w, colors=cols, glow=me.style["glow"])
 
 
-# ---------------------------------------------------------------- Tracer
+# ---------------------------------------------------------------- Probe
 
 _PATHS: OrderedDict[tuple, fm.Path] = OrderedDict()
 
@@ -464,13 +473,13 @@ def _path(r: Resolved, x0: tuple[float, ...], n: int, direction: float) -> fm.Pa
 
 
 @register
-class Tracer(_Child):
+class Probe(_Child):
     """One seed ``x0`` and its path under the flow up to the system's flow time (backward
     for a negative one, bounded by the escape radius): the path (the last ``trail`` of flow
     time, 0: all of it), the moving dot and a ``label`` beside it (``"phi^t(x0)"``). A path
     stores at most ``flow_math.MAX_PROBE_STEPS`` steps (lint ``flow_budget`` past that)."""
 
-    type: ClassVar[str] = "flow_tracer"
+    type: ClassVar[str] = "flow_probe"
     Style: ClassVar = {
         "color": ("emphasis", "highlight"),
         "dot": ("emphasis", "primary"),
@@ -508,13 +517,13 @@ class Tracer(_Child):
     def semantics(self, state: SceneState) -> dict[str, Any]:
         run = self._run(state)
         if run is None:
-            return self._none("flow_tracer")
+            return self._none("flow_probe")
         r, x0, n, clamped, path = run
         pts = path.points[0]
         fin = pts[np.isfinite(pts).all(axis=1)]
         stopped = {fm.NONFINITE: "not finite", fm.TOO_FAST: "too fast",
                    fm.ESCAPED: "escaped"}.get(int(path.code[0]))  # fmt: skip
-        out = {"kind": "flow_tracer", "system": r.id, "x0": _rv(x0), "tau": _r(r.tau),
+        out = {"kind": "flow_probe", "system": r.id, "x0": _rv(x0), "tau": _r(r.tau),
                "steps": n, "stopped": stopped,
                "stopped_at_tau": _r(path.at[0] * r.dt) if path.at[0] >= 0 else None,
                "too_fast": int(path.code[0] == fm.TOO_FAST),
@@ -641,16 +650,16 @@ class FlowSet(_Child):
                          h_max=p.h_max if p.h_max > 0 else 0.01 * r.diag, refine_every=10,
                          cap=fm.MAX_SET_POINTS,
                          max_step=r.max_step, escape=(tuple(map(float, r.escape[0])),
-                                                      r.escape[1]), trail=trail,
+                                                      r.escape[1]),
                          direction=-1.0 if r.tau < 0 else 1.0)  # fmt: skip
-        return sim, clamped
+        return sim, trail, clamped
 
-    def _run(self, state: SceneState):
+    def _run(self, state: SceneState, with_trail: bool = False):
         r = self._sys(state)
         if r is None:
             return None
         p = self.me(state).params
-        sim, clamped = self._sim(p, r)
+        sim, trail, clamped = self._sim(p, r)
         n, over = r.steps()
         if over:
             clamped.append("steps")
@@ -660,14 +669,20 @@ class FlowSet(_Child):
         if n > most:
             n = most
             clamped.append("work")
-        runner = runner_for(sim, every=CHECKPOINT_EVERY)
-        return r, sim, n, clamped, runner.state_at(n * sim.dt)
+        # in memory only: a slider dragged through a hundred values must not leave a hundred
+        # folders of checkpoints on disk (advice 1.3); a set is recomputed when reopened
+        runner = runner_for(sim, every=CHECKPOINT_EVERY, cache_dir=None)
+        back = min(trail, n)
+        lines = None
+        if back and with_trail:  # a few steps from an earlier state, not checkpointed
+            lines = sim.trail_from(runner.state_at((n - back) * sim.dt), back)
+        return r, sim, n, clamped, runner.state_at(n * sim.dt), lines
 
     def semantics(self, state: SceneState) -> dict[str, Any]:
         run = self._run(state)
         if run is None:
             return self._none("flow_set")
-        r, _sim, n, clamped, st = run
+        r, _sim, n, clamped, st, _ = run
         p = self.me(state).params
         codes = np.concatenate([st["pc"], st["qc"]])
         out = {"kind": "flow_set", "system": r.id, "shape": p.shape, "fill": p.fill,
@@ -694,10 +709,10 @@ class FlowSet(_Child):
         return out
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
-        run = self._run(state)
+        run = self._run(state, with_trail=True)
         if run is None:
             return
-        r, sim, _n, _, st = run
+        r, sim, _n, _, st, lines = run
         me = self.me(state)
         p = me.params
         cam = state.camera_for(me)
@@ -711,8 +726,8 @@ class FlowSet(_Child):
             stride = max(1, -(-int(ok.sum()) // MAX_DRAWN_POINTS))
             idx = np.flatnonzero(ok)[::stride]
             cols = np.c_[lut_colors(lut, u[idx])[:, :3], np.full(len(idx), p.opacity)]
-            if "trail" in st and st["trail"].shape[0] > 1 and len(idx):
-                tr = st["trail"][:, idx].astype(np.float64)  # (T, K, dim)
+            if lines is not None and lines.shape[0] > 1 and len(idx):
+                tr = lines[:, idx]  # (T + 1, K, dim)
                 good = np.isfinite(tr).all(axis=(0, 2))
                 a = r.world(tr[:-1, good].reshape(-1, r.dim))
                 b = r.world(tr[1:, good].reshape(-1, r.dim))
@@ -869,7 +884,7 @@ class EquilibriumView(_Child):
         "unstable": ("emphasis", "danger"),
         "ring": ("emphasis", "muted"),
         "text": ("emphasis", "primary"),
-        "size": ("text", "annotation"),
+        "size": ("text", "label"),
         "stroke": ("stroke", "regular"),
         "glow": ("glow", "none"),
     }

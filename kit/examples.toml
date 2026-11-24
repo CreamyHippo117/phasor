@@ -142,6 +142,11 @@ kind = "physics"
 tier = "technique"
 teaches = "A 3D flow from formulas: a cone field, classified equilibria, a ball of initial conditions folding, an equilibrium's card (the Explorer's objects)"
 
+[examples.pendulum_flow]
+kind = "physics"
+tier = "technique"
+teaches = "A 2D flow with a slider: a Variable on a Control, separatrices (Manifold), a probe with its label, a disk of initial conditions shrinking"
+
 [examples.game_tree]
 kind = "basics"
 tier = "technique"
