@@ -1961,7 +1961,8 @@ s.add(flow.EquilibriumView(id="lorenz.cplus", near=(8, 8, 27), name="C+"))
 s.add(flow.FlowSet(id="lorenz.ball", shape="ball", center=(1, 1, 20), size=2, count=500))
 s.set("lorenz.tau", 2.0)
 seen = {o["id"]: o["semantic"] for o in s.engine.inspect(0.0)["objects"]}
-assert [p["kind"] for p in seen["lorenz.eq"]["points"]] == ["saddle-focus", "saddle", "saddle-focus"]
+kinds = [p["kind"] for p in seen["lorenz.eq"]["points"]]
+assert kinds == ["saddle-focus", "saddle", "saddle-focus"]
 assert seen["lorenz.cplus"]["card"][1] == "eigenvalues -13.84, 0.08516 +/- 10.15i"
 assert seen["lorenz.ball"]["alive"] == 500
 ```
