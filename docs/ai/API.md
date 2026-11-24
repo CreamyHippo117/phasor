@@ -1614,6 +1614,7 @@ Example: `examples/strange_attractor.py`.
 | `phasor lint SCENE [--fix] [--strict] [--json] [--step S] [--allow-scripts]` | M2 | Lint; exit 1 on errors (`--strict`: on warnings too). `--fix` applies suggested fixes and saves them |
 | `phasor storyboard SCENE [-o PNG] [--t T]... [--marks] [--json] [--allow-scripts]` | M2 | Keyframe contact sheet plus what the inspector sees |
 | `phasor render SCENE [-o OUT] [--preset preview\|final\|4k] [--fps F] [--start S] [--end E] [--frame T] [--workers N] [--threads T] [--allow-scripts]` | M3 | Video (`.mp4`; `.mov` is ProRes; a folder or `%05d.png` is a PNG sequence) or one PNG with `--frame`. `--workers`: render processes (default a quarter of the CPU threads, 1 to 4); the result is the same file as one process makes. `--threads`: CPU kernel threads per process without CUDA (default: the cores shared out, workers x threads <= cores) |
+| `phasor cues SCENE [-o CUES.csv] [--allow-scripts]` | cues | A cue sheet for lining up music and sound design in an audio editor: one CSV row per marker and per motion (below); standard output without `-o` |
 | `phasor kit [FOLDER]` | kit | Set up or update a folder where an AI writes scenes (default `Documents/phasor`): `CLAUDE.md`, the AI docs, the examples sorted by kind, the `/scene` command, `TASTE.md`, and the phasor tools in `.mcp.json`. Your `TASTE.md`, `WISHLIST.md` and `scenes/` are never replaced |
 | `phasor bench [--width W] [--height H]` | M3 | ms per frame per kernel and peak VRAM; saved in `benchmarks/` |
 | `phasor bench --frames SCENE [--count N] [--preset P] [--allow-scripts]` | GPU_SPEED.md | ms per final frame per stage (state, simulation, draw, gpu draw, readback, widen, blur sum, post, srgb, encode); saved in `benchmarks/` |
@@ -1627,6 +1628,40 @@ Example: `examples/strange_attractor.py`.
 `--allow-scripts` (off by default) runs the Python modules a saved document names in
 `meta.modules` (its own object types and updaters); without it those objects are
 `missing_type` placeholder boxes. A `.py` scene is code you ran, so it needs no flag.
+
+### Cue sheet: line up music with the transitions
+
+`phasor cues SCENE -o cues.csv` writes every marker and every motion of a scene, in time
+order, as CSV with the columns `time, timecode, kind, name, start, end, duration` (seconds
+to the millisecond; `timecode` is `HH:MM:SS.mmm`). `kind` is `marker` (its name; no
+start/end) or `motion` (the verb and the ids it moves, in the order they start moving: a
+transform names its source, then its target; a raw `to()` transition is `raw`). One verb
+call is one cue: a staggered reveal of three objects, or a flash that swells and falls, is
+one row from its first start to its last end. The same from Python
+(`phasor.workspace.cues`):
+
+```python
+from phasor import Dot, Scene
+from phasor.workspace.cues import cue_rows, cues_csv
+
+cs = Scene("cue_demo", passes=None)
+cs.add(Dot(id="p", pos=(0.0, 0.0, 0.0)))
+cs.add(Dot(id="q", pos=(1.0, 0.0, 0.0)))
+cs.marker("start", 0.0)
+cs.marker("pulse", 2.0)
+cs.at("start").reveal("p", "q")
+cs.at("pulse").flash("p")
+rows = cue_rows(cs.engine)
+assert [(r["kind"], r["name"]) for r in rows] == [
+    ("marker", "start"),
+    ("motion", "reveal p q"),
+    ("marker", "pulse"),
+    ("motion", "flash p"),
+]
+text = cues_csv(rows)  # write it with encoding="utf-8", newline=""
+assert text.splitlines()[0] == "time,timecode,kind,name,start,end,duration"
+assert text.splitlines()[3] == "2.000,00:00:02.000,marker,pulse,,,"
+```
 
 ## The desktop app (`phasor-gui`)
 
