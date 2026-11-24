@@ -36,6 +36,7 @@ from typing import Any
 
 from phasor.core.ids import name_from, unique_names
 from phasor.core.schema import Document, ObjectSpec
+from phasor.domains import explore_math as em
 from phasor.domains import flow
 from phasor.domains import flow_math as fm
 from phasor.domains.rows import Row, group_ode_rows, normalize_row
@@ -250,8 +251,8 @@ def _settings(ed: dict[str, Any], i: int) -> None:
     for k in ("value", "min", "max", "step", "dt", "tau", "rate"):
         if k in ed:
             num(k)
-    if "step" in ed and ed["step"] <= 0:
-        raise EditError(f"edit {i}: step must be above 0")
+    if "step" in ed and not 1e-9 <= ed["step"] <= 1e9:
+        raise EditError(f"edit {i}: step must be between 1e-09 and 1e+09")
     if "min" in ed and "max" in ed and not ed["min"] < ed["max"]:
         raise EditError(f"edit {i}: min must be below max")
     for k, (lo, hi) in LIMITS.items():
@@ -561,7 +562,9 @@ def _build(doc: Document, specs: dict[str, ObjectSpec], want: list[_Want], remov
         final.append(u)
     units = final
     # ---- ids: keep an object whose kind is unchanged; name new ones by meaning
-    taken: set[str] = {o.id for o in doc.objects} | set(doc.retired_ids)
+    # every id namespace an object's id may not take: objects, retired ids, cameras
+    taken: set[str] = {o.id for o in doc.objects} | set(doc.retired_ids) | {
+        c.id for c in doc.cameras} | {"camera"}  # fmt: skip
     claimed: set[str] = set()
     for u in units:
         o = specs.get(u.origin) if u.origin else None
@@ -627,8 +630,11 @@ def _build(doc: Document, specs: dict[str, ObjectSpec], want: list[_Want], remov
         if color is not None:
             ops.append(_color_op(u, color))
         if any(w.changed for w in u.rows) or fresh:
-            report_rows.append({"id": u.id, "kind": _unit_kind(u), "type": u.type,
-                                "error": u.error, "new": fresh,
+            kind = _unit_kind(u)
+            drawn = u.type in ("flow_system", "flow_probe")
+            why = None if drawn or kind in ("variable", "error") else NOT_DRAWN
+            report_rows.append({"id": u.id, "kind": kind, "type": u.type, "error": u.error,
+                                "new": fresh, "drawn": drawn, "why": why,
                                 "text": [w.row.text for w in u.rows]})  # fmt: skip
     if added_3d and camera_kind == "ortho":
         view = {"azimuth": -50.0, "elevation": 20.0}
@@ -771,12 +777,13 @@ def _window(r, window) -> tuple[list[float], list[float]]:
     except (TypeError, ValueError):
         raise EditError("window is a (lo, hi) pair per coordinate") from None
     if len(pairs) != r.dim or not all(math.isfinite(a) and math.isfinite(b) and a < b
-                                      for a, b in pairs):  # fmt: skip
+                                      and math.isfinite(b - a) for a, b in pairs):  # fmt: skip
         raise EditError(f"window needs {r.dim} finite (lo, hi) pairs with lo < hi")
     return [a for a, _ in pairs], [b for _, b in pairs]
 
 
 def _r6(v: Any) -> Any:
+    """Plain JSON: 6 significant digits (1e-9 stays 1e-9), None for what is not finite."""
     import numpy as np
 
     if isinstance(v, dict):
@@ -790,8 +797,7 @@ def _r6(v: Any) -> Any:
     if isinstance(v, int | np.integer):
         return int(v)
     if isinstance(v, float | np.floating):
-        x = float(v)
-        return round(x, 6) if math.isfinite(x) else None
+        return em.sig(v)
     return v
 
 
@@ -806,7 +812,7 @@ def find_equilibria(engine, window=None, grid: int = 9, variables=None, system=N
     sid, r = resolve(engine, system, t, variables)
     lo, hi = _window(r, window)
     grid = int(min(max(int(_finite(grid, "grid")), 2), 64))
-    found = fm.classified_equilibria(r.sys, r.values, lo, hi, grid)
+    found = em.classified_equilibria(r.sys, r.values, lo, hi, grid)
     pts = [{"at": c["at"], "kind": c["kind"], "stable": c["stable"],
             "eigenvalues": [list(e) for e in c["eigenvalues"]], "dims": c["dims"],
             "trace": c["trace"], "det": c["det"], "hyperbolic": c["dims"]["c"] == 0,
@@ -816,7 +822,7 @@ def find_equilibria(engine, window=None, grid: int = 9, variables=None, system=N
         **_provenance(sid, r, lo, hi, grid=found["grid"], starts=found["starts"], T=None),
         "count": len(pts), "points": pts, "non_isolated": found["non_isolated"],
         "converged": True,
-        "tolerance": {"newton_residual": 1e-9, "newton_step": fm.XTOL,
+        "tolerance": {"newton_residual": em.NEWTON_TOL, "newton_step": fm.XTOL,
                       "merge_share_of_window": fm.MERGE,
                       "classify": "1e-7 x max|J| per point (its 'tolerance')"},
         "notes": ["searched only inside the window, from a grid of starts: none found there "
@@ -841,20 +847,24 @@ def flow_probe(engine, x0, T: float = 10.0, samples: int = 16, variables=None, s
     if seeds.ndim != 2 or seeds.shape[1] != r.dim:
         raise EditError(f"x0 needs {r.dim} coordinates per point")
     samples = int(_finite(samples, "samples"))
-    if not 2 <= samples <= fm.MAX_SAMPLES:
-        raise EditError(f"samples is 2 to {fm.MAX_SAMPLES}")
+    if not 2 <= samples <= em.MAX_SAMPLES:
+        raise EditError(f"samples is 2 to {em.MAX_SAMPLES}")
     try:
-        out = fm.probe(r.sys, r.values, seeds, T, r.dt, samples=samples, size=r.diag,
+        out = em.probe(r.sys, r.values, seeds, T, r.dt, samples=samples, size=r.diag,
                        escape=r.escape, max_step=r.max_step)  # fmt: skip
     except fm.FunctionError as e:
         raise EditError(str(e)) from None
-    agree = all(s["dt_check"]["agree"] for s in out["seeds"])
     return _r6({
-        **_provenance(sid, r, list(r.lo), list(r.hi), grid=None), **out, "converged": agree,
-        "notes": ["positions are given only up to chaotic_beyond (where an error of 1e-12 of "
-                  "the window has grown to 1e-3 at the largest Lyapunov exponent); after it, "
-                  "statistics", "the Lyapunov estimate is converged only when 'converged' "
-                  "says so; quote its spread", "converged here means dt and dt/2 agreed"],
+        **_provenance(sid, r, list(r.lo), list(r.hi), grid=None), **out,
+        "converged": all(s["converged"] for s in out["seeds"]),
+        "notes": ["positions are given only up to positions_until: the smaller of "
+                  "chaotic_beyond (an error of 1e-12 of the window grown to 1e-3 at the "
+                  "largest Lyapunov exponent) and where dt and dt/2 part; statistics after",
+                  "converged means dt and dt/2 agreed over enough steps and no seed was "
+                  "stopped as too fast or not finite",
+                  "quote the Lyapunov estimate with its spread; it is converged only when "
+                  "'converged' says so",
+                  f"at most {em.MAX_RUN} steps (clamped says when T was cut)"],
     })  # fmt: skip
 
 
@@ -869,29 +879,35 @@ def sweep_parameter(engine, name: str, lo: float, hi: float, n: int = 17,
                         "Milestone 30)")  # fmt: skip
     sid, r = resolve(engine, system, t, variables)
     lo, hi = _finite(lo, "lo"), _finite(hi, "hi")
+    if not (lo < hi and math.isfinite(hi - lo)):
+        raise EditError("a sweep needs lo < hi, both finite and hi - lo finite")
     n = int(_finite(n, "n"))
-    if not 2 <= n <= fm.MAX_SWEEP:
-        raise EditError(f"n is 2 to {fm.MAX_SWEEP}")
+    if not 2 <= n <= em.MAX_SWEEP:
+        raise EditError(f"n is 2 to {em.MAX_SWEEP}")
     wlo, whi = _window(r, window)
     grid = int(min(max(int(_finite(grid, "grid")), 2), 64))
     try:
-        out = fm.sweep(r.sys, r.values, name, lo, hi, n, wlo, whi, grid)
+        out = em.sweep(r.sys, r.values, name, lo, hi, n, wlo, whi, grid)
     except fm.FunctionError as e:
         raise EditError(str(e)) from None
     held = {k: v for k, v in r.values.items() if k != name}
     res = _r6({
         **_provenance(sid, r, wlo, whi, T=None), **out, "variables": held,
         "converged": all(c["converged"] for c in out["candidates"]),
-        "tolerance": {"bisection_width": out["bisection"]["width"], "newton_residual": 1e-9},
+        "tolerance": {"bisection_width": out["bisection"]["width"],
+                      "newton_residual": em.NEWTON_TOL,
+                      "merge_distance": fm.MERGE * max(b - a for a, b in zip(wlo, whi,
+                                                                              strict=True)),
+                      "per_candidate": "each candidate's 'precision' says what limits it"},
         "notes": ["candidates are named by the local test that found them; a count change "
                   "or a crossing between two values of the sweep is all they say",
+                  "a candidate 'enters or leaves the window' or 'not named' is not a "
+                  "bifurcation inside the window",
                   "global bifurcations are not detected: " + out["not_detected"]],
     })  # fmt: skip
-    # a bisected value keeps its digits (rounding to 6 would undo the bisection)
+    # a bisected value keeps its digits (rounding would undo the bisection); all finite
     for c, raw in zip(res["candidates"], out["candidates"], strict=True):
         c["value"], c["bracket"] = raw["value"], raw["bracket"]
-    res["bisection"]["width"] = out["bisection"]["width"]
-    res["tolerance"]["bisection_width"] = out["bisection"]["width"]
     return res
 
 

@@ -385,7 +385,7 @@ def test_a_commit_that_changes_nothing_writes_nothing(ws):
     ({"id": "a", "min": 20}, "below max"),
     ({"id": "a", "value": None}, "finite number"),
     ({"id": "a", "value": float("inf")}, "finite number"),
-    ({"id": "a", "step": 0}, "above 0"),
+    ({"id": "a", "step": 0}, "step must be between"),
     ({"id": ["a"]}, "id is"),
     ({"id": "a", "at": None}, "whole number"),
     ({"id": "a", "remove": "false"}, "true or false"),

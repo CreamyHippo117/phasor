@@ -778,7 +778,7 @@ class Workspace:
     def _explorer(self, fn):
         try:
             return self._guard(fn)
-        except (_explorer.EditError, TypeError) as e:
+        except _explorer.EditError as e:
             raise ToolError(str(e)) from e
 
     def explorer_state(self, t: float = 0.0) -> dict[str, Any]:
@@ -818,13 +818,54 @@ class Workspace:
                             "again (explorer_state)"})  # fmt: skip
         return out
 
+    def _locked_by(self, ops: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """The rows the person is typing in that these ops would touch: the row's object, its
+        parts (``system.field``), or any other row of the same object (an ODE line's
+        system). Decided from the planned ops, so a new row that rewrites a locked one (a
+        second ``rho = ...``, a third ``x' = ...``) is caught as well as an edit by id."""
+        if not self._drafts:
+            return []
+        from phasor.core.ids import split_path
+
+        current = {e["id"]: e for e in _explorer.rows_of(self.engine.document)}
+        touched: set[str] = set()
+        for op in ops:
+            kind = op.get("op")
+            path = None
+            if kind in ("remove_object", "set_style"):
+                touched.add(op["id"])
+            elif kind == "add_object":
+                touched.add(op["object"]["id"])
+            elif kind == "set_param":
+                path = op["path"]
+            elif kind == "add_control":
+                path = op["control"]["path"]
+            elif kind == "remove_control":
+                path = op["path"]
+            if path is not None:
+                touched.add(split_path(path)[0])
+        out = []
+        for key in sorted(self._drafts):
+            row = current.get(key)
+            if row is None:
+                continue
+            obj = row["object"]
+            if obj in touched or any(t.startswith(f"{obj}.") for t in touched):
+                out.append({"code": "row_locked", "row": key, "version": row["version"],
+                            "message": f"the person is typing in row {key!r}, and this edit "
+                            "would change it; read explorer_state again and retry once it "
+                            "is not locked"})  # fmt: skip
+        return out
+
     def explorer_edit(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
         """Add, retype, remove, show, hide, recolour and reorder Explorer rows and set
         variables, as one undoable edit. Each entry: ``{"text": "x' = sigma*(y - x)"}`` adds
         a row; ``{"id": "rho", "value": 24.74}`` (also ``min``, ``max``, ``step``), ``{"id":
         ..., "text": ...}``, ``{"id": ..., "remove": true}``, ``"visible"``, ``"color"`` (a
         role), ``"kind"`` (over the guess), ``"at"`` (its place), a system's ``window``,
-        ``dt``, ``tau``, ``rate``; ``"version"`` refuses the edit if the row changed since.
+        ``dt``, ``tau``, ``rate``; ``"version"`` refuses the edit if the row changed since;
+        ``"base"`` on a new row is the id its object is named from (``"lorenz"``). A call
+        that would change a row the person is typing in is refused whole (``row_locked``).
         Text is read like typing (``x^2``, ``2x``, Greek letters, ``x'``); a row that does not read
         is kept with its ``error``. Names no variable defines get a slider. Returns the rows
         changed (ids, kinds, errors) and the lint delta: read them before you answer."""
@@ -837,6 +878,9 @@ class Workspace:
             return {"ok": False, "version": e.version, "errors": refused}
         cam = e.document.cameras[0].kind if e.document.cameras else "ortho"
         ops, report = self._explorer(lambda: _explorer.plan(e.document, rows, cam))
+        locked = self._locked_by(ops)
+        if locked:
+            return {"ok": False, "version": e.version, "errors": locked}
         return self._explorer_commit_ops(ops, report)
 
     def _explorer_commit_ops(self, ops: list[dict[str, Any]], report: dict[str, Any]) -> dict:
@@ -858,6 +902,8 @@ class Workspace:
         range, the window and ``dt``. ``replace`` (default) removes the other rows in the same
         edit. Returns what ``explorer_edit`` returns."""
         e = self.engine
+        if not isinstance(replace, bool):
+            raise ToolError(f"replace is true or false, not {replace!r}")
 
         def go():
             edits = _explorer.preset_edits(name, _explorer.rows_of(e.document), replace)
@@ -879,9 +925,10 @@ class Workspace:
                    samples: int = 16, variables: dict[str, float] | None = None,
                    system: str | None = None, t: float = 0.0) -> dict[str, Any]:  # fmt: skip
         """Integrate one point ``x0`` (or up to 16) for flow time ``T`` (negative: backward)
-        on a fork: ``samples`` positions (at most 64; only up to ``chaotic_beyond``, then
-        statistics), escaped and when, bounding box, final speed, a period estimate, the
-        largest Lyapunov exponent with its spread, and the dt check (did ``dt/2`` agree)."""
+        on a fork: ``samples`` positions (at most 64; only up to ``positions_until``, the
+        smaller of ``chaotic_beyond`` and where ``dt`` and ``dt/2`` part, then statistics),
+        escaped and when, bounding box, final speed, a period estimate, the largest Lyapunov
+        exponent with its spread, and the dt check. At most 4000 steps (``clamped``)."""
         return self._explorer(lambda: _explorer.flow_probe(
             self.engine, x0, T, samples, variables, system, t))  # fmt: skip
 
@@ -892,12 +939,17 @@ class Workspace:
         """Move one variable from ``lo`` to ``hi`` (``n`` values, at most 64) on a fork: the
         equilibria at each (count, kinds, largest real part), and candidate bifurcations
         refined by bisection, each named by the local test that found it (saddle-node or
-        pitchfork: the count changes; Hopf: a complex pair crosses). Global bifurcations
-        (homoclinic, crises) are not detected; say so."""
+        pitchfork: the count changes; Hopf: a complex pair crosses; transcritical: a real
+        eigenvalue crosses with the count unchanged), with its ``precision``. A count change
+        at the window's edge is ``enters or leaves the window``; one beside non-isolated
+        equilibria is ``not named``. Global bifurcations (homoclinic, crises) are not
+        detected; say so."""
         return self._explorer(lambda: _explorer.sweep_parameter(
             self.engine, name, lo, hi, n, measure, window, grid, variables, system, t))  # fmt: skip
 
-    # Not tools: the editor's own (an attached AI cannot call a name starting with _).
+    # Not tools: the editor's own (an attached AI cannot call a name starting with _). The
+    # Explorer panel (Milestone 29) must call these under the shared lock (``Editor.lock``),
+    # like every other edit, so a lock and an AI call never interleave.
 
     def _explorer_typing(self, row: str, text: str) -> str:
         """The person is typing ``text`` in ``row``: it is locked to them until

@@ -665,6 +665,7 @@ Each issue has `code`, `severity`, `message`, `ids`, `times`, `fix_hint`, and `f
 | `flow_budget` | warning | a flow object past its budget: a set or path whose points x steps pass the theme's `[lint] flow_work`, a field with more arrows than `[lint] flow_arrows`, or work cut at a hard limit (`flow_math.MAX_POINTS`, `MAX_PROBE_STEPS`, `MAX_STEPS`, `flow.MAX_ARROWS`, points x trail) |
 | `flow_too_fast` | warning | points of a flow that moved further in one step than the window allows even after 16 sub-steps (a stiff field such as `1e6*x`): they are stopped, not flung across the screen |
 | `duplicate_variable` | warning | a `flow.Variable` whose name an earlier `Variable` already has: systems read the first, so this one changes nothing |
+| `explorer_row` | warning | an Explorer row kept as a `flow.Note`: one that does not read (its error), or a kind the Explorer does not draw yet (graph, curve, surface, heat map) |
 | `set_under_resolved` | warning | a `FlowSet` outline that reached `flow_math.MAX_SET_POINTS` (2^17) points: from that flow time it is drawn as points, not a curve |
 
 `engine.autofix()` applies every `fix` the linter offers (add `near` for a child label that

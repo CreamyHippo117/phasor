@@ -10,6 +10,7 @@ import math
 import numpy as np
 import pytest
 
+from phasor.domains import explore_math as em
 from phasor.domains import flow_math as fm
 from phasor.workspace.tools import ToolError, Workspace
 
@@ -96,7 +97,7 @@ def test_sweep_finds_the_lorenz_hopf_at_its_formula(lorenz):
 ])  # fmt: skip
 def test_local_bifurcations_are_named_by_their_test(name, lo, hi, kind, at):
     p = fm.PRESETS[name]
-    r = fm.sweep(fm.build(p.equations), {"mu": 0.0}, "mu", lo, hi, 9,
+    r = em.sweep(fm.build(p.equations), {"mu": 0.0}, "mu", lo, hi, 9,
                  [w[0] for w in p.window], [w[1] for w in p.window])  # fmt: skip
     assert [c["kind"] for c in r["candidates"]] == [kind]
     assert r["candidates"][0]["value"] == pytest.approx(at, abs=1e-6)
@@ -125,7 +126,7 @@ def test_probe_of_a_chaotic_path_gives_statistics_past_chaotic_beyond(lorenz):
     beyond = s["chaotic_beyond"]
     assert beyond == pytest.approx(math.log(1e9) / lam, rel=1e-3)
     assert all(x["t"] <= beyond for x in s["samples"])
-    assert "after_chaotic_beyond" in s and s["final_speed"] is None
+    assert "after_positions" in s and s["final_speed"] is None
     assert s["dt_check"]["compared_up_to"] <= beyond
 
 
@@ -138,7 +139,7 @@ def test_probe_escape_backward_and_bounds(ws):
     back = ws.flow_probe([1, 1], T=-2, samples=3)
     assert back["T"] == pytest.approx(-2) and back["seeds"][0]["samples"][-1]["t"] < 0
     big = ws.flow_probe([0.1, 0], T=1e6, samples=2)
-    assert big["clamped"] is True and big["steps"] == fm.MAX_PROBE_STEPS // 2
+    assert big["clamped"] is True and big["steps"] == em.MAX_RUN
     for bad, match in ((dict(x0=[1, 2, 3]), "coordinates"), (dict(x0=[1, 0], samples=65),
                        "samples"), (dict(x0=[[0, 0]] * 17), "at most"),
                        (dict(x0=[1, 0], T=float("nan")), "finite")):  # fmt: skip
@@ -187,7 +188,7 @@ def test_the_tools_are_named_for_mcp_and_documented():
 
 def test_answers_are_plain_json_without_numpy():
     p = fm.PRESETS["duffing"]
-    r = fm.probe(fm.build(p.equations), {"delta": 0.3, "alpha": -1.0, "beta": 1.0},
+    r = em.probe(fm.build(p.equations), {"delta": 0.3, "alpha": -1.0, "beta": 1.0},
                  np.array([[1.0, 0.0]]), 5.0, 0.01, samples=4, size=6.4)  # fmt: skip
 
     def walk(v):

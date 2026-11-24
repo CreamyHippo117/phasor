@@ -295,6 +295,7 @@ yet). Work like this:
    `version`; read `explorer_state` again and retry later.
 
 ```json calls
+{"tool": "scene_new", "title": "explorer", "look": "none"}
 {"tool": "explorer_preset", "name": "pendulum"}
 {"tool": "explorer_edit", "rows": [{"id": "gamma", "value": 0.5}, {"text": "(1.5, 1.5)"}]}
 {"tool": "explorer_state"}
@@ -306,4 +307,10 @@ yet). Work like this:
 Rows are read the way people write: `x^2`, `2x`, `x y`, `sin(x)` (not `sin x`), Greek
 letters (`σ` is `sigma`), `x'` or `dx/dt`. A run of letters is one name (`rho`), so a
 product needs a space or `*`. A name no row defines gets a slider (value 1, range -10..10)
-when the edit is committed. A row that does not read is kept, with its `error` in words.
+when the edit is committed. A row that does not read is kept, with its `error` in words;
+a graph, curve, surface or heat map row is kept but not drawn yet (`drawn: false` and `why`
+in the answer, lint `explorer_row`). A new row may name the id its object gets with `base`
+(`{"text": "x' = y", "base": "pendulum"}`). Sweep candidates carry a `precision` (the
+bracket, and what limits the value besides it: Newton's residual, the merge distance of
+roots, the eigenvalue tolerance); a count change at the window's edge is `enters or leaves
+the window`, not a bifurcation. `flow_probe` gives positions only up to `positions_until`.

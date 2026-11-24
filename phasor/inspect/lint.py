@@ -835,6 +835,9 @@ def run(
                     f.add("flow_budget", (e["id"],), t, why="; ".join(why))
             if sem.get("too_fast"):
                 f.add("flow_too_fast", (e["id"],), t, n=sem["too_fast"])
+            if sem.get("kind") == "flow_note":  # an Explorer row that draws nothing
+                f.add("explorer_row", (e["id"],), t, error=sem.get("error"),
+                      source=sem.get("source", ""))  # fmt: skip
             if sem.get("shadowed_by"):
                 f.add("duplicate_variable", (e["id"],), t, first=sem["shadowed_by"],
                       name=sem.get("name"))  # fmt: skip
@@ -980,6 +983,16 @@ def run(
                          "warning", ids, times=ts, fix_hint="fewer points or arrows, a "
                          "shorter flow time, or a larger dt; past a hard limit the work is "
                          "cut and less is drawn than asked")  # fmt: skip
+        if code == "explorer_row":
+            text = info["source"] if len(info["source"]) <= 60 else info["source"][:57] + "..."
+            if info["error"]:
+                return Issue(code, f"row {ids[0]!r} ({text!r}) does not read: {info['error']}",
+                             "warning", ids, times=ts, fix_hint="retype the row; its text is "
+                             "kept until then")  # fmt: skip
+            return Issue(code, f"row {ids[0]!r} ({text!r}) is kept but not drawn: the Explorer "
+                         "does not draw this kind of row yet", "warning", ids, times=ts,
+                         fix_hint="nothing to fix; it is drawn once the Explorer learns this "
+                         "kind (graphs, curves, surfaces, heat maps)")  # fmt: skip
         if code == "duplicate_variable":
             return Issue(code, f"{ids[0]!r} names the variable {info['name']!r}, which "
                          f"{info['first']!r} already names; systems read {info['first']!r} "
