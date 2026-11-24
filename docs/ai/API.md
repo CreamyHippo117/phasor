@@ -40,7 +40,7 @@ s.set("camera.height", 6)  # world units visible top to bottom
 | `cloud.PointCloud` | `source` (`roots`/`attractor`/`buddhabrot`/`points`), `degree` and `coefficients` (roots), `kind` (`clifford`/`dejong`/`lorenz`) and `constants` (attractor), `max_iter` (buddhabrot), `points` and `values` (given directly), `count` (at most), `seed`, `pos` (centre and origin of the points), `size` (the rectangle it is seen in), `scale`, `point_size` (splat radius, px), `exposure`, `hue`, `color_by` (`source`/`phase`), `twist` (roots: turns of the last coefficient, animatable), `twinkle` (0-1, life), `white` (0-1, white-hot dense parts) | `colormap` (colormap, spectrum), `glow` (glow, none) |
 
 | `Value` | `value` (a named number to animate; nothing is drawn: see "Your own types") | none |
-| `Sound` | `path` (a WAV file in the scene's folder), `start` (seconds into the scene), `gain` (dB, -60 to 24); nothing is drawn: `phasor render` mixes it in (see "Narrate") | none |
+| `Sound` | `path` (a sound file in the scene's folder: WAV, or an mp4's sound, m4a, mp3, ogg, flac with the `encode` extra), `start` (seconds into the scene), `gain` (dB, -60 to 24); nothing is drawn: `phasor render` mixes it in (see "Narrate") | none |
 | `Image` | `path` (a PNG/JPEG/WebP file, relative to the scene's folder), `pos` (centre), `width`, `height` (0: keep the picture's shape), `frame` (an outline of light) | `glow` (glow, none: bright parts shine), `frame` (emphasis, muted), `stroke` (stroke, hairline). Presets `plain`, `framed`, `luminous`. A missing file is issue `missing_file`; transparent parts show the background; an AI may only name files inside its folder |
 | `Text` | `text` (`$...$` is typeset math), `pos`, `anchor` (`center`/`left`/`right`), `leader`, `leader_on` (set by layout) | `color` (emphasis, primary), `size` (text, label), `leader` (stroke, hairline) |
 | `Equation` | `parts` (math or text, set on one baseline), `colors` (an emphasis role per part), `pos` | `color` (emphasis, primary), `size` (text, math), `glow` (glow, none) |
@@ -286,8 +286,10 @@ assert s4.engine.lint(strict=True) == []
   `WhisperX()` or `TimingsFile()`.
 - `phasor render` muxes the narration into the video, with any **sound clips**: a `Sound`
   (Manim's `add_sound`) plays a WAV file in the scene's folder from `start` seconds, `gain`
-  dB louder, cut where the scene ends. PCM WAV only (8 to 32-bit, 8 to 192 kHz, 1 to 16
-  channels, mixed down to mono and resampled to the narration's rate, else 48 kHz); at most
+  dB louder, cut where the scene ends. PCM WAV (8 to 32-bit, 8 to 192 kHz, 1 to 16
+  channels), or with the `encode` extra the sound of an mp4, m4a, mp3, ogg or flac (decoded
+  once into the user's cache; an mp4 with no sound is `bad_file`; without PyAV
+  `missing_extra`), mixed down to mono and resampled to the narration's rate, else 48 kHz; at most
   `MAX_CLIP_FRAMES` (2^26) frames of a clip are read, the track covers at most 3 hours, and
   at most `MAX_SOUNDS` (256) clips and `MAX_MIX_SAMPLES` (2^30) clip samples in all are
   mixed. The mix is made a chunk at a time on the scene's own sample grid (a render of part
@@ -317,6 +319,70 @@ track, rate = s5.engine.audio_track()
 assert rate == 48000 and len(track) == 2 * 48000  # the scene's length, no narration needed
 assert track[:24000].max() == 0 and track[24000 : 24000 + 4800].max() > 0
 assert s5.engine.inspect(0.0, id="click")["objects"][0]["semantic"]["seconds"] == 0.1
+```
+
+### Narration from a recording, and snapping the scene to it
+
+`s.narrate(script, audio="talk.wav")` takes the narration from a recording in the scene's
+folder instead of a voice: a WAV, or the sound of an `.mp4`, `.m4a`, `.mp3`, `.ogg`,
+`.flac` (decoded once with PyAV, the `encode` extra, into the user's cache, never into the
+scene's folder; without PyAV only WAV works and lint says `missing_extra`). Speech and pauses
+are found in it (pure NumPy: an energy detector with a noise floor that follows the room).
+With the script it reads, each sentence is aligned to the speech that says it (by its words,
+against the pauses; not equal spacing) and its `[[markers]]` fall on its words; with no
+script (`s.narrate(audio="talk.wav")`) each phrase (speech up to a pause of the theme's
+`[narration] phrase_pause`) is a block of unknown words (`"…"`). The recording plays from
+0 s, cut into one block per sentence (`NarrationBlock.audio_span`: the part of the file it
+plays), so `pace()` and re-pacing work on it as on a voice.
+
+`s.snap_to_narration(dry_run=True)` then says how the markers you placed by hand
+(`s.marker`, the scene starts) would move onto it: `moves` (marker, from, to, why,
+confidence 0..1, kind `sentence`/`phrase`/`between`), `kept`, the detection's `quality` and
+`flags` (`low_snr`, `music`, `clipping`, `unreliable`, ...). Without `dry_run` it moves them,
+as one patch (one undo step); a second snap moves nothing. Each marker goes to the start of
+the sentence it sits near by its place in the scene (within `[narration] snap_reach` of the
+narration's length), or where speech resumes after a pause; markers left over keep their
+place between those, stretched with them. Markers never change order or pass a marker the
+narration owns, and no scene gets shorter than the motions anchored at its marker need
+(at least the theme's shortest verb) unless `allow_short=True`. `anchors={"poles": 2}` pins a
+marker to the start of `narration.blocks[2]`. Motions anchored to a moved marker follow it.
+Lint `narration_drift` lists the markers a snap would move (no `fix`: the snap is the
+offer). It works on any narration; on an estimated one the confidence is at most 0.5.
+
+```python
+import tempfile
+import wave
+from pathlib import Path
+
+import numpy as np
+
+from phasor import Dot, Scene
+
+folder = Path(tempfile.mkdtemp())
+rate = 8000
+x = np.zeros(7 * rate)
+for a, b in ((0.5, 1.9), (2.6, 3.8), (4.5, 6.4)):  # three "sentences": tone bursts here
+    i, j = int(a * rate), int(b * rate)
+    x[i:j] = 0.4 * np.sin(2 * np.pi * 220 * np.arange(j - i) / rate)
+with wave.open(str(folder / "talk.wav"), "wb") as w:
+    w.setnchannels(1), w.setsampwidth(2), w.setframerate(rate)
+    w.writeframes((x * 32767).astype("<i2").tobytes())
+
+s6 = Scene("recorded", passes=None, base_dir=folder)
+s6.add(Dot(id="p"))
+s6.marker("start", 0.0)  # laid out before the recording existed
+s6.marker("move", 2.0)
+s6.at("start").bloom_in("p")
+s6.at("move").settle("p.pos", (2, 0))
+s6.narrate(
+    "One thing appears here. It moves [[moves]] right. And that is all there is.", audio="talk.wav"
+)
+plan = s6.snap_to_narration(dry_run=True)
+assert [m["marker"] for m in plan["moves"]] == ["start", "move"]
+s6.snap_to_narration()
+markers = s6.engine.document.timeline.markers
+assert abs(markers["move"] - 2.6) < 0.05  # sentence 2 starts there (less a 0.03 s pre-roll)
+assert s6.snap_to_narration(dry_run=True)["moves"] == []  # nothing left to move
 ```
 
 ## Animate with verbs
@@ -476,7 +542,7 @@ lint_added, lint_resolved)`. Each error has `code`, `message`, `ids`, `path`, `f
 | `set_marker` / `remove_marker` | `name`, `t` |
 | `set_meta` | `field`, `value` |
 | `add_constraint` | `rule`, `priority` (`required`/`strong`/`medium`/`weak`, default `strong`) |
-| `set_narration` | `narration` (from `phasor.voice.narrate`) or `null`; replaces the markers it owns |
+| `set_narration` | `narration` (from `phasor.voice.narrate` or `phasor.voice.from_audio`) or `null`; replaces the markers it owns |
 | `remove_constraint` | `rule` |
 
 On a scene built by a script, `set_param`, `set_style` and `add_constraint` are stored as
@@ -564,6 +630,7 @@ Each issue has `code`, `severity`, `message`, `ids`, `times`, `fix_hint`, and `f
 | `morph_limit` | warning | a morph between outlines with more than `morph_math.MAX_SUBPATHS` (512) subpaths a side: the rest fade |
 | `bad_file` | warning | a file an object reads is not valid (an SVG that is not SVG), or some of its shapes are skipped (points not finite or absurdly far out); what cannot be read draws nothing |
 | `sound_limit` | warning | a sound clip the mix leaves out: past `narration.MAX_SOUNDS` (256) clips in one scene; or a clip whose `start` or `gain` is animated (the mix reads them once, at 0 s, so the animation is not heard) |
+| `narration_drift` | warning | a marker placed by hand that `snap_to_narration` would move by more than `[lint] narration_drift` seconds (0.3) onto a sentence of a recorded narration; no fix (the snap is offered); `missing_file`, `bad_file` and `missing_extra` also cover the recording |
 | `svg_too_complex` | warning | an SVG past a reading limit (size, elements once `<use>` is expanded, nesting, shapes, segments): its drawing is empty or cut short |
 | `crowded_ticks` | warning | numbers along an axis (or a chart's bar names) closer **on screen** than `[lint] tick_gap` text heights (every pair, so an axis a 3D camera sees end-on is caught); `path` names the axis (`ax.x`), the hint the smallest nice step that clears them, or to turn the camera when the axis points at it |
 | `truncated` | warning | a file a `Table` or `Code` reads is past a limit (rows, columns, lines); only its first part is shown |

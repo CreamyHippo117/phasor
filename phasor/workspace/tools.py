@@ -452,16 +452,30 @@ class Workspace:
         start = base + offset
         return {"verb": verb, "start": start, "end": start + step._end, "version": e.version}
 
-    def narrate(self, script: str, voice: str = "auto", pace: bool = True) -> dict[str, Any]:
+    def narrate(self, script: str = "", voice: str = "auto", pace: bool = True,
+                audio: str | None = None) -> dict[str, Any]:  # fmt: skip
         """Set the narration. ``[[name]]`` puts a marker at the next word. Every animation
         anchored to a marker follows the voice. ``pace`` adds breathing room after busy
-        sentences."""
+        sentences. ``audio``: a recording in the scene's folder (a WAV, or an mp4, m4a, mp3,
+        ogg or flac) instead of a voice; ``script`` is then what it says (its sentences are
+        found in the audio), or empty (its phrases become the blocks). A recording keeps its
+        own timing, so ``pace`` is not applied to it; ``snap_to_narration`` moves your
+        markers onto it."""
         e = self.engine
         if e.scripted:
             raise ToolError("this scene is built by a script: change the narration there")
         scene = Scene.of(e)
+        if audio is not None:
+            self._inside(e.base_dir / audio)  # (and the scene's folder: core/files.py)
+        from phasor.voice import VoiceError
 
         def go():
+            if audio is not None:
+                try:
+                    scene.narrate(script, audio=audio)
+                except VoiceError as err:
+                    raise ToolError(str(err)) from err
+                return
             scene.narrate(script, voice=voice)
             if pace:
                 scene.pace()
@@ -472,6 +486,20 @@ class Workspace:
             "duration": e.duration,
             "voice": e.document.narration.voice if e.document.narration else None,
         }
+
+    def snap_to_narration(self, dry_run: bool = True, anchors: dict[str, int] | None = None,
+                          allow_short: bool = False) -> dict[str, Any]:  # fmt: skip
+        """Move the markers you placed by hand onto the narration's sentence starts (or where
+        speech resumes after a pause), keeping their order and each scene long enough for its
+        motions. ``dry_run`` (the default) only previews: ``moves`` lists marker, from, to,
+        why and confidence. Call again with ``dry_run: false`` to apply (one undo step).
+        ``anchors`` pins a marker to a narration block index (``{"poles": 2}``)."""
+        e = self.engine
+        if e.scripted and not dry_run:
+            raise ToolError("this scene is built by a script: add s.snap_to_narration() there, "
+                            "after s.narrate(...)")  # fmt: skip
+        return self._guard(lambda: e.snap_to_narration(dry_run=dry_run, anchors=anchors,
+                                                       allow_short=allow_short))  # fmt: skip
 
     # ------------------------------------------------------------ checkpoints
 

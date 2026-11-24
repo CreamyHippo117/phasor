@@ -175,26 +175,17 @@ MIN_GAIN, MAX_GAIN = -60.0, 24.0  # dB
 MAX_START = 1e6  # seconds
 
 
-@functools.lru_cache(maxsize=64)
-def _wav_header(path: str, mtime_ns: int, size: int):
-    """The header of a WAV file (``time.narration.wav_info``), or the reason it cannot be
-    mixed; cached per file version."""
-    from phasor.time.narration import wav_info
-
-    try:
-        return wav_info(path)
-    except Exception as e:  # a hostile file is lint bad_file, never a crash
-        return str(e) or type(e).__name__
-
-
 @register
 class Sound(ObjectBase):
-    """A sound clip (Manim's ``add_sound``): a WAV file in the scene's folder that plays from
-    ``start`` seconds, ``gain`` dB louder (negative: quieter). Nothing is drawn: ``phasor
-    render`` mixes it into the video's sound, next to the narration, cut where the scene
-    ends. A missing file is lint ``missing_file``; one that is not PCM WAV phasor can mix
-    (8 to 32-bit, 8 to 192 kHz, 1 to 16 channels) is ``bad_file``; either way the render
-    leaves it out and says so."""
+    """A sound clip (Manim's ``add_sound``): a sound file in the scene's folder that plays
+    from ``start`` seconds, ``gain`` dB louder (negative: quieter). Nothing is drawn:
+    ``phasor render`` mixes it into the video's sound, next to the narration, cut where the
+    scene ends. A WAV is read as it is (PCM, 8 to 32-bit, 8 to 192 kHz, 1 to 16 channels);
+    any other sound file (the sound of an ``.mp4``, ``.m4a``, ``.mp3``, ``.ogg``, ``.flac``,
+    M22) is decoded once with PyAV, the ``encode`` extra (``domains.audio``). A missing file
+    is lint ``missing_file``; one that cannot be read (an mp4 with no sound) is ``bad_file``;
+    a non-WAV file without PyAV is ``missing_extra``; the render leaves such clips out and
+    says so."""
 
     type: ClassVar[str] = "sound"
     Files: ClassVar = ("path",)  # in the scene's folder (core/files.py)
@@ -208,24 +199,32 @@ class Sound(ObjectBase):
         @field_validator("path")
         @classmethod
         def _sound_file(cls, v: str) -> str:
-            if not v.lower().endswith((".wav", ".wave")):
-                raise ValueError(f"{v!r} is not a WAV file (.wav); convert it to WAV first")
+            from phasor.domains.audio import AUDIO_EXTS
+
+            if not v.lower().endswith(AUDIO_EXTS):
+                raise ValueError(f"{v!r} is not a sound file ({', '.join(AUDIO_EXTS)})")
             return files.relative_path(v)
 
     def _header(self, state: SceneState):
-        """The file's ``WavInfo``, a reason it cannot be mixed (str), or None (missing)."""
-        p = self.me(state).params
-        _, mtime, size = files.stamp(state.base_dir, p.path)
-        if mtime is None:
-            return None
-        return _wav_header(str(files.resolve(state.base_dir, p.path)), mtime, size)
+        """What the file holds once read (a ``WavInfo``), a reason it cannot be mixed (str),
+        or None (missing); cached per file version (``domains.audio.info``)."""
+        from phasor.domains.audio import info
+
+        return info(state.base_dir, self.me(state).params.path)
 
     def semantics(self, state: SceneState) -> dict[str, Any]:
         p = self.me(state).params
-        head = self._header(state)
+        from phasor.domains.audio import decoder_available, needs_decoder
+
         out: dict[str, Any] = {"kind": "sound", "path": p.path, "start": p.start,
-                               "gain": p.gain, "missing": head is None, "drawn": 0.0,
+                               "gain": p.gain, "missing": False, "drawn": 0.0,
                                "file": p.path}  # fmt: skip
+        if needs_decoder(p.path) and not decoder_available():
+            out["missing"] = not files.exists(state.base_dir, p.path)
+            out["needs"] = "av"  # lint missing_extra: not heard until PyAV is installed
+            return out
+        head = self._header(state)
+        out["missing"] = head is None
         if isinstance(head, str):
             out["unreadable"] = head
         elif head is not None:

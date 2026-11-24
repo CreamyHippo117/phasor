@@ -187,6 +187,64 @@ def repace(narration: Narration, extra: Sequence[float], gap: float, lead: float
     return Narration(script=narration.script, voice=narration.voice, blocks=tuple(out))
 
 
+PRE_ROLL = 0.03  # seconds of a recording kept before a sentence's first sound (as TTS clips)
+POST_ROLL = 0.05  # ... and after its last
+PHRASE = "\u2026"  # the text of a phrase whose words are not known (a recording, no script)
+
+
+def place_recorded(
+    script: str,
+    voice: str,
+    audio: str,
+    blocks: Sequence[Block],
+    found: Sequence[tuple[float, float, Sequence[float]]],
+    seconds: float,
+) -> Narration:
+    """A narration cut from one recording (``audio``, ``seconds`` long), each spoken block
+    where the recording says it (``found[i]``: the start and end of the ``i``-th spoken
+    block's speech and where each of its pieces starts, seconds into the recording). Each
+    block plays its part of the file (``audio_span``: ``PRE_ROLL`` before the first sound to
+    ``POST_ROLL`` after the last, never overlapping its neighbours) at the time it has in the
+    recording, so the scene's timeline is the recording's. A marker at a block's first piece
+    is the block's start; one at a later piece is that piece's first sound, less the pre-roll.
+    A ``[[pause]]`` between two blocks lasts the silence the recording has there."""
+    spoken = [b for b in blocks if b.pause is None]
+    if len(spoken) != len(found):
+        raise ScriptError(f"{len(spoken)} sentences but {len(found)} were found in the audio")
+    spans: list[tuple[float, float]] = []
+    for i, (a, b, _) in enumerate(found):
+        lo = max(0.0, a - PRE_ROLL, spans[-1][1] if spans else 0.0)
+        nxt = found[i + 1][0] if i + 1 < len(found) else seconds
+        hi = min(max(b, lo), b + POST_ROLL, max(b, (b + nxt) / 2), seconds)
+        spans.append((round(lo, 4), round(max(hi, lo), 4)))
+    out: list[NarrationBlock] = []
+    k = 0
+    t = 0.0
+    for j, block in enumerate(blocks):
+        if block.pause is not None:
+            later = [i for i in range(j + 1, len(blocks)) if blocks[i].pause is None]
+            end = spans[k][0] if later else t + block.pause
+            out.append(NarrationBlock(text="", start=round(t, 4), duration=round(max(0.0,
+                                      end - t), 4)))  # fmt: skip
+            t = max(t, end)
+            continue
+        lo, hi = spans[k]
+        piece_starts = list(found[k][2]) or [found[k][0]]
+        offs = [0.0] + [min(max(0.0, p - PRE_ROLL - lo), hi - lo) for p in piece_starts[1:]]
+        for i in range(1, len(offs)):
+            offs[i] = max(offs[i], offs[i - 1])
+        ends = [*offs[1:], hi - lo]
+        words = tuple(w for piece, a, e in zip(block.pieces, offs, ends, strict=False)
+                      for w in estimate_words(piece, max(e - a, 0.0), a))  # fmt: skip
+        markers = {name: round(offs[i], 4) for name, i in block.markers.items()}
+        out.append(NarrationBlock(text=block.text, start=lo, duration=round(hi - lo, 4),
+                                  audio=audio, words=words, markers=markers,
+                                  audio_span=(lo, hi)))  # fmt: skip
+        t = hi
+        k += 1
+    return Narration(script=script, voice=voice, blocks=tuple(out))
+
+
 def block_of(narration: Narration, t: float) -> int | None:
     """Index of the block that is playing, or last played, at time ``t``."""
     k = None

@@ -200,3 +200,8 @@ why = "a Manim script, the Milestone 20 exit demo of the importer"
 kind = "basics"
 tier = "technique"
 teaches = "A sound on cue: a Sound clip (a WAV file in the scene folder) mixed in at render when a ball lands"
+
+[examples.narrated_from_audio]
+kind = "basics"
+tier = "technique"
+teaches = "Narration from a recording (a WAV, or an mp4's sound): sentences found in the audio, and markers placed by hand snapped onto them with snap_to_narration (a preview first)"

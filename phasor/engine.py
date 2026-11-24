@@ -135,11 +135,15 @@ class _Snapshot:
 
 
 def file_stamps(c: Compiled) -> tuple:
-    """Each file the document's objects name (``Files``) as it is now (``files.stamp``)."""
+    """Each file the document's objects name (``Files``) as it is now (``files.stamp``),
+    and the recordings its narration is cut from (M22: lint reads them)."""
     out = []
     for o in c.objects:
         for name in getattr(type(o.impl), "Files", ()):
             out.extend(files.stamp(c.base_dir, v) for v in file_values(c, f"{o.id}.{name}"))
+    nar = c.doc.narration
+    for name in sorted({b.audio for b in nar.blocks if b.audio_span and b.audio} if nar else ()):
+        out.append(files.stamp(c.base_dir, name))
     return tuple(out)
 
 
@@ -531,7 +535,101 @@ class Engine:
         return mix_track(n, self.base_dir, self.duration, clips, problems, start, end,
                          resolve=readable_wav)  # fmt: skip
 
+    def snap_to_narration(self, *, dry_run: bool = False,
+                          anchors: dict[str, int] | None = None, allow_short: bool = False,
+                          origin: str = "tweak") -> dict[str, Any]:  # fmt: skip
+        """Move the hand-placed markers (scene starts) onto the narration (Milestone 22): each
+        onto the sentence it belongs with (or where speech resumes after a pause), the rest
+        kept in their place between them; never reordered, never past a neighbour or a marker
+        the narration owns, and no scene shorter than the motions anchored at its marker
+        need (at least the theme's shortest ``[motion]`` verb) unless ``allow_short``.
+        ``anchors`` pins a marker to a block (``{"poles": 2}``: the start of
+        ``narration.blocks[2]``). Every motion anchored to a moved marker follows it.
+
+        Returns what moves (``moves``: marker, from, to, why, confidence, kind) and what does
+        not (``kept``), the detection's ``quality`` and ``flags``. ``dry_run`` changes nothing
+        (a preview); otherwise the moves are one patch through ``apply`` (one undo step).
+        Snapping again moves nothing. ``ValueError`` without narration or with a bad
+        anchor."""
+        from phasor.core.patch import SetMarker
+
+        moves, quality, flags = self._snap_plan(self._snap.compiled, anchors, allow_short)
+        out: dict[str, Any] = {
+            "moves": [m.to_dict() for m in moves if m.moves],
+            "kept": [m.to_dict() for m in moves if not m.moves],
+            "quality": quality,
+            "flags": list(flags),
+            "unreliable": "unreliable" in flags or quality < 0.3,
+            "applied": False,
+            "version": self.version,
+        }
+        todo = [SetMarker(name=m.marker, t=m.t1) for m in moves if m.moves]
+        if dry_run or not todo:
+            return out
+        result = self.apply(todo, origin=origin)
+        if not result.ok:
+            out["errors"] = [i.to_dict() for i in result.errors]
+            return out
+        out["applied"] = True
+        out["version"] = self.version
+        return out
+
+    def _snap_plan(self, c: Compiled, anchors: dict[str, int] | None = None,
+                   allow_short: bool = False) -> tuple[list, float, tuple[str, ...]]:  # fmt: skip
+        """``time.speech.plan_snap`` on this scene: its markers, the narration's boundaries
+        (``domains.audio.narration_boundaries``) and what the motions at each marker need.
+        Lint ``narration_drift`` reads the same plan, so it never disagrees with the snap."""
+        from phasor.core.schema import MarkerRef
+        from phasor.domains.audio import narration_boundaries
+        from phasor.time import speech as sp
+
+        doc = c.doc
+        nar = doc.narration
+        if nar is None:
+            raise ValueError("snap_to_narration needs narration: narrate first")
+        n = c.theme.narration
+        owned = nar.markers()
+        markers = doc.timeline.markers
+        hand = {k: v for k, v in markers.items() if k not in owned}
+        bounds, quality, flags = narration_boundaries(nar, self.base_dir, n["words_per_second"],
+                                                      n["phrase_pause"])  # fmt: skip
+        pins: dict[str, sp.Boundary] = {}
+        for name, k in (anchors or {}).items():
+            if name in owned:
+                raise ValueError(f"marker {name!r} belongs to the narration (a [[marker]] in its "
+                                 "script): it is on its words already")  # fmt: skip
+            if name not in hand:
+                raise ValueError(f"no marker {name!r}; markers placed by hand are {sorted(hand)}")
+            if (isinstance(k, bool) or not isinstance(k, int) or not 0 <= k < len(nar.blocks)
+                    or not nar.blocks[k].text):  # fmt: skip
+                raise ValueError(f"anchor {name!r}: {k!r} is not the index of a spoken block "
+                                 f"of the narration (0 to {len(nar.blocks) - 1})")  # fmt: skip
+            b = nar.blocks[k]
+            pins[name] = sp.Boundary(round(b.start, 4), "sentence",
+                                     f"block {k} ({b.text[:40]!r})", 1.0, k)  # fmt: skip
+        # what a scene needs: the motions anchored at its marker (verbs and transitions that
+        # start there and end there or at a fixed time), at least the shortest verb's time
+        floor = min(float(v["duration"]) for v in c.theme.motion.values() if isinstance(v, dict))
+        need = dict.fromkeys(hand, floor)
+        visual_end = max([float(doc.meta.duration or 0.0), *hand.values()], default=0.0)
+        for segs in doc.timeline.tracks.values():
+            for seg in segs:
+                end = c.time_map.resolve(seg.t1)
+                visual_end = max(visual_end, end)
+                if not isinstance(seg.t0, MarkerRef) or seg.t0.marker not in markers:
+                    continue
+                m = seg.t0.marker
+                if not isinstance(seg.t1, MarkerRef) or seg.t1.marker == m:
+                    need[m] = max(need.get(m, floor), end - markers[m])
+        visual_end = max([visual_end, *(t + need[k] for k, t in hand.items())], default=1.0)
+        moves = sp.plan_snap(hand, owned, bounds, visual_end=visual_end,
+                             narration_end=nar.end, reach=n["snap_reach"], need=need,
+                             anchors=pins, allow_short=allow_short)  # fmt: skip
+        return moves, quality, flags
+
     def _lint(self, snap: _Snapshot, step: float) -> tuple[Issue, ...]:
+        from phasor.domains.audio import info as audio_info
+
         snap.refresh()
         if step not in snap.lint:
             visual = lint_rules.run(
@@ -545,6 +643,9 @@ class Engine:
             snap.lint[step] = (*snap.orphans, *self._bake(snap).issues,
                                *lint_rules.control_rules(snap.compiled),
                                *lint_rules.file_rules(snap.compiled),
+                               *lint_rules.narration_rules(
+                                   snap.compiled, audio_info,
+                                   lambda: self._snap_plan(snap.compiled)[0]),
                                *lint_rules.type_rules(snap.compiled), *visual)  # fmt: skip
         return snap.lint[step]
 

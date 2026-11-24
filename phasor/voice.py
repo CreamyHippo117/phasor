@@ -253,3 +253,57 @@ def from_recordings(
         spoken.append(Spoken(durations, rel, tuple(words)))
     n = theme.narration
     return build(script, "recorded", blocks, spoken, lead=n["lead"], gap=n["gap"])
+
+
+# ------------------------------------------------------------------ a recording (M22)
+
+
+def from_audio(script: str | None, audio: str, base_dir: Path, theme: Theme) -> Narration:
+    """Narration from one recording in the scene's folder: a WAV, or the sound of an mp4,
+    m4a, mp3, ogg or flac (decoded once into the user's cache; the ``encode`` extra). Speech
+    and pauses are found in it (``time.speech.detect``). With the ``script`` that was read,
+    each sentence is aligned to the speech that says it and its ``[[markers]]`` fall on the
+    words (``time.speech.align``); without one, each phrase (speech up to a pause of the
+    theme's ``phrase_pause`` seconds) is a block of unknown words. The recording plays from
+    0 s: the scene's timeline is the recording's. ``VoiceError`` with the reason when the
+    file cannot be read or holds no speech."""
+    from phasor.core import files
+    from phasor.domains import audio as sound
+    from phasor.time import speech as sp
+    from phasor.time.narration import PHRASE, place_recorded, wav_info
+
+    try:
+        rel = files.relative_path(audio)
+        wav = sound.readable_wav(files.regular_file(base_dir, rel))
+        seconds = wav_info(wav).seconds
+        heard = sound.speech(base_dir, rel)
+    except ValueError as e:
+        raise VoiceError(f"narration audio {audio!r}: {e}") from None
+    if not heard.segments:
+        raise VoiceError(f"narration audio {rel!r}: no speech was found in it "
+                         f"({', '.join(heard.flags) or 'too quiet'})")  # fmt: skip
+    n = theme.narration
+    if script and script.strip():
+        blocks = parse_script(script)
+        spoken = [b for b in blocks if b.pause is None]
+        before, pause = [], 0.0
+        for b in blocks:
+            if b.pause is not None:
+                pause += b.pause
+            else:
+                before.append(pause)
+                pause = 0.0
+        wps = n["words_per_second"]
+        try:
+            placed = sp.align(heard, [estimate_duration(b.text, wps) for b in spoken], before)
+        except ValueError as e:
+            raise VoiceError(f"narration audio {rel!r}: {e}") from None
+        found = [(p.start, p.end, sp.pieces(p, [estimate_duration(x, wps) for x in b.pieces]))
+                 for p, b in zip(placed, spoken, strict=True)]  # fmt: skip
+        text = script
+    else:
+        placed = sp.phrases(heard, n["phrase_pause"])
+        blocks = [Block((PHRASE,)) for _ in placed]
+        found = [(p.start, p.end, [p.start]) for p in placed]
+        text = ""
+    return place_recorded(text, f"file:{rel}", rel, blocks, found, seconds)

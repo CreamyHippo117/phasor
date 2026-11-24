@@ -304,25 +304,29 @@ def align(speech: Speech, expected: Sequence[float], pause_before: Sequence[floa
         P[k] = _SKIP * k
     back = np.zeros((n, m + 1), np.int16)
     ks = np.arange(m + 1)
+    # what does not depend on the sentence, per width: segments a..k-1 for every end k
+    per = []
+    for width in range(1, w + 1):
+        a = ks - width
+        ok = a >= 0
+        aa = np.where(ok, a, 0)
+        first = np.minimum(aa, m - 1)
+        brk = np.where(aa > 0, 1.0 - z[first], 0.0)
+        inner = 1.5 * (Z2[np.maximum(ks - 1, 0)] - Z2[aa])  # gaps aa+1 .. k-1
+        per.append((width, ok, aa, np.log(G[ks] - G[aa] + 0.1), brk, inner, gaps[first]))
     for i in range(n):
         N = np.full(m + 1, inf)
-        want = rate * exp[i]
-        for width in range(1, w + 1):
-            a = ks - width  # the sentence is segments a..k-1
-            ok = a >= 0
-            aa = np.where(ok, a, 0)
-            said = G[ks] - G[aa]
-            cost = np.log((said + 0.1) / (want + 0.1)) ** 2
-            cost += 1.5 * np.where(aa > 0, 1.0 - z[np.minimum(aa, m - 1)], 0.0) if i else 0.0
+        lw = math.log(rate * exp[i] + 0.1)
+        for width, ok, aa, lsaid, brk, inner, g in per:
+            cost = (lsaid - lw) ** 2 + inner
+            if i:
+                cost += 1.5 * brk
             if pb[i] > 0:
-                g = gaps[np.minimum(aa, m - 1)]
                 cost += np.where(aa > 0, np.clip(1.0 - g / (0.5 * pb[i]), 0, 1), 0.0)
-            inner = Z2[np.maximum(ks - 1, 0)] - Z2[aa]  # gaps aa+1 .. k-1
-            cost += 1.5 * inner
             total = np.where(ok, P[aa] + cost, inf)
             better = total < N
             N = np.where(better, total, N)
-            back[i] = np.where(better, width, back[i])
+            back[i][better] = width
         P = N
     trail = P + _SKIP * (m - ks)
     k = int(np.argmin(trail))
@@ -522,14 +526,16 @@ def _plan_once(hand, owned, boundaries, vend, nend, reach, need, anchors, allow_
     match: dict[int, int] = {}
     pinned = {i for i, k in enumerate(names) if k in anchors}
     if len(c) and len(h):
-        cost = np.minimum(np.abs(h[:, None] / vend - c[None, :] / nend),
-                          np.abs(h[:, None] - c[None, :]) / nend)  # fmt: skip
-        cost += np.array([_PHRASE_COST * reach if b.kind == "phrase" else 0.0 for b in bounds])
-        cost = np.where((c[None, :] > lo[:, None]) & (c[None, :] < hi[:, None]), cost, np.inf)
-        cost = np.where(cost <= reach, cost, np.inf)
-        for i in pinned:  # a pinned marker matches its boundary only
-            cost[i] = np.inf
-        match = _dp(cost, reach, pinned)
+        extra = np.array([_PHRASE_COST * reach if b.kind == "phrase" else 0.0 for b in bounds])
+
+        def cost(i: int) -> np.ndarray:  # a row at a time: memory is one row, not K x N
+            if i in pinned:  # a pinned marker matches its boundary only
+                return np.full(len(c), np.inf)
+            row = np.minimum(np.abs(h[i] / vend - c / nend), np.abs(h[i] - c) / nend) + extra
+            row[(c <= lo[i]) | (c >= hi[i]) | (row > reach)] = np.inf
+            return row
+
+        match = _dp(cost, len(h), len(c), reach, pinned)
     detail: dict[str, Move] = {}
     anchor_pts: list[tuple[float, float, str, float]] = []  # (old, new, name, confidence)
     for i, k in enumerate(names):
@@ -545,12 +551,12 @@ def _plan_once(hand, owned, boundaries, vend, nend, reach, need, anchors, allow_
             anchor_pts.append((h[i], b.t, k, conf))
     while True:
         new = _interpolate(names, h, anchor_pts, fixed)
-        drop = _violation(names, h, new, fixed, need, allow_short, anchor_pts)
-        if not drop:
+        drops = _violation(names, h, new, fixed, need, allow_short, anchor_pts)
+        if not drops:
             break
-        worst = min(drop, key=lambda p: (p[3], p[2]))
-        anchor_pts.remove(worst)
-        detail.pop(worst[2], None)
+        for worst in {min(d, key=lambda p: (p[3], p[2])) for d in drops}:
+            anchor_pts.remove(worst)
+            detail.pop(worst[2], None)
     out = []
     for i, k in enumerate(names):
         if k in detail:
@@ -563,18 +569,20 @@ def _plan_once(hand, owned, boundaries, vend, nend, reach, need, anchors, allow_
     return out
 
 
-def _dp(cost: np.ndarray, skip: float, pinned: set[int]) -> dict[int, int]:
-    """An order-keeping matching of rows (markers) to columns (boundaries), each used once,
-    minimising the matched costs plus ``skip`` per unmatched row."""
-    k, n = cost.shape
+def _dp(cost: Callable[[int], np.ndarray], k: int, n: int, skip: float,
+        pinned: set[int]) -> dict[int, int]:  # fmt: skip
+    """An order-keeping matching of ``k`` rows (markers) to ``n`` columns (boundaries), each
+    used once, minimising the matched costs (``cost(i)``: row ``i``) plus ``skip`` per
+    unmatched row."""
     F = np.zeros(n + 1)  # F[j]: best cost so far using columns < j
     choice = np.zeros((k, n + 1), np.int8)  # 0 skip row, 1 match (i, j-1), 2 carry from j-1
     for i in range(k):
         pen = 0.0 if i in pinned else skip
         G = F + pen
-        G[1:] = np.minimum(G[1:], F[:-1] + cost[i])
+        row = cost(i)
+        G[1:] = np.minimum(G[1:], F[:-1] + row)
         took = np.zeros(n + 1, np.int8)
-        took[1:] = np.where(F[:-1] + cost[i] < F[1:] + pen, 1, 0)
+        took[1:] = np.where(F[:-1] + row < F[1:] + pen, 1, 0)
         H = np.minimum.accumulate(G)
         carry = np.zeros(n + 1, np.int8)
         carry[1:] = H[1:] < G[1:]
@@ -596,42 +604,53 @@ def _interpolate(names, h, anchor_pts, fixed) -> dict[str, float]:
     the anchors and owned markers around them (0 stays 0; after the last, shifted with it)."""
     pts = sorted({(float(o), float(n)) for o, n, *_ in anchor_pts} |
                  {(float(t), float(t)) for _, t in fixed})  # fmt: skip
+    t = np.asarray(h, np.float64)
+    if not pts:
+        new = t.copy()
+    else:
+        xs = np.array([p[0] for p in pts])
+        ys = np.array([p[1] for p in pts])
+        if xs[0] > 0.0:
+            xs, ys = np.concatenate([[0.0], xs]), np.concatenate([[0.0], ys])
+        new = np.interp(t, xs, ys)
+        new = np.where(t >= xs[-1], t + ys[-1] - xs[-1], new)
+        new = np.where(t < xs[0], t + ys[0] - xs[0], new)
     at = {p[2]: p[1] for p in anchor_pts}
-    out = {}
-    for i, k in enumerate(names):
-        if k in at:
-            out[k] = float(at[k])
-            continue
-        t = float(h[i])
-        if not pts:
-            out[k] = t
-        elif t >= pts[-1][0]:
-            out[k] = t + pts[-1][1] - pts[-1][0]
-        else:
-            xs = [0.0] + [p[0] for p in pts]
-            ys = [0.0] + [p[1] for p in pts]
-            if pts[0][0] <= 0.0:
-                xs, ys = xs[1:], ys[1:]
-            out[k] = float(np.interp(t, xs, ys)) if t >= xs[0] else t + ys[0] - xs[0]
-    return out
+    return {k: float(at[k]) if k in at else float(v) for k, v in zip(names, new, strict=True)}
 
 
-def _violation(names, h, new, fixed, need, allow_short, anchor_pts) -> list:
-    """The matched anchors to choose from when a span runs backwards or (unless
-    ``allow_short``) became shorter than the motions anchored at its first marker need (and
-    than it was): the nearest matched anchor at or before the span and at or after it."""
+def _violation(names, h, new, fixed, need, allow_short, anchor_pts) -> list[list]:
+    """For each span that runs backwards or (unless ``allow_short``) became shorter than the
+    motions anchored at its first marker need (and than it was): the matched anchors that
+    place its two ends (the end itself, or the nearest anchor beyond it; an owned or pinned
+    one cannot be dropped). Spans run between markers that start a scene: hand-placed ones,
+    and owned ones that motions are anchored to (``need`` names them); an owned marker that
+    is only a word bounds the order alone."""
     seq = sorted([(float(h[i]), k, new[k]) for i, k in enumerate(names)] +
                  [(t, k, t) for k, t in fixed])  # fmt: skip
-    for (o0, a, n0), (o1, _, n1) in itertools.pairwise(seq):
-        short = not allow_short and n1 - n0 < min(o1 - o0, need.get(a, 0.0)) - 1e-6
-        if n1 < n0 - 1e-9 or short:
-            free = [p for p in anchor_pts if p[3] < 2.0]
-            before = [p for p in free if p[0] <= o0]
-            after = [p for p in free if p[0] >= o1]
-            out = []
-            if before:
-                out.append(max(before, key=lambda p: p[0]))
-            if after:
-                out.append(min(after, key=lambda p: p[0]))
-            return out
-    return []
+    hand = set(names)
+    index = {x: i for i, x in enumerate(seq)}
+    starts = [x for x in seq if x[1] in hand or x[1] in need]
+    placed = {p[2]: p for p in anchor_pts}
+    owned = {k for k, _ in fixed}
+
+    def placer(i: int, step: int):
+        while 0 <= i < len(seq):
+            name = seq[i][1]
+            if name in owned:
+                return None
+            if name in placed:
+                return placed[name] if placed[name][3] < 2.0 else None
+            i += step
+        return None
+
+    bad = [(x, y) for x, y in itertools.pairwise(seq) if y[2] < x[2] - 1e-9]
+    if not allow_short:
+        bad += [(x, y) for x, y in itertools.pairwise(starts)
+                if y[2] - x[2] < min(y[0] - x[0], need.get(x[1], 0.0)) - 1e-6]  # fmt: skip
+    out = []
+    for x, y in bad:
+        ends = [p for p in (placer(index[x], -1), placer(index[y], 1)) if p is not None]
+        if ends:
+            out.append(ends)
+    return out

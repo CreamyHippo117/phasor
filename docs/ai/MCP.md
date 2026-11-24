@@ -32,6 +32,7 @@ a variant and compare.
 | `scene_edit` | apply a patch (below); returns `ok`, `errors`, and the lint issues it added or fixed |
 | `animate` | a choreography verb at a marker or time: `reveal`, `exit`, `trace`, `bloom_in`, `dim_others`, `undim`, `focus_pull`, `morph`, `settle`, `write`, `travel`, `flash`, `wiggle`, `circumscribe` (`value` "circle" or "box"), `transform`, `transform_matching` and `become` (`targets` [from, to]), `sweep` (`path`, `value`), and in 3D `orbit` (`value` degrees, `until` a marker) and `orbit_reveal` |
 | `narrate` | set the script and voice; markers appear in `markers` |
+| `snap_to_narration` | move the markers you placed by hand onto the narration's sentence starts (a recording: `narrate` with `audio`); `dry_run` (default true) previews each move (marker, from, to, why, confidence); `dry_run: false` applies it as one undo step |
 | `inspect` | what is on screen at `t`: `brief` (a line each), `standard`, `full` |
 | `lint` | visual problems; `fix: true` applies the certain fixes |
 | `review` | the whole self-review round in one call |
@@ -181,6 +182,16 @@ to a marker with a verb. Do not animate by raw seconds in a narrated scene (lint
 {"tool": "narrate", "script": "Here are the poles. [[poles]] Draw a loop around the first. [[loop]] The result is two pi.", "voice": "estimate"}
 {"tool": "animate", "verb": "reveal", "at": "poles", "targets": ["pole_i"]}
 {"tool": "animate", "verb": "trace", "at": "loop", "targets": ["loop"]}
+```
+
+A recording instead of a voice: put the file (WAV, or an mp4, m4a, mp3, ogg, flac) in the
+scene's folder and call `narrate` with `audio` and the `script` it reads (its sentences are
+found in the audio; `[[markers]]` fall on their words). Markers you placed by hand before
+the recording existed snap onto it: `snap_to_narration` previews (`dry_run`, the default),
+then `dry_run: false` moves them. Lint `narration_drift` lists markers the snap would move.
+
+```json calls
+{"tool": "snap_to_narration", "dry_run": true}
 ```
 
 `animate` returns `start` and `end`: pass `offset: end - start` to start the next step when

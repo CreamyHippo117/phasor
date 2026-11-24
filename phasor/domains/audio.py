@@ -248,3 +248,76 @@ def samples(base_dir: str | Path, name: str, span: tuple[float, float] | None = 
     n = max(0, min(round((span[1] - span[0]) * head.rate), nar.MAX_CLIP_FRAMES))
     src = nar.WavSource(wav, head, int(sp.MAX_SECONDS * head.rate) + 1)
     return src.read(a, n), head.rate
+
+
+# ------------------------------------------------------------------ where sentences start
+
+MAX_BOUNDARIES = 20000
+
+
+def narration_boundaries(
+    narration, base_dir: str | Path, words_per_second: float, phrase_pause: float
+) -> tuple[list[sp.Boundary], float, tuple[str, ...]]:
+    """Where a marker may snap to on the narration: every spoken block's start (a sentence,
+    or a phrase of a recording read without a script) and, inside blocks that have audio,
+    where speech resumes after a pause of at least ``phrase_pause`` seconds. With how sure
+    each is: a synthesized block's start is exact (1), an estimated one is a guess (0.5), a
+    recording's comes from the alignment (``time.speech.align``, re-run on the cached
+    detection). Also the detection's quality (the lowest of the files) and its flags
+    (``unreadable`` when a file could not be read)."""
+    from phasor.time.narration import PHRASE, PRE_ROLL, estimate_duration, parse_script
+
+    spoken = [(k, b) for k, b in enumerate(narration.blocks) if b.text]
+    heard: dict[str, sp.Speech | None] = {}
+    flags: set[str] = set()
+    quality = 1.0
+    for _, b in spoken:
+        if b.audio and b.audio not in heard:
+            try:
+                heard[b.audio] = speech(base_dir, b.audio)
+                quality = min(quality, heard[b.audio].quality)
+                flags.update(heard[b.audio].flags)
+            except ValueError:
+                heard[b.audio] = None
+                flags.add("unreadable")
+    sure: dict[int, float] = {}
+    if narration.voice.startswith("file:") and narration.script.strip():
+        src = heard.get(narration.voice[5:])
+        try:
+            blocks = [x for x in parse_script(narration.script) if x.pause is None]
+            if src is not None and len(blocks) == len(spoken):
+                wants = [estimate_duration(x.text, words_per_second) for x in blocks]
+                sure = {i: p.confidence for i, p in enumerate(sp.align(src, wants))}
+        except ValueError:
+            pass
+    out: list[sp.Boundary] = []
+    for i, (k, b) in enumerate(spoken):
+        phrase = b.text == PHRASE
+        words = " ".join(b.text.split()[:5])
+        label = (f"phrase {i + 1} starts" if phrase else
+                 f"sentence {i + 1} ({words!r}{'...' if len(b.text.split()) > 5 else ''}) "
+                 "starts")  # fmt: skip
+        found = heard.get(b.audio) if b.audio else None
+        if not b.audio:
+            conf = 0.5  # timed from the text: a guess
+        elif b.audio_span is None:
+            conf = 1.0  # a synthesized clip per block: exact
+        else:
+            conf = sure.get(i, found.quality if found is not None else 0.0)
+        out.append(sp.Boundary(round(b.start, 4), "phrase" if phrase else "sentence", label,
+                               round(conf, 3), k))  # fmt: skip
+        if found is None:
+            continue
+        a, z = b.audio_span if b.audio_span is not None else (0.0, found.seconds)
+        prev = None
+        for s0, s1 in found.segments:
+            if prev is not None and a + PRE_ROLL < s0 < z and s0 - prev >= phrase_pause:
+                t = b.start + s0 - PRE_ROLL - a
+                if b.start < t < b.start + b.duration:
+                    out.append(sp.Boundary(round(t, 4), "phrase", f"speech resumes after a "
+                                           f"{s0 - prev:.2f} s pause in block {i + 1}",
+                                           round(0.8 * found.quality, 3), k))  # fmt: skip
+            prev = s1
+        if len(out) > MAX_BOUNDARIES:
+            break
+    return out[:MAX_BOUNDARIES], round(quality, 3), tuple(sorted(flags))
