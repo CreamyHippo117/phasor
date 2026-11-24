@@ -196,24 +196,36 @@ living motion: tag an object `exact` when something must sit on it exactly.
 **`Value`** is a named number to animate with no drawing (Manim's `ValueTracker`): read
 it in an expression (`expr("speed.value")`), in an updater, or show it with a `Counter`.
 
-```python no-run
-# no-run: an updater must be defined in a file in the scene's folder (the document names
-# it), and this page's text is not one. examples/open_contract.py runs the same thing, and
-# tests/test_open_contract.py checks it.
+```python
+# In a notebook cell (or a script file in the scene's folder) the same code works. A cell has
+# no file for the document to name, so the scene holds the updater and `save_copy` writes it
+# into a module beside the copy (ADR 0006): `nb = nb.save_copy("work/ball.phasor.json")`.
+import tempfile
+import warnings
+
+nb = Scene("ball", passes=None)
+SLOW = 0.5  # a plain constant: the saved module keeps its value
+
+
 def above(t, look):
     x, y, z = look("ball").pos
     return {"pos": (x, y + 0.5, z)}
 
 
 def roll(t, look):
-    return {"pos": (look("speed").value * t, 0.0, 0.0)}
+    return {"pos": (look("speed").value * t * SLOW * 2, 0.0, 0.0)}
 
 
-k.add(Value(id="speed", value=0.5))
-k.add(Dot(id="ball", r=0.15, tags=["exact"]).always(roll))
-k.add(Text(id="ball.label", text="ball").always(above))
-assert k.engine.state_at(2.0)["ball.label"].params.pos == (1.0, 0.5, 0.0)
-assert not [i for i in k.engine.lint(strict=True) if i.code == "impure_updater"]
+nb.add(Value(id="speed", value=0.5))
+with warnings.catch_warnings():  # warns "this scene does not run them": the copy does
+    warnings.simplefilter("ignore")
+    nb.add(Dot(id="ball", r=0.15, tags=["exact"]).always(roll))
+    nb.add(Text(id="ball.label", text="ball").always(above))
+with tempfile.TemporaryDirectory() as work:
+    nb = nb.save_copy(f"{work}/ball.phasor.json")  # ball.updaters.py now holds both functions
+    assert nb.engine.document.meta.modules == ("ball.updaters.py",)
+    assert nb.engine.state_at(2.0)["ball.label"].params.pos == (1.0, 0.5, 0.0)
+    assert not [i for i in nb.engine.lint(strict=True) if i.code == "impure_updater"]
 ```
 
 **Where the code lives.** A type or updater defined in the scene script, or in a
@@ -223,8 +235,24 @@ scripts may run (`phasor.load("scene.py")`, `Engine(..., allow_scripts=True)`, t
 server's `--allow-scripts`, and `--allow-scripts` on `phasor inspect`, `lint`, `storyboard`,
 `render`, `web`, `bench --frames` and `sketch`; render workers inherit it), only from inside the scene's folder. A missing, refused or
 broken module is lint `missing_type`: the object draws as a placeholder box and keeps its
-parameters and overrides (saving it changes nothing). An updater defined anywhere else (a
-notebook cell, a prompt) is refused: the document could not find it again. Types shipped in phasor still get an entry here, an
+parameters and overrides (saving it changes nothing). An updater from a file outside the
+folder is refused: the document could not find it again.
+
+**Updaters defined in a notebook cell or at a prompt** have no file, so `Scene.add` keeps
+them in the builder instead (it warns: the open scene does not run them) and
+`scene.save_copy("folder/name.phasor.json")` writes them into `folder/name.updaters.py`,
+names that file in the copy's document (`meta.modules`, `always`) and returns the copy,
+opened. The open scene never changes, and `Scene.save` refuses while updaters are held. Its
+source comes from `inspect.getsource`: IPython, Jupyter and Python 3.13's prompt keep it, a
+plain `python` prompt does not (refused: write the function in a `.py` file). What is
+written: a top-level `def` whose names are builtins, modules (`np`), functions or classes
+importable from a module that is not `__main__`, or constants of plain data (numbers,
+strings, `None`, tuples of them: their value at `add` is kept). A lambda, closure, decorator,
+method, or a name that is a list, array or another notebook function raises
+`UpdaterCaptureError` at `add`, naming it and the fix. A file is never overwritten: the
+same content is reused, different content goes to `name.updaters2.py`. The patch op
+`set_always` (`{"op": "set_always", "id": "dot", "always": ["file.py:fn"]}`) is how the
+copy gets its references. Types shipped in phasor still get an entry here, an
 example and a storyboard test; scene-local types do not need them.
 
 ## Narrate: words drive time
@@ -408,6 +436,7 @@ lint_added, lint_resolved)`. Each error has `code`, `message`, `ids`, `path`, `f
 | `set_param` | `path`, `value` (constant or `{"expr": "..."}`) |
 | `set_style` | `id`, `key`, `role` |
 | `set_tags` | `id`, `tags` |
+| `set_always` | `id`, `always` (updaters, each `"file.py:function"`; the file must be in `meta.modules`) |
 | `add_segment` | `path`, `segment: {t0, t1, to, ease}`; a time is seconds or `{"marker", "offset"}` |
 | `clear_track` | `path` |
 | `set_marker` / `remove_marker` | `name`, `t` |

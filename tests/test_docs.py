@@ -6,6 +6,7 @@ on earlier ones. Mark a block that must not run with ```python no-run.
 
 from __future__ import annotations
 
+import linecache
 import re
 from pathlib import Path
 
@@ -25,7 +26,11 @@ def test_doc_code_blocks_run(path: Path):
     ns: dict = {"__name__": f"docs_{path.stem}"}
     for i, m in enumerate(BLOCK.finditer(text)):
         code = m.group(1)
-        exec(compile(code, f"{path.name}[block {i}]", "exec"), ns)
+        name = f"{path.name}[block {i}]"
+        # Like a notebook: the block's text is in linecache, so inspect.getsource finds it
+        # (an updater defined in a block is saved as a copy, ADR 0006).
+        linecache.cache[name] = (len(code), None, code.splitlines(True), name)
+        exec(compile(code, name, "exec"), ns)
 
 
 MCP_BLOCK = re.compile(r"^```json (patch|calls)[ \t]*\n(.*?)^```", re.S | re.M)
