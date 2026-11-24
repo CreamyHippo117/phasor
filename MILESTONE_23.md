@@ -40,15 +40,28 @@ determinism are checked numerically).
   60 s and 256 MiB.
 - 3000 random corruptions of two real files (bytes, cuts, 0xFFFFFFFF lengths): every one a
   `Song`, about 1 s in all.
+- One `Notes` at the note bound (1563 script notes x `repeat=64`, cut at 98 469 notes, 78 885
+  dropped past the voices) in a 60 s scene: placing them the first time 4.5 s; a whole lint
+  2 s (it was 68 s before the summary (span, ranges, programs, voices, the roll's table) was
+  made once per placement instead of at every lint sample); its `audio_track` 17 s (64
+  voices for 60 s); 60 MiB peak. Eight such objects: 39 s to place, lint 15 s, the mix 122 s,
+  313 MiB peak. The synthesizers' work is bounded: `MAX_SYNTH_WORK` = 2^31 samples, per
+  synthesizer and for the scene's notes together (about 11 million samples a second on one
+  core here, so at most a few minutes), and placed notes are cached while they hold at most
+  `CACHED_NOTES` = 400 000 notes in all (each ~0.4 KiB with its voice).
 
 ## Verification
 
-Each suite on its own (`-m "not slow"`): test_midi 87 (+1 `gl`+`slow` golden, passed),
-test_docs 5, test_kit + test_layers + test_contracts 28, test_lint + test_sound 72,
-test_narration + test_narration_snap + test_narration_audit + test_audio_inputs +
-test_style_freedom + test_pycode 160 (2 skipped: espeak-ng), test_mcp + test_pycode 44,
-test_final `-k "not slow"` 475 passed, 8 skipped + the 2 it found (`notes` drew nothing in the type sweep: it now gets `show=True` there) fixed and rerun (7 passed). ruff check, ruff format --check and
-lint-imports (2 contracts kept) clean. The full suite was not run (CI).
+Each suite on its own (`-m "not slow"`), after the last change: test_midi 90 (+1 `gl`+`slow`
+golden, passed against the stored picture without `PHASOR_UPDATE_GOLDEN`), test_docs 5,
+test_lint + test_sound + test_mcp 111, test_engine + test_proc + test_windows_robust 38
+(2 skipped: Windows only), test_narration + test_narration_snap + test_narration_audit +
+test_audio_inputs + test_style_freedom + test_pycode + test_kit + test_layers +
+test_contracts 188 (2 skipped: espeak-ng), test_final `-k "notes and not slow"` 7. Before the
+last change: test_final `-k "not slow"` 475 passed, 8 skipped, and the 2 failures it found
+(`notes` drew nothing in the type sweep: it now gets `show=True` there) fixed. ruff check,
+ruff format --check and lint-imports (2 contracts kept) clean. The full suite was not run
+(CI).
 
 Checked against something other than phasor's own writer: the SMF 1.0 specification's
 example file reads as the specification describes it (programs, notes, velocities, the
@@ -76,6 +89,11 @@ chunk by chunk in the tests.
 7. `inspect/lint.py` `_sound_rules`: the PyAV check skips non-`sound` objects (a `.mid` had
    no business there; it would have warned `missing_extra` where PyAV is absent).
 8. No theme `[lint]` threshold: every `notes_limit` case is a hard limit of the mix.
+9. Two bounds the plan did not name: `MAX_SYNTH_WORK` (samples the synthesizers make; past
+   it notes, then whole objects, are left out and lint says so) and `CACHED_NOTES` (the
+   placed-notes cache is bounded by notes held, not by entries). A scene of many objects
+   each at `MAX_NOTES` still costs about 4.5 s and 40 MiB per object when first placed (and
+   again when evicted); a scene-wide note bound is deferred.
 
 ## Deferred
 
@@ -85,6 +103,7 @@ chunk by chunk in the tests.
 3. Format 2 files (refused, with the reason).
 4. The app's MIDI panel (Milestone 25), a timeline lane for notes.
 5. A third-party check of written files (`mido` or a DAW) on the owner's PC.
+6. A scene-wide bound on notes placed (many objects each at `MAX_NOTES` are slow to lint).
 
 ## Untested
 

@@ -349,7 +349,7 @@ names), `voices`, and for a file `format`, `tracks`, `bpm`, `names`. A missing f
 `missing_file`; one that is not MIDI (or format 2) is `bad_file` and plays nothing; one read
 only in part (a track cut short, a lying length, past `MAX_EVENTS`, `MAX_NOTES` or
 `MAX_TEMPOS`) is `truncated` and plays what was read; notes starting after the scene's end,
-notes dropped past the voices and a `start` marker the scene lacks are `notes_limit`.
+notes dropped past the voices or the synthesizer's work (`MAX_SYNTH_WORK`) and a `start` marker the scene lacks are `notes_limit`.
 Hearing it is untested by a person: the samples, timing and pitch are checked numerically.
 
 ```python
@@ -706,7 +706,7 @@ Each issue has `code`, `severity`, `message`, `ids`, `times`, `fix_hint`, and `f
 | `bad_file` | warning | a file an object reads is not valid (an SVG that is not SVG), or some of its shapes are skipped (points not finite or absurdly far out); what cannot be read draws nothing |
 | `sound_limit` | warning | a sound clip the mix leaves out: past `narration.MAX_SOUNDS` (256) clips in one scene; or a clip whose `start` or `gain` is animated (the mix reads them once, at 0 s, so the animation is not heard) |
 | `narration_drift` | warning | a marker placed by hand that `snap_to_narration` would move by more than `[lint] narration_drift` seconds (0.3) onto a sentence of a recorded narration; no fix (the snap is offered); `missing_file`, `bad_file` and `missing_extra` also cover the recording |
-| `notes_limit` | warning | MIDI notes (`Notes`) not heard as written: notes starting at or after the scene's end, notes the synthesizer drops because `MAX_VOICES` (64) already sound, or a `start` marker the scene does not have (nothing is heard). A `.mid` that cannot be read is `bad_file`, one read only in part `truncated` |
+| `notes_limit` | warning | MIDI notes (`Notes`) not heard as written: notes starting at or after the scene's end, notes the synthesizer drops because `MAX_VOICES` (64) already sound or past `midi_math.MAX_SYNTH_WORK` (2^31 samples made, per object and for the scene's notes together), or a `start` marker the scene does not have (nothing is heard). A `.mid` that cannot be read is `bad_file`, one read only in part `truncated` |
 | `svg_too_complex` | warning | an SVG past a reading limit (size, elements once `<use>` is expanded, nesting, shapes, segments): its drawing is empty or cut short |
 | `crowded_ticks` | warning | numbers along an axis (or a chart's bar names) closer **on screen** than `[lint] tick_gap` text heights (every pair, so an axis a 3D camera sees end-on is caught); `path` names the axis (`ax.x`), the hint the smallest nice step that clears them, or to turn the camera when the axis points at it |
 | `truncated` | warning | a file a `Table` or `Code` reads is past a limit (rows, columns, lines), or a picture sequence has more than 3000 pictures; only its first part is shown (plays) |
