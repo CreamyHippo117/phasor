@@ -94,17 +94,24 @@ def _sequence_stamp(base_dir: str | Path, value: str) -> tuple:
     """A sequence's stamp: the pattern's path, a digest of every frame's name, modification
     time and size (``hashlib``: the same in every process, so a render worker can compare
     it), and the number of frames; ``None`` for both when no frame is there."""
+    return sequence_frames(base_dir, value)[0]
+
+
+def sequence_frames(base_dir: str | Path, value: str) -> tuple[tuple, tuple]:
+    """A sequence's ``stamp`` and its frames as (path, modification time, size), from one
+    scan of the folder: what a reader checks each frame against when it opens it."""
     try:
         where = str(resolve(base_dir, value))
     except ValueError:
-        return (value, None, None)
+        return (value, None, None), ()
     frames = _scan(base_dir, value)
     if not frames:
-        return (where, None, None)
+        return (where, None, None), ()
     digest = hashlib.sha256()
     for _, path, st in frames:
         digest.update(f"{path.name}\0{st.st_mtime_ns}\0{st.st_size}\n".encode())
-    return (where, "seq:" + digest.hexdigest(), len(frames))
+    stamp = (where, "seq:" + digest.hexdigest(), len(frames))
+    return stamp, tuple((path, st.st_mtime_ns, st.st_size) for _, path, st in frames)
 
 
 def relative_path(value: str) -> str:

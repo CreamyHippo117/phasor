@@ -67,6 +67,9 @@ def _clip(path: Path, n: int = 24, fps: int = FPS, w: int = 64, h: int = 36,
         s.width, s.height, s.pix_fmt = w, h, "yuv420p"
         if s.codec_context.name in ("libx264", "h264"):
             s.options = {"bf": "2", "g": "8", "crf": "8"}
+        else:  # mpeg4 (no x264, e.g. some Windows wheels): near-lossless, so colours read
+            s.bit_rate = 20_000_000
+            s.options = {"bf": "2", "g": "8", "qmin": "1", "qmax": "2"}
         for i in range(n):
             a = np.zeros((h, w, 3), np.uint8)
             a[:] = _color(i)
@@ -161,7 +164,9 @@ def test_a_link_out_of_the_folder_ends_a_sequence_and_is_never_read(tmp_path):
     assert len(files.sequence(root, "fr/f_%03d.png")) == 2
 
 
-def test_a_long_sequence_stops_at_the_cap_and_stamping_it_stays_cheap(tmp_path, monkeypatch):
+def test_a_long_sequence_plays_its_first_frames_up_to_the_cap(tmp_path, monkeypatch):
+    """Past ``MAX_SEQUENCE`` pictures the first ones still play (lint ``truncated``), as a
+    long table shows its first rows; it drew nothing (audit, N2)."""
     monkeypatch.setattr(files, "MAX_SEQUENCE", 40)
     folder = tmp_path / "fr"
     folder.mkdir()
@@ -171,7 +176,32 @@ def test_a_long_sequence_stops_at_the_cap_and_stamping_it_stays_cheap(tmp_path, 
     assert len(files.sequence(tmp_path, "fr/f_%03d.png")) == 41  # one past the cap: "more"
     s = _scene(tmp_path)
     s.add(Image(id="v", path="fr/f_%03d.png", width=2.0))
-    assert "too_big" in _sem(s, 0.0) and "video_too_big" in _codes(s)
+    sem = _sem(s, 0.0)
+    assert not sem["missing"] and sem["frames"] == 40 and "40" in sem["truncated"]
+    codes = _codes(s)
+    assert "truncated" in codes and "video_too_big" not in codes
+
+
+def test_a_sequence_frame_changed_or_swapped_for_a_link_is_not_read(tmp_path):
+    """Each frame is checked against the time and size it was stamped with, and opened
+    without following a link: a frame swapped since is not read (audit, N3)."""
+    path = _frames(tmp_path / "fr", 3)
+    secret = _png(tmp_path / "secret.png", (0, 255, 0, 255))
+    src = mm.open_source(tmp_path, path)
+    assert src.probe().frames == 3
+    f1 = tmp_path / "fr" / "f_001.png"
+    _png(f1, (1, 2, 3, 255), w=9)  # changed since the stamp
+    assert src.frame(1) is None
+    f2 = tmp_path / "fr" / "f_002.png"
+    f2.unlink()
+    try:
+        os.symlink(secret, f2)
+    except (OSError, NotImplementedError):
+        return  # no links here; the stamp check above is the guard
+    st = os.stat(secret)
+    want = next(f for f in src.frames if f[0].name == "f_002.png")
+    os.utime(secret, ns=(st.st_atime_ns, want[1]))  # even with the time and size it had
+    assert src.frame(2) is None
 
 
 # ---------------------------------------------------------------- 2. time and placement
@@ -276,13 +306,12 @@ def _open_gop(path: Path, n: int = 40) -> Path:
     each keyframe but the first come B-frames shown before it that refer to the GOP before
     (leading frames). A square moves so no two frames are alike. Skips without libx264."""
     av = pytest.importorskip("av")
-    try:
-        av.codec.Codec("libx264", "w")
-    except Exception:
-        pytest.skip("PyAV here has no libx264 (open GOPs are an x264 option)")
     path.parent.mkdir(parents=True, exist_ok=True)
     with av.open(str(path), "w") as c:
-        s = c.add_stream("libx264", rate=FPS)
+        try:
+            s = c.add_stream("libx264", rate=FPS)
+        except Exception:
+            pytest.skip("PyAV here has no libx264 (open GOPs are an x264 option)")
         s.width, s.height, s.pix_fmt = 64, 36, "yuv420p"
         s.options = {"crf": "8", "x264-params": "open-gop=1:keyint=8:min-keyint=8:scenecut=0:"
                      "bframes=3:b-adapt=0:b-pyramid=normal"}  # fmt: skip
@@ -687,6 +716,59 @@ def test_lint_reports_a_clip_past_a_cap(tmp_path, passes, monkeypatch):
     mm.close_all()
     s.engine.apply({"op": "set_param", "path": "v.width", "value": 2.5})
     assert "frames" in next(i for i in s.engine.lint() if i.code == "video_too_big").message
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_lint_reports_a_trim_from_past_the_end_and_too_many_clips(tmp_path, passes,
+                                                                  monkeypatch):  # fmt: skip
+    """A clip trimmed from at or past its end shows only its last frame (``clip_ended``, said
+    so: N1); more clips at once than decoders kept open is ``too_many_clips`` (S1)."""
+    pytest.importorskip("av")
+    from phasor import Video
+
+    _clip(tmp_path / "c.mp4", n=12)  # half a second
+    monkeypatch.setattr(mm, "MAX_OPEN", 2)
+    s = _scene(tmp_path, passes)
+    s.add(Video(id="late", path="c.mp4", width=1.0, pos=(-2, 0, 0), trim=(0.8, 0.0), loop=True))
+    s.marker("end", 1.0)
+    sem = _sem(s, 0.0, "late")
+    assert sem["ended"] and sem["trim_past_end"] == pytest.approx(0.5)
+    (issue,) = [i for i in s.engine.lint() if i.code == "clip_ended"]
+    assert "past its end" in issue.message and "trim" in issue.fix_hint
+    assert "too_many_clips" not in _codes(s)
+    for k in range(2):
+        s.add(Video(id=f"v{k}", path="c.mp4", width=1.0, pos=(k, 0, 0), loop=True))
+    (many,) = [i for i in s.engine.lint() if i.code == "too_many_clips"]
+    assert many.ids == ("late", "v0", "v1") and many.times[0] == 0.0
+    s.engine.apply({"op": "set_param", "path": "v1.opacity", "value": 0.0})
+    assert "too_many_clips" not in _codes(s)
+
+
+def test_a_clips_timing_cannot_be_animated(tmp_path):
+    """Clip time is (t - start) x speed into trim: an animated speed played the clip
+    backwards as it slowed (audit, S3). A track, an expression or an updater on start, trim,
+    speed or a sequence's fps is a validation error; so are such ``from_video`` arguments
+    (they raised a bare float() error: N5)."""
+    from phasor import Video
+    from phasor.scene import expr
+
+    _clip(tmp_path / "c.mp4", n=12)
+    s = _scene(tmp_path)
+    s.add(Video(id="v", path="c.mp4", width=1.0))
+    with pytest.raises(DocumentError, match="v.speed cannot change over time"):
+        s.at(0).to("v.speed", 3.0, duration=1.0)
+    with pytest.raises(DocumentError, match="v.start cannot change"):
+        s.set("v.start", expr("t"))
+    seq = _frames(tmp_path / "fr", 3)
+    s.add(Image(id="p", path=seq, width=1.0, pos=(2, 0, 0)))
+    with pytest.raises(DocumentError, match="p.fps cannot change"):
+        s.at(0).to("p.fps", 12.0, duration=1.0)
+    s.at(0).to("v.width", 2.0, duration=1.0)  # everything else animates as before
+    for clip in ({"speed": expr("1 + t")}, {"start": expr("t")}):
+        with pytest.raises(DocumentError, match="cannot change over time"):
+            Scene.from_video("c.mp4", base_dir=tmp_path, passes=None, clip=clip)
+    with pytest.raises((DocumentError, ValueError)):
+        Scene.from_video("c.mp4", base_dir=tmp_path, passes=None, clip={"speed": "fast"})
 
 
 def test_without_pyav_a_video_is_missing_extra_and_draws_nothing(tmp_path, monkeypatch):

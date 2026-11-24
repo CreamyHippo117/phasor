@@ -68,6 +68,9 @@ class Picture(ObjectBase):
         "luminous": {"params": {"frame": True}, "style": {"glow": "soft", "frame": "highlight"}},
     }
     kind: ClassVar[str] = "picture"
+    # clip time = (t - start) x speed into trim (fps: a sequence's frame times), a pure
+    # function of t only while these hold still (an animated speed played it backwards)
+    Fixed: ClassVar = ("start", "trim", "speed", "fps")
 
     def source(self, state: SceneState) -> mm.Source:
         """The frames this object shows (``media_math.open_source``)."""
@@ -171,6 +174,9 @@ class Picture(ObjectBase):
         if probe.too_big:
             out["too_big"] = probe.too_big  # lint video_too_big
             out["file"] = p.path
+        if probe.truncated:
+            out["truncated"] = probe.truncated  # lint truncated: the first part plays
+            out["file"] = p.path
         if p.backdrop or p.fill:
             out["backdrop"] = True  # labels may sit on it
         if p.fill:
@@ -184,6 +190,11 @@ class Picture(ObjectBase):
                         "seconds": round(probe.seconds, 6), "frame": index,
                         "clip_time": round(at, 6), "looping": p.loop,
                         "trimmed": a > 0 or b < probe.seconds, "ended": ended})  # fmt: skip
+            if p.trim[0] >= probe.seconds:  # nothing left to play: its last frame, always
+                out["ended"] = True
+                out["trim_past_end"] = round(probe.seconds, 6)  # lint clip_ended
+            if self.kind == "video":  # lint too_many_clips: more than are kept open
+                out["decoders"] = [mm.MAX_OPEN, mm.PER_FILE]
         return out
 
     def average_color(self, state: SceneState) -> tuple[float, float, float] | None:

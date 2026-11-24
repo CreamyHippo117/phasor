@@ -109,6 +109,7 @@ class Probe:
     frame_seconds: float = 0.0
     problem: str = ""
     too_big: str = ""
+    truncated: str = ""  # shown, but only its first part (lint ``truncated``)
     needs: str = ""
     opaque: bool = True
     pts: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.int64))  # video
@@ -216,7 +217,7 @@ def _open_picture(path: Path, stamp: tuple | None, max_pixels: int):
     from PIL import Image as PILImage
 
     expect = stamp[1:] if stamp is not None and isinstance(stamp[1], int) else None
-    f = files.open_regular(path, expect)
+    f = files.open_regular(path, expect, nofollow=True)
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", PILImage.DecompressionBombWarning)
@@ -289,16 +290,19 @@ class StillSource(Source):
 
 
 class SequenceSource(Source):
-    """Pictures ``frames/shot_%04d.png`` played at ``fps``: frame i is the i-th file. Every
-    frame is read when shown (each a regular file inside the folder, the stamp covering all of
-    them); one that cannot be read draws nothing. Frames of another size than the first are
-    stretched to its box."""
+    """Pictures ``frames/shot_%04d.png`` played at ``fps``: frame i is the i-th file, at
+    most ``files.MAX_SEQUENCE`` of them (more: the first ones play, lint ``truncated``).
+    Every frame is read when shown (each a regular file inside the folder, the stamp
+    covering all of them, and checked against its own time and size when opened, never
+    through a link swapped in since); one that cannot be read draws nothing. Frames of
+    another size than the first are stretched to its box."""
 
     kind = "sequence"
 
-    def __init__(self, stamp: tuple, frames: tuple[Path, ...], fps: float) -> None:
+    def __init__(self, stamp: tuple, frames: tuple, fps: float) -> None:
         super().__init__(stamp)
-        self.paths = frames
+        self.frames = frames  # (path, modification time, size) of each
+        self.paths = tuple(f[0] for f in frames)
         self.fps = fps
 
     def _probe_key(self) -> tuple:
@@ -307,21 +311,22 @@ class SequenceSource(Source):
     def _probe(self) -> Probe:
         if not (np.isfinite(self.fps) and 0 < self.fps <= MAX_FPS):
             return Probe(problem=f"fps {self.fps!r} is not between 0 and {MAX_FPS:g}")
-        if len(self.paths) > files.MAX_SEQUENCE:
-            return Probe(too_big=f"more than {files.MAX_SEQUENCE} frames")
         try:
-            first = _decode_picture(self.paths[0], None, MAX_FRAME_PIXELS, STORE_SIDE)
+            first = self._read(0, Probe())
         except PictureTooBig as e:
             return Probe(too_big=f"frame 0 is {e}")
         h, w = first.shape[:2]
         first.flags.writeable = False
         _FRAMES.put((self.kind, self.stamp, 0), first)
-        n = len(self.paths)
+        n = min(len(self.paths), files.MAX_SEQUENCE)
+        cut = (f"more than {files.MAX_SEQUENCE} pictures: the first {files.MAX_SEQUENCE} "
+               "play" if len(self.paths) > n else "")  # fmt: skip
         return Probe(width=w, height=h, times=np.arange(n) / self.fps,
-                     frame_seconds=1.0 / self.fps, opaque=False)  # fmt: skip
+                     frame_seconds=1.0 / self.fps, opaque=False, truncated=cut)  # fmt: skip
 
     def _read(self, index: int, probe: Probe) -> np.ndarray | None:
-        return _decode_picture(self.paths[index], None, MAX_FRAME_PIXELS, STORE_SIDE)
+        path, mtime, size = self.frames[index]
+        return _decode_picture(path, (None, mtime, size), MAX_FRAME_PIXELS, STORE_SIDE)
 
 
 # ---------------------------------------------------------------- video (PyAV)
@@ -614,11 +619,12 @@ def open_source(base_dir: str | Path, value: str, *, video: bool = False,
     """The source ``value`` names in the scene's folder: a clip (``video``), a picture
     sequence (``files.is_sequence``) played at ``fps``, or one picture. A source with
     nothing there is ``missing``."""
+    if files.is_sequence(value):
+        stamp, frames = files.sequence_frames(base_dir, value)
+        return SequenceSource(stamp, frames, float(fps)) if frames else Source(stamp)
     stamp = files.stamp(base_dir, value)
     if stamp[1] is None:
         return Source(stamp)
-    if files.is_sequence(value):
-        return SequenceSource(stamp, files.sequence(base_dir, value), float(fps))
     path = Path(stamp[0])
     return VideoSource(stamp, path) if video else StillSource(stamp, path)
 

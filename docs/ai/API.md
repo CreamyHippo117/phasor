@@ -567,11 +567,12 @@ Each issue has `code`, `severity`, `message`, `ids`, `times`, `fix_hint`, and `f
 | `sound_limit` | warning | a sound clip the mix leaves out: past `narration.MAX_SOUNDS` (256) clips in one scene; or a clip whose `start` or `gain` is animated (the mix reads them once, at 0 s, so the animation is not heard) |
 | `svg_too_complex` | warning | an SVG past a reading limit (size, elements once `<use>` is expanded, nesting, shapes, segments): its drawing is empty or cut short |
 | `crowded_ticks` | warning | numbers along an axis (or a chart's bar names) closer **on screen** than `[lint] tick_gap` text heights (every pair, so an axis a 3D camera sees end-on is caught); `path` names the axis (`ax.x`), the hint the smallest nice step that clears them, or to turn the camera when the axis points at it |
-| `truncated` | warning | a file a `Table` or `Code` reads is past a limit (rows, columns, lines); only its first part is shown |
+| `truncated` | warning | a file a `Table` or `Code` reads is past a limit (rows, columns, lines), or a picture sequence has more than 3000 pictures; only its first part is shown (plays) |
 | `unknown_language` | warning | a `Code` language pygments does not know: drawn plain |
 | `clamped` | warning | less is drawn than asked: an axis range past 100 ticks (drawn at a wider nice step), a span lost in rounding (no ticks), axis labels past one per axis or that cannot be typeset (left out), bars outside a chart's `y_range` (cut at it) |
-| `video_too_big` | warning | a clip or picture sequence past a cap (a frame past 8K, more than 216 000 frames or 3000 pictures, longer than 4 hours): it is not drawn |
-| `clip_ended` | warning | a clip or sequence shown past its end with `loop` off: it holds its last frame (no fix: loop it, slow it, trim less or fade it out) |
+| `video_too_big` | warning | a clip or picture sequence past a cap (a frame past 8K, more than 216 000 frames, longer than 4 hours): it is not drawn |
+| `clip_ended` | warning | a clip or sequence shown past its end with `loop` off, or trimmed from at or past its end: it holds its last frame (no fix: loop it, slow it, trim less or fade it out) |
+| `too_many_clips` | warning | more `Video` objects shown at once than a process keeps decoders open (8, or 4 of one file): each frame is found by seeking, so drawing is much slower |
 
 `engine.autofix()` applies every `fix` the linter offers (add `near` for a child label that
 overlaps, `on_screen` for something cut by the frame), lints again, and returns
@@ -633,7 +634,10 @@ makes the box the camera's whole view (2D camera; ignored in perspective). `back
 with `fill`) lets labels sit on it: layout does not avoid it, lint `overlap` does not count
 it, and `contrast` judges text against the picture (without OpenGL, against the mean colour
 of the frame shown). Semantics add `frames`, `fps`, `seconds`, `frame` (shown at t),
-`clip_time`, `looping`, `trimmed`, `ended`.
+`clip_time`, `looping`, `trimmed`, `ended`. `start`, `trim`, `speed` (and a sequence's
+`fps`) hold one value for the whole scene: a track, an expression or an updater on one is a
+validation error (`bad_param`), since clip time is worked out from them at each t (to
+change speed part-way, play two objects one after the other).
 
 `s.background(path, **params)` puts a picture, a sequence or a clip behind everything
 (`fill`, `fit="cover"`, `z_index` -1000); `Scene.from_video(path, clip={...})` makes a scene
@@ -686,13 +690,15 @@ assert sem["frame"] == 6 and sem["looping"] and sem["trimmed"]  # 1 s in: looped
 ```
 
 Limits (`domains/media_math.py`): a frame past 8K (7680 x 4320), more than 216 000 frames,
-longer than 4 hours or a file over 64 GB is `video_too_big`; a sequence past 3000 pictures
-too; a file that is not a video, has no video stream, no frames, frames that do not decode
-or an absurd size is `bad_file`; a picture past Pillow's own bomb limit (about 179 million
-pixels) is `bad_file`. Each draws nothing. Frames larger than 4096 pixels are scaled down
-when decoded; decoded frames are kept in a cache of at most 256 MB per process; at most 4
-clips are open for decoding at once, each decoding forward when played in order and seeking
-to the nearest keyframe otherwise.
+longer than 4 hours or a file over 64 GB is `video_too_big`; a file that is not a video, has
+no video stream, no frames, frames that do not decode or an absurd size is `bad_file`; a
+picture past Pillow's own bomb limit (about 179 million pixels) is `bad_file`. Each draws
+nothing. A sequence past 3000 pictures plays its first 3000 (`truncated`). Frames larger
+than 4096 pixels are scaled down when decoded; decoded frames are kept in a cache of at most
+256 MB per process, stills in one of their own (2 GB). Clips decode forward when played in
+order and otherwise seek to the keyframe before the frame (open GOPs and mp4 edit lists
+included); a process keeps at most 8 decoders open, 4 of one file (`too_many_clips` past
+that).
 
 ## Stills and files
 

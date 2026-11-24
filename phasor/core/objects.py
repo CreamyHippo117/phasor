@@ -173,6 +173,11 @@ class ObjectBase:
     # The parameters that name files the type reads (core/files.py): relative to the scene's
     # folder and inside it; a missing one is the lint issue ``missing_file``.
     Files: ClassVar[tuple[str, ...]] = ()
+    # Parameters that hold one value for the whole scene: a track, an expression or an
+    # updater on one is a validation error (``bad_param``). A clip's timing (``Video``):
+    # its clip time is worked out from them at each t, so a changing speed would play it
+    # backwards (Milestone 24 audit).
+    Fixed: ClassVar[tuple[str, ...]] = ()
 
     def __init__(
         self,
