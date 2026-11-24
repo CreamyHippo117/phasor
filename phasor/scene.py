@@ -333,8 +333,14 @@ class Scene:
         """Move the markers placed by hand (``marker``) onto the narration's sentences
         (``Engine.snap_to_narration``): what moves, from where to where, why and how sure.
         ``dry_run`` only says. Run it after ``narrate``; running it again moves nothing."""
-        return self.engine.snap_to_narration(dry_run=dry_run, anchors=anchors,
-                                             allow_short=allow_short, origin="script")  # fmt: skip
+        out = self.engine.snap_to_narration(dry_run=dry_run, anchors=anchors,
+                                            allow_short=allow_short, origin="script")  # fmt: skip
+        if out.get("errors"):  # refused: raise, as every Scene call does
+            from phasor.core.issues import DocumentError, Issue
+
+            raise DocumentError([Issue(**{k: v for k, v in e.items() if k != "fix"})
+                                 for e in out["errors"]])  # fmt: skip
+        return out
 
     def pace(self) -> None:
         """Give each sentence breathing room in proportion to how much it changes on screen:

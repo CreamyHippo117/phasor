@@ -286,19 +286,11 @@ def from_audio(script: str | None, audio: str, base_dir: Path, theme: Theme) -> 
     if script and script.strip():
         blocks = parse_script(script)
         spoken = [b for b in blocks if b.pause is None]
-        before, pause = [], 0.0
-        for b in blocks:
-            if b.pause is not None:
-                pause += b.pause
-            else:
-                before.append(pause)
-                pause = 0.0
-        wps = n["words_per_second"]
         try:
-            placed = sp.align(heard, [estimate_duration(b.text, wps) for b in spoken], before)
+            placed = sound.aligned(base_dir, rel, script)
         except ValueError as e:
             raise VoiceError(f"narration audio {rel!r}: {e}") from None
-        found = [(p.start, p.end, sp.pieces(p, [estimate_duration(x, wps) for x in b.pieces]))
+        found = [(p.start, p.end, sp.pieces(p, [sp.text_length(x) for x in b.pieces]))
                  for p, b in zip(placed, spoken, strict=True)]  # fmt: skip
         text = script
     else:

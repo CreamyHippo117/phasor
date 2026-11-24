@@ -10,6 +10,7 @@ none can be created the inspector runs in analytic mode (tier C).
 
 from __future__ import annotations
 
+import itertools
 import threading
 from collections import OrderedDict
 from collections.abc import Callable
@@ -132,6 +133,22 @@ class _Snapshot:
             self.lint = {}
             self.states.clear()
             self.snapshots.clear()
+
+
+def _check_pins(pins: dict, hand: dict[str, float], owned: dict[str, float]) -> None:
+    """``ValueError`` when pinned markers would change order among themselves or cross a
+    marker the narration owns (it may not move, so the pin is wrong)."""
+    order = sorted(pins, key=lambda k: (hand[k], k))
+    for a, b in itertools.pairwise(order):
+        if pins[b].t <= pins[a].t:
+            raise ValueError(f"anchors {a!r} and {b!r} would swap their order ({a!r} comes "
+                             f"first in the scene; their blocks start at {pins[a].t:g} and "
+                             f"{pins[b].t:g} s)")  # fmt: skip
+    for k, b in pins.items():
+        for o, t in owned.items():
+            if (hand[k] < t) != (b.t < t) or b.t == t:
+                raise ValueError(f"anchor {k!r} -> {b.t:g} s would cross the marker {o!r} the "
+                                 f"narration owns ({t:g} s): markers keep their order")  # fmt: skip
 
 
 def file_stamps(c: Compiled) -> tuple:
@@ -547,18 +564,26 @@ class Engine:
         ``narration.blocks[2]``). Every motion anchored to a moved marker follows it.
 
         Returns what moves (``moves``: marker, from, to, why, confidence, kind) and what does
-        not (``kept``), the detection's ``quality`` and ``flags``. ``dry_run`` changes nothing
+        not (``kept``), the detection's ``quality`` and ``flags``, and ``alignment``: how the
+        scene's clock was read (``scale``, ``offset``, ``residual``, ``margin``,
+        ``ambiguous``: then nothing moves) and, for a recording read with its script, how
+        the text fitted the speech (``speech``: ``rate``, ``misfit``, ``worst``,
+        ``doubtful``). ``unreliable`` is true when any of that is in doubt (flags
+        ``ambiguous_timing``, ``alignment_doubtful``, ``unreadable``, ``music``,
+        ``low_snr``, ``no_pauses``). ``dry_run`` changes nothing
         (a preview); otherwise the moves are one patch through ``apply`` (one undo step).
         Snapping again moves nothing. ``ValueError`` without narration or with a bad
-        anchor."""
+        anchor (an anchor that would reorder markers or cross one the narration owns is
+        refused)."""
         from phasor.core.patch import SetMarker
 
-        moves, quality, flags = self._snap_plan(self._snap.compiled, anchors, allow_short)
+        moves, quality, flags, fit = self._snap_plan(self._snap.compiled, anchors, allow_short)
         out: dict[str, Any] = {
             "moves": [m.to_dict() for m in moves if m.moves],
             "kept": [m.to_dict() for m in moves if not m.moves],
             "quality": quality,
             "flags": list(flags),
+            "alignment": fit,
             "unreliable": "unreliable" in flags or quality < 0.3,
             "applied": False,
             "version": self.version,
@@ -591,8 +616,8 @@ class Engine:
         owned = nar.markers()
         markers = doc.timeline.markers
         hand = {k: v for k, v in markers.items() if k not in owned}
-        bounds, quality, flags = narration_boundaries(nar, self.base_dir, n["words_per_second"],
-                                                      n["phrase_pause"])  # fmt: skip
+        bounds, quality, flags, fitted = narration_boundaries(
+            nar, self.base_dir, n["words_per_second"], n["phrase_pause"])  # fmt: skip
         pins: dict[str, sp.Boundary] = {}
         for name, k in (anchors or {}).items():
             if name in owned:
@@ -607,6 +632,7 @@ class Engine:
             b = nar.blocks[k]
             pins[name] = sp.Boundary(round(b.start, 4), "sentence",
                                      f"block {k} ({b.text[:40]!r})", 1.0, k)  # fmt: skip
+        _check_pins(pins, hand, owned)
         # what a scene needs: the motions anchored at its marker (verbs and transitions that
         # start there and end there or at a fixed time), at least the shortest verb's time
         floor = min(float(v["duration"]) for v in c.theme.motion.values() if isinstance(v, dict))
@@ -625,7 +651,18 @@ class Engine:
         moves = sp.plan_snap(hand, owned, bounds, visual_end=visual_end,
                              narration_end=nar.end, reach=n["snap_reach"], need=need,
                              anchors=pins, allow_short=allow_short)  # fmt: skip
-        return moves, quality, flags
+        flags = set(flags)
+        fit = dict(moves.fit)
+        if fit.get("ambiguous"):
+            flags.add("ambiguous_timing")
+        if fitted is not None:
+            fit["speech"] = fitted  # how the script fitted the recording
+            if fitted.get("doubtful"):
+                flags.add("alignment_doubtful")
+        if {"ambiguous_timing", "alignment_doubtful", "unreadable", "music", "low_snr",
+                "no_pauses"} & flags:  # fmt: skip
+            flags.add("unreliable")
+        return moves, quality, tuple(sorted(flags)), fit
 
     def _lint(self, snap: _Snapshot, step: float) -> tuple[Issue, ...]:
         from phasor.domains.audio import info as audio_info

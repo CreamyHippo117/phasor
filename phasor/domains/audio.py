@@ -235,6 +235,42 @@ def speech(base_dir: str | Path, name: str) -> sp.Speech:
     return got
 
 
+@functools.lru_cache(maxsize=16)
+def _aligned(path: str, mtime_ns: int, size: int, cache: str, script: str):
+    from phasor.time.narration import parse_script
+
+    heard = _speech(path, mtime_ns, size, cache)
+    if isinstance(heard, str):
+        return heard
+    try:
+        blocks = parse_script(script)
+        before, pause = [], 0.0
+        for b in blocks:
+            if b.pause is not None:
+                pause += b.pause
+            else:
+                before.append(pause)
+                pause = 0.0
+        spoken = [b for b in blocks if b.pause is None]
+        return sp.align(heard, [sp.text_length(b.text) for b in spoken], before)
+    except ValueError as e:
+        return str(e)
+
+
+def aligned(base_dir: str | Path, name: str, script: str) -> sp.Alignment:
+    """The sentences of ``script`` found in the recording ``name`` (``time.speech.align`` on
+    its cached detection), cached per file version and script: narrating and every later lint
+    and snap read the same alignment, computed once. Do not change what it returns.
+    ``ValueError`` when the file is missing or cannot be read or aligned."""
+    where, mtime, size = files.stamp(base_dir, name)
+    if mtime is None:
+        raise ValueError(files.problem(base_dir, name) or f"no file {name!r}")
+    got = _aligned(where, mtime, size, str(cache_dir()), script)
+    if isinstance(got, str):
+        raise ValueError(got)
+    return got
+
+
 def samples(base_dir: str | Path, name: str, span: tuple[float, float] | None = None
             ) -> tuple[np.ndarray, int]:  # fmt: skip
     """Mono float32 samples of the sound ``name`` (seconds ``span`` of it, else at most
@@ -257,15 +293,17 @@ MAX_BOUNDARIES = 20000
 
 def narration_boundaries(
     narration, base_dir: str | Path, words_per_second: float, phrase_pause: float
-) -> tuple[list[sp.Boundary], float, tuple[str, ...]]:
+) -> tuple[list[sp.Boundary], float, tuple[str, ...], dict | None]:
     """Where a marker may snap to on the narration: every spoken block's start (a sentence,
     or a phrase of a recording read without a script) and, inside blocks that have audio,
     where speech resumes after a pause of at least ``phrase_pause`` seconds. With how sure
     each is: a synthesized block's start is exact (1), an estimated one is a guess (0.5), a
     recording's comes from the alignment (``time.speech.align``, re-run on the cached
-    detection). Also the detection's quality (the lowest of the files) and its flags
-    (``unreadable`` when a file could not be read)."""
-    from phasor.time.narration import PHRASE, PRE_ROLL, estimate_duration, parse_script
+    detection). Also the detection's quality (the lowest of the files; 0 when a file could
+    not be read), its flags (``unreadable`` then) and, for a recording read with its script,
+    how well the text fitted the speech (``Alignment.to_dict``: rate, misfit, worst,
+    doubtful), else None."""
+    from phasor.time.narration import PHRASE, PRE_ROLL
 
     spoken = [(k, b) for k, b in enumerate(narration.blocks) if b.text]
     heard: dict[str, sp.Speech | None] = {}
@@ -281,15 +319,19 @@ def narration_boundaries(
                 heard[b.audio] = None
                 flags.add("unreadable")
     sure: dict[int, float] = {}
+    fit: dict | None = None
     if narration.voice.startswith("file:") and narration.script.strip():
-        src = heard.get(narration.voice[5:])
         try:
-            blocks = [x for x in parse_script(narration.script) if x.pause is None]
-            if src is not None and len(blocks) == len(spoken):
-                wants = [estimate_duration(x.text, words_per_second) for x in blocks]
-                sure = {i: p.confidence for i, p in enumerate(sp.align(src, wants))}
+            found = aligned(base_dir, narration.voice[5:], narration.script)
+            fit = found.to_dict()
+            if len(found) == len(spoken):
+                sure = {i: p.confidence for i, p in enumerate(found)}
+            else:
+                fit["doubtful"] = True  # the narration no longer matches its script
         except ValueError:
-            pass
+            flags.add("unreadable")
+    if "unreadable" in flags:
+        quality = 0.0
     out: list[sp.Boundary] = []
     for i, (k, b) in enumerate(spoken):
         phrase = b.text == PHRASE
@@ -320,4 +362,4 @@ def narration_boundaries(
             prev = s1
         if len(out) > MAX_BOUNDARIES:
             break
-    return out[:MAX_BOUNDARIES], round(quality, 3), tuple(sorted(flags))
+    return out[:MAX_BOUNDARIES], round(quality, 3), tuple(sorted(flags)), fit
