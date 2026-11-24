@@ -580,3 +580,118 @@ def test_engine_render_is_the_job(monkeypatch, tmp_path):
     e = Engine(passes=None)
     e.render(tmp_path / "a.mp4", preset="draft", start="x")
     assert calls == [(e, tmp_path / "a.mp4", {"preset": "draft", "start": "x"})]
+
+
+# ---------------------------------------------------------------- the independent audit's findings
+
+
+def test_a_window_too_long_is_a_clear_error_not_a_memory_error(tmp_path):
+    from phasor.render.job import MAX_FRAMES
+
+    e = _scene().engine
+    for kw in [{"end": 1e12}, {"fps": 1000, "end": 1e6}, {"end": 1e308, "start": -1e308},
+               {"preset": "final", "end": 1e9}]:  # fmt: skip
+        with pytest.raises(ValueError, match="at most"):
+            e.render(tmp_path / "x.mp4", **{"preset": "draft", **kw})
+    assert not (tmp_path / "x.mp4").exists()
+    assert MAX_FRAMES >= 4 * 3600 * 60  # four hours at 60 fps still render
+
+
+def test_a_rate_the_encoder_cannot_write_is_refused(tmp_path):
+    from fractions import Fraction
+
+    for bad in [1e-9, 1e-4, 1 / 1002]:
+        with pytest.raises(ValueError, match="1/1001"):
+            check_fps(bad)
+    assert Fraction(check_fps(1 / 1001)).limit_denominator(1001) > 0
+    s = Scene("slow", look="none", passes=None, fps=1e-9)
+    s.add(Dot(id="d"))
+    with pytest.raises(ValueError, match="1/1001"):
+        s.engine.render(tmp_path / "x.mp4", preset="final")
+
+
+def test_a_marker_called_inf_or_nan_is_a_marker():
+    from phasor.render.job import resolve_time
+
+    s = Scene("odd", look="none", passes=None)
+    s.add(Dot(id="d"))
+    s.marker("inf", 1.5)
+    s.marker("nan", 2.5)
+    assert resolve_time(s.engine, "inf") == 1.5 and resolve_time(s.engine, "nan") == 2.5
+    with pytest.raises(ValueError):
+        resolve_time(s.engine, "infinity")  # not a marker here: a number that is not finite
+
+
+def test_no_fork_when_the_theme_does_not_drift(monkeypatch):
+    s = Scene("orbit", look="none", passes=None, life="off")
+    s.use_camera("orbit", azimuth=30.0)
+    s.add(Dot(id="d"))
+    assert s.engine.without_decoration() is not s.engine  # the theme drifts: 3 degrees
+    monkeypatch.setitem(s.engine._snap.compiled.theme.camera, "drift", 0.0)
+    s.engine._plain = None
+    assert s.engine.without_decoration() is s.engine  # nothing would change: no fork, no bake
+
+
+def test_the_fast_nvenc_pipe_is_constant_quality(monkeypatch, tmp_path):
+    from phasor.render import encode
+
+    seen = []
+
+    class Proc:
+        stdin = None
+
+        def __init__(self, cmd, **kw):
+            seen.append(cmd)
+
+    monkeypatch.setattr(encode.shutil, "which", lambda _: "ffmpeg")
+    monkeypatch.setattr(encode.subprocess, "Popen", Proc)
+    encode.FFmpegWriter(tmp_path / "a.mp4", 64, 48, 15.0, "h264_nvenc", "yuv420p", "fast")
+    encode.FFmpegWriter(tmp_path / "a.mp4", 64, 48, 15.0, "h264_nvenc", "yuv420p")
+    fast, quality = seen
+    assert fast[fast.index("-b:v") + 1] == "0" and "-cq" in fast
+    assert "-b:v" not in quality  # the quality command line is as it was
+
+
+def test_busy_ssim_of_flat_pictures_is_a_number():
+    from tests.ssim import ssim
+
+    flat = np.full((32, 32, 3), 7, np.uint8)
+    assert ssim(flat, flat, busy=20.0) == pytest.approx(1.0)
+    assert 0 < ssim(flat, flat + 50, busy=20.0) < 1
+
+
+@pytest.mark.gl
+@needs_gl
+def test_a_cancelled_render_removes_the_folders_it_made(tmp_path):
+    from phasor.render.job import RenderCancelled
+
+    e = _scene().engine
+    for target in [tmp_path / "new" / "deeper" / "v.mp4", tmp_path / "frames" / "seq"]:
+        with pytest.raises(RenderCancelled):
+            e.render(target, preset="draft", cancel=lambda: True)
+        stop = threading.Event()
+        with pytest.raises(RenderCancelled):
+            e.render(target, preset="draft", cancel=stop,
+                     progress=lambda k, n, stop=stop: stop.set())  # fmt: skip
+    (tmp_path / "kept").mkdir()
+    stop = threading.Event()
+    with pytest.raises(RenderCancelled):
+        e.render(tmp_path / "kept" / "v.mp4", preset="draft", cancel=stop,
+                 progress=lambda k, n: stop.set())  # fmt: skip
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["kept"]  # made here, removed
+    assert list((tmp_path / "kept").iterdir()) == []
+
+
+@pytest.mark.gl
+@needs_gl
+def test_ctrl_c_while_the_video_is_finished_leaves_no_file(tmp_path, monkeypatch):
+    import phasor.render.job as job
+
+    def interrupted(self):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(job.BackgroundWriter, "close", interrupted)
+    e = _scene().engine
+    with pytest.raises(KeyboardInterrupt):
+        e.render(tmp_path / "out" / "v.mp4", preset="draft", end=0.4)
+    assert not (tmp_path / "out").exists()

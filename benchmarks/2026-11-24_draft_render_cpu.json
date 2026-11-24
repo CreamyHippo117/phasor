@@ -1,25 +1,230 @@
 {
-  "what": "Milestone 21: whole renders, wall clock (Engine.render after load and the scene's own bake; a draft's one-time fork bake counted), one process, kernels on 4 CPU threads (g++), GL on llvmpipe, ffmpeg:libx264. final: a 2 s window (4-6 s), the whole scene takes ~8 min.",
-  "machine": "4-core Linux container, no GPU (tier B)",
-  "commit": "531f95d",
-  "renders": [
-    {"scene": "prism_primes", "preset": "draft", "frames": 195, "size": [640, 360], "fps": 15, "wall_s": 4.82, "frames_per_s": 40.5, "video_s_per_wall_s": 2.70, "drawn": 103, "repeated": 92, "bytes": 397213},
-    {"scene": "prism_primes", "preset": "preview", "frames": 390, "size": [960, 540], "fps": 30, "wall_s": 73.01, "frames_per_s": 5.34, "video_s_per_wall_s": 0.178, "bytes": 711995},
-    {"scene": "prism_primes", "preset": "final", "frames": 120, "size": [1920, 1080], "fps": 60, "wall_s": 83.88, "frames_per_s": 1.43, "video_s_per_wall_s": 0.024, "window_s": [4, 6]},
-    {"scene": "motion_gallery", "preset": "draft", "frames": 180, "size": [640, 360], "fps": 15, "wall_s": 9.35, "frames_per_s": 19.3, "video_s_per_wall_s": 1.28, "drawn": 180, "repeated": 0, "bytes": 829664},
-    {"scene": "motion_gallery", "preset": "preview", "frames": 360, "size": [960, 540], "fps": 30, "wall_s": 74.23, "frames_per_s": 4.85, "video_s_per_wall_s": 0.162, "bytes": 763741},
-    {"scene": "motion_gallery", "preset": "final", "frames": 120, "size": [1920, 1080], "fps": 60, "wall_s": 158.01, "frames_per_s": 0.76, "video_s_per_wall_s": 0.013, "window_s": [4, 6]},
-    {"scene": "basics_3d", "preset": "draft", "frames": 180, "size": [640, 360], "fps": 15, "wall_s": 15.28, "frames_per_s": 11.8, "video_s_per_wall_s": 0.786, "drawn": 180, "repeated": 0, "bytes": 992262},
-    {"scene": "basics_3d", "preset": "preview", "frames": 360, "size": [960, 540], "fps": 30, "wall_s": 91.18, "frames_per_s": 3.95, "video_s_per_wall_s": 0.132, "bytes": 754474},
-    {"scene": "basics_3d", "preset": "final", "frames": 120, "size": [1920, 1080], "fps": 60, "wall_s": 238.55, "frames_per_s": 0.50, "video_s_per_wall_s": 0.008, "window_s": [4, 6]}
-  ],
-  "dedup": [
-    {"scene": "prism_primes", "frames": 195, "repeated": 92, "wall_s_with": 5.18, "wall_s_without": 8.29, "byte_identical": true},
-    {"scene": "prism_domain", "frames": 120, "repeated": 99, "wall_s_with": 3.47, "wall_s_without": 5.00, "byte_identical": true},
-    {"scene": "residues", "frames": 38, "repeated": 15, "wall_s_with": 1.27, "wall_s_without": 1.40, "byte_identical": true}
-  ],
-  "workers_draft": [
-    {"scene": "basics_3d", "workers": 1, "wall_s": 13.03}, {"scene": "basics_3d", "workers": 2, "wall_s": 11.94}, {"scene": "basics_3d", "workers": 4, "wall_s": 14.14},
-    {"scene": "prism_primes", "workers": 1, "wall_s": 5.61}, {"scene": "prism_primes", "workers": 2, "wall_s": 6.66}, {"scene": "prism_primes", "workers": 4, "wall_s": 9.12}
-  ]
+ "what": "Milestone 21: whole renders, wall clock (Engine.render after load and the scene's own bake; a draft's one-time fork bake counted), one process, kernels on 4 CPU threads (g++), GL on llvmpipe, ffmpeg:libx264. final: a 2 s window (4-6 s), the whole scene takes ~8 min.",
+ "machine": "4-core Linux container, no GPU (tier B)",
+ "commit": "531f95d",
+ "renders": [
+  {
+   "scene": "prism_primes",
+   "preset": "draft",
+   "frames": 195,
+   "size": [
+    640,
+    360
+   ],
+   "fps": 15,
+   "wall_s": 4.82,
+   "frames_per_s": 40.5,
+   "video_s_per_wall_s": 2.7,
+   "drawn": 103,
+   "repeated": 92,
+   "bytes": 397213
+  },
+  {
+   "scene": "prism_primes",
+   "preset": "preview",
+   "frames": 390,
+   "size": [
+    960,
+    540
+   ],
+   "fps": 30,
+   "wall_s": 73.01,
+   "frames_per_s": 5.34,
+   "video_s_per_wall_s": 0.178,
+   "bytes": 711995
+  },
+  {
+   "scene": "prism_primes",
+   "preset": "final",
+   "frames": 120,
+   "size": [
+    1920,
+    1080
+   ],
+   "fps": 60,
+   "wall_s": 83.88,
+   "frames_per_s": 1.43,
+   "video_s_per_wall_s": 0.024,
+   "window_s": [
+    4,
+    6
+   ]
+  },
+  {
+   "scene": "motion_gallery",
+   "preset": "draft",
+   "frames": 180,
+   "size": [
+    640,
+    360
+   ],
+   "fps": 15,
+   "wall_s": 9.35,
+   "frames_per_s": 19.3,
+   "video_s_per_wall_s": 1.28,
+   "drawn": 180,
+   "repeated": 0,
+   "bytes": 829664
+  },
+  {
+   "scene": "motion_gallery",
+   "preset": "preview",
+   "frames": 360,
+   "size": [
+    960,
+    540
+   ],
+   "fps": 30,
+   "wall_s": 74.23,
+   "frames_per_s": 4.85,
+   "video_s_per_wall_s": 0.162,
+   "bytes": 763741
+  },
+  {
+   "scene": "motion_gallery",
+   "preset": "final",
+   "frames": 120,
+   "size": [
+    1920,
+    1080
+   ],
+   "fps": 60,
+   "wall_s": 158.01,
+   "frames_per_s": 0.76,
+   "video_s_per_wall_s": 0.013,
+   "window_s": [
+    4,
+    6
+   ]
+  },
+  {
+   "scene": "basics_3d",
+   "preset": "draft",
+   "frames": 180,
+   "size": [
+    640,
+    360
+   ],
+   "fps": 15,
+   "wall_s": 15.28,
+   "frames_per_s": 11.8,
+   "video_s_per_wall_s": 0.786,
+   "drawn": 180,
+   "repeated": 0,
+   "bytes": 992262
+  },
+  {
+   "scene": "basics_3d",
+   "preset": "preview",
+   "frames": 360,
+   "size": [
+    960,
+    540
+   ],
+   "fps": 30,
+   "wall_s": 91.18,
+   "frames_per_s": 3.95,
+   "video_s_per_wall_s": 0.132,
+   "bytes": 754474
+  },
+  {
+   "scene": "basics_3d",
+   "preset": "final",
+   "frames": 120,
+   "size": [
+    1920,
+    1080
+   ],
+   "fps": 60,
+   "wall_s": 238.55,
+   "frames_per_s": 0.5,
+   "video_s_per_wall_s": 0.008,
+   "window_s": [
+    4,
+    6
+   ]
+  }
+ ],
+ "dedup": [
+  {
+   "scene": "prism_primes",
+   "frames": 195,
+   "repeated": 92,
+   "wall_s_with": 5.18,
+   "wall_s_without": 8.29,
+   "byte_identical": true
+  },
+  {
+   "scene": "prism_domain",
+   "frames": 120,
+   "repeated": 99,
+   "wall_s_with": 3.47,
+   "wall_s_without": 5.0,
+   "byte_identical": true
+  },
+  {
+   "scene": "residues",
+   "frames": 38,
+   "repeated": 15,
+   "wall_s_with": 1.27,
+   "wall_s_without": 1.4,
+   "byte_identical": true
+  }
+ ],
+ "workers_draft": [
+  {
+   "scene": "basics_3d",
+   "workers": 1,
+   "wall_s": 13.03
+  },
+  {
+   "scene": "basics_3d",
+   "workers": 2,
+   "wall_s": 11.94
+  },
+  {
+   "scene": "basics_3d",
+   "workers": 4,
+   "wall_s": 14.14
+  },
+  {
+   "scene": "prism_primes",
+   "workers": 1,
+   "wall_s": 5.61
+  },
+  {
+   "scene": "prism_primes",
+   "workers": 2,
+   "wall_s": 6.66
+  },
+  {
+   "scene": "prism_primes",
+   "workers": 4,
+   "wall_s": 9.12
+  }
+ ],
+ "kernel_bound": [
+  {
+   "scene": "point_cloud",
+   "window_s": [
+    3.0,
+    3.4
+   ],
+   "preset": "draft",
+   "frames": 6,
+   "wall_s": 48.5,
+   "s_per_frame": 8.09
+  },
+  {
+   "scene": "point_cloud",
+   "window_s": [
+    3.0,
+    3.4
+   ],
+   "preset": "preview",
+   "frames": 12,
+   "wall_s": 76.2,
+   "s_per_frame": 6.35
+  }
+ ]
 }

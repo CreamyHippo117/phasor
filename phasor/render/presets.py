@@ -92,6 +92,7 @@ PRESETS: dict[str, Preset] = {
 }  # fmt: skip
 
 MAX_FPS = 1000.0
+MIN_FPS = 1 / 1001  # the encoders take the rate as a fraction with a denominator up to 1001
 
 
 def preset_named(name: str) -> Preset:
@@ -102,13 +103,13 @@ def preset_named(name: str) -> Preset:
 
 
 def check_fps(fps: Any) -> float:
-    """A frame rate a render may use: finite, above 0, at most ``MAX_FPS``."""
+    """A frame rate a render may use: finite, from ``MIN_FPS`` (1/1001) to ``MAX_FPS``."""
     try:
         f = float(fps)
     except (TypeError, ValueError):
         raise ValueError(f"fps must be a number, got {fps!r}") from None
-    if not (math.isfinite(f) and 0 < f <= MAX_FPS):
-        raise ValueError(f"fps must be above 0 and at most {MAX_FPS:g}, got {fps!r}")
+    if not (math.isfinite(f) and MIN_FPS <= f <= MAX_FPS):
+        raise ValueError(f"fps must be from 1/1001 to {MAX_FPS:g}, got {fps!r}")
     return f
 
 

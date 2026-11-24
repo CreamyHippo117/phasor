@@ -157,6 +157,8 @@ class FFmpegWriter:
         self.path, self.encoder, self.size = path, f"ffmpeg:{codec}", (width, height)
         rate = _rate(fps)
         fast = [a for k, v in fast_options(codec, fps).items() for a in (f"-{k}", v)]
+        if fast and codec.endswith("_nvenc"):  # constant quality, as the PyAV path's bit_rate 0
+            fast += ["-b:v", "0"]  # (untested: no NVIDIA card here)
         cmd = [exe, "-y", "-hide_banner", "-loglevel", "error",
                "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{width}x{height}",
                "-r", f"{rate.numerator}/{rate.denominator}", "-i", "-",
@@ -276,13 +278,19 @@ def _nvenc_takes(codec: str, width: int, height: int) -> bool:
         return False
 
 
+def mux_temp(video: str | Path) -> Path:
+    """Where ``mux_audio`` writes before it replaces ``video``."""
+    video = Path(video)
+    return video.with_name(video.stem + ".mux" + video.suffix)
+
+
 def mux_audio(video: str | Path, samples: np.ndarray, rate: int) -> None:
     """Add a mono int16 narration track to a finished video file, in place. The video
     stream is copied, not re-encoded; the audio becomes AAC (MP4) or PCM (MOV)."""
     import av
 
     video = Path(video)
-    tmp = video.with_name(video.stem + ".mux" + video.suffix)
+    tmp = mux_temp(video)
     with av.open(str(video)) as src, av.open(str(tmp), mode="w") as dst:
         vin = src.streams.video[0]
         vout = dst.add_stream_from_template(vin)

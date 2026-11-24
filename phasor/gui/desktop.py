@@ -541,6 +541,7 @@ class ExportDialog(QDialog):
         lay.addWidget(self.status)
         lay.addWidget(self.buttons)
         self.kind.currentIndexChanged.connect(self._kind_changed)
+        self.preset.currentIndexChanged.connect(self._kind_changed)  # a draft: a.draft.mp4
         self._kind_changed()
 
     def _kind(self) -> str:
@@ -556,7 +557,10 @@ class ExportDialog(QDialog):
         else:
             self.status.setText("")
         base = Path(self.out.text()) if self.out.text() else self._default_dir() / self._stem()
-        self.out.setText(str(base.with_name(base.name.split(".")[0] + EXPORTS[k]["suffix"])))
+        # a draft never takes the real render's name (as `phasor render --preset draft`)
+        draft = ".draft" if k != "web" and self.preset.currentData() == "draft" else ""
+        suffix = draft + EXPORTS[k]["suffix"]
+        self.out.setText(str(base.with_name(base.name.split(".")[0] + suffix)))
 
     def _default_dir(self) -> Path:
         p = self.win.ed.path

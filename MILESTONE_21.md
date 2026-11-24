@@ -9,14 +9,16 @@ Exit condition: **a draft render of an example scene at 15 fps with no post effe
 the same picture, several times faster than preview, cancellable with progress, from the CLI,
 the Workspace tool and the Engine API.**
 
-Status: **built; focused gates green on Linux (tier B: llvmpipe, CPU kernels); self-gated
-by the authoring model, not independently audited.** Windows, macOS and CUDA untested.
+Status: **built; audited independently (2026-11-24): 1 blocker + 4 should-fix + 6 nits
+fixed, each with a regression test that failed before the fix (see "Audit"); focused gates
+green on Linux (tier B: llvmpipe, CPU kernels).** The full suite is left to CI. Windows,
+macOS, CUDA, NVENC and the desktop dialog by hand untested.
 
 ## Built
 
 | Area | Where | What |
 | --- | --- | --- |
-| The preset table | `phasor/render/presets.py` | `Preset` (size: `width` x `height`, or a `long_side` keeping the scene's aspect with even sides and never enlarging; `fps`; `shutter`, `blur_samples`; `effects`; `life`; `dedup`; `encoder`) and `PRESETS`: `draft`, `preview`, `final`, `4k`. `Effects(bloom, lens, fog)`: `FULL`, `DRAFT`. `preset_named` and `check_fps` (above 0, at most 1000, finite) give clean `ValueError`s. `render.job.BLUR` is read from it |
+| The preset table | `phasor/render/presets.py` | `Preset` (size: `width` x `height`, or a `long_side` keeping the scene's aspect with even sides and never enlarging; `fps`; `shutter`, `blur_samples`; `effects`; `life`; `dedup`; `encoder`) and `PRESETS`: `draft`, `preview`, `final`, `4k`. `Effects(bloom, lens, fog)`: `FULL`, `DRAFT`. `preset_named` and `check_fps` (1/1001 to 1000, finite) give clean `ValueError`s. `render.job.BLUR` is read from it |
 | The plain look | `render/post.py`, `render/passes.py`, `engine.py` | `finish(..., effects=)` skips the bloom pyramid and the lens (fringe, vignette); the tone map and sRGB encode run once as always. `GLRenderer.start_color_raw(fog=, emission=)`: no depth fog on lit surfaces, and the emission target is not read back or widened when nothing blooms. `Engine.frame(..., effects=)`, `frame_blurred(..., effects=)` |
 | No decoration | `engine.py` | `Engine.without_decoration()`: a fork (`fork` + `apply`) with `meta.life="off"` and, on an orbit camera that takes the theme's drift, `drift=0`; made once per version of the document (keyed by `fingerprint`) and kept; the engine itself when there is nothing to strip. Its layout bake is made in it, once, like any engine's (never per frame; workers get its bake, ADR 0003) |
 | Frame de-duplication | `render/framekey.py`, `render/passes.py`, `render/job.py`, `scene.py` | `GLRenderer.frame_plan(state, size, fog=)` records each object's color-pass draw calls (no GL) and a 256-bit BLAKE2 digest of everything the drawing depends on: the calls (arrays by bytes), draw order, each object's id, type, layer, opacity, flash and camera, the light, the background, the stroke hue, the size and the fog flag; kernel fields by type, parameters, roles, style and quad (as the field cache keys them). `render.job.FrameDrawer` repeats the last frame's bytes when the key is the last one's, and otherwise draws with the recorded calls (`Engine.frame(plan=)`), so `draw` runs once per frame either way. Workers: a worker starting a stretch takes the frame before it as "last" (`prime`) and sends `("repeat", k)`; the parent repeats its last bytes. Only with `dedup` (the draft) and never with motion blur. Unknown values in a digest get a token that never repeats (a frame is drawn rather than wrongly repeated) |
@@ -24,7 +26,7 @@ by the authoring model, not independently audited.** Windows, macOS and CUDA unt
 | Progress, cancel, window | `render/job.py` | `render_file(cancel=)`: a `threading.Event` or a callable, checked before the first frame and between frames; cancelling aborts the encoder, removes what the render wrote (the video file, or the PNGs it wrote, never the folder or other files) and raises `RenderCancelled` (a `RuntimeError`). `progress(k, n)` as before. `start`/`end`/`frame` take seconds or a marker name (`resolve_time`); non-finite or unknown is a `ValueError` naming the markers; out-of-range times keep rendering as before. Results add `preset`, `drawn`, `repeated` |
 | Surfaces | `cli.py`, `scene.py`, `engine.py`, `workspace/tools.py`, `gui/desktop.py`, `render/doctor.py`, `render/bench.py` | `phasor render --preset draft` and `phasor preview SCENE` (the same options, default `draft`; registered in `cli.py`, which owns `render`); a draft's default file is `<scene>.draft.mp4`; `--start`/`--end`/`--frame` take markers; the summary line says the preset, the repeated frames and the wall time. `Engine.render(out, preset=, ...)`; `Scene.render(out, preset=, workers=)` and `scene.render(engine, ...)` (resolve the draft engine before building `parallel_frames`, so workers draw it; the CLI uses it). The Workspace/MCP `render` tool accepts `draft` and markers, writes `<scene>.draft.mp4`. The desktop export dialog lists Draft (default still Preview). `phasor doctor` prints the preset table (and `--json` has `presets`). `phasor bench --frames --preset draft` and a `dedup` stage |
 | Docs | `docs/ai/API.md`, `docs/ai/MCP.md`, `llms.txt` | "Render presets and the draft render": the preset table, the effect table below, how de-duplication decides, a running example; the command table; the MCP tool row |
-| Tests | `tests/test_draft.py` (57), `tests/test_desktop.py` (+1), `tests/ssim.py` | below |
+| Tests | `tests/test_draft.py` (66), `tests/test_desktop.py` (+1), `tests/ssim.py` | below |
 
 ### The effect table: what the draft skips and keeps
 
@@ -58,6 +60,15 @@ fork bake is inside the clock. `final` is a 2 s window (4-6 s); a whole final ta
 | `prism_primes` (13 s) | 195 frames in 4.8 s: **40.5 frames/s**, 2.7 s of video per second | 390 in 73.0 s: 5.3 frames/s, 0.18 s/s | 120 in 83.9 s: 1.43 frames/s, 0.024 s/s | **15x** |
 | `motion_gallery` (12 s) | 180 in 9.4 s: **19.3 frames/s**, 1.28 s/s | 360 in 74.2 s: 4.9 frames/s, 0.16 s/s | 120 in 158 s: 0.76 frames/s, 0.013 s/s | **7.9x** |
 | `basics_3d` (12 s, 3D) | 180 in 15.3 s: **11.8 frames/s**, 0.79 s/s | 360 in 91.2 s: 3.9 frames/s, 0.13 s/s | 120 in 239 s: 0.50 frames/s, 0.008 s/s | **6.0x** |
+| `point_cloud`, window 3.0-3.4 s (kernel/data-bound) | 6 frames in 48.5 s: **8.1 s a frame**, 0.008 s/s | 12 in 76.2 s: 6.4 s a frame, 0.005 s/s | not measured | **1.6x** (only the halved frame rate) |
+
+**The draft is not fast everywhere.** Its savings are in pixels and post effects. In
+`point_cloud` the time goes into solving the roots of 65,536 polynomials (a million points)
+whenever `twist` moves, which does not depend on the picture's size: a draft frame costs as
+much as a preview frame (8.1 s against 6.4 s here; the draft's includes its one fork bake),
+and only the 15 fps gives 1.6x. The splat itself does follow the draft's pixel size. A cheap
+safe way to make that solve smaller in drafts (fewer points) would change what the scene
+draws, so it is left as a limit (API.md says so).
 
 The `prism_primes` preview row ran once beside the docs tests (91.4 s) and once alone
 (73.0 s, the row above).
@@ -97,6 +108,27 @@ cores; `default_workers()` is 1 here, which is what the CLI uses.
 before any change and after: all 24 files have the same SHA-256 (two runs before agreed
 with each other first).
 
+## Audit (independent, 2026-11-24) and fixes
+
+The audit confirmed the core (preview and final byte-identical, dedup 0 mismatches over 32
+examples, cancel and Ctrl-C cleanup, the fork never leaks). Each fix has a regression test
+that fails on the audited commit and passes now (`tests/test_draft.py`, the block "the
+independent audit's findings", `tests/test_contracts.py`, `tests/test_desktop.py`).
+
+| # | Finding | Fix |
+| --- | --- | --- |
+| 1 (blocker) | `phasor/cli.py` read the clock (`perf_counter`), failing the contract-3 grep rule in `test_contracts.py` | the wall time comes from `core.timing.Stopwatch`, the one place allowed to read it |
+| 2 | the desktop dialog named a Draft export `<stem>.mp4`, overwriting the real render | the suggested name follows the quality: `a.draft.mp4` / `a.draft.png`, as the CLI and the Workspace tool |
+| 3 | `--end 1e12` (or `--fps 1000 --end 1e6`) ran out of memory building the frame times | `render.job.MAX_FRAMES` = 1,000,000 frames (4.6 h at 60 fps, 9.3 h at 30, 16.7 min at 1000), checked before anything is set up; a clean `ValueError` for every preset |
+| 4 | `--fps 1e-9` passed and gave the encoder `-r 0/1` | rates below 1/1001 are refused (`presets.MIN_FPS`), and so is a scene's own rate below it |
+| 5 | the speed claim did not hold for kernel-bound scenes | measured and stated (the table above, API.md, PITFALLS.md); a limit |
+| 6 | markers named `inf`/`nan` could not be a window | `resolve_time` tries the marker name first |
+| 7 | cancel left empty folders; Ctrl-C inside `writer.close()`/`mux_audio` left a partial or `.mux.mp4` file | the folders a render made are removed if empty; Ctrl-C while finishing removes the file and the mux temp (`encode.mux_temp`) |
+| 8 | a pointless fork and bake when nothing would change | no fork for the theme's drift when the theme's drift (or its period) is 0. The fork still bakes its own layout once even when the parent is baked: its document differs (life off), and contract 7 / ADR 0003 allow applying a bake only to the document it was made for |
+| 9 | NVENC fast settings over the ffmpeg pipe had `-rc vbr -cq 28` without `-b:v 0` | added (the PyAV path already sets `bit_rate` 0); untested without a card |
+| 10 | `tests/ssim.py` `busy=` with no busy window returned NaN | the plain mean over every window then |
+| 11 | `skills/phasor/SKILL.md`, `kit/CLAUDE.md`, `docs/ai/PITFALLS.md` did not mention the draft | they do (`phasor preview`), `.claude/skills/phasor/SKILL.md` kept equal, `llms.txt` regenerated |
+
 ## Tests
 
 `tests/test_draft.py`: the table and the old presets' values; draft sizes at the bounds
@@ -125,7 +157,7 @@ inspector agreeing that the dot rests; `--workers 0` still renders; Ctrl-C
 (`KeyboardInterrupt`) removes the partial file. `tests/test_desktop.py`: the export dialog lists Draft and starts on Preview.
 
 Gates run (Linux): `ruff check .`, `ruff format --check .`, `lint-imports` (2 kept);
-`test_draft.py`, `test_render.py`, `test_workers.py`, `test_prism.py`, `test_frame_bench.py`,
+`test_contracts.py` (added to the list after the audit), `test_draft.py`, `test_render.py`, `test_workers.py`, `test_prism.py`, `test_frame_bench.py`,
 `test_cpu_backend.py`, `test_mcp.py`, `test_kit.py`, `test_layers.py`, `test_beauty.py`,
 `test_engine.py`, `test_desktop.py` (with the gui extra), `test_doctor.py`,
 `test_encode_thread.py`, `test_proc.py`, `test_life.py`, `test_docs.py`, `test_final.py -k
@@ -165,10 +197,9 @@ Gates run (Linux): `ruff check .`, `ruff format --check .`, `lint-imports` (2 ke
 ## Deferred
 
 - **The app's preview button** (Milestone 25): the export dialog only lists Draft; the
-  window is not redesigned. Two things there are left for 25: the dialog's default file
-  name does not change for Draft (a Draft export to the suggested `a.mp4` overwrites the
-  real render's file; the CLI and the Workspace tool default to `a.draft.mp4`), and the
-  dialog still cancels by killing the render process, which leaves the partial file.
+  window is not redesigned. Left for 25: the dialog still cancels by killing the render
+  process, which leaves the partial file (its suggested name for a Draft is `a.draft.mp4`
+  since the audit).
 - **The Workspace / MCP `render` tool has no progress and no cancel**: it renders a draft
   (and takes markers), but a tool call is one blocking request. Progress and `cancel` exist
   on `render_file`, `Engine.render` and `Scene.render`; the Workspace hook for the app is
@@ -188,7 +219,7 @@ Gates run (Linux): `ruff check .`, `ruff format --check .`, `lint-imports` (2 ke
 
 ## Untested
 
-Windows (CI has no OpenGL: the GL tests skip there; the 46 non-GL tests are
+Windows (CI has no OpenGL: the GL tests skip there; the 52 non-GL tests are
 written for it), macOS, CUDA and NVENC (the fast NVENC options were not run on a card), the
-desktop app's export of a draft by hand, the GUI cancel (the dialog still kills the process;
+desktop app's export of a draft by hand (its file naming is tested offscreen), the GUI cancel (the dialog still kills the process;
 the in-process `cancel` is for Milestone 25).

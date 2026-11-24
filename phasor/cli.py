@@ -161,9 +161,8 @@ def default_out(scene: str, preset: str, still: bool) -> str:
 
 
 def _cmd_render(args: argparse.Namespace) -> int:
-    import time
-
     from phasor.core.issues import DocumentError
+    from phasor.core.timing import Stopwatch
     from phasor.render.encode import EncodeError
     from phasor.scene import render
 
@@ -172,15 +171,16 @@ def _cmd_render(args: argparse.Namespace) -> int:
             print(f"\rframe {k}/{n}", end="", file=sys.stderr, flush=True)
 
     name = "preview" if args.command == "preview" else "render"
-    began = time.perf_counter()
     try:
-        engine = _open(args)
-        out = args.out or default_out(args.scene, args.preset, args.frame is not None)
-        r = render(
-            engine, out, preset=args.preset, workers=args.workers, threads=args.threads,
-            fps=args.fps, start=args.start, end=args.end, frame=args.frame, progress=progress,
-            shutter=args.shutter, blur_samples=args.blur_samples,
-        )  # fmt: skip
+        # the wall time is only said (core/timing, the one place that reads the clock)
+        with Stopwatch() as watch:
+            engine = _open(args)
+            out = args.out or default_out(args.scene, args.preset, args.frame is not None)
+            r = render(
+                engine, out, preset=args.preset, workers=args.workers, threads=args.threads,
+                fps=args.fps, start=args.start, end=args.end, frame=args.frame,
+                progress=progress, shutter=args.shutter, blur_samples=args.blur_samples,
+            )  # fmt: skip
     except (DocumentError, OSError, ValueError, RuntimeError, EncodeError) as e:
         print(f"\nphasor {name}: {e}", file=sys.stderr)
         return 1
@@ -194,7 +194,7 @@ def _cmd_render(args: argparse.Namespace) -> int:
         print(f"wrote {r['path']} ({w}x{h}, t = {r['t']:g} s)")
     else:
         sound = ", with sound" if r["narration"] else ""  # narration and Sound clips
-        took = time.perf_counter() - began
+        took = watch.wall
         same = f", {r['repeated']} repeated" if r.get("repeated") else ""
         print(f"\nwrote {r['path']}: {r['frames']} frames, {w}x{h} at {r['fps']:g} fps, "
               f"{r['encoder']}{sound} ({r['preset']}{same}; {took:.1f} s)")  # fmt: skip

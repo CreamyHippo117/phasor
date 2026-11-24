@@ -21,9 +21,9 @@ from typing import Any
 
 from phasor.core.timing import stage
 from phasor.render.doctor import run_doctor
-from phasor.render.encode import BackgroundWriter, mux_audio, open_writer
+from phasor.render.encode import BackgroundWriter, mux_audio, mux_temp, open_writer
 from phasor.render.output import save_png
-from phasor.render.presets import FULL, PRESETS, Effects, check_fps, preset_named
+from phasor.render.presets import FULL, MIN_FPS, PRESETS, Effects, check_fps, preset_named
 
 # Motion blur (shutter as a share of a frame interval, samples per frame) by preset: off while
 # iterating, on for finals, where it is what makes fast motion look smooth rather than stuttery.
@@ -53,6 +53,10 @@ def render_frame(engine: Any, t: float, fps: float, size: tuple[int, int], shutt
                                     output="srgb8", **extra)  # fmt: skip
     return engine.frame(t, size, output="srgb8", **extra)
 
+
+# Frames one render may have: 4.6 hours at 60 fps, 9.3 at 30, 16.7 minutes at 1000. Their
+# times are a list, so an end of 1e12 s must be refused before it is made, not run out of memory.
+MAX_FRAMES = 1_000_000
 
 REPEAT = object()  # what ``FrameDrawer.draw`` returns for a frame identical to the last
 
@@ -143,15 +147,16 @@ def resolve_time(engine: Any, value: Any, what: str = "time") -> float | None:
     if value is None:
         return None
     if isinstance(value, str):
+        # a marker first: a marker may be called ``inf`` or ``nan`` (ids are [a-z][a-z0-9_]*)
+        markers = engine.timeline()["markers"] if hasattr(engine, "timeline") else {}
+        if value in markers:
+            return float(markers[value])
         try:
             value = float(value)
         except ValueError:
-            markers = engine.timeline()["markers"] if hasattr(engine, "timeline") else {}
-            if value not in markers:
-                known = ", ".join(sorted(markers)) or "none"
-                raise ValueError(f"{what} {value!r} is neither seconds nor a marker "
-                                 f"(markers: {known})") from None  # fmt: skip
-            return float(markers[value])
+            known = ", ".join(sorted(markers)) or "none"
+            raise ValueError(f"{what} {value!r} is neither seconds nor a marker "
+                             f"(markers: {known})") from None  # fmt: skip
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{what} must be seconds or a marker name, got {value!r}")
     if not math.isfinite(value):
@@ -166,13 +171,27 @@ def _stopped(cancel: Cancel) -> bool:
     return bool(is_set() if is_set is not None else cancel())
 
 
-def _remove_partial(writer: Any, out: Path) -> None:
-    """What a cancelled render wrote: its PNGs (never the folder), or the video file."""
+def _new_folders(out: Path) -> list[Path]:
+    """The folders writing ``out`` will create (none of them exist yet), deepest first."""
+    folder = out if out.suffix == "" else out.parent
+    new = []
+    while not folder.exists() and folder != folder.parent:
+        new.append(folder)
+        folder = folder.parent
+    return new
+
+
+def _remove_partial(writer: Any, out: Path, folders: list[Path] = ()) -> None:
+    """What a cancelled render wrote: its PNGs, or the video file and a half-muxed copy of it;
+    then the folders it created, if they are empty. Never a file or folder it did not make."""
     inner = getattr(writer, "inner", writer)
-    files = inner.written() if hasattr(inner, "written") else [out]
+    files = inner.written() if hasattr(inner, "written") else [out, mux_temp(out)]
     for f in files:
         with contextlib.suppress(OSError):
             f.unlink(missing_ok=True)
+    for d in folders:
+        with contextlib.suppress(OSError):
+            d.rmdir()  # only if empty
 
 
 def render_file(
@@ -207,6 +226,16 @@ def render_file(
     meta = engine.document.meta
     size = p.size(meta.width, meta.height)
     fps = fps or p.fps or meta.fps
+    if fps < MIN_FPS:  # a scene's own rate the encoder cannot write (its rate would be 0/1)
+        raise ValueError(f"fps must be at least 1/1001, the scene's is {fps!r}")
+    if frame is None:  # the window, bounded before anything is set up
+        start = start or 0.0
+        end = engine.duration if end is None else end
+        span = (end - start) * fps
+        if not span <= MAX_FRAMES:  # also catches an overflow to inf
+            raise ValueError(f"the window {start:g}-{end:g} s at {fps:g} fps is {span:.3g} "
+                             f"frames; a render takes at most {MAX_FRAMES} "
+                             "(render.job.MAX_FRAMES)")  # fmt: skip
     with stage("setup"):  # once per render, not per frame
         report = run_doctor()
         tier = report.tier
@@ -221,9 +250,7 @@ def render_file(
         save_png(out, render_frame(engine, frame, fps, size, 0.0, 1, effects))
         return {"path": str(out), "size": size, "t": frame, "frames": 1, "warnings": warnings,
                 "preset": preset}  # fmt: skip
-    start = start or 0.0
-    end = engine.duration if end is None else end
-    count = max(1, round((end - start) * fps))
+    count = max(1, round(span))
     times = [start + k / fps for k in range(count)]
     # The sound first: a clip that cannot be mixed is said before any frame is rendered,
     # never after the last one.
@@ -245,6 +272,7 @@ def render_file(
     if _stopped(cancel):
         frames.close()
         raise RenderCancelled("render cancelled before its first frame")
+    folders = _new_folders(out)
     writer = BackgroundWriter(open_writer(out, *size, fps, speed=p.encoder))
     try:
         for k, srgb8 in enumerate(frames):  # finished bytes, encoded on the card if any
@@ -257,16 +285,20 @@ def render_file(
     except BaseException as e:
         writer.abort()
         if isinstance(e, (RenderCancelled, KeyboardInterrupt)):  # stopped on purpose (Ctrl-C)
-            _remove_partial(writer, out)
+            _remove_partial(writer, out, folders)
         raise
     finally:
         frames.close()  # a frame source stops its workers
-    with stage("encode"):  # the frames still queued
-        writer.close()
     sound = track is not None
-    if sound:
-        samples, rate = track
-        mux_audio(out, samples[: round(count / fps * rate)], rate)
+    try:
+        with stage("encode"):  # the frames still queued
+            writer.close()
+        if sound:
+            samples, rate = track
+            mux_audio(out, samples[: round(count / fps * rate)], rate)
+    except KeyboardInterrupt:  # Ctrl-C while finishing: no half-written file stays behind
+        _remove_partial(writer, out, folders)
+        raise
     return {
         "path": str(out), "size": size, "fps": fps, "frames": count, "encoder": writer.encoder,
         "narration": bool(sound), "warnings": warnings,

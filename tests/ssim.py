@@ -7,7 +7,8 @@ import numpy as np
 
 def ssim(a: np.ndarray, b: np.ndarray, window: int = 8, busy: float | None = None) -> float:
     """``busy``: average only over windows where either picture varies (luma variance above
-    ``busy``), so a mostly empty dark frame is judged by its content, not its background."""
+    ``busy``), so a mostly empty dark frame is judged by its content, not its background.
+    When no window is busy (two flat pictures) it is the plain mean over every window."""
 
     def luma(x):
         x = x.astype(np.float64)
@@ -29,5 +30,7 @@ def ssim(a: np.ndarray, b: np.ndarray, window: int = 8, busy: float | None = Non
         (mu_a**2 + mu_b**2 + c1) * (var_a + var_b + c2)
     )
     if busy is not None:
-        s = s[(var_a > busy) | (var_b > busy)]
+        mask = (var_a > busy) | (var_b > busy)
+        if mask.any():  # no busy window: both pictures flat, judged over every window
+            s = s[mask]
     return float(s.mean())

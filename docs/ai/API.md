@@ -676,6 +676,13 @@ background), not by their pixels. The repeated frames are byte for byte the fram
 would make. The encoder runs `ultrafast` (libx264; `p1` on NVENC), no B-frames, a keyframe
 every second; a PNG sequence compresses at level 1.
 
+**Where a draft is not much faster.** The savings are in pixels and post effects. A scene
+whose time goes into computing its data, not its pixels, gains only the halved frame rate:
+`examples/point_cloud.py` solves a million polynomial roots whenever `twist` moves, whatever
+the picture's size (measured 2026-11-24, 4-core CPU: 8.1 s a frame as a draft, 6.4 s as a
+preview; the draft's whole 3.0-3.4 s window took 48.5 s against 76.2 s, 1.6x). The same holds
+for any kernel picture whose parameters change every frame.
+
 ```python
 from phasor import Dot, Scene
 from phasor.render.job import resolve_time
@@ -712,9 +719,11 @@ r["drawn"], r["repeated"]  # frames drawn, frames repeated
 `render_file(...)`, `Engine.render(...)` and `Scene.render(...)` take `preset`, `fps`,
 `start`/`end`/`frame` (seconds or a marker name), `progress(k, n)` and `cancel` (a
 `threading.Event` or a callable, checked between frames; cancelling raises
-`render.job.RenderCancelled` and removes what was written). A bad preset, a frame rate that
-is not above 0 and at most 1000, a time that is not finite or an unknown marker is a
-`ValueError` before anything is written. A draft's default file is `<scene>.draft.mp4`, so it
+`render.job.RenderCancelled` and removes what was written, and the folders the render
+made if they are empty; Ctrl-C does the same). A bad preset, a frame rate outside 1/1001 to
+1000, a time that is not finite, an unknown marker (a marker name is tried first, so a
+marker called `inf` works) or a window of more than `render.job.MAX_FRAMES` (1,000,000:
+4.6 hours at 60 fps) is a `ValueError` before anything is written. A draft's default file is `<scene>.draft.mp4`, so it
 never overwrites the real render. `phasor preview SCENE` is `phasor render SCENE --preset
 draft`. Untested on Windows, macOS and CUDA (NVENC's fast settings included).
 

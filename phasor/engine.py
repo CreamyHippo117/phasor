@@ -380,7 +380,10 @@ class Engine:
         tweak = []
         if cam is not None and cam.kind == "orbit":
             drift = cam.params.get("drift", -1.0)
-            if isinstance(drift, (int, float)) and drift < 0:
+            tc = self._snap.compiled.theme.camera
+            theme_drift = tc.get("drift", 0.0) and tc.get("drift_period", 0.0) > 0
+            # only when the theme's drift really moves it: else a fork would change nothing
+            if isinstance(drift, (int, float)) and drift < 0 and theme_drift:
                 tweak.append(SetParam(path=f"{cam.id}.drift", value=0.0))
         return script, tweak
 
