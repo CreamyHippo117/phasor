@@ -177,6 +177,11 @@ kind = "fourier_linalg"
 tier = "technique"
 teaches = "A low-pass filter: poles and zeros over its transfer function, gain and phase, a signal and its spectrum cut"
 
+[examples.filter_poles]
+kind = "fourier_linalg"
+tier = "technique"
+teaches = "A filter's poles on the z plane, and the pole outside the unit circle that makes it unstable"
+
 [examples.fourier_winding]
 kind = "fourier_linalg"
 tier = "technique"
