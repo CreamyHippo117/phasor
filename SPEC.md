@@ -167,6 +167,7 @@ Only that pole contributes [[residue_glow]].
 - Re-recording re-aligns everything; nothing is hard-timed.
 - A recording can also be the narration as it is (Milestone 22): a WAV, or the sound of an mp4, m4a, mp3, ogg or flac in the scene's folder (decoded once with PyAV into the user's cache). Speech and pauses are detected (energy, an adaptive noise floor, no model), the script's sentences are aligned to the speech by dynamic programming over the detected segments (sentence length in proportion to its words, breaks on long pauses), and each block plays its part of the file (`NarrationBlock.audio_span`). Without a script, each phrase is a block.
 - `snap_to_narration` moves the markers placed by hand (scene starts) onto the narration's sentence starts or pause ends, in order, keeping each scene long enough for the motions anchored at it; it previews (`dry_run`) and applies through `Engine.apply` as one patch. Lint `narration_drift` lists what it would move.
+- MIDI notes (Milestone 23) are a `Notes` object: from a `.mid` in the scene's folder (phasor's own SMF reader, format 0/1) or listed by the script, played by a built-in deterministic synthesizer and mixed into the track like a sound clip from `start` (seconds or a marker's name, resolved by `Engine.audio_track`); `Engine.export_midi` writes the scene's notes to a format 1 file.
 
 **State tracks and transitions**
 

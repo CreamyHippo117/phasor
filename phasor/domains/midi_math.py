@@ -724,6 +724,6 @@ class Synth:
         return noise * env
 
 
-def drum_noise(rng: np.random.Generator) -> np.ndarray:
+def drum_noise(rng) -> np.ndarray:
     """The drum kit's noise table, from ``core.rng.rng(object_id, seed)``."""
     return rng.random(_NOISE) * 2.0 - 1.0
