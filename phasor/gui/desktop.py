@@ -502,10 +502,12 @@ class ExportDialog(QDialog):
         where.addWidget(self.out, 1)
         where.addWidget(browse)
         self.preset = QComboBox()
-        for p, text in (("preview", "Preview (960 x 540, 30 fps, quick)"),
+        for p, text in (("draft", "Draft (small, 15 fps, plain look: quickest)"),
+                        ("preview", "Preview (960 x 540, 30 fps, quick)"),
                         ("final", "Final (the scene's size and frame rate, motion blur)"),
                         ("4k", "4K (3840 x 2160)")):  # fmt: skip
             self.preset.addItem(text, p)
+        self.preset.setCurrentIndex(self.preset.findData("preview"))  # the default, as before
         self.time = QDoubleSpinBox()
         self.time.setRange(0.0, max(win.ed.engine.duration, 0.0))
         self.time.setDecimals(2)

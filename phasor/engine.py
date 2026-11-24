@@ -299,6 +299,7 @@ class Engine:
         self._checkpoints: dict[str, _Snapshot] = {}  # named points to go back to
         self._version = 0
         self._passes = passes
+        self._plain: tuple[str, Engine] | None = None  # (fingerprint, without_decoration())
 
     def fingerprint(self) -> str:
         """A hash of the current document and overrides (canonical JSON): what a bake was
@@ -366,6 +367,54 @@ class Engine:
         allow = self.allow_scripts if allow_scripts is None else allow_scripts
         return Engine(self._snap.base, overrides=self._snap.overrides, passes=self._passes,
                       base_dir=self.base_dir, allow_scripts=allow)  # fmt: skip
+
+    def decoration_ops(self) -> tuple[list[Any], list[Any]]:
+        """What ``without_decoration`` changes, as (script ops, tweak ops): life off
+        (``meta.life``) and, on an orbit camera that takes the theme's drift (``drift`` < 0),
+        no drift. Both empty when there is nothing to strip."""
+        from phasor.core.patch import SetMeta, SetParam
+
+        doc = self.document
+        script = [SetMeta(field="life", value="off")] if doc.meta.life != "off" else []
+        cam = doc.camera(doc.timeline.camera)
+        tweak = []
+        if cam is not None and cam.kind == "orbit":
+            drift = cam.params.get("drift", -1.0)
+            if isinstance(drift, (int, float)) and drift < 0:
+                tweak.append(SetParam(path=f"{cam.id}.drift", value=0.0))
+        return script, tweak
+
+    def without_decoration(self) -> Engine:
+        """This scene with its decorative motion off, for a draft render (Milestone 21): life
+        (glow breathing, drifting dots and equations, turning field colors, twinkle) off
+        and the theme's slow camera drift off. Everything the document animates still moves.
+        A private fork (``fork``) edited through ``apply``, made once per version of this
+        document and kept (its own layout bake is made in it once, like any engine's);
+        this engine itself when there is nothing to strip."""
+        script, tweak = self.decoration_ops()
+        if not script and not tweak:
+            return self
+        key = self.fingerprint()
+        cached = self._plain
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        plain = self.fork()
+        if script:
+            plain.apply(script, origin="script").raise_for_errors()
+        if tweak:
+            plain.apply(tweak).raise_for_errors()
+        self._plain = (key, plain)
+        return plain
+
+    def render(self, out: str | Path, *, preset: str = "preview", **kwargs: Any) -> dict[str, Any]:
+        """Render this scene to ``out`` (``render.job.render_file``: a video, a PNG sequence
+        or, with ``frame``, one PNG): ``engine.render("x.mp4", preset="draft")``. Keywords:
+        ``fps``, ``start``/``end`` (seconds or marker names), ``frame``, ``progress(k, n)``,
+        ``cancel`` (a ``threading.Event`` or a callable), ``shutter``, ``blur_samples``,
+        ``frame_source``. Needs OpenGL."""
+        from phasor.render.job import render_file
+
+        return render_file(self, out, preset=preset, **kwargs)
 
     # ------------------------------------------------------------ files
 
@@ -803,13 +852,19 @@ class Engine:
 
         return encode_srgb8(self.frame(t, size))
 
-    def frame(self, t: float, size: tuple[int, int] | None = None, *, output: str = "linear"):
+    def frame(self, t: float, size: tuple[int, int] | None = None, *, output: str = "linear",
+              effects: Any = None, plan: Any = None):  # fmt: skip
         """The finished picture at ``t`` in linear light: color pass, bloom, tone map.
         (h, w, 4) float32, row 0 = top. ``still`` and ``phasor render`` both use this.
-        ``output="srgb8"``: the (h, w, 3) sRGB bytes instead, encoded on the card."""
-        return self._finished([t], size, output)
+        ``output="srgb8"``: the (h, w, 3) sRGB bytes instead, encoded on the card.
+        ``effects`` (``render.presets.Effects``, default ``FULL``): ``DRAFT`` leaves out the
+        bloom, the lens and the depth fog (a draft render). ``plan``: this frame's
+        ``pass_runner().frame_plan(state_at(t), size)``, already recorded (``render.job``
+        records one to tell whether the frame repeats the last), so it is not drawn twice."""
+        return self._finished([t], size, output, effects, [plan] if plan is not None else None)
 
-    def _finished(self, times: list[float], size, output: str):
+    def _finished(self, times: list[float], size, output: str, effects: Any = None,
+                  plans: list[Any] | None = None):  # fmt: skip
         """The average light of the color pass at ``times`` (one time: the frame itself),
         bloomed, tone-mapped and encoded once. Each sample goes to the card once as float16
         and is widened and added there in float32, in a fixed order (GPU_SPEED.md step 2);
@@ -818,27 +873,38 @@ class Engine:
         from phasor.render.gpu import Tile, run
         from phasor.render.passes import GLRenderer
         from phasor.render.post import card_sync, finish
+        from phasor.render.presets import FULL
 
         runner = self.pass_runner()
         if not isinstance(runner, GLRenderer):
             raise RuntimeError("no OpenGL renderer on this machine (run `phasor doctor`)")
+        effects = FULL if effects is None else effects
         weight = 1.0 / len(times)
         pic = glow = None
         # Start every sample before collecting any: the card copies one sample off while
         # the next is drawn (asynchronous readback). Same samples, same order of the sum.
-        pending = [runner.start_color_raw(self.state_at(ts), size) for ts in times]
+        # Without bloom the emission target is not read at all.
+        plans = plans or [None] * len(times)
+        pending = [
+            runner.start_color_raw(p.state if p is not None else self.state_at(ts), size,
+                                   fog=effects.fog, emission=effects.bloom, plan=p)
+            for ts, p in zip(times, plans, strict=True)
+        ]  # fmt: skip
         try:
             for job in pending:
                 p, g = job.collect()
                 with stage("blur sum" if len(times) > 1 else "widen", sync=card_sync):
                     tile = Tile.full(p.shape[1], p.shape[0])
                     pic = run("accumulate", tile, image=p, weight=weight, acc=pic)
-                    glow = run("accumulate", tile, image=g, weight=weight, acc=glow)
+                    if g is not None:
+                        glow = run("accumulate", tile, image=g, weight=weight, acc=glow)
         finally:
             for job in pending:
                 job.release()
         # rows bottom-up as GL stores them -> top-down (a view, wherever the sum is)
-        return finish(pic[::-1], self._snap.compiled.theme, glow[::-1], output=output)
+        return finish(pic[::-1], self._snap.compiled.theme,
+                      None if glow is None else glow[::-1], output=output,
+                      effects=effects)  # fmt: skip
 
     def timeline(self) -> dict[str, Any]:
         """What a timeline panel shows: the duration, the markers, for every animated
@@ -879,6 +945,7 @@ class Engine:
         samples: int = 4,
         size: tuple[int, int] | None = None,
         output: str = "linear",
+        effects: Any = None,
     ):
         """Like ``frame`` but with motion blur: the average of ``samples`` frames spread over
         a shutter open ``shutter`` of a frame interval (0.5 is the film standard "180
@@ -887,11 +954,11 @@ class Engine:
         as moving (``is_moving``). Linear light, deterministic."""
         half = shutter / fps / 2
         if samples <= 1 or shutter <= 0 or not self.is_moving(t - half, t + half):
-            return self.frame(t, size, output=output)
+            return self.frame(t, size, output=output, effects=effects)
         # Average the light before the tone map (which then runs once, contract 4): a bright
         # moving glow smears at its real brightness instead of an already squashed one.
         times = [min(max(ts, 0.0), self.duration) for ts in blur_times(t, fps, shutter, samples)]
-        return self._finished(times, size, output)
+        return self._finished(times, size, output, effects)
 
     def storyboard_times(self, count: int = 6) -> list[float]:
         """Start, every marker and the end; padded with evenly spaced times up to ``count``."""

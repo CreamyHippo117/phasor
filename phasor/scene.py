@@ -364,6 +364,16 @@ class Scene:
     def save(self, path: str | Path) -> None:
         self.engine.save(path)
 
+    def render(self, out: str | Path, *, preset: str = "preview", workers: int | None = 1,
+               **kwargs: Any) -> dict[str, Any]:  # fmt: skip
+        """Render this scene to ``out``: ``s.render("intro.mp4", preset="draft")`` is the
+        quick plain look (small, 15 fps, no bloom, lens, fog or life; frames that repeat are
+        not drawn again), ``preview``, ``final`` and ``4k`` the full look. ``workers`` > 1
+        renders in that many processes (``parallel_frames``; None: ``default_workers()``).
+        Other keywords go to ``Engine.render``: ``start``/``end`` (seconds or marker names),
+        ``fps``, ``frame``, ``progress(k, n)``, ``cancel``. Needs OpenGL."""
+        return render(self.engine, out, preset=preset, workers=workers, **kwargs)
+
 
 def load(path: str | Path, **engine_kwargs: Any) -> Engine:
     """Open a scene for any client: a ``.phasor.json`` document, or a ``.py`` script that
@@ -381,6 +391,33 @@ def load(path: str | Path, **engine_kwargs: Any) -> Engine:
     engine_kwargs.setdefault("base_dir", path.parent)
     engine_kwargs.setdefault("allow_scripts", True)  # the person ran this script: its code runs
     return Engine(scenes[0].engine.base, overrides=overrides, **engine_kwargs)
+
+
+MAX_WORKERS = 64  # render processes at most (Scene.render, `phasor render --workers`)
+
+
+def render(engine: Engine, out: str | Path, *, preset: str = "preview", workers: int | None = 1,
+           threads: int | None = None, **kwargs: Any) -> dict[str, Any]:  # fmt: skip
+    """``engine.render`` with ``workers`` render processes (None: ``default_workers()``; 1:
+    this process) and ``threads`` CPU kernel threads per process (None:
+    ``default_threads``). The engine a preset draws (``render.job.engine_for``: a draft's
+    has no decoration) is resolved first, so the workers get its document and bake."""
+    from phasor.render.cpu import set_threads
+    from phasor.render.job import engine_for
+    from phasor.render.presets import preset_named
+
+    preset_named(preset)  # a bad name is a clear error before anything starts
+    workers = default_workers() if workers is None else workers
+    if isinstance(workers, bool) or not isinstance(workers, int):
+        raise ValueError(f"workers must be a whole number, got {workers!r}")
+    # 1 or fewer renders here (as `--workers 0` always did); more than MAX_WORKERS is clamped
+    workers = min(max(workers, 1), MAX_WORKERS)
+    threads = default_threads(workers) if threads is None else threads
+    set_threads(threads)  # this process's kernels (all of them with one worker)
+    source = None
+    if workers > 1 and kwargs.get("frame") is None:
+        source = parallel_frames(engine_for(engine, preset), workers, threads=threads)
+    return engine.render(out, preset=preset, frame_source=source, **kwargs)
 
 
 # ---------------------------------------------------------------- render workers (ADR 0003)
@@ -429,7 +466,10 @@ def parallel_frames(engine: Any, workers: int, *, chunk: int = WORKER_CHUNK,
     ``_on_start`` and ``_slow`` are for tests."""
     import multiprocessing
 
-    def source(times, size, fps, shutter, samples):
+    from phasor.render.presets import FULL
+
+    def source(times, size, fps, shutter, samples, *, engine=engine, effects=FULL, dedup=False,
+               counts=None):  # fmt: skip
         n = len(times)
         stretches = [(a, min(a + chunk, n)) for a in range(0, n, chunk)]
         count = max(1, min(workers, len(stretches)))
@@ -442,7 +482,7 @@ def parallel_frames(engine: Any, workers: int, *, chunk: int = WORKER_CHUNK,
         procs = [
             ctx.Process(target=_render_worker, name=f"phasor-render-{w}", daemon=True,
                         args=(payload, stretches[w::count], times, size, fps, shutter, samples,
-                              queues[w], 1.0 / count, each, _fail_at, _slow))
+                              queues[w], 1.0 / count, each, _fail_at, _slow, effects, dedup))
             for w in range(count)
         ]  # fmt: skip
         with _workers_skip_main():
@@ -450,6 +490,8 @@ def parallel_frames(engine: Any, workers: int, *, chunk: int = WORKER_CHUNK,
                 p.start()
         if _on_start is not None:
             _on_start([p.pid for p in procs])
+        last = None
+        drawn = repeated = 0
         try:
             for i, (a, b) in enumerate(stretches):
                 w = i % count
@@ -459,7 +501,16 @@ def parallel_frames(engine: Any, workers: int, *, chunk: int = WORKER_CHUNK,
                         raise RuntimeError(f"render worker {w} failed: {msg[1]}")
                     if msg[1] != k:
                         raise RuntimeError(f"render worker {w} sent frame {msg[1]}, not {k}")
-                    yield msg[2]
+                    if msg[0] == "repeat":  # the same drawing as frame k - 1: its bytes again
+                        if last is None:
+                            raise RuntimeError(f"render worker {w} repeated frame {k} first")
+                        repeated += 1
+                    else:
+                        last = msg[2]
+                        drawn += 1
+                    if counts is not None:
+                        counts.update(drawn=drawn, repeated=repeated)
+                    yield last
         finally:
             for p in procs:
                 if p.is_alive():
@@ -510,7 +561,7 @@ def _receive(q: Any, proc: Any) -> tuple:
 
 
 def _render_worker(payload, stretches, times, size, fps, shutter, samples, q, share, threads,
-                   fail_at, slow) -> None:  # fmt: skip
+                   fail_at, slow, effects=None, dedup=False) -> None:  # fmt: skip
     """A render worker's whole life: build the engine from the payload, render its
     stretches, send each frame. Stops when the parent is gone."""
     import multiprocessing
@@ -539,21 +590,26 @@ def _render_worker(payload, stretches, times, size, fps, shutter, samples, q, sh
         from phasor.engine import Engine
         from phasor.render.cpu import set_threads
         from phasor.render.gpu.budget import set_share
-        from phasor.render.job import render_frame
+        from phasor.render.job import REPEAT, FrameDrawer
+        from phasor.render.presets import FULL
 
         set_share(share)
         set_threads(threads)  # None: every core (one worker, or kernels on the card)
         engine = Engine.from_payload(payload)
+        drawer = FrameDrawer(engine, fps, size, shutter, samples, effects or FULL, dedup)
         for a, b in stretches:
+            if a > 0:  # another worker drew frame a - 1: this stretch may start by repeating it
+                drawer.prime(times[a - 1])
             for k in range(a, b):
                 if orphaned():
                     return
                 if k == fail_at:
                     raise RuntimeError(f"failed on purpose at frame {k}")
-                frame = render_frame(engine, times[k], fps, size, shutter, samples)
+                frame = drawer.draw(times[k])
                 if slow:
                     time.sleep(slow)
-                if not send(("frame", k, frame)):
+                msg = ("repeat", k) if frame is REPEAT else ("frame", k, frame)
+                if not send(msg):
                     return
     except BaseException:
         send(("error", traceback.format_exc(limit=12)))

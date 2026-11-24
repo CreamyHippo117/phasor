@@ -17,7 +17,8 @@ this file runs in order, against one scene, in `tests/test_docs.py`.
 4. `review`: lint + what is on screen at every marker + a storyboard picture.
    Fix each item in `todo` (`scene_edit`, or `lint` with `fix: true` for the certain fixes)
    and `review` again. Stop when `clean` is true or after 5 rounds; say what is left.
-5. `scene_save`, then `render` (`preview` is fast).
+5. `scene_save`, then `render` (`draft` is quickest: small, 15 fps, plain look; `preview`
+   shows the full look).
 
 A failed patch changes nothing and tells you why (`errors[].message`, often with
 `fix_hint`). `undo` reverts the last edit; `checkpoint` / `restore` / `diff` let you try
@@ -41,7 +42,7 @@ a variant and compare.
 | `critique`, `polish` | the art director: a taste score, aesthetic issues with fixes and the rubric; apply the fixes (3 rounds at most; `snap: true` also snaps explicit values to roles) |
 | `variants`, `choose` | alternative looks of one beat side by side (as is, calmer, bolder); pick one, it is recorded in `style/choices.jsonl` and applied |
 | `diff`, `checkpoint`, `restore`, `undo`, `redo` | compare and branch |
-| `render` | a video (`preview`, `final`, `4k`) or one PNG with `frame` |
+| `render` | a video (`draft`, `preview`, `final`, `4k`) or one PNG with `frame`; `start`/`end`/`frame` take seconds or a marker name (a draft goes to `<scene>.draft.mp4`) |
 | `docs_search` | find the API, a pattern or an example |
 
 ## Patch operations

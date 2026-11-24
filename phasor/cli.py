@@ -151,44 +151,53 @@ def _cmd_web(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_render(args: argparse.Namespace) -> int:
+def default_out(scene: str, preset: str, still: bool) -> str:
+    """Where ``phasor render`` writes by default: ``<scene>.mp4`` (``.png`` for a still); a
+    draft is ``<scene>.draft.mp4``, so it never overwrites the real render."""
     from pathlib import Path
 
+    stem = Path(scene).name.split(".")[0] + (".draft" if preset == "draft" else "")
+    return stem + (".png" if still else ".mp4")
+
+
+def _cmd_render(args: argparse.Namespace) -> int:
+    import time
+
     from phasor.core.issues import DocumentError
-    from phasor.render.cpu import set_threads
     from phasor.render.encode import EncodeError
-    from phasor.render.job import render_file
-    from phasor.scene import default_threads, default_workers, parallel_frames
+    from phasor.scene import render
 
     def progress(k: int, n: int) -> None:
         if not args.quiet:
             print(f"\rframe {k}/{n}", end="", file=sys.stderr, flush=True)
 
-    stem = Path(args.scene).name.split(".")[0]
+    name = "preview" if args.command == "preview" else "render"
+    began = time.perf_counter()
     try:
         engine = _open(args)
-        default = stem + (".png" if args.frame is not None else ".mp4")
-        workers = default_workers() if args.workers is None else args.workers
-        threads = default_threads(workers) if args.threads is None else args.threads
-        set_threads(threads)  # this process's kernels (all of them with --workers 1)
-        source = parallel_frames(engine, workers, threads=threads) if workers > 1 else None
-        r = render_file(
-            engine, args.out or default, preset=args.preset, fps=args.fps, start=args.start,
-            end=args.end, frame=args.frame, progress=progress, shutter=args.shutter,
-            blur_samples=args.blur_samples, frame_source=source,
+        out = args.out or default_out(args.scene, args.preset, args.frame is not None)
+        r = render(
+            engine, out, preset=args.preset, workers=args.workers, threads=args.threads,
+            fps=args.fps, start=args.start, end=args.end, frame=args.frame, progress=progress,
+            shutter=args.shutter, blur_samples=args.blur_samples,
         )  # fmt: skip
     except (DocumentError, OSError, ValueError, RuntimeError, EncodeError) as e:
-        print(f"\nphasor render: {e}", file=sys.stderr)
+        print(f"\nphasor {name}: {e}", file=sys.stderr)
         return 1
+    except KeyboardInterrupt:  # Ctrl-C: the partial file is already removed
+        print(f"\nphasor {name}: cancelled", file=sys.stderr)
+        return 130
     for w in r["warnings"]:
         print(f"warning: {w}", file=sys.stderr)
     w, h = r["size"]
     if args.frame is not None:
-        print(f"wrote {r['path']} ({w}x{h}, t = {args.frame:g} s)")
+        print(f"wrote {r['path']} ({w}x{h}, t = {r['t']:g} s)")
     else:
         sound = ", with sound" if r["narration"] else ""  # narration and Sound clips
+        took = time.perf_counter() - began
+        same = f", {r['repeated']} repeated" if r.get("repeated") else ""
         print(f"\nwrote {r['path']}: {r['frames']} frames, {w}x{h} at {r['fps']:g} fps, "
-              f"{r['encoder']}{sound}")  # fmt: skip
+              f"{r['encoder']}{sound} ({r['preset']}{same}; {took:.1f} s)")  # fmt: skip
     return 0
 
 
@@ -335,27 +344,37 @@ def build_parser() -> argparse.ArgumentParser:
     sb.add_argument("--json", action="store_true", help="machine-readable output")
     sb.set_defaults(func=_cmd_storyboard)
 
-    r = sub.add_parser("render", help="render a video (or one frame) with the final look")
-    r.add_argument("scene", help="a .phasor.json document or a .py script that builds a Scene")
-    r.add_argument("--allow-scripts", action="store_true", help=ALLOW_SCRIPTS_HELP)
-    r.add_argument("-o", "--out", help="output: .mp4, .mov (ProRes), a folder or a %%05d.png")
-    r.add_argument("--preset", choices=sorted(PRESETS), default="preview")
-    r.add_argument("--fps", type=float, help="override the preset's frame rate")
-    r.add_argument("--start", type=float, help="first time in seconds (default 0)")
-    r.add_argument("--end", type=float, help="last time in seconds (default: the end)")
-    r.add_argument("--frame", type=float, help="render only the frame at this time, as PNG")
-    r.add_argument("--motion-blur", type=float, metavar="SHUTTER", dest="shutter",
-                   help="shutter as a share of a frame (0 off, 0.5 film standard); "
-                   "default: off for preview, 0.5 for final and 4k")  # fmt: skip
-    r.add_argument("--blur-samples", type=int, help="sub-frames per frame when blurring (4)")
-    r.add_argument("--workers", type=int,
-                   help="render processes (default: a quarter of the CPU threads, 1 to 4; "
-                   "1 renders in this process)")  # fmt: skip
-    r.add_argument("--threads", type=int,
-                   help="CPU kernel threads per render process, without CUDA (default: the "
-                   "cores shared out, workers x threads <= cores; env PHASOR_THREADS)")  # fmt: skip
-    r.add_argument("--quiet", action="store_true")
-    r.set_defaults(func=_cmd_render)
+    def render_args(r: argparse.ArgumentParser, preset: str) -> None:
+        r.add_argument("scene", help="a .phasor.json document or a .py script that builds a Scene")
+        r.add_argument("--allow-scripts", action="store_true", help=ALLOW_SCRIPTS_HELP)
+        r.add_argument("-o", "--out", help="output: .mp4, .mov (ProRes), a folder or a "
+                       "%%05d.png (default: <scene>.mp4; a draft: <scene>.draft.mp4)")  # fmt: skip
+        r.add_argument("--preset", choices=sorted(PRESETS), default=preset,
+                       help=f"quality (default {preset}; `phasor doctor` lists them)")  # fmt: skip
+        r.add_argument("--fps", type=float, help="override the preset's frame rate")
+        r.add_argument("--start", help="first time: seconds or a marker name (default 0)")
+        r.add_argument("--end", help="last time: seconds or a marker name (default: the end)")
+        r.add_argument("--frame", help="render only the frame at this time (seconds or a "
+                       "marker name), as PNG")  # fmt: skip
+        r.add_argument("--motion-blur", type=float, metavar="SHUTTER", dest="shutter",
+                       help="shutter as a share of a frame (0 off, 0.5 film standard); "
+                       "default: off for draft and preview, 0.5 for final and 4k")  # fmt: skip
+        r.add_argument("--blur-samples", type=int, help="sub-frames per frame when blurring (4)")
+        r.add_argument("--workers", type=int,
+                       help="render processes (default: a quarter of the CPU threads, 1 to 4; "
+                       "1 renders in this process)")  # fmt: skip
+        r.add_argument("--threads", type=int,
+                       help="CPU kernel threads per render process, without CUDA (default: the "
+                       "cores shared out, workers x threads <= cores; "
+                       "env PHASOR_THREADS)")  # fmt: skip
+        r.add_argument("--quiet", action="store_true")
+        r.set_defaults(func=_cmd_render)
+
+    render_args(sub.add_parser("render", help="render a video (or one frame) with the final look"),
+                "preview")  # fmt: skip
+    render_args(sub.add_parser("preview", help="a quick draft render: `phasor render --preset "
+                               "draft` (small, 15 fps, plain look; --start/--end take markers)"),
+                "draft")  # fmt: skip
 
     k = sub.add_parser("kit", help="set up (or update) a folder where an AI writes scenes")
     k.add_argument("folder", nargs="?",
@@ -387,7 +406,7 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--frames", metavar="SCENE", help="time whole frames of SCENE (a file or "
                    "an example name) stage by stage, instead of single kernels")  # fmt: skip
     b.add_argument("--count", type=int, default=60, help="frames to time (with --frames)")
-    b.add_argument("--preset", default="final", choices=["preview", "final", "4k"],
+    b.add_argument("--preset", default="final", choices=sorted(PRESETS),
                    help="render preset (with --frames)")  # fmt: skip
     b.add_argument("--allow-scripts", action="store_true", help=ALLOW_SCRIPTS_HELP)
     b.set_defaults(func=_cmd_bench)

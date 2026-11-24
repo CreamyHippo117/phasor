@@ -355,6 +355,7 @@ CUDA does the math, OpenGL draws the picture, and one narrow bridge connects the
 
 - `render/encode.py` probes at startup, in order: PyAV with `h264_nvenc`/`hevc_nvenc`, a system `ffmpeg.exe` fed raw frames over a pipe, then PyAV `libx264`. H.264 comes first because it plays everywhere (owner, 2026-11-20); `h264_nvenc` runs at constant quality (cq 19), `libx264` at crf 16. A probe must encode real frames: PyAV wheels list NVENC codecs even on machines without an NVIDIA GPU.
 - Audio is muxed in the same step from the narration blocks.
+- Render presets are one table (`render/presets.py`, as built in Milestone 21): `draft` (long side 640 at the scene's aspect, 15 fps, no bloom, lens, depth fog, motion blur or life, frames whose drawing repeats the last one repeated, the encoder's fastest settings), `preview` (960x540, 30 fps), `final` (the scene's own, motion blur) and `4k`. A draft draws `Engine.without_decoration()`, a fork with life and the theme's camera drift off, baked once; the tone map and sRGB encode still run once.
 
 **Hardware tiers**
 

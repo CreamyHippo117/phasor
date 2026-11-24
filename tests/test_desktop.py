@@ -613,6 +613,19 @@ def test_the_export_dialog_shows_only_what_each_kind_needs(desk, home):
     assert "no sliders" in dlg.status.text()  # this scene has none
 
 
+def test_the_export_dialog_offers_a_draft_and_still_starts_on_preview(desk, home):
+    """Milestone 21: the draft preset is in the quality list; the default stays preview."""
+    from phasor.gui.desktop import ExportDialog
+    from phasor.render.presets import PRESETS
+
+    dlg = ExportDialog(desk.open(plain_scene(home / "a.phasor.json")))
+    data = [dlg.preset.itemData(i) for i in range(dlg.preset.count())]
+    assert data == list(PRESETS) and dlg.preset.currentData() == "preview"
+    dlg.preset.setCurrentIndex(dlg.preset.findData("draft"))
+    job = ExportJob(None, "video", "/out/a.mp4", scene_dir=".", preset=dlg.preset.currentData())
+    assert job.command("s.phasor.json")[-2:] == ["--preset", "draft"]
+
+
 # ---------------------------------------------------------------- A9: launching
 
 

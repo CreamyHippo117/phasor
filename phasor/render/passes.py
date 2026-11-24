@@ -293,20 +293,23 @@ class _Collector:
 class PendingRead:
     """A color pass on its way off the card (``GLRenderer.start_color_raw``)."""
 
-    def __init__(self, renderer: GLRenderer, packs: list, size: tuple[int, int]) -> None:
+    def __init__(self, renderer: GLRenderer, packs: list, size: tuple[int, int],
+                 targets: int = 2) -> None:  # fmt: skip
         self._renderer, self._packs, self.size = renderer, packs, size
+        self._targets = targets  # 1: the picture only (no bloom wants the emission)
 
-    def collect(self) -> tuple[np.ndarray, np.ndarray]:
+    def collect(self) -> tuple[np.ndarray, np.ndarray | None]:
         """Wait for the copy; the picture and emission as (h, w, 4) float16, rows
-        bottom-up, read-only. The pack buffers go back to the renderer's pool."""
+        bottom-up, read-only (the emission None when it was not read). The pack buffers go
+        back to the renderer's pool."""
         if self._packs is None:
             raise RuntimeError("this read was already collected or released")
         packs, self._packs = self._packs, None
         w, h = self.size
         with stage("readback"):
-            data = self._renderer._finish_read(packs, self.size, read=True)
-        pic, glow = (np.frombuffer(d, dtype=np.float16).reshape(h, w, 4) for d in data)
-        return pic, glow
+            data = self._renderer._finish_read(packs, self.size, read=True, targets=self._targets)
+        pic, *glow = (np.frombuffer(d, dtype=np.float16).reshape(h, w, 4) for d in data)
+        return pic, (glow[0] if glow else None)
 
     def release(self) -> None:
         """Give the buffers back unread (after an error). Harmless once collected."""
@@ -434,13 +437,13 @@ class GLRenderer:
         return collector.commands
 
     def _draw_object(self, state, obj: ObjectState, pass_, size, order: int, zoom: float,
-                     commands=None) -> None:  # fmt: skip
+                     commands=None, fog: bool = True) -> None:  # fmt: skip
         cam = state.camera_for(obj)
         for kind, c in self._commands(state, obj, pass_) if commands is None else commands:
             if kind == "surface" and pass_ == "color":
                 if obj.params.flash > 0:  # the flash verb lights surfaces too
                     c = {**c, "glow": float(c.get("glow", 1.0)) * (1.0 + 1.5 * obj.params.flash)}
-                self._draw_lit(state, cam, c, order, zoom)
+                self._draw_lit(state, cam, c, order, zoom, fog)
                 continue
             if kind == "surface":  # id and solo: plain triangles
                 kind, c = "mesh", {"positions": c["positions"], "indices": c["indices"],
@@ -515,7 +518,7 @@ class GLRenderer:
                                             c["indices"])  # fmt: skip
             vao.render(vertices=n)
 
-    def _draw_lit(self, state, cam, c, order: int, zoom: float) -> None:
+    def _draw_lit(self, state, cam, c, order: int, zoom: float, fog: bool = True) -> None:
         prog = self._program("color", "lit")
         light = state.light
         prog["u_vp"].write(cam.view_proj.astype("f4").T.tobytes())
@@ -527,6 +530,8 @@ class GLRenderer:
                                        dtype="f4").tobytes())  # fmt: skip
         for name in ("ambient", "specular", "shininess", "fog"):
             prog[f"u_{name}"].value = float(light[name])
+        if not fog:  # a draft: no depth fog (render.presets.Effects)
+            prog["u_fog"].value = 0.0
         prog["u_fog_ref"].value = float(cam.height if cam.perspective else 100.0)
         prog["u_bg"].value = tuple(float(x) for x in state.background)
         prog["u_opacity"].value = c["opacity"]
@@ -600,8 +605,9 @@ class GLRenderer:
             return self._render_current(state, pass_, size, **kwargs)
 
     def _render_current(
-        self, state, pass_, size, *, only=None, force=frozenset(), zoom=1.0, raw=False
-    ) -> np.ndarray:
+        self, state, pass_, size, *, only=None, force=frozenset(), zoom=1.0, raw=False,
+        fog=True, emission=True, plan=None,
+    ) -> np.ndarray:  # fmt: skip
         import moderngl
 
         ctx = self.ctx
@@ -629,7 +635,10 @@ class GLRenderer:
                 continue
             if pass_ == "id" and not occludes(obj) and obj.id not in force:
                 continue
-            commands = self._commands(state, obj, pass_)
+            if plan is not None and pass_ == "color":  # recorded already (``frame_plan``)
+                commands = plan.commands[order]
+            else:
+                commands = self._commands(state, obj, pass_)
             if pass_ == "color" and obj.layer != "overlay":
                 clear = [c for c in commands if c[0] == "surface"
                          and (c[1]["opacity"] < 0.999 or c[1]["material"] == "glass")]  # fmt: skip
@@ -639,12 +648,12 @@ class GLRenderer:
                         deferred.append((float(cam.depth(c[1]["positions"]).mean()), order, obj, c))
                     commands = [c for c in commands if all(c is not d for d in clear)]
             if obj.layer == "overlay" and deferred:
-                self._draw_deferred(state, deferred, size, zoom)
+                self._draw_deferred(state, deferred, size, zoom, fog)
             # The overlay layer always sits on top of the world: it ignores world depth.
             ctx.depth_func = "1" if obj.layer == "overlay" else "<="
-            self._draw_object(state, obj, pass_, size, order, zoom, commands)
+            self._draw_object(state, obj, pass_, size, order, zoom, commands, fog)
         if deferred:
-            self._draw_deferred(state, deferred, size, zoom)
+            self._draw_deferred(state, deferred, size, zoom, fog)
         if resolved is not target:
             ctx.copy_framebuffer(resolved, target)
         if raw != "async":
@@ -653,16 +662,17 @@ class GLRenderer:
             # too). An asynchronous read must not wait: that is its point.
             with stage("gpu draw", sync=ctx.finish):
                 pass
-        return self._read(resolved, pass_, size, raw=raw)
+        return self._read(resolved, pass_, size, raw=raw, emission=emission)
 
-    def _read(self, resolved, pass_, size, raw=False):
+    def _read(self, resolved, pass_, size, raw=False, emission=True):
         w, h = size
         if pass_ == "color" and raw:  # as stored: float16, rows bottom-up, not widened
             free = self._free_packs.setdefault(size, [])
             packs = free.pop() if free else [self.ctx.buffer(reserve=w * h * 8) for _ in (0, 1)]
-            for buffer, attachment in zip(packs, (0, 1), strict=True):  # returns at once
+            targets = 2 if emission else 1  # no bloom: the emission is not needed
+            for buffer, attachment in zip(packs[:targets], (0, 1)[:targets], strict=True):
                 resolved.read_into(buffer, components=4, dtype="f2", attachment=attachment)
-            return PendingRead(self, packs, size)
+            return PendingRead(self, packs, size, targets)
         if pass_ == "color":
             out = []
             for attachment in (0, 1):
@@ -679,7 +689,7 @@ class GLRenderer:
         raw = np.frombuffer(resolved.read(components=1, dtype="f1"), dtype=np.uint8)
         return raw.reshape(h, w)[::-1] > 127
 
-    def _draw_deferred(self, state, deferred: list, size, zoom) -> None:
+    def _draw_deferred(self, state, deferred: list, size, zoom, fog: bool = True) -> None:
         """Translucent surfaces, tested against depth but not writing it, drawn far to near:
         objects by depth, and each surface's own triangles by depth, so a glass surface that
         folds over itself (two sheets) blends in the right order. Sorting replaces OIT; it is
@@ -696,7 +706,7 @@ class GLRenderer:
                     np.argsort(-state.camera_for(obj).depth(centroid), kind="stable")
                 ]
                 cmd = ("surface", c)
-            self._draw_object(state, obj, "color", size, order, zoom, [cmd])
+            self._draw_object(state, obj, "color", size, order, zoom, [cmd], fog)
         target.depth_mask = True
         deferred.clear()
 
@@ -733,19 +743,55 @@ class GLRenderer:
         return self.start_color_raw(state, size).collect()
 
     def start_color_raw(
-        self, state: SceneState, size: tuple[int, int] | None = None
-    ) -> PendingRead:
+        self, state: SceneState, size: tuple[int, int] | None = None, *, fog: bool = True,
+        emission: bool = True, plan: FramePlan | None = None,
+    ) -> PendingRead:  # fmt: skip
         """Draw the color pass and start copying both targets off the card, without
         waiting: ``collect()`` on the result gives what ``color_and_emission_raw`` gives.
         Start several before collecting any, and the card copies one frame while the next
-        is being built. Every started read must be collected (or ``release``d)."""
+        is being built. Every started read must be collected (or ``release``d).
+        A draft (``render.presets.DRAFT``) passes ``fog=False`` (no depth fog on lit
+        surfaces) and ``emission=False`` (the emission target is not read: no bloom uses
+        it); ``plan`` is this state's ``frame_plan``, so its objects are not drawn twice."""
         size = size or (state.width, state.height)
-        return self._render(state, "color", size, raw="async")
+        if plan is not None and (plan.state is not state or plan.size != size):
+            raise ValueError("this frame plan was made for another state or size")
+        return self._render(state, "color", size, raw="async", fog=fog, emission=emission,
+                            plan=plan)  # fmt: skip
 
-    def _finish_read(self, packs: list, size, read: bool) -> list[bytes] | None:
+    def frame_plan(self, state: SceneState, size: tuple[int, int] | None = None, *,
+                   fog: bool = True) -> FramePlan:  # fmt: skip
+        """Record what the color pass will draw for ``state`` at ``size`` (each object's draw
+        calls) and a digest of everything that drawing depends on: the calls, the draw
+        order, each object's layer, opacity, flash and camera, the light, the background,
+        the theme's stroke hue, the size and ``fog``. Two plans with the same ``key`` draw
+        the same picture, so a render may repeat the first frame instead of drawing the
+        second (``render.job``'s de-duplication). Kernel pictures (``field``) are keyed the
+        way the renderer caches them: by the object's type, parameters, roles and style,
+        its quad, and the background, not by the pixels themselves. Needs no GL."""
+        from phasor.render.framekey import digest
+
+        size = size or (state.width, state.height)
+        commands: dict[int, list] = {}
+        parts: list[Any] = [size, bool(fog), tuple(state.background), state.light,
+                            _stroke_hue(state, "color")]  # fmt: skip
+        for order, obj in enumerate(state.draw_order()):
+            if obj.params.opacity <= 0:
+                continue
+            cmds = self._commands(state, obj, "color")
+            commands[order] = cmds
+            keyed = [(kind, {k: v for k, v in c.items() if k != "pixels"}) for kind, c in cmds]
+            fields = any(kind == "field" for kind, _ in cmds)
+            parts.append((order, obj.id, obj.type, obj.layer, float(obj.params.opacity),
+                          float(obj.params.flash), state.camera_for(obj), keyed,
+                          (obj.params, obj.roles, obj.style) if fields else None))  # fmt: skip
+        return FramePlan(state, size, digest(*parts), commands)
+
+    def _finish_read(self, packs: list, size, read: bool,
+                     targets: int = 2) -> list[bytes] | None:  # fmt: skip
         def run():
             with self.ctx:
-                data = [b.read() for b in packs] if read else None
+                data = [b.read() for b in packs[:targets]] if read else None
             self._free_packs.setdefault(size, []).append(packs)
             return data
 
@@ -795,6 +841,17 @@ def _view_depth(cam, z01: np.ndarray, size) -> np.ndarray:
     d = ((world - cam.eye) @ cam.forward).reshape(h, w)
     d[z01 >= 1.0] = np.inf
     return d
+
+
+@dataclasses.dataclass(frozen=True, eq=False)
+class FramePlan:
+    """What ``GLRenderer.frame_plan`` recorded: the state and size it is for, the digest of
+    the drawing (``key``) and each drawn object's commands by draw-order index."""
+
+    state: SceneState
+    size: tuple[int, int]
+    key: bytes
+    commands: dict[int, list]
 
 
 @functools.cache

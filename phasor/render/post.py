@@ -25,6 +25,7 @@ from phasor.core.timing import stage
 from phasor.render.gpu import run
 from phasor.render.gpu.bridge import to_host
 from phasor.render.gpu.budget import Tile
+from phasor.render.presets import FULL, Effects
 from phasor.style.theme import Theme
 
 BLUR_SIGMA = 1.5  # pixels, at each pyramid level
@@ -75,6 +76,7 @@ def finish(
     *,
     backend: str = "auto",
     output: str = "linear",
+    effects: Effects = FULL,
 ) -> np.ndarray:
     """Linear HDR RGBA (h, w, 4) float32 -> linear display RGBA in 0..1, as NumPy; or,
     with ``output="srgb8"``, the finished (h, w, 3) sRGB bytes, encoded where the frame
@@ -84,11 +86,13 @@ def finish(
     target), so plain paint never blooms and a thin glowing curve blooms in proportion to
     its light at any resolution. Without ``emission`` the light above the threshold in
     ``image`` itself is used. ``image`` and ``emission`` may already be on the card (CuPy
-    arrays, as ``Engine.frame_blurred`` passes them); they are then not copied out."""
+    arrays, as ``Engine.frame_blurred`` passes them); they are then not copied out.
+    ``effects`` (``render.presets``) leaves out the bloom (``bloom``) and the lens
+    (``lens``: fringe and vignette) for a draft; the tone map always runs."""
     if output not in ("linear", "srgb8"):
         raise ValueError(f"output must be 'linear' or 'srgb8', got {output!r}")
     with stage("post", sync=lambda: card_sync(backend)):
-        out = _finish(image, theme, emission, backend=backend)
+        out = _finish(image, theme, emission, backend=backend, effects=effects)
     if output == "srgb8":
         with stage("srgb", sync=lambda: card_sync(backend)):
             out = run("srgb8", _whole(out), image=out, backend=backend)
@@ -107,18 +111,23 @@ def _finish(
     emission: np.ndarray | None = None,
     *,
     backend: str = "auto",
+    effects: Effects = FULL,
 ) -> np.ndarray:
     image = _contiguous(image)
     b = theme.bloom
-    source, threshold = image, b["threshold"]
-    if emission is not None:
-        source, threshold = _contiguous(emission), 0.0
-    glow = bloom(source, threshold, int(b["levels"]), backend) if b["strength"] > 0 else None
-    if glow is not None and b.get("fringe", 0.0) > 0:  # warm and cool rims on the glow only
+    glow = None
+    if effects.bloom and b["strength"] > 0:
+        source, threshold = image, b["threshold"]
+        if emission is not None:
+            source, threshold = _contiguous(emission), 0.0
+        glow = bloom(source, threshold, int(b["levels"]), backend)
+    if (
+        glow is not None and effects.lens and b.get("fringe", 0.0) > 0
+    ):  # warm and cool rims on the glow only
         glow = run("fringe", _whole(image), image=glow, amount=b["fringe"], backend=backend)
     out = run("tonemap", _whole(image), image=image, exposure=b["exposure"], bloom=glow,
               bloom_strength=b["strength"] / max(int(b["levels"]), 1), knee=b["knee"],
               backend=backend)  # fmt: skip
-    if b.get("vignette", 0.0) > 0:
+    if effects.lens and b.get("vignette", 0.0) > 0:
         out = run("vignette", _whole(image), image=out, strength=b["vignette"], backend=backend)
     return out  # still on the card when there is one; ``finish`` copies it out once

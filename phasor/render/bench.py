@@ -119,6 +119,7 @@ def save(result: dict[str, Any], directory: str | Path = "benchmarks") -> Path:
 STAGES = (
     "state",
     "simulation",
+    "dedup",
     "draw",
     "gpu draw",
     "readback",
@@ -141,7 +142,7 @@ def run_frame_bench(engine: Any, name: str, count: int = 60, preset: str = "fina
     from phasor.core.timing import Stopwatch
     from phasor.render.job import PRESETS, render_file
 
-    fps = PRESETS[preset][2] or engine.document.meta.fps
+    fps = PRESETS[preset].fps or engine.document.meta.fps
     span = count / fps
     start = max(0.0, (engine.duration - span) / 2)
     with tempfile.TemporaryDirectory(prefix="phasor_bench_") as d:
