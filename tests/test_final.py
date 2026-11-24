@@ -26,7 +26,7 @@ for _m in phasor._MODULES:  # register every domain's types
     getattr(phasor, _m)
 TYPES = sorted(n for n, c in registered_types().items() if is_builtin(c))  # not test types
 # Types with nothing to draw and so no style roles (ADR 0005): a named number.
-DRAWLESS = {"value", "sound"}
+DRAWLESS = {"value", "sound", "variable"}
 # The fewest parameters each type needs (the rest have defaults).
 REQUIRED = {
     "domain_coloring": {"function": "1/(z**2+1)"},
@@ -49,11 +49,26 @@ REQUIRED = {
     "table": {"cells": [["x", "$x^2$"], ["2", "4"]]},
     "code": {"code": "def f(x):\n    return x * x"},
     "code_line": {"text": "return x * x", "classes": "kkkkkkpppppp"},
+    **{
+        t: {"system": "sys"}
+        for t in (
+            "flow_arrows",
+            "flow_probe",
+            "flow_set",
+            "flow_equilibria",
+            "flow_equilibrium_view",
+        )
+    },
+    "flow_manifold": {"system": "sys", "near": [3.14, 0.0]},  # a saddle: it has manifolds
 }
 # Types that point at another object: the scene gets a curve called "guide" for them.
 PARTNERED = {"tracer", "callout"}
 # Sound in a 3D room: the scene gets a Room3D called "room" for them.
 IN_ROOM = {"sound_rays", "wavefront3d"}
+# Parts of a flow (Milestone 26): the scene gets a System called "sys" (a damped pendulum,
+# saddles at +-pi) and the type names it.
+IN_SYSTEM = {"flow_arrows", "flow_probe", "flow_set", "flow_equilibria",
+             "flow_equilibrium_view", "flow_manifold"}  # fmt: skip
 # Examples that build a Scene called ``s``: not domain_coloring (a script that renders the
 # kernel directly) or manim_reverb (a Manim script, run through the importer in its own test).
 EXAMPLES = sorted(p.stem for p in (ROOT / "examples").glob("*.py")
@@ -83,6 +98,10 @@ def _one(name: str, camera: str, passes="auto"):
     if name in PARTNERED:
         s.engine.apply({"op": "add_object", "object": {"id": "guide", "type": "line", "params": {
             "points": [[-1, -0.5, 0], [0, 0.5, 0], [1, -0.5, 0]]}}}, origin="script")  # fmt: skip
+    if name in IN_SYSTEM:
+        r = s.engine.apply({"op": "add_object", "object": {"id": "sys", "type": "flow_system",
+                                                           "params": {}}}, origin="script")  # fmt: skip
+        assert r.ok, [i.message for i in r.errors]
     if name in IN_ROOM:
         r = s.engine.apply({"op": "add_object", "object": {"id": "room", "type": "room3d",
                                                            "params": {}}}, origin="script")  # fmt: skip

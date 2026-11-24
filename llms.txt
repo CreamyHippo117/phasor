@@ -59,8 +59,15 @@
 - `epicycles`: flash, points, terms, phase, trace
 - `equation`: flash, morph_from, morph, morph_kind, parts, colors, pos, write, drift, keys, from_parts, from_colors, from_keys, from_pos, from_id, arc, as_shapes, fill_opacity, stroke_opacity
 - `fixed_points`: flash, f, g, constants, pos, extent, rays, labels, ray_length, reveal, grid
+- `flow_arrows`: flash, system, counts, shape, length_by, size
+- `flow_equilibria`: flash, system, grid, radius, reveal
+- `flow_equilibrium_view`: flash, system, near, radius, name, card, grid
 - `flow_lines`: flash, fp, fq, fr, pos, extent, seeds, steps, length, both, progress
+- `flow_manifold`: flash, system, near, which, length, progress, grid
 - `flow_particles`: flash, fp, fq, fr, pos, extent, count, speed, lifetime, tail, seed
+- `flow_probe`: flash, system, x0, trail, dot, label
+- `flow_set`: flash, system, shape, center, size, points, count, fill, trail, samples, h_max, rings, radius
+- `flow_system`: flash, equations, terms, constants, window, tau, rate, dt, escape, pos, scale, frame, label
 - `fractal`: flash, kind, c, pos, size, max_iter, density, hue, center, zoom, steady, radius, ambient
 - `galois_diagram`: flash, primes, pos, width, height, gap
 - `graph`: flash, function, xmin, xmax, pos
@@ -112,6 +119,7 @@
 - `tracer`: flash, path, progress, trail, r
 - `transform_grid`: flash, matrix, pos, extent, spacing, square, basis
 - `value`: flash, value
+- `variable`: flash, name, value, min, max
 - `vector_field`: flash, p, q, pos, extent, spacing, color_by_size, length_by
 - `vector_field_3d`: flash, fp, fq, fr, pos, extent, counts, spacing, color_by_size, length_by
 - `video`: flash, pos, width, height, frame, fit, fill, backdrop, start, trim, speed, loop, path

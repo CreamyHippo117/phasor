@@ -31,6 +31,7 @@ _ALIAS = {
     "phasor.domains.cloud": "cloud",
     "phasor.domains.network": "nw",
     "phasor.domains.dynamics": "dyn",
+    "phasor.domains.flow": "flow",
     "phasor.domains.shapes": "shapes",
     "phasor.domains.path": "shapes",  # shapes.Path
     "phasor.domains.svg": "shapes",  # shapes.SVG

@@ -1,0 +1,4476 @@
+[
+ {
+  "names": [
+   "ERROR"
+  ],
+  "real": "Symbol('ERROR', real=True)",
+  "s": "(ERROR)"
+ },
+ {
+  "complex": "Mul(Pow(Add(Symbol('a'), Pow(Symbol('z'), Integer(2))), Integer(-1)), Add(Mul(Integer(-1), Symbol('a')), Pow(Symbol('z'), Integer(3)), Integer(-1)))",
+  "names": [
+   "a",
+   "z"
+  ],
+  "real": "Mul(Pow(Add(Symbol('a', real=True), Pow(Symbol('z', real=True), Integer(2))), Integer(-1)), Add(Mul(Integer(-1), Symbol('a', real=True)), Pow(Symbol('z', real=True), Integer(3)), Integer(-1)))",
+  "s": "(z**3 - 1 - a)/(z**2 + a)"
+ },
+ {
+  "complex": "Mul(Pow(Add(Pow(Symbol('z'), Integer(2)), Float('0.5', precision=53)), Integer(-1)), Add(Pow(Symbol('z'), Integer(3)), Integer(-1)))",
+  "names": [
+   "z"
+  ],
+  "real": "Mul(Pow(Add(Pow(Symbol('z', real=True), Integer(2)), Float('0.5', precision=53)), Integer(-1)), Add(Pow(Symbol('z', real=True), Integer(3)), Integer(-1)))",
+  "s": "(z**3 - 1)/(z**2 + 0.5)"
+ },
+ {
+  "complex": "Mul(Pow(Add(Symbol('a'), Pow(Symbol('z'), Integer(2))), Integer(-1)), Add(Mul(Integer(-1), Symbol('a')), Pow(Symbol('z'), Integer(5)), Integer(-1)))",
+  "names": [
+   "a",
+   "z"
+  ],
+  "real": "Mul(Pow(Add(Symbol('a', real=True), Pow(Symbol('z', real=True), Integer(2))), Integer(-1)), Add(Mul(Integer(-1), Symbol('a', real=True)), Pow(Symbol('z', real=True), Integer(5)), Integer(-1)))",
+  "s": "(z**5 - 1 - a)/(z**2 + a)"
+ },
+ {
+  "complex": "Mul(Pow(Add(Pow(Symbol('z'), Integer(2)), Mul(Float('0.59999999999999998', precision=53), I)), Integer(-1)), Add(Pow(Symbol('z'), Integer(5)), Integer(-1)))",
+  "names": [
+   "z"
+  ],
+  "real": "Mul(Pow(Add(Pow(Symbol('z', real=True), Integer(2)), Mul(Float('0.59999999999999998', precision=53), I)), Integer(-1)), Add(Pow(Symbol('z', real=True), Integer(5)), Integer(-1)))",
+  "s": "(z**5 - 1)/(z**2 + 0.6j)"
+ },
+ {
+  "complex": "Pow(Symbol('z'), Rational(1, 2))",
+  "names": [
+   "z"
+  ],
+  "real": "Pow(Symbol('z', real=True), Rational(1, 2))",
+  "s": "+sqrt(z)"
+ },
+ {
+  "names": [
+   "preset"
+  ],
+  "real": "Symbol('preset', real=True)",
+  "s": "--preset"
+ },
+ {
+  "names": [
+   "quiet"
+  ],
+  "real": "Symbol('quiet', real=True)",
+  "s": "--quiet"
+ },
+ {
+  "names": [
+   "root"
+  ],
+  "real": "Symbol('root', real=True)",
+  "s": "--root"
+ },
+ {
+  "names": [
+   "steps"
+  ],
+  "real": "Symbol('steps', real=True)",
+  "s": "--steps"
+ },
+ {
+  "names": [
+   "t"
+  ],
+  "real": "Add(Mul(Float('1.2', precision=53), cos(Symbol('t', real=True))), Float('-1.5', precision=53))",
+  "s": "-1.5 + 1.2*cos(t)"
+ },
+ {
+  "names": [
+   "t"
+  ],
+  "real": "Add(Mul(Float('1.2', precision=53), sin(Mul(Integer(2), Symbol('t', real=True)))), Float('-2.0', precision=53))",
+  "s": "-2.0 + 1.2*sin(2*t)"
+ },
+ {
+  "complex": "Mul(Integer(-1), I)",
+  "names": [],
+  "real": "Mul(Integer(-1), I)",
+  "s": "-i"
+ },
+ {
+  "names": [
+   "m"
+  ],
+  "real": "Mul(Integer(-1), Symbol('m', real=True))",
+  "s": "-m"
+ },
+ {
+  "names": [
+   "o"
+  ],
+  "real": "Mul(Integer(-1), Symbol('o', real=True))",
+  "s": "-o"
+ },
+ {
+  "names": [
+   "x"
+  ],
+  "real": "Mul(Integer(-1), sin(Symbol('x', real=True)))",
+  "s": "-sin(x)"
+ },
+ {
+  "names": [
+   "x",
+   "y"
+  ],
+  "real": "Add(Mul(Integer(-1), Float('0.29999999999999999', precision=53), Symbol('y', real=True)), Mul(Integer(-1), sin(Symbol('x', real=True))))",
+  "s": "-sin(x) - 0.3 * y"
+ },
+ {
+  "complex": "Mul(Integer(-1), Pow(Symbol('z'), Rational(1, 2)))",
+  "names": [
+   "z"
+  ],
+  "real": "Mul(Integer(-1), Pow(Symbol('z', real=True), Rational(1, 2)))",
+  "s": "-sqrt(z)"
+ },
+ {
+  "names": [
+   "y"
+  ],
+  "real": "Mul(Integer(-1), Symbol('y', real=True))",
+  "s": "-y"
+ },
+ {
+  "names": [
+   "t"
+  ],
+  "real": "Add(Mul(Rational(1, 10), Symbol('t', real=True)), Float('0.02', precision=53))",
+  "s": "0.02 + t / 10"
+ },
+ {
+  "names": [
+   "t"
+  ],
+  "real": "Add(Mul(Float('0.17999999999999999', precision=53), Symbol('t', real=True)), Integer(-1))",
+  "s": "0.18*t - 1"
+ },
+ {
+  "names": [
+   "t"
+  ],
+  "real": "Mul(Float('0.20000000000000001', precision=53), Symbol('t', real=True))",
+  "s": "0.2*t"
+ },
+ {
+  "names": [
+   "t"
+  ],
+  "real": "Mul(Float('0.40000000000000002', precision=53), Pow(Add(Symbol('t', real=True), Integer(1)), Integer(-1)))",
+  "s": "0.4 / (1 + t)"
+ },
+ {
+  "names": [
+   "t"
+  ],
+  "real": "Mul(Float('1.2', precision=53), cos(Symbol('t', real=True)))",
+  "s": "1.2*cos(t)"
+ },
+ {
+  "names": [
+   "t"
+  ],
+  "real": "Mul(Float('1.2', precision=53), sin(Symbol('t', real=True)))",
+  "s": "1.2*sin(t)"
+ },
+ {
+  "complex": "Pow(Add(Pow(Symbol('z'), Integer(2)), Integer(1)), Integer(-1))",
+  "names": [
+   "z"
+  ],
+  "real": "Pow(Add(Pow(Symbol('z', real=True), Integer(2)), Integer(1)), Integer(-1))",
+  "s": "1/(z**2 + 1)"
+ },
+ {
+  "complex": "Pow(Add(Pow(Symbol('z'), Integer(2)), Integer(1)), Integer(-1))",
+  "names": [
+   "z"
+  ],
+  "real": "Pow(Add(Pow(Symbol('z', real=True), Integer(2)), Integer(1)), Integer(-1))",
+  "s": "1/(z**2+1)"
+ },
+ {
+  "names": [
+   "u"
+  ],
+  "real": "Mul(Integer(2), cos(Symbol('u', real=True)))",
+  "s": "2*cos(u)"
+ },
+ {
+  "names": [
+   "u",
+   "v"
+  ],
+  "real": "Mul(Integer(2), sin(Symbol('u', real=True)), cos(Symbol('v', real=True)))",
+  "s": "2*sin(u)*cos(v)"
+ },
+ {
+  "names": [
+   "u",
+   "v"
+  ],
+  "real": "Mul(Integer(2), sin(Symbol('u', real=True)), sin(Symbol('v', real=True)))",
+  "s": "2*sin(u)*sin(v)"
+ },
+ {
+  "names": [
+   "A"
+  ],
+  "real": "Symbol('A', real=True)",
+  "s": "A"
+ },
+ {
+  "names": [
+   "Apr"
+  ],
+  "real": "Symbol('Apr', real=True)",
+  "s": "Apr"
+ },
+ {
+  "names": [
+   "B"
+  ],
+  "real": "Symbol('B', real=True)",
+  "s": "B"
+ },
+ {
+  "names": [
+   "C"
+  ],
+  "real": "Symbol('C', real=True)",
+  "s": "C"
+ },
+ {
+  "names": [
+   "CUDA"
+  ],
+  "real": "Symbol('CUDA', real=True)",
+  "s": "CUDA"
+ },
+ {
+  "names": [
+   "D4"
+  ],
+  "real": "Symbol('D4', real=True)",
+  "s": "D4"
+ },
+ {
+  "names": [
+   "Feb"
+  ],
+  "real": "Symbol('Feb', real=True)",
+  "s": "Feb"
+ },
+ {
+  "names": [
+   "Jan"
+  ],
+  "real": "Symbol('Jan', real=True)",
+  "s": "Jan"
+ },
+ {
+  "names": [
+   "Mar"
+  ],
+  "real": "Symbol('Mar', real=True)",
+  "s": "Mar"
+ },
+ {
+  "names": [
+   "PHASOR_DEFAULT_LOOK"
+  ],
+  "real": "Symbol('PHASOR_DEFAULT_LOOK', real=True)",
+  "s": "PHASOR_DEFAULT_LOOK"
+ },
+ {
+  "names": [
+   "Residues"
+  ],
+  "real": "Symbol('Residues', real=True)",
+  "s": "Residues"
+ },
+ {
+  "names": [
+   "Shapes"
+  ],
+  "real": "Symbol('Shapes', real=True)",
+  "s": "Shapes"
+ },
+ {
+  "names": [
+   "_"
+  ],
+  "real": "Symbol('_', real=True)",
+  "s": "_"
+ },
+ {
+  "names": [
+   "__main__"
+  ],
+  "real": "Symbol('__main__', real=True)",
+  "s": "__main__"
+ },
+ {
+  "names": [
+   "_a"
+  ],
+  "real": "Symbol('_a', real=True)",
+  "s": "_a"
+ },
+ {
+  "names": [
+   "_b"
+  ],
+  "real": "Symbol('_b', real=True)",
+  "s": "_b"
+ },
+ {
+  "names": [
+   "_marks"
+  ],
+  "real": "Symbol('_marks', real=True)",
+  "s": "_marks"
+ },
+ {
+  "complex": "Symbol('a')",
+  "names": [
+   "a"
+  ],
+  "real": "Symbol('a', real=True)",
+  "s": "a"
+ },
+ {
+  "names": [
+   "a_06"
+  ],
+  "real": "Symbol('a_06', real=True)",
+  "s": "a_06"
+ },
+ {
+  "names": [
+   "a_07"
+  ],
+  "real": "Symbol('a_07', real=True)",
+  "s": "a_07"
+ },
+ {
+  "names": [
+   "a_end"
+  ],
+  "real": "Symbol('a_end', real=True)",
+  "s": "a_end"
+ },
+ {
+  "names": [
+   "a_x"
+  ],
+  "real": "Symbol('a_x', real=True)",
+  "s": "a_x"
+ },
+ {
+  "names": [
+   "ab"
+  ],
+  "real": "Symbol('ab', real=True)",
+  "s": "ab"
+ },
+ {
+  "names": [
+   "add_constraint"
+  ],
+  "real": "Symbol('add_constraint', real=True)",
+  "s": "add_constraint"
+ },
+ {
+  "names": [
+   "add_control"
+  ],
+  "real": "Symbol('add_control', real=True)",
+  "s": "add_control"
+ },
+ {
+  "names": [
+   "add_object"
+  ],
+  "real": "Symbol('add_object', real=True)",
+  "s": "add_object"
+ },
+ {
+  "names": [
+   "after"
+  ],
+  "real": "Symbol('after', real=True)",
+  "s": "after"
+ },
+ {
+  "names": [
+   "alive"
+  ],
+  "real": "Symbol('alive', real=True)",
+  "s": "alive"
+ },
+ {
+  "names": [
+   "amplitudes"
+  ],
+  "real": "Symbol('amplitudes', real=True)",
+  "s": "amplitudes"
+ },
+ {
+  "names": [
+   "animate"
+  ],
+  "real": "Symbol('animate', real=True)",
+  "s": "animate"
+ },
+ {
+  "names": [
+   "annotation"
+  ],
+  "real": "Symbol('annotation', real=True)",
+  "s": "annotation"
+ },
+ {
+  "names": [
+   "annulus"
+  ],
+  "real": "Symbol('annulus', real=True)",
+  "s": "annulus"
+ },
+ {
+  "names": [
+   "answer"
+  ],
+  "real": "Symbol('answer', real=True)",
+  "s": "answer"
+ },
+ {
+  "names": [
+   "ants"
+  ],
+  "real": "Symbol('ants', real=True)",
+  "s": "ants"
+ },
+ {
+  "names": [
+   "appear"
+  ],
+  "real": "Symbol('appear', real=True)",
+  "s": "appear"
+ },
+ {
+  "names": [
+   "applied"
+  ],
+  "real": "Symbol('applied', real=True)",
+  "s": "applied"
+ },
+ {
+  "names": [
+   "arc"
+  ],
+  "real": "Symbol('arc', real=True)",
+  "s": "arc"
+ },
+ {
+  "names": [
+   "area"
+  ],
+  "real": "Symbol('area', real=True)",
+  "s": "area"
+ },
+ {
+  "names": [
+   "area_integral"
+  ],
+  "real": "Symbol('area_integral', real=True)",
+  "s": "area_integral"
+ },
+ {
+  "names": [
+   "args"
+  ],
+  "real": "Symbol('args', real=True)",
+  "s": "args"
+ },
+ {
+  "names": [
+   "arrivals"
+  ],
+  "real": "Symbol('arrivals', real=True)",
+  "s": "arrivals"
+ },
+ {
+  "names": [
+   "arrows"
+  ],
+  "real": "Symbol('arrows', real=True)",
+  "s": "arrows"
+ },
+ {
+  "names": [
+   "at"
+  ],
+  "real": "Symbol('at', real=True)",
+  "s": "at"
+ },
+ {
+  "names": [
+   "ax"
+  ],
+  "real": "Symbol('ax', real=True)",
+  "s": "ax"
+ },
+ {
+  "names": [
+   "axes"
+  ],
+  "real": "Symbol('axes', real=True)",
+  "s": "axes"
+ },
+ {
+  "names": [
+   "axis"
+  ],
+  "real": "Symbol('axis', real=True)",
+  "s": "axis"
+ },
+ {
+  "names": [
+   "b"
+  ],
+  "real": "Symbol('b', real=True)",
+  "s": "b"
+ },
+ {
+  "names": [
+   "backdrop"
+  ],
+  "real": "Symbol('backdrop', real=True)",
+  "s": "backdrop"
+ },
+ {
+  "names": [
+   "bad_param"
+  ],
+  "real": "Symbol('bad_param', real=True)",
+  "s": "bad_param"
+ },
+ {
+  "names": [
+   "ball"
+  ],
+  "real": "Symbol('ball', real=True)",
+  "s": "ball"
+ },
+ {
+  "names": [
+   "basics_3d"
+  ],
+  "real": "Symbol('basics_3d', real=True)",
+  "s": "basics_3d"
+ },
+ {
+  "names": [
+   "beacon"
+  ],
+  "real": "Symbol('beacon', real=True)",
+  "s": "beacon"
+ },
+ {
+  "names": [
+   "beat"
+  ],
+  "real": "Symbol('beat', real=True)",
+  "s": "beat"
+ },
+ {
+  "names": [
+   "bees"
+  ],
+  "real": "Symbol('bees', real=True)",
+  "s": "bees"
+ },
+ {
+  "names": [
+   "before"
+  ],
+  "real": "Symbol('before', real=True)",
+  "s": "before"
+ },
+ {
+  "names": [
+   "bend"
+  ],
+  "real": "Symbol('bend', real=True)",
+  "s": "bend"
+ },
+ {
+  "names": [
+   "blend"
+  ],
+  "real": "Symbol('blend', real=True)",
+  "s": "blend"
+ },
+ {
+  "names": [
+   "blend_done"
+  ],
+  "real": "Symbol('blend_done', real=True)",
+  "s": "blend_done"
+ },
+ {
+  "names": [
+   "bold"
+  ],
+  "real": "Symbol('bold', real=True)",
+  "s": "bold"
+ },
+ {
+  "names": [
+   "booleans"
+  ],
+  "real": "Symbol('booleans', real=True)",
+  "s": "booleans"
+ },
+ {
+  "names": [
+   "both"
+  ],
+  "real": "Symbol('both', real=True)",
+  "s": "both"
+ },
+ {
+  "names": [
+   "bottom"
+  ],
+  "real": "Symbol('bottom', real=True)",
+  "s": "bottom"
+ },
+ {
+  "names": [
+   "box"
+  ],
+  "real": "Symbol('box', real=True)",
+  "s": "box"
+ },
+ {
+  "names": [
+   "brace"
+  ],
+  "real": "Symbol('brace', real=True)",
+  "s": "brace"
+ },
+ {
+  "names": [
+   "branch"
+  ],
+  "real": "Symbol('branch', real=True)",
+  "s": "branch"
+ },
+ {
+  "names": [
+   "brief"
+  ],
+  "real": "Symbol('brief', real=True)",
+  "s": "brief"
+ },
+ {
+  "names": [
+   "c"
+  ],
+  "real": "Symbol('c', real=True)",
+  "s": "c"
+ },
+ {
+  "names": [
+   "calm"
+  ],
+  "real": "Symbol('calm', real=True)",
+  "s": "calm"
+ },
+ {
+  "names": [
+   "camera"
+  ],
+  "real": "Symbol('camera', real=True)",
+  "s": "camera"
+ },
+ {
+  "names": [
+   "caption"
+  ],
+  "real": "Symbol('caption', real=True)",
+  "s": "caption"
+ },
+ {
+  "names": [
+   "card"
+  ],
+  "real": "Symbol('card', real=True)",
+  "s": "card"
+ },
+ {
+  "names": [
+   "carried_over"
+  ],
+  "real": "Symbol('carried_over', real=True)",
+  "s": "carried_over"
+ },
+ {
+  "names": [
+   "cats"
+  ],
+  "real": "Symbol('cats', real=True)",
+  "s": "cats"
+ },
+ {
+  "names": [
+   "center"
+  ],
+  "real": "Symbol('center', real=True)",
+  "s": "center"
+ },
+ {
+  "names": [
+   "changed"
+  ],
+  "real": "Symbol('changed', real=True)",
+  "s": "changed"
+ },
+ {
+  "names": [
+   "chart"
+  ],
+  "real": "Symbol('chart', real=True)",
+  "s": "chart"
+ },
+ {
+  "names": [
+   "checkpoint"
+  ],
+  "real": "Symbol('checkpoint', real=True)",
+  "s": "checkpoint"
+ },
+ {
+  "names": [
+   "chime"
+  ],
+  "real": "Symbol('chime', real=True)",
+  "s": "chime"
+ },
+ {
+  "names": [
+   "chirp"
+  ],
+  "real": "Symbol('chirp', real=True)",
+  "s": "chirp"
+ },
+ {
+  "names": [
+   "circle"
+  ],
+  "real": "Symbol('circle', real=True)",
+  "s": "circle"
+ },
+ {
+  "names": [
+   "circle_1"
+  ],
+  "real": "Symbol('circle_1', real=True)",
+  "s": "circle_1"
+ },
+ {
+  "names": [
+   "circulation"
+  ],
+  "real": "Symbol('circulation', real=True)",
+  "s": "circulation"
+ },
+ {
+  "names": [
+   "t"
+  ],
+  "real": "error: FunctionError",
+  "s": "clamp((t - 4) / 3, 0, 1)"
+ },
+ {
+  "names": [
+   "clap"
+  ],
+  "real": "Symbol('clap', real=True)",
+  "s": "clap"
+ },
+ {
+  "names": [
+   "clean"
+  ],
+  "real": "Symbol('clean', real=True)",
+  "s": "clean"
+ },
+ {
+  "names": [
+   "click"
+  ],
+  "real": "Symbol('click', real=True)",
+  "s": "click"
+ },
+ {
+  "names": [
+   "clicks"
+  ],
+  "real": "Symbol('clicks', real=True)",
+  "s": "clicks"
+ },
+ {
+  "names": [
+   "cluttered"
+  ],
+  "real": "Symbol('cluttered', real=True)",
+  "s": "cluttered"
+ },
+ {
+  "names": [
+   "cluttered_"
+  ],
+  "real": "Symbol('cluttered_', real=True)",
+  "s": "cluttered_"
+ },
+ {
+  "names": [
+   "code"
+  ],
+  "real": "Symbol('code', real=True)",
+  "s": "code"
+ },
+ {
+  "names": [
+   "color"
+  ],
+  "real": "Symbol('color', real=True)",
+  "s": "color"
+ },
+ {
+  "names": [
+   "colormap"
+  ],
+  "real": "Symbol('colormap', real=True)",
+  "s": "colormap"
+ },
+ {
+  "names": [
+   "colors"
+  ],
+  "real": "Symbol('colors', real=True)",
+  "s": "colors"
+ },
+ {
+  "names": [
+   "comet"
+  ],
+  "real": "Symbol('comet', real=True)",
+  "s": "comet"
+ },
+ {
+  "names": [
+   "contour"
+  ],
+  "real": "Symbol('contour', real=True)",
+  "s": "contour"
+ },
+ {
+  "names": [
+   "t"
+  ],
+  "real": "cos(Symbol('t', real=True))",
+  "s": "cos(t)"
+ },
+ {
+  "names": [
+   "cosets"
+  ],
+  "real": "Symbol('cosets', real=True)",
+  "s": "cosets"
+ },
+ {
+  "names": [
+   "count"
+  ],
+  "real": "Symbol('count', real=True)",
+  "s": "count"
+ },
+ {
+  "names": [
+   "cpu"
+  ],
+  "real": "Symbol('cpu', real=True)",
+  "s": "cpu"
+ },
+ {
+  "names": [
+   "crowded"
+  ],
+  "real": "Symbol('crowded', real=True)",
+  "s": "crowded"
+ },
+ {
+  "names": [
+   "crowded_ticks"
+  ],
+  "real": "Symbol('crowded_ticks', real=True)",
+  "s": "crowded_ticks"
+ },
+ {
+  "names": [
+   "current"
+  ],
+  "real": "Symbol('current', real=True)",
+  "s": "current"
+ },
+ {
+  "names": [
+   "curtain"
+  ],
+  "real": "Symbol('curtain', real=True)",
+  "s": "curtain"
+ },
+ {
+  "names": [
+   "cycles"
+  ],
+  "real": "Symbol('cycles', real=True)",
+  "s": "cycles"
+ },
+ {
+  "names": [
+   "danger"
+  ],
+  "real": "Symbol('danger', real=True)",
+  "s": "danger"
+ },
+ {
+  "names": [
+   "dash"
+  ],
+  "real": "Symbol('dash', real=True)",
+  "s": "dash"
+ },
+ {
+  "names": [
+   "dashed"
+  ],
+  "real": "Symbol('dashed', real=True)",
+  "s": "dashed"
+ },
+ {
+  "names": [
+   "data"
+  ],
+  "real": "Symbol('data', real=True)",
+  "s": "data"
+ },
+ {
+  "names": [
+   "data_viz"
+  ],
+  "real": "Symbol('data_viz', real=True)",
+  "s": "data_viz"
+ },
+ {
+  "names": [
+   "deep_zoom"
+  ],
+  "real": "Symbol('deep_zoom', real=True)",
+  "s": "deep_zoom"
+ },
+ {
+  "names": [
+   "degree"
+  ],
+  "real": "Symbol('degree', real=True)",
+  "s": "degree"
+ },
+ {
+  "names": [
+   "delta"
+  ],
+  "real": "Symbol('delta', real=True)",
+  "s": "delta"
+ },
+ {
+  "names": [
+   "dense"
+  ],
+  "real": "Symbol('dense', real=True)",
+  "s": "dense"
+ },
+ {
+  "names": [
+   "depth"
+  ],
+  "real": "Symbol('depth', real=True)",
+  "s": "depth"
+ },
+ {
+  "names": [
+   "determinant"
+  ],
+  "real": "Symbol('determinant', real=True)",
+  "s": "determinant"
+ },
+ {
+  "names": [
+   "diagram_kit"
+  ],
+  "real": "Symbol('diagram_kit', real=True)",
+  "s": "diagram_kit"
+ },
+ {
+  "names": [
+   "diamond"
+  ],
+  "real": "Symbol('diamond', real=True)",
+  "s": "diamond"
+ },
+ {
+  "names": [
+   "diff"
+  ],
+  "real": "Symbol('diff', real=True)",
+  "s": "diff"
+ },
+ {
+  "names": [
+   "difference"
+  ],
+  "real": "Symbol('difference', real=True)",
+  "s": "difference"
+ },
+ {
+  "names": [
+   "ding"
+  ],
+  "real": "Symbol('ding', real=True)",
+  "s": "ding"
+ },
+ {
+  "names": [
+   "disc"
+  ],
+  "real": "Symbol('disc', real=True)",
+  "s": "disc"
+ },
+ {
+  "names": [
+   "distance"
+  ],
+  "real": "Symbol('distance', real=True)",
+  "s": "distance"
+ },
+ {
+  "names": [
+   "dive"
+  ],
+  "real": "Symbol('dive', real=True)",
+  "s": "dive"
+ },
+ {
+  "names": [
+   "doc_kite"
+  ],
+  "real": "Symbol('doc_kite', real=True)",
+  "s": "doc_kite"
+ },
+ {
+  "names": [
+   "doc_signpost"
+  ],
+  "real": "Symbol('doc_signpost', real=True)",
+  "s": "doc_signpost"
+ },
+ {
+  "names": [
+   "docs_search"
+  ],
+  "real": "Symbol('docs_search', real=True)",
+  "s": "docs_search"
+ },
+ {
+  "names": [
+   "dogs"
+  ],
+  "real": "Symbol('dogs', real=True)",
+  "s": "dogs"
+ },
+ {
+  "names": [
+   "domain"
+  ],
+  "real": "Symbol('domain', real=True)",
+  "s": "domain"
+ },
+ {
+  "names": [
+   "domain_coloring"
+  ],
+  "real": "Symbol('domain_coloring', real=True)",
+  "s": "domain_coloring"
+ },
+ {
+  "names": [
+   "domains"
+  ],
+  "real": "Symbol('domains', real=True)",
+  "s": "domains"
+ },
+ {
+  "names": [
+   "done"
+  ],
+  "real": "Symbol('done', real=True)",
+  "s": "done"
+ },
+ {
+  "names": [
+   "dot"
+  ],
+  "real": "Symbol('dot', real=True)",
+  "s": "dot"
+ },
+ {
+  "names": [
+   "dot_1"
+  ],
+  "real": "Symbol('dot_1', real=True)",
+  "s": "dot_1"
+ },
+ {
+  "names": [
+   "dot_label"
+  ],
+  "real": "Symbol('dot_label', real=True)",
+  "s": "dot_label"
+ },
+ {
+  "names": [
+   "dotted"
+  ],
+  "real": "Symbol('dotted', real=True)",
+  "s": "dotted"
+ },
+ {
+  "names": [
+   "draft"
+  ],
+  "real": "Symbol('draft', real=True)",
+  "s": "draft"
+ },
+ {
+  "names": [
+   "draw"
+  ],
+  "real": "Symbol('draw', real=True)",
+  "s": "draw"
+ },
+ {
+  "names": [
+   "drawing"
+  ],
+  "real": "Symbol('drawing', real=True)",
+  "s": "drawing"
+ },
+ {
+  "names": [
+   "drift"
+  ],
+  "real": "Symbol('drift', real=True)",
+  "s": "drift"
+ },
+ {
+  "names": [
+   "drop"
+  ],
+  "real": "Symbol('drop', real=True)",
+  "s": "drop"
+ },
+ {
+  "names": [
+   "drum"
+  ],
+  "real": "Symbol('drum', real=True)",
+  "s": "drum"
+ },
+ {
+  "names": [
+   "edges"
+  ],
+  "real": "Symbol('edges', real=True)",
+  "s": "edges"
+ },
+ {
+  "names": [
+   "eig"
+  ],
+  "real": "Symbol('eig', real=True)",
+  "s": "eig"
+ },
+ {
+  "names": [
+   "eigenvalues"
+  ],
+  "real": "Symbol('eigenvalues', real=True)",
+  "s": "eigenvalues"
+ },
+ {
+  "names": [
+   "element"
+  ],
+  "real": "Symbol('element', real=True)",
+  "s": "element"
+ },
+ {
+  "names": [
+   "ellipse"
+  ],
+  "real": "Symbol('ellipse', real=True)",
+  "s": "ellipse"
+ },
+ {
+  "names": [
+   "emblem"
+  ],
+  "real": "Symbol('emblem', real=True)",
+  "s": "emblem"
+ },
+ {
+  "names": [
+   "emphasis"
+  ],
+  "real": "Symbol('emphasis', real=True)",
+  "s": "emphasis"
+ },
+ {
+  "names": [
+   "end"
+  ],
+  "real": "Symbol('end', real=True)",
+  "s": "end"
+ },
+ {
+  "names": [
+   "energy_left"
+  ],
+  "real": "Symbol('energy_left', real=True)",
+  "s": "energy_left"
+ },
+ {
+  "names": [
+   "entries"
+  ],
+  "real": "Symbol('entries', real=True)",
+  "s": "entries"
+ },
+ {
+  "names": [
+   "epsilon"
+  ],
+  "real": "Symbol('epsilon', real=True)",
+  "s": "epsilon"
+ },
+ {
+  "names": [
+   "eq"
+  ],
+  "real": "Symbol('eq', real=True)",
+  "s": "eq"
+ },
+ {
+  "names": [
+   "error"
+  ],
+  "real": "Symbol('error', real=True)",
+  "s": "error"
+ },
+ {
+  "names": [
+   "error_eq"
+  ],
+  "real": "Symbol('error_eq', real=True)",
+  "s": "error_eq"
+ },
+ {
+  "names": [
+   "escape"
+  ],
+  "real": "Symbol('escape', real=True)",
+  "s": "escape"
+ },
+ {
+  "names": [
+   "estimate"
+  ],
+  "real": "Symbol('estimate', real=True)",
+  "s": "estimate"
+ },
+ {
+  "names": [
+   "evenodd"
+  ],
+  "real": "Symbol('evenodd', real=True)",
+  "s": "evenodd"
+ },
+ {
+  "names": [
+   "exact"
+  ],
+  "real": "Symbol('exact', real=True)",
+  "s": "exact"
+ },
+ {
+  "names": [
+   "examples"
+  ],
+  "real": "Symbol('examples', real=True)",
+  "s": "examples"
+ },
+ {
+  "names": [
+   "exclusion"
+  ],
+  "real": "Symbol('exclusion', real=True)",
+  "s": "exclusion"
+ },
+ {
+  "names": [
+   "explorer"
+  ],
+  "real": "Symbol('explorer', real=True)",
+  "s": "explorer"
+ },
+ {
+  "names": [
+   "f"
+  ],
+  "real": "Symbol('f', real=True)",
+  "s": "f"
+ },
+ {
+  "names": [
+   "f_eq"
+  ],
+  "real": "Symbol('f_eq', real=True)",
+  "s": "f_eq"
+ },
+ {
+  "names": [
+   "fade"
+  ],
+  "real": "Symbol('fade', real=True)",
+  "s": "fade"
+ },
+ {
+  "names": [
+   "fall"
+  ],
+  "real": "Symbol('fall', real=True)",
+  "s": "fall"
+ },
+ {
+  "names": [
+   "features"
+  ],
+  "real": "Symbol('features', real=True)",
+  "s": "features"
+ },
+ {
+  "names": [
+   "field"
+  ],
+  "real": "Symbol('field', real=True)",
+  "s": "field"
+ },
+ {
+  "names": [
+   "fields"
+  ],
+  "real": "Symbol('fields', real=True)",
+  "s": "fields"
+ },
+ {
+  "names": [
+   "fill"
+  ],
+  "real": "Symbol('fill', real=True)",
+  "s": "fill"
+ },
+ {
+  "names": [
+   "fill_color"
+  ],
+  "real": "Symbol('fill_color', real=True)",
+  "s": "fill_color"
+ },
+ {
+  "names": [
+   "final"
+  ],
+  "real": "Symbol('final', real=True)",
+  "s": "final"
+ },
+ {
+  "names": [
+   "first_arrival_ms"
+  ],
+  "real": "Symbol('first_arrival_ms', real=True)",
+  "s": "first_arrival_ms"
+ },
+ {
+  "names": [
+   "five"
+  ],
+  "real": "Symbol('five', real=True)",
+  "s": "five"
+ },
+ {
+  "names": [
+   "flag"
+  ],
+  "real": "Symbol('flag', real=True)",
+  "s": "flag"
+ },
+ {
+  "names": [
+   "flip"
+  ],
+  "real": "Symbol('flip', real=True)",
+  "s": "flip"
+ },
+ {
+  "names": [
+   "floor"
+  ],
+  "real": "Symbol('floor', real=True)",
+  "s": "floor"
+ },
+ {
+  "names": [
+   "flow"
+  ],
+  "real": "Symbol('flow', real=True)",
+  "s": "flow"
+ },
+ {
+  "names": [
+   "focus"
+  ],
+  "real": "Symbol('focus', real=True)",
+  "s": "focus"
+ },
+ {
+  "names": [
+   "fourier_linalg"
+  ],
+  "real": "Symbol('fourier_linalg', real=True)",
+  "s": "fourier_linalg"
+ },
+ {
+  "names": [
+   "fractal"
+  ],
+  "real": "Symbol('fractal', real=True)",
+  "s": "fractal"
+ },
+ {
+  "names": [
+   "frame"
+  ],
+  "real": "Symbol('frame', real=True)",
+  "s": "frame"
+ },
+ {
+  "names": [
+   "front"
+  ],
+  "real": "Symbol('front', real=True)",
+  "s": "front"
+ },
+ {
+  "names": [
+   "fronts"
+  ],
+  "real": "Symbol('fronts', real=True)",
+  "s": "fronts"
+ },
+ {
+  "names": [
+   "fronts_in_room"
+  ],
+  "real": "Symbol('fronts_in_room', real=True)",
+  "s": "fronts_in_room"
+ },
+ {
+  "names": [
+   "full"
+  ],
+  "real": "Symbol('full', real=True)",
+  "s": "full"
+ },
+ {
+  "names": [
+   "g"
+  ],
+  "real": "Symbol('g', real=True)",
+  "s": "g"
+ },
+ {
+  "names": [
+   "g_eq"
+  ],
+  "real": "Symbol('g_eq', real=True)",
+  "s": "g_eq"
+ },
+ {
+  "names": [
+   "galois"
+  ],
+  "real": "Symbol('galois', real=True)",
+  "s": "galois"
+ },
+ {
+  "names": [
+   "game"
+  ],
+  "real": "Symbol('game', real=True)",
+  "s": "game"
+ },
+ {
+  "names": [
+   "game_tree"
+  ],
+  "real": "Symbol('game_tree', real=True)",
+  "s": "game_tree"
+ },
+ {
+  "names": [
+   "ghosts"
+  ],
+  "real": "Symbol('ghosts', real=True)",
+  "s": "ghosts"
+ },
+ {
+  "names": [
+   "gibbs_overshoot"
+  ],
+  "real": "Symbol('gibbs_overshoot', real=True)",
+  "s": "gibbs_overshoot"
+ },
+ {
+  "names": [
+   "glass"
+  ],
+  "real": "Symbol('glass', real=True)",
+  "s": "glass"
+ },
+ {
+  "names": [
+   "glow"
+  ],
+  "real": "Symbol('glow', real=True)",
+  "s": "glow"
+ },
+ {
+  "names": [
+   "glowing"
+  ],
+  "real": "Symbol('glowing', real=True)",
+  "s": "glowing"
+ },
+ {
+  "names": [
+   "go"
+  ],
+  "real": "Symbol('go', real=True)",
+  "s": "go"
+ },
+ {
+  "names": [
+   "graph"
+  ],
+  "real": "Symbol('graph', real=True)",
+  "s": "graph"
+ },
+ {
+  "names": [
+   "graphs"
+  ],
+  "real": "Symbol('graphs', real=True)",
+  "s": "graphs"
+ },
+ {
+  "names": [
+   "green"
+  ],
+  "real": "Symbol('green', real=True)",
+  "s": "green"
+ },
+ {
+  "names": [
+   "grid"
+  ],
+  "real": "Symbol('grid', real=True)",
+  "s": "grid"
+ },
+ {
+  "names": [
+   "grow"
+  ],
+  "real": "Symbol('grow', real=True)",
+  "s": "grow"
+ },
+ {
+  "names": [
+   "guide"
+  ],
+  "real": "Symbol('guide', real=True)",
+  "s": "guide"
+ },
+ {
+  "names": [
+   "hairline"
+  ],
+  "real": "Symbol('hairline', real=True)",
+  "s": "hairline"
+ },
+ {
+  "names": [
+   "half"
+  ],
+  "real": "Symbol('half', real=True)",
+  "s": "half"
+ },
+ {
+  "names": [
+   "hann"
+  ],
+  "real": "Symbol('hann', real=True)",
+  "s": "hann"
+ },
+ {
+  "names": [
+   "heat"
+  ],
+  "real": "Symbol('heat', real=True)",
+  "s": "heat"
+ },
+ {
+  "names": [
+   "heat_dihedral"
+  ],
+  "real": "Symbol('heat_dihedral', real=True)",
+  "s": "heat_dihedral"
+ },
+ {
+  "names": [
+   "height"
+  ],
+  "real": "Symbol('height', real=True)",
+  "s": "height"
+ },
+ {
+  "names": [
+   "held"
+  ],
+  "real": "Symbol('held', real=True)",
+  "s": "held"
+ },
+ {
+  "names": [
+   "helix"
+  ],
+  "real": "Symbol('helix', real=True)",
+  "s": "helix"
+ },
+ {
+  "names": [
+   "hero"
+  ],
+  "real": "Symbol('hero', real=True)",
+  "s": "hero"
+ },
+ {
+  "names": [
+   "hexagon"
+  ],
+  "real": "Symbol('hexagon', real=True)",
+  "s": "hexagon"
+ },
+ {
+  "names": [
+   "highlight"
+  ],
+  "real": "Symbol('highlight', real=True)",
+  "s": "highlight"
+ },
+ {
+  "names": [
+   "holds"
+  ],
+  "real": "Symbol('holds', real=True)",
+  "s": "holds"
+ },
+ {
+  "names": [
+   "hom"
+  ],
+  "real": "Symbol('hom', real=True)",
+  "s": "hom"
+ },
+ {
+  "names": [
+   "home"
+  ],
+  "real": "Symbol('home', real=True)",
+  "s": "home"
+ },
+ {
+  "names": [
+   "hue_cycles"
+  ],
+  "real": "Symbol('hue_cycles', real=True)",
+  "s": "hue_cycles"
+ },
+ {
+  "complex": "I",
+  "names": [],
+  "real": "I",
+  "s": "i"
+ },
+ {
+  "names": [
+   "id"
+  ],
+  "real": "Symbol('id', real=True)",
+  "s": "id"
+ },
+ {
+  "names": [
+   "ids"
+  ],
+  "real": "Symbol('ids', real=True)",
+  "s": "ids"
+ },
+ {
+  "names": [
+   "image"
+  ],
+  "real": "Symbol('image', real=True)",
+  "s": "image"
+ },
+ {
+  "names": [
+   "images"
+  ],
+  "real": "Symbol('images', real=True)",
+  "s": "images"
+ },
+ {
+  "names": [
+   "in_out"
+  ],
+  "real": "Symbol('in_out', real=True)",
+  "s": "in_out"
+ },
+ {
+  "names": [
+   "in_rectangle"
+  ],
+  "real": "Symbol('in_rectangle', real=True)",
+  "s": "in_rectangle"
+ },
+ {
+  "names": [
+   "inner"
+  ],
+  "real": "Symbol('inner', real=True)",
+  "s": "inner"
+ },
+ {
+  "names": [
+   "insulated"
+  ],
+  "real": "Symbol('insulated', real=True)",
+  "s": "insulated"
+ },
+ {
+  "names": [
+   "integral"
+  ],
+  "real": "Symbol('integral', real=True)",
+  "s": "integral"
+ },
+ {
+  "names": [
+   "intersection"
+  ],
+  "real": "Symbol('intersection', real=True)",
+  "s": "intersection"
+ },
+ {
+  "names": [
+   "intro"
+  ],
+  "real": "Symbol('intro', real=True)",
+  "s": "intro"
+ },
+ {
+  "names": [
+   "ir"
+  ],
+  "real": "Symbol('ir', real=True)",
+  "s": "ir"
+ },
+ {
+  "names": [
+   "isolines"
+  ],
+  "real": "Symbol('isolines', real=True)",
+  "s": "isolines"
+ },
+ {
+  "names": [
+   "s"
+  ],
+  "real": "error: FunctionError",
+  "s": "issue(s)"
+ },
+ {
+  "names": [
+   "issues"
+  ],
+  "real": "Symbol('issues', real=True)",
+  "s": "issues"
+ },
+ {
+  "names": [
+   "iterations"
+  ],
+  "real": "Symbol('iterations', real=True)",
+  "s": "iterations"
+ },
+ {
+  "complex": "I",
+  "names": [],
+  "real": "I",
+  "s": "j"
+ },
+ {
+  "names": [
+   "julia"
+  ],
+  "real": "Symbol('julia', real=True)",
+  "s": "julia"
+ },
+ {
+  "names": [
+   "julia_explorer"
+  ],
+  "real": "Symbol('julia_explorer', real=True)",
+  "s": "julia_explorer"
+ },
+ {
+  "names": [
+   "kernel"
+  ],
+  "real": "Symbol('kernel', real=True)",
+  "s": "kernel"
+ },
+ {
+  "names": [
+   "key"
+  ],
+  "real": "Symbol('key', real=True)",
+  "s": "key"
+ },
+ {
+  "names": [
+   "kind"
+  ],
+  "real": "Symbol('kind', real=True)",
+  "s": "kind"
+ },
+ {
+  "names": [
+   "kit"
+  ],
+  "real": "Symbol('kit', real=True)",
+  "s": "kit"
+ },
+ {
+  "names": [
+   "kite"
+  ],
+  "real": "Symbol('kite', real=True)",
+  "s": "kite"
+ },
+ {
+  "names": [
+   "kites"
+  ],
+  "real": "Symbol('kites', real=True)",
+  "s": "kites"
+ },
+ {
+  "names": [
+   "label"
+  ],
+  "real": "Symbol('label', real=True)",
+  "s": "label"
+ },
+ {
+  "names": [
+   "label_follows"
+  ],
+  "real": "Symbol('label_follows', real=True)",
+  "s": "label_follows"
+ },
+ {
+  "names": [
+   "land"
+  ],
+  "real": "Symbol('land', real=True)",
+  "s": "land"
+ },
+ {
+  "names": [
+   "largest"
+  ],
+  "real": "Symbol('largest', real=True)",
+  "s": "largest"
+ },
+ {
+  "names": [
+   "latex"
+  ],
+  "real": "Symbol('latex', real=True)",
+  "s": "latex"
+ },
+ {
+  "names": [
+   "lattice"
+  ],
+  "real": "Symbol('lattice', real=True)",
+  "s": "lattice"
+ },
+ {
+  "names": [
+   "layers"
+  ],
+  "real": "Symbol('layers', real=True)",
+  "s": "layers"
+ },
+ {
+  "names": [
+   "layout"
+  ],
+  "real": "Symbol('layout', real=True)",
+  "s": "layout"
+ },
+ {
+  "names": [
+   "leave"
+  ],
+  "real": "Symbol('leave', real=True)",
+  "s": "leave"
+ },
+ {
+  "names": [
+   "left"
+  ],
+  "real": "Symbol('left', real=True)",
+  "s": "left"
+ },
+ {
+  "names": [
+   "lens"
+  ],
+  "real": "Symbol('lens', real=True)",
+  "s": "lens"
+ },
+ {
+  "names": [
+   "level"
+  ],
+  "real": "Symbol('level', real=True)",
+  "s": "level"
+ },
+ {
+  "names": [
+   "lhs"
+  ],
+  "real": "Symbol('lhs', real=True)",
+  "s": "lhs"
+ },
+ {
+  "names": [
+   "lift"
+  ],
+  "real": "Symbol('lift', real=True)",
+  "s": "lift"
+ },
+ {
+  "names": [
+   "lift_done"
+  ],
+  "real": "Symbol('lift_done', real=True)",
+  "s": "lift_done"
+ },
+ {
+  "names": [
+   "limit"
+  ],
+  "real": "Symbol('limit', real=True)",
+  "s": "limit"
+ },
+ {
+  "names": [
+   "line"
+  ],
+  "real": "Symbol('line', real=True)",
+  "s": "line"
+ },
+ {
+  "names": [
+   "linear"
+  ],
+  "real": "Symbol('linear', real=True)",
+  "s": "linear"
+ },
+ {
+  "names": [
+   "lines"
+  ],
+  "real": "Symbol('lines', real=True)",
+  "s": "lines"
+ },
+ {
+  "names": [
+   "listener"
+  ],
+  "real": "Symbol('listener', real=True)",
+  "s": "listener"
+ },
+ {
+  "names": [
+   "look"
+  ],
+  "real": "Symbol('look', real=True)",
+  "s": "look"
+ },
+ {
+  "names": [
+   "loop"
+  ],
+  "real": "Symbol('loop', real=True)",
+  "s": "loop"
+ },
+ {
+  "names": [
+   "loop_draw"
+  ],
+  "real": "Symbol('loop_draw', real=True)",
+  "s": "loop_draw"
+ },
+ {
+  "names": [
+   "lower"
+  ],
+  "real": "Symbol('lower', real=True)",
+  "s": "lower"
+ },
+ {
+  "names": [
+   "luminous"
+  ],
+  "real": "Symbol('luminous', real=True)",
+  "s": "luminous"
+ },
+ {
+  "names": [
+   "m"
+  ],
+  "real": "Symbol('m', real=True)",
+  "s": "m"
+ },
+ {
+  "names": [
+   "magnitude"
+  ],
+  "real": "Symbol('magnitude', real=True)",
+  "s": "magnitude"
+ },
+ {
+  "names": [
+   "map"
+  ],
+  "real": "Symbol('map', real=True)",
+  "s": "map"
+ },
+ {
+  "names": [
+   "markers"
+  ],
+  "real": "Symbol('markers', real=True)",
+  "s": "markers"
+ },
+ {
+  "names": [
+   "mat"
+  ],
+  "real": "Symbol('mat', real=True)",
+  "s": "mat"
+ },
+ {
+  "names": [
+   "matched"
+  ],
+  "real": "Symbol('matched', real=True)",
+  "s": "matched"
+ },
+ {
+  "names": [
+   "matching"
+  ],
+  "real": "Symbol('matching', real=True)",
+  "s": "matching"
+ },
+ {
+  "names": [
+   "material"
+  ],
+  "real": "Symbol('material', real=True)",
+  "s": "material"
+ },
+ {
+  "names": [
+   "math"
+  ],
+  "real": "Symbol('math', real=True)",
+  "s": "math"
+ },
+ {
+  "names": [
+   "matrix"
+  ],
+  "real": "Symbol('matrix', real=True)",
+  "s": "matrix"
+ },
+ {
+  "names": [
+   "max"
+  ],
+  "real": "Symbol('max', real=True)",
+  "s": "max"
+ },
+ {
+  "names": [
+   "max_error_vs_exact"
+  ],
+  "real": "Symbol('max_error_vs_exact', real=True)",
+  "s": "max_error_vs_exact"
+ },
+ {
+  "names": [
+   "mcp"
+  ],
+  "real": "Symbol('mcp', real=True)",
+  "s": "mcp"
+ },
+ {
+  "names": [
+   "medium"
+  ],
+  "real": "Symbol('medium', real=True)",
+  "s": "medium"
+ },
+ {
+  "names": [
+   "mic"
+  ],
+  "real": "Symbol('mic', real=True)",
+  "s": "mic"
+ },
+ {
+  "names": [
+   "mid"
+  ],
+  "real": "Symbol('mid', real=True)",
+  "s": "mid"
+ },
+ {
+  "names": [
+   "midnight_glow"
+  ],
+  "real": "Symbol('midnight_glow', real=True)",
+  "s": "midnight_glow"
+ },
+ {
+  "names": [
+   "min"
+  ],
+  "real": "Symbol('min', real=True)",
+  "s": "min"
+ },
+ {
+  "names": [
+   "t"
+  ],
+  "real": "error: FunctionError",
+  "s": "min(t / 2, 1)"
+ },
+ {
+  "names": [
+   "t"
+  ],
+  "real": "error: FunctionError",
+  "s": "min(t / 3, 1)"
+ },
+ {
+  "names": [
+   "t"
+  ],
+  "real": "error: FunctionError",
+  "s": "min(t / 4, 1)"
+ },
+ {
+  "names": [
+   "mix_eq"
+  ],
+  "real": "Symbol('mix_eq', real=True)",
+  "s": "mix_eq"
+ },
+ {
+  "names": [
+   "modes"
+  ],
+  "real": "Symbol('modes', real=True)",
+  "s": "modes"
+ },
+ {
+  "names": [
+   "month"
+  ],
+  "real": "Symbol('month', real=True)",
+  "s": "month"
+ },
+ {
+  "names": [
+   "moon"
+  ],
+  "real": "Symbol('moon', real=True)",
+  "s": "moon"
+ },
+ {
+  "names": [
+   "moonlight"
+  ],
+  "real": "Symbol('moonlight', real=True)",
+  "s": "moonlight"
+ },
+ {
+  "names": [
+   "more"
+  ],
+  "real": "Symbol('more', real=True)",
+  "s": "more"
+ },
+ {
+  "names": [
+   "more_operands"
+  ],
+  "real": "Symbol('more_operands', real=True)",
+  "s": "more_operands"
+ },
+ {
+  "names": [
+   "more_results"
+  ],
+  "real": "Symbol('more_results', real=True)",
+  "s": "more_results"
+ },
+ {
+  "names": [
+   "more_terms"
+  ],
+  "real": "Symbol('more_terms', real=True)",
+  "s": "more_terms"
+ },
+ {
+  "names": [
+   "more_wave2"
+  ],
+  "real": "Symbol('more_wave2', real=True)",
+  "s": "more_wave2"
+ },
+ {
+  "names": [
+   "morph"
+  ],
+  "real": "Symbol('morph', real=True)",
+  "s": "morph"
+ },
+ {
+  "names": [
+   "morphing_from"
+  ],
+  "real": "Symbol('morphing_from', real=True)",
+  "s": "morphing_from"
+ },
+ {
+  "names": [
+   "motion"
+  ],
+  "real": "Symbol('motion', real=True)",
+  "s": "motion"
+ },
+ {
+  "names": [
+   "motion_gallery"
+  ],
+  "real": "Symbol('motion_gallery', real=True)",
+  "s": "motion_gallery"
+ },
+ {
+  "names": [
+   "move_"
+  ],
+  "real": "Symbol('move_', real=True)",
+  "s": "move_"
+ },
+ {
+  "names": [
+   "moved"
+  ],
+  "real": "Symbol('moved', real=True)",
+  "s": "moved"
+ },
+ {
+  "names": [
+   "moving_dot"
+  ],
+  "real": "Symbol('moving_dot', real=True)",
+  "s": "moving_dot"
+ },
+ {
+  "names": [
+   "moving_dot_"
+  ],
+  "real": "Symbol('moving_dot_', real=True)",
+  "s": "moving_dot_"
+ },
+ {
+  "names": [
+   "muted"
+  ],
+  "real": "Symbol('muted', real=True)",
+  "s": "muted"
+ },
+ {
+  "names": [
+   "n"
+  ],
+  "real": "Symbol('n', real=True)",
+  "s": "n"
+ },
+ {
+  "names": [
+   "name"
+  ],
+  "real": "Symbol('name', real=True)",
+  "s": "name"
+ },
+ {
+  "names": [
+   "names"
+  ],
+  "real": "Symbol('names', real=True)",
+  "s": "names"
+ },
+ {
+  "names": [
+   "narrate"
+  ],
+  "real": "Symbol('narrate', real=True)",
+  "s": "narrate"
+ },
+ {
+  "names": [
+   "narrated"
+  ],
+  "real": "Symbol('narrated', real=True)",
+  "s": "narrated"
+ },
+ {
+  "names": [
+   "neumann"
+  ],
+  "real": "Symbol('neumann', real=True)",
+  "s": "neumann"
+ },
+ {
+  "names": [
+   "nodes"
+  ],
+  "real": "Symbol('nodes', real=True)",
+  "s": "nodes"
+ },
+ {
+  "names": [
+   "none"
+  ],
+  "real": "Symbol('none', real=True)",
+  "s": "none"
+ },
+ {
+  "names": [
+   "norm"
+  ],
+  "real": "Symbol('norm', real=True)",
+  "s": "norm"
+ },
+ {
+  "names": [
+   "normal"
+  ],
+  "real": "Symbol('normal', real=True)",
+  "s": "normal"
+ },
+ {
+  "names": [
+   "note"
+  ],
+  "real": "Symbol('note', real=True)",
+  "s": "note"
+ },
+ {
+  "names": [
+   "object"
+  ],
+  "real": "Symbol('object', real=True)",
+  "s": "object"
+ },
+ {
+  "names": [
+   "object_types"
+  ],
+  "real": "Symbol('object_types', real=True)",
+  "s": "object_types"
+ },
+ {
+  "names": [
+   "objects"
+  ],
+  "real": "Symbol('objects', real=True)",
+  "s": "objects"
+ },
+ {
+  "names": [
+   "ocean"
+  ],
+  "real": "Symbol('ocean', real=True)",
+  "s": "ocean"
+ },
+ {
+  "names": [
+   "off_palette"
+  ],
+  "real": "Symbol('off_palette', real=True)",
+  "s": "off_palette"
+ },
+ {
+  "names": [
+   "off_scale"
+  ],
+  "real": "Symbol('off_scale', real=True)",
+  "s": "off_scale"
+ },
+ {
+  "names": [
+   "ok"
+  ],
+  "real": "Symbol('ok', real=True)",
+  "s": "ok"
+ },
+ {
+  "names": [
+   "loop"
+  ],
+  "real": "error: FunctionError",
+  "s": "on_screen(loop, 0.05)"
+ },
+ {
+  "names": [
+   "title"
+  ],
+  "real": "error: FunctionError",
+  "s": "on_screen(title)"
+ },
+ {
+  "names": [
+   "on_screen_fraction"
+  ],
+  "real": "Symbol('on_screen_fraction', real=True)",
+  "s": "on_screen_fraction"
+ },
+ {
+  "names": [
+   "one"
+  ],
+  "real": "Symbol('one', real=True)",
+  "s": "one"
+ },
+ {
+  "names": [
+   "one_zero"
+  ],
+  "real": "Symbol('one_zero', real=True)",
+  "s": "one_zero"
+ },
+ {
+  "names": [
+   "only"
+  ],
+  "real": "Symbol('only', real=True)",
+  "s": "only"
+ },
+ {
+  "names": [
+   "op"
+  ],
+  "real": "Symbol('op', real=True)",
+  "s": "op"
+ },
+ {
+  "names": [
+   "open_contract"
+  ],
+  "real": "Symbol('open_contract', real=True)",
+  "s": "open_contract"
+ },
+ {
+  "names": [
+   "operands"
+  ],
+  "real": "Symbol('operands', real=True)",
+  "s": "operands"
+ },
+ {
+  "names": [
+   "orbit"
+  ],
+  "real": "Symbol('orbit', real=True)",
+  "s": "orbit"
+ },
+ {
+  "names": [
+   "orbit_pattern"
+  ],
+  "real": "Symbol('orbit_pattern', real=True)",
+  "s": "orbit_pattern"
+ },
+ {
+  "names": [
+   "order"
+  ],
+  "real": "Symbol('order', real=True)",
+  "s": "order"
+ },
+ {
+  "names": [
+   "origin"
+  ],
+  "real": "Symbol('origin', real=True)",
+  "s": "origin"
+ },
+ {
+  "names": [
+   "ortho"
+  ],
+  "real": "Symbol('ortho', real=True)",
+  "s": "ortho"
+ },
+ {
+  "names": [
+   "out"
+  ],
+  "real": "Symbol('out', real=True)",
+  "s": "out"
+ },
+ {
+  "names": [
+   "outcome"
+  ],
+  "real": "Symbol('outcome', real=True)",
+  "s": "outcome"
+ },
+ {
+  "names": [
+   "outer"
+  ],
+  "real": "Symbol('outer', real=True)",
+  "s": "outer"
+ },
+ {
+  "names": [
+   "overlap"
+  ],
+  "real": "Symbol('overlap', real=True)",
+  "s": "overlap"
+ },
+ {
+  "names": [
+   "overlay"
+  ],
+  "real": "Symbol('overlay', real=True)",
+  "s": "overlay"
+ },
+ {
+  "names": [
+   "own_colors"
+  ],
+  "real": "Symbol('own_colors', real=True)",
+  "s": "own_colors"
+ },
+ {
+  "names": [
+   "p"
+  ],
+  "real": "Symbol('p', real=True)",
+  "s": "p"
+ },
+ {
+  "names": [
+   "pairs"
+  ],
+  "real": "Symbol('pairs', real=True)",
+  "s": "pairs"
+ },
+ {
+  "names": [
+   "path"
+  ],
+  "real": "Symbol('path', real=True)",
+  "s": "path"
+ },
+ {
+  "names": [
+   "pde_profile"
+  ],
+  "real": "Symbol('pde_profile', real=True)",
+  "s": "pde_profile"
+ },
+ {
+  "names": [
+   "pendulum"
+  ],
+  "real": "Symbol('pendulum', real=True)",
+  "s": "pendulum"
+ },
+ {
+  "names": [
+   "perm"
+  ],
+  "real": "Symbol('perm', real=True)",
+  "s": "perm"
+ },
+ {
+  "names": [
+   "perturbation"
+  ],
+  "real": "Symbol('perturbation', real=True)",
+  "s": "perturbation"
+ },
+ {
+  "names": [
+   "phase"
+  ],
+  "real": "Symbol('phase', real=True)",
+  "s": "phase"
+ },
+ {
+  "names": [
+   "phase_portrait"
+  ],
+  "real": "Symbol('phase_portrait', real=True)",
+  "s": "phase_portrait"
+ },
+ {
+  "names": [
+   "phasor"
+  ],
+  "real": "Symbol('phasor', real=True)",
+  "s": "phasor"
+ },
+ {
+  "names": [
+   "picture"
+  ],
+  "real": "Symbol('picture', real=True)",
+  "s": "picture"
+ },
+ {
+  "names": [
+   "pixels"
+  ],
+  "real": "Symbol('pixels', real=True)",
+  "s": "pixels"
+ },
+ {
+  "names": [
+   "plane"
+  ],
+  "real": "Symbol('plane', real=True)",
+  "s": "plane"
+ },
+ {
+  "names": [
+   "plane_map"
+  ],
+  "real": "Symbol('plane_map', real=True)",
+  "s": "plane_map"
+ },
+ {
+  "names": [
+   "planet"
+  ],
+  "real": "Symbol('planet', real=True)",
+  "s": "planet"
+ },
+ {
+  "names": [
+   "plate"
+  ],
+  "real": "Symbol('plate', real=True)",
+  "s": "plate"
+ },
+ {
+  "names": [
+   "plot"
+  ],
+  "real": "Symbol('plot', real=True)",
+  "s": "plot"
+ },
+ {
+  "names": [
+   "plots"
+  ],
+  "real": "Symbol('plots', real=True)",
+  "s": "plots"
+ },
+ {
+  "names": [
+   "point"
+  ],
+  "real": "Symbol('point', real=True)",
+  "s": "point"
+ },
+ {
+  "names": [
+   "point_cloud"
+  ],
+  "real": "Symbol('point_cloud', real=True)",
+  "s": "point_cloud"
+ },
+ {
+  "names": [
+   "points"
+  ],
+  "real": "Symbol('points', real=True)",
+  "s": "points"
+ },
+ {
+  "names": [
+   "pole"
+  ],
+  "real": "Symbol('pole', real=True)",
+  "s": "pole"
+ },
+ {
+  "names": [
+   "pole_a"
+  ],
+  "real": "Symbol('pole_a', real=True)",
+  "s": "pole_a"
+ },
+ {
+  "names": [
+   "pole_appears"
+  ],
+  "real": "Symbol('pole_appears', real=True)",
+  "s": "pole_appears"
+ },
+ {
+  "names": [
+   "pole_b"
+  ],
+  "real": "Symbol('pole_b', real=True)",
+  "s": "pole_b"
+ },
+ {
+  "names": [
+   "pole_bottom"
+  ],
+  "real": "Symbol('pole_bottom', real=True)",
+  "s": "pole_bottom"
+ },
+ {
+  "names": [
+   "pole_c"
+  ],
+  "real": "Symbol('pole_c', real=True)",
+  "s": "pole_c"
+ },
+ {
+  "names": [
+   "pole_i"
+  ],
+  "real": "Symbol('pole_i', real=True)",
+  "s": "pole_i"
+ },
+ {
+  "names": [
+   "pole_i_label"
+  ],
+  "real": "Symbol('pole_i_label', real=True)",
+  "s": "pole_i_label"
+ },
+ {
+  "names": [
+   "pole_minus_i"
+  ],
+  "real": "Symbol('pole_minus_i', real=True)",
+  "s": "pole_minus_i"
+ },
+ {
+  "names": [
+   "pole_moves"
+  ],
+  "real": "Symbol('pole_moves', real=True)",
+  "s": "pole_moves"
+ },
+ {
+  "names": [
+   "pole_top"
+  ],
+  "real": "Symbol('pole_top', real=True)",
+  "s": "pole_top"
+ },
+ {
+  "names": [
+   "poles"
+  ],
+  "real": "Symbol('poles', real=True)",
+  "s": "poles"
+ },
+ {
+  "names": [
+   "poles_1"
+  ],
+  "real": "Symbol('poles_1', real=True)",
+  "s": "poles_1"
+ },
+ {
+  "names": [
+   "poles_2"
+  ],
+  "real": "Symbol('poles_2', real=True)",
+  "s": "poles_2"
+ },
+ {
+  "names": [
+   "poles_3"
+  ],
+  "real": "Symbol('poles_3', real=True)",
+  "s": "poles_3"
+ },
+ {
+  "names": [
+   "polygon"
+  ],
+  "real": "Symbol('polygon', real=True)",
+  "s": "polygon"
+ },
+ {
+  "names": [
+   "pos"
+  ],
+  "real": "Symbol('pos', real=True)",
+  "s": "pos"
+ },
+ {
+  "names": [
+   "post"
+  ],
+  "real": "Symbol('post', real=True)",
+  "s": "post"
+ },
+ {
+  "names": [
+   "precision"
+  ],
+  "real": "Symbol('precision', real=True)",
+  "s": "precision"
+ },
+ {
+  "names": [
+   "preview"
+  ],
+  "real": "Symbol('preview', real=True)",
+  "s": "preview"
+ },
+ {
+  "names": [
+   "primary"
+  ],
+  "real": "Symbol('primary', real=True)",
+  "s": "primary"
+ },
+ {
+  "names": [
+   "prism"
+  ],
+  "real": "Symbol('prism', real=True)",
+  "s": "prism"
+ },
+ {
+  "names": [
+   "prism_domain"
+  ],
+  "real": "Symbol('prism_domain', real=True)",
+  "s": "prism_domain"
+ },
+ {
+  "names": [
+   "prism_drum_3d"
+  ],
+  "real": "Symbol('prism_drum_3d', real=True)",
+  "s": "prism_drum_3d"
+ },
+ {
+  "names": [
+   "prism_everywhere"
+  ],
+  "real": "Symbol('prism_everywhere', real=True)",
+  "s": "prism_everywhere"
+ },
+ {
+  "names": [
+   "prism_field"
+  ],
+  "real": "Symbol('prism_field', real=True)",
+  "s": "prism_field"
+ },
+ {
+  "names": [
+   "prism_fractal"
+  ],
+  "real": "Symbol('prism_fractal', real=True)",
+  "s": "prism_fractal"
+ },
+ {
+  "names": [
+   "prism_heat"
+  ],
+  "real": "Symbol('prism_heat', real=True)",
+  "s": "prism_heat"
+ },
+ {
+  "names": [
+   "prism_primes"
+  ],
+  "real": "Symbol('prism_primes', real=True)",
+  "s": "prism_primes"
+ },
+ {
+  "names": [
+   "prism_transitions"
+  ],
+  "real": "Symbol('prism_transitions', real=True)",
+  "s": "prism_transitions"
+ },
+ {
+  "names": [
+   "probe"
+  ],
+  "real": "Symbol('probe', real=True)",
+  "s": "probe"
+ },
+ {
+  "names": [
+   "problems"
+  ],
+  "real": "Symbol('problems', real=True)",
+  "s": "problems"
+ },
+ {
+  "names": [
+   "px"
+  ],
+  "real": "Symbol('px', real=True)",
+  "s": "px"
+ },
+ {
+  "names": [
+   "quotient"
+  ],
+  "real": "Symbol('quotient', real=True)",
+  "s": "quotient"
+ },
+ {
+  "names": [
+   "r"
+  ],
+  "real": "Symbol('r', real=True)",
+  "s": "r"
+ },
+ {
+  "names": [
+   "r2"
+  ],
+  "real": "Symbol('r2', real=True)",
+  "s": "r2"
+ },
+ {
+  "names": [
+   "radial"
+  ],
+  "real": "Symbol('radial', real=True)",
+  "s": "radial"
+ },
+ {
+  "names": [
+   "radius"
+  ],
+  "real": "Symbol('radius', real=True)",
+  "s": "radius"
+ },
+ {
+  "names": [
+   "rank"
+  ],
+  "real": "Symbol('rank', real=True)",
+  "s": "rank"
+ },
+ {
+  "names": [
+   "rate"
+  ],
+  "real": "Symbol('rate', real=True)",
+  "s": "rate"
+ },
+ {
+  "names": [
+   "raw_motion"
+  ],
+  "real": "Symbol('raw_motion', real=True)",
+  "s": "raw_motion"
+ },
+ {
+  "names": [
+   "rays"
+  ],
+  "real": "Symbol('rays', real=True)",
+  "s": "rays"
+ },
+ {
+  "names": [
+   "rearrange"
+  ],
+  "real": "Symbol('rearrange', real=True)",
+  "s": "rearrange"
+ },
+ {
+  "names": [
+   "recolor"
+  ],
+  "real": "Symbol('recolor', real=True)",
+  "s": "recolor"
+ },
+ {
+  "names": [
+   "rect"
+  ],
+  "real": "Symbol('rect', real=True)",
+  "s": "rect"
+ },
+ {
+  "names": [
+   "rectangle"
+  ],
+  "real": "Symbol('rectangle', real=True)",
+  "s": "rectangle"
+ },
+ {
+  "names": [
+   "reflections_so_far"
+  ],
+  "real": "Symbol('reflections_so_far', real=True)",
+  "s": "reflections_so_far"
+ },
+ {
+  "names": [
+   "region"
+  ],
+  "real": "Symbol('region', real=True)",
+  "s": "region"
+ },
+ {
+  "names": [
+   "regular"
+  ],
+  "real": "Symbol('regular', real=True)",
+  "s": "regular"
+ },
+ {
+  "names": [
+   "remaining"
+  ],
+  "real": "Symbol('remaining', real=True)",
+  "s": "remaining"
+ },
+ {
+  "names": [
+   "remove_object"
+  ],
+  "real": "Symbol('remove_object', real=True)",
+  "s": "remove_object"
+ },
+ {
+  "names": [
+   "render"
+  ],
+  "real": "Symbol('render', real=True)",
+  "s": "render"
+ },
+ {
+  "names": [
+   "res_value"
+  ],
+  "real": "Symbol('res_value', real=True)",
+  "s": "res_value"
+ },
+ {
+  "names": [
+   "residue"
+  ],
+  "real": "Symbol('residue', real=True)",
+  "s": "residue"
+ },
+ {
+  "names": [
+   "residue_ai"
+  ],
+  "real": "Symbol('residue_ai', real=True)",
+  "s": "residue_ai"
+ },
+ {
+  "names": [
+   "residue_theorem"
+  ],
+  "real": "Symbol('residue_theorem', real=True)",
+  "s": "residue_theorem"
+ },
+ {
+  "names": [
+   "residues"
+  ],
+  "real": "Symbol('residues', real=True)",
+  "s": "residues"
+ },
+ {
+  "names": [
+   "rest"
+  ],
+  "real": "Symbol('rest', real=True)",
+  "s": "rest"
+ },
+ {
+  "names": [
+   "restyle"
+  ],
+  "real": "Symbol('restyle', real=True)",
+  "s": "restyle"
+ },
+ {
+  "names": [
+   "result"
+  ],
+  "real": "Symbol('result', real=True)",
+  "s": "result"
+ },
+ {
+  "names": [
+   "results"
+  ],
+  "real": "Symbol('results', real=True)",
+  "s": "results"
+ },
+ {
+  "names": [
+   "reveal"
+  ],
+  "real": "Symbol('reveal', real=True)",
+  "s": "reveal"
+ },
+ {
+  "names": [
+   "review"
+  ],
+  "real": "Symbol('review', real=True)",
+  "s": "review"
+ },
+ {
+  "names": [
+   "ridge"
+  ],
+  "real": "Symbol('ridge', real=True)",
+  "s": "ridge"
+ },
+ {
+  "names": [
+   "riemann"
+  ],
+  "real": "Symbol('riemann', real=True)",
+  "s": "riemann"
+ },
+ {
+  "names": [
+   "riemann_sqrt"
+  ],
+  "real": "Symbol('riemann_sqrt', real=True)",
+  "s": "riemann_sqrt"
+ },
+ {
+  "names": [
+   "riemann_sum"
+  ],
+  "real": "Symbol('riemann_sum', real=True)",
+  "s": "riemann_sum"
+ },
+ {
+  "names": [
+   "riemann_surface"
+  ],
+  "real": "Symbol('riemann_surface', real=True)",
+  "s": "riemann_surface"
+ },
+ {
+  "names": [
+   "right"
+  ],
+  "real": "Symbol('right', real=True)",
+  "s": "right"
+ },
+ {
+  "names": [
+   "ring"
+  ],
+  "real": "Symbol('ring', real=True)",
+  "s": "ring"
+ },
+ {
+  "names": [
+   "rod"
+  ],
+  "real": "Symbol('rod', real=True)",
+  "s": "rod"
+ },
+ {
+  "names": [
+   "role"
+  ],
+  "real": "Symbol('role', real=True)",
+  "s": "role"
+ },
+ {
+  "names": [
+   "room"
+  ],
+  "real": "Symbol('room', real=True)",
+  "s": "room"
+ },
+ {
+  "names": [
+   "room_3d"
+  ],
+  "real": "Symbol('room_3d', real=True)",
+  "s": "room_3d"
+ },
+ {
+  "names": [
+   "room_acoustics"
+  ],
+  "real": "Symbol('room_acoustics', real=True)",
+  "s": "room_acoustics"
+ },
+ {
+  "names": [
+   "root"
+  ],
+  "real": "Symbol('root', real=True)",
+  "s": "root"
+ },
+ {
+  "names": [
+   "roots"
+  ],
+  "real": "Symbol('roots', real=True)",
+  "s": "roots"
+ },
+ {
+  "names": [
+   "rough"
+  ],
+  "real": "Symbol('rough', real=True)",
+  "s": "rough"
+ },
+ {
+  "names": [
+   "rough_beauty"
+  ],
+  "real": "Symbol('rough_beauty', real=True)",
+  "s": "rough_beauty"
+ },
+ {
+  "names": [
+   "round"
+  ],
+  "real": "Symbol('round', real=True)",
+  "s": "round"
+ },
+ {
+  "names": [
+   "rounds"
+  ],
+  "real": "Symbol('rounds', real=True)",
+  "s": "rounds"
+ },
+ {
+  "names": [
+   "route"
+  ],
+  "real": "Symbol('route', real=True)",
+  "s": "route"
+ },
+ {
+  "names": [
+   "row"
+  ],
+  "real": "Symbol('row', real=True)",
+  "s": "row"
+ },
+ {
+  "names": [
+   "rows"
+  ],
+  "real": "Symbol('rows', real=True)",
+  "s": "rows"
+ },
+ {
+  "names": [
+   "rule"
+  ],
+  "real": "Symbol('rule', real=True)",
+  "s": "rule"
+ },
+ {
+  "names": [
+   "run"
+  ],
+  "real": "Symbol('run', real=True)",
+  "s": "run"
+ },
+ {
+  "names": [
+   "s"
+  ],
+  "real": "Symbol('s', real=True)",
+  "s": "s"
+ },
+ {
+  "names": [
+   "s_value"
+  ],
+  "real": "Symbol('s_value', real=True)",
+  "s": "s_value"
+ },
+ {
+  "names": [
+   "saddle"
+  ],
+  "real": "Symbol('saddle', real=True)",
+  "s": "saddle"
+ },
+ {
+  "names": [
+   "sales"
+  ],
+  "real": "Symbol('sales', real=True)",
+  "s": "sales"
+ },
+ {
+  "names": [
+   "scale"
+  ],
+  "real": "Symbol('scale', real=True)",
+  "s": "scale"
+ },
+ {
+  "names": [
+   "scene_edit"
+  ],
+  "real": "Symbol('scene_edit', real=True)",
+  "s": "scene_edit"
+ },
+ {
+  "names": [
+   "scene_new"
+  ],
+  "real": "Symbol('scene_new', real=True)",
+  "s": "scene_new"
+ },
+ {
+  "names": [
+   "scene_save"
+  ],
+  "real": "Symbol('scene_save', real=True)",
+  "s": "scene_save"
+ },
+ {
+  "names": [
+   "score"
+  ],
+  "real": "Symbol('score', real=True)",
+  "s": "score"
+ },
+ {
+  "names": [
+   "script"
+  ],
+  "real": "Symbol('script', real=True)",
+  "s": "script"
+ },
+ {
+  "names": [
+   "secondary"
+  ],
+  "real": "Symbol('secondary', real=True)",
+  "s": "secondary"
+ },
+ {
+  "names": [
+   "seconds"
+  ],
+  "real": "Symbol('seconds', real=True)",
+  "s": "seconds"
+ },
+ {
+  "names": [
+   "sector"
+  ],
+  "real": "Symbol('sector', real=True)",
+  "s": "sector"
+ },
+ {
+  "names": [
+   "semantic"
+  ],
+  "real": "Symbol('semantic', real=True)",
+  "s": "semantic"
+ },
+ {
+  "names": [
+   "set"
+  ],
+  "real": "Symbol('set', real=True)",
+  "s": "set"
+ },
+ {
+  "names": [
+   "set_camera"
+  ],
+  "real": "Symbol('set_camera', real=True)",
+  "s": "set_camera"
+ },
+ {
+  "names": [
+   "set_param"
+  ],
+  "real": "Symbol('set_param', real=True)",
+  "s": "set_param"
+ },
+ {
+  "names": [
+   "set_style"
+  ],
+  "real": "Symbol('set_style', real=True)",
+  "s": "set_style"
+ },
+ {
+  "names": [
+   "set_tags"
+  ],
+  "real": "Symbol('set_tags', real=True)",
+  "s": "set_tags"
+ },
+ {
+  "names": [
+   "settled"
+  ],
+  "real": "Symbol('settled', real=True)",
+  "s": "settled"
+ },
+ {
+  "names": [
+   "shadow"
+  ],
+  "real": "Symbol('shadow', real=True)",
+  "s": "shadow"
+ },
+ {
+  "names": [
+   "shape"
+  ],
+  "real": "Symbol('shape', real=True)",
+  "s": "shape"
+ },
+ {
+  "names": [
+   "shapes"
+  ],
+  "real": "Symbol('shapes', real=True)",
+  "s": "shapes"
+ },
+ {
+  "names": [
+   "shapes_demo"
+  ],
+  "real": "Symbol('shapes_demo', real=True)",
+  "s": "shapes_demo"
+ },
+ {
+  "names": [
+   "sheet"
+  ],
+  "real": "Symbol('sheet', real=True)",
+  "s": "sheet"
+ },
+ {
+  "names": [
+   "sheets"
+  ],
+  "real": "Symbol('sheets', real=True)",
+  "s": "sheets"
+ },
+ {
+  "names": [
+   "short"
+  ],
+  "real": "Symbol('short', real=True)",
+  "s": "short"
+ },
+ {
+  "names": [
+   "shown"
+  ],
+  "real": "Symbol('shown', real=True)",
+  "s": "shown"
+ },
+ {
+  "names": [
+   "sign"
+  ],
+  "real": "Symbol('sign', real=True)",
+  "s": "sign"
+ },
+ {
+  "names": [
+   "t"
+  ],
+  "real": "sin(Mul(Integer(2), Symbol('t', real=True)))",
+  "s": "sin(2*t)"
+ },
+ {
+  "names": [
+   "t"
+  ],
+  "real": "sin(Symbol('t', real=True))",
+  "s": "sin(t)"
+ },
+ {
+  "names": [
+   "x"
+  ],
+  "real": "Mul(Pow(Symbol('x', real=True), Integer(-1)), sin(Symbol('x', real=True)))",
+  "s": "sin(x)/x"
+ },
+ {
+  "names": [
+   "y"
+  ],
+  "real": "sin(Symbol('y', real=True))",
+  "s": "sin(y)"
+ },
+ {
+  "names": [
+   "singular_values"
+  ],
+  "real": "Symbol('singular_values', real=True)",
+  "s": "singular_values"
+ },
+ {
+  "names": [
+   "sixty"
+  ],
+  "real": "Symbol('sixty', real=True)",
+  "s": "sixty"
+ },
+ {
+  "names": [
+   "size"
+  ],
+  "real": "Symbol('size', real=True)",
+  "s": "size"
+ },
+ {
+  "names": [
+   "sketch_contour"
+  ],
+  "real": "Symbol('sketch_contour', real=True)",
+  "s": "sketch_contour"
+ },
+ {
+  "names": [
+   "skin"
+  ],
+  "real": "Symbol('skin', real=True)",
+  "s": "skin"
+ },
+ {
+  "names": [
+   "slot"
+  ],
+  "real": "Symbol('slot', real=True)",
+  "s": "slot"
+ },
+ {
+  "names": [
+   "smooth"
+  ],
+  "real": "Symbol('smooth', real=True)",
+  "s": "smooth"
+ },
+ {
+  "names": [
+   "snap"
+  ],
+  "real": "Symbol('snap', real=True)",
+  "s": "snap"
+ },
+ {
+  "names": [
+   "soft"
+  ],
+  "real": "Symbol('soft', real=True)",
+  "s": "soft"
+ },
+ {
+  "names": [
+   "soft_phase"
+  ],
+  "real": "Symbol('soft_phase', real=True)",
+  "s": "soft_phase"
+ },
+ {
+  "names": [
+   "softness"
+  ],
+  "real": "Symbol('softness', real=True)",
+  "s": "softness"
+ },
+ {
+  "names": [
+   "solid"
+  ],
+  "real": "Symbol('solid', real=True)",
+  "s": "solid"
+ },
+ {
+  "names": [
+   "solve"
+  ],
+  "real": "Symbol('solve', real=True)",
+  "s": "solve"
+ },
+ {
+  "names": [
+   "sound_cue"
+  ],
+  "real": "Symbol('sound_cue', real=True)",
+  "s": "sound_cue"
+ },
+ {
+  "names": [
+   "source"
+  ],
+  "real": "Symbol('source', real=True)",
+  "s": "source"
+ },
+ {
+  "names": [
+   "space"
+  ],
+  "real": "Symbol('space', real=True)",
+  "s": "space"
+ },
+ {
+  "names": [
+   "span"
+  ],
+  "real": "Symbol('span', real=True)",
+  "s": "span"
+ },
+ {
+  "names": [
+   "spec"
+  ],
+  "real": "Symbol('spec', real=True)",
+  "s": "spec"
+ },
+ {
+  "names": [
+   "spectral"
+  ],
+  "real": "Symbol('spectral', real=True)",
+  "s": "spectral"
+ },
+ {
+  "names": [
+   "spectrum"
+  ],
+  "real": "Symbol('spectrum', real=True)",
+  "s": "spectrum"
+ },
+ {
+  "names": [
+   "spin"
+  ],
+  "real": "Symbol('spin', real=True)",
+  "s": "spin"
+ },
+ {
+  "names": [
+   "sqrt"
+  ],
+  "real": "Symbol('sqrt', real=True)",
+  "s": "sqrt"
+ },
+ {
+  "names": [
+   "square"
+  ],
+  "real": "Symbol('square', real=True)",
+  "s": "square"
+ },
+ {
+  "names": [
+   "squash"
+  ],
+  "real": "Symbol('squash', real=True)",
+  "s": "squash"
+ },
+ {
+  "names": [
+   "squeeze"
+  ],
+  "real": "Symbol('squeeze', real=True)",
+  "s": "squeeze"
+ },
+ {
+  "names": [
+   "src"
+  ],
+  "real": "Symbol('src', real=True)",
+  "s": "src"
+ },
+ {
+  "names": [
+   "srgb"
+  ],
+  "real": "Symbol('srgb', real=True)",
+  "s": "srgb"
+ },
+ {
+  "names": [
+   "start"
+  ],
+  "real": "Symbol('start', real=True)",
+  "s": "start"
+ },
+ {
+  "names": [
+   "step1"
+  ],
+  "real": "Symbol('step1', real=True)",
+  "s": "step1"
+ },
+ {
+  "names": [
+   "step2"
+  ],
+  "real": "Symbol('step2', real=True)",
+  "s": "step2"
+ },
+ {
+  "names": [
+   "still"
+  ],
+  "real": "Symbol('still', real=True)",
+  "s": "still"
+ },
+ {
+  "names": [
+   "stroke"
+  ],
+  "real": "Symbol('stroke', real=True)",
+  "s": "stroke"
+ },
+ {
+  "names": [
+   "strong"
+  ],
+  "real": "Symbol('strong', real=True)",
+  "s": "strong"
+ },
+ {
+  "names": [
+   "subgroup_order"
+  ],
+  "real": "Symbol('subgroup_order', real=True)",
+  "s": "subgroup_order"
+ },
+ {
+  "names": [
+   "subtle"
+  ],
+  "real": "Symbol('subtle', real=True)",
+  "s": "subtle"
+ },
+ {
+  "names": [
+   "sum_eq"
+  ],
+  "real": "Symbol('sum_eq', real=True)",
+  "s": "sum_eq"
+ },
+ {
+  "names": [
+   "sun"
+  ],
+  "real": "Symbol('sun', real=True)",
+  "s": "sun"
+ },
+ {
+  "names": [
+   "sunset"
+  ],
+  "real": "Symbol('sunset', real=True)",
+  "s": "sunset"
+ },
+ {
+  "names": [
+   "surface"
+  ],
+  "real": "Symbol('surface', real=True)",
+  "s": "surface"
+ },
+ {
+  "names": [
+   "sweep"
+  ],
+  "real": "Symbol('sweep', real=True)",
+  "s": "sweep"
+ },
+ {
+  "names": [
+   "sweep_done"
+  ],
+  "real": "Symbol('sweep_done', real=True)",
+  "s": "sweep_done"
+ },
+ {
+  "names": [
+   "sweep_go"
+  ],
+  "real": "Symbol('sweep_go', real=True)",
+  "s": "sweep_go"
+ },
+ {
+  "names": [
+   "swing"
+  ],
+  "real": "Symbol('swing', real=True)",
+  "s": "swing"
+ },
+ {
+  "names": [
+   "swirl"
+  ],
+  "real": "Symbol('swirl', real=True)",
+  "s": "swirl"
+ },
+ {
+  "names": [
+   "t"
+  ],
+  "real": "Symbol('t', real=True)",
+  "s": "t"
+ },
+ {
+  "names": [
+   "t"
+  ],
+  "real": "Add(Symbol('t', real=True), Integer(-1))",
+  "s": "t - 1"
+ },
+ {
+  "names": [
+   "t"
+  ],
+  "real": "Mul(Rational(1, 10), Symbol('t', real=True))",
+  "s": "t / 10"
+ },
+ {
+  "names": [
+   "t"
+  ],
+  "real": "Mul(Rational(1, 300), Symbol('t', real=True))",
+  "s": "t / 300"
+ },
+ {
+  "names": [
+   "t"
+  ],
+  "real": "Mul(Rational(1, 4), Symbol('t', real=True))",
+  "s": "t / 4"
+ },
+ {
+  "names": [
+   "t"
+  ],
+  "real": "Mul(Rational(1, 400), Symbol('t', real=True))",
+  "s": "t / 400"
+ },
+ {
+  "names": [
+   "table"
+  ],
+  "real": "Symbol('table', real=True)",
+  "s": "table"
+ },
+ {
+  "names": [
+   "targets"
+  ],
+  "real": "Symbol('targets', real=True)",
+  "s": "targets"
+ },
+ {
+  "names": [
+   "taste"
+  ],
+  "real": "Symbol('taste', real=True)",
+  "s": "taste"
+ },
+ {
+  "names": [
+   "text"
+  ],
+  "real": "Symbol('text', real=True)",
+  "s": "text"
+ },
+ {
+  "names": [
+   "text_shapes"
+  ],
+  "real": "Symbol('text_shapes', real=True)",
+  "s": "text_shapes"
+ },
+ {
+  "names": [
+   "text_shapes_demo"
+  ],
+  "real": "Symbol('text_shapes_demo', real=True)",
+  "s": "text_shapes_demo"
+ },
+ {
+  "names": [
+   "theorem_holds"
+  ],
+  "real": "Symbol('theorem_holds', real=True)",
+  "s": "theorem_holds"
+ },
+ {
+  "names": [
+   "tick"
+  ],
+  "real": "Symbol('tick', real=True)",
+  "s": "tick"
+ },
+ {
+  "names": [
+   "ticks"
+  ],
+  "real": "Symbol('ticks', real=True)",
+  "s": "ticks"
+ },
+ {
+  "names": [
+   "tictactoe"
+  ],
+  "real": "Symbol('tictactoe', real=True)",
+  "s": "tictactoe"
+ },
+ {
+  "names": [
+   "tip"
+  ],
+  "real": "Symbol('tip', real=True)",
+  "s": "tip"
+ },
+ {
+  "names": [
+   "tips"
+  ],
+  "real": "Symbol('tips', real=True)",
+  "s": "tips"
+ },
+ {
+  "names": [
+   "title"
+  ],
+  "real": "Symbol('title', real=True)",
+  "s": "title"
+ },
+ {
+  "names": [
+   "to"
+  ],
+  "real": "Symbol('to', real=True)",
+  "s": "to"
+ },
+ {
+  "names": [
+   "together"
+  ],
+  "real": "Symbol('together', real=True)",
+  "s": "together"
+ },
+ {
+  "names": [
+   "tone"
+  ],
+  "real": "Symbol('tone', real=True)",
+  "s": "tone"
+ },
+ {
+  "names": [
+   "tool"
+  ],
+  "real": "Symbol('tool', real=True)",
+  "s": "tool"
+ },
+ {
+  "names": [
+   "top"
+  ],
+  "real": "Symbol('top', real=True)",
+  "s": "top"
+ },
+ {
+  "names": [
+   "total"
+  ],
+  "real": "Symbol('total', real=True)",
+  "s": "total"
+ },
+ {
+  "names": [
+   "total_heat"
+  ],
+  "real": "Symbol('total_heat', real=True)",
+  "s": "total_heat"
+ },
+ {
+  "names": [
+   "trace"
+  ],
+  "real": "Symbol('trace', real=True)",
+  "s": "trace"
+ },
+ {
+  "names": [
+   "transform_grid"
+  ],
+  "real": "Symbol('transform_grid', real=True)",
+  "s": "transform_grid"
+ },
+ {
+  "names": [
+   "tree"
+  ],
+  "real": "Symbol('tree', real=True)",
+  "s": "tree"
+ },
+ {
+  "names": [
+   "truth"
+  ],
+  "real": "Symbol('truth', real=True)",
+  "s": "truth"
+ },
+ {
+  "names": [
+   "turn"
+  ],
+  "real": "Symbol('turn', real=True)",
+  "s": "turn"
+ },
+ {
+  "names": [
+   "turn_again"
+  ],
+  "real": "Symbol('turn_again', real=True)",
+  "s": "turn_again"
+ },
+ {
+  "names": [
+   "twenty"
+  ],
+  "real": "Symbol('twenty', real=True)",
+  "s": "twenty"
+ },
+ {
+  "names": [
+   "two"
+  ],
+  "real": "Symbol('two', real=True)",
+  "s": "two"
+ },
+ {
+  "names": [
+   "type"
+  ],
+  "real": "Symbol('type', real=True)",
+  "s": "type"
+ },
+ {
+  "names": [
+   "union"
+  ],
+  "real": "Symbol('union', real=True)",
+  "s": "union"
+ },
+ {
+  "names": [
+   "unsolved"
+  ],
+  "real": "Symbol('unsolved', real=True)",
+  "s": "unsolved"
+ },
+ {
+  "names": [
+   "upper"
+  ],
+  "real": "Symbol('upper', real=True)",
+  "s": "upper"
+ },
+ {
+  "names": [
+   "center",
+   "upper"
+  ],
+  "real": "Add(Mul(Integer(-1), Symbol('center', real=True)), Symbol('upper', real=True))",
+  "s": "upper-center"
+ },
+ {
+  "names": [
+   "utf"
+  ],
+  "real": "Add(Symbol('utf', real=True), Integer(-8))",
+  "s": "utf-8"
+ },
+ {
+  "names": [
+   "value"
+  ],
+  "real": "Symbol('value', real=True)",
+  "s": "value"
+ },
+ {
+  "names": [
+   "vector_toolkit"
+  ],
+  "real": "Symbol('vector_toolkit', real=True)",
+  "s": "vector_toolkit"
+ },
+ {
+  "names": [
+   "verb"
+  ],
+  "real": "Symbol('verb', real=True)",
+  "s": "verb"
+ },
+ {
+  "names": [
+   "video"
+  ],
+  "real": "Symbol('video', real=True)",
+  "s": "video"
+ },
+ {
+  "names": [
+   "videos"
+  ],
+  "real": "Symbol('videos', real=True)",
+  "s": "videos"
+ },
+ {
+  "names": [
+   "view_height"
+  ],
+  "real": "Symbol('view_height', real=True)",
+  "s": "view_height"
+ },
+ {
+  "names": [
+   "vignette"
+  ],
+  "real": "Symbol('vignette', real=True)",
+  "s": "vignette"
+ },
+ {
+  "names": [
+   "visits"
+  ],
+  "real": "Symbol('visits', real=True)",
+  "s": "visits"
+ },
+ {
+  "names": [
+   "voice"
+  ],
+  "real": "Symbol('voice', real=True)",
+  "s": "voice"
+ },
+ {
+  "names": [
+   "volume"
+  ],
+  "real": "Symbol('volume', real=True)",
+  "s": "volume"
+ },
+ {
+  "names": [
+   "walk"
+  ],
+  "real": "Symbol('walk', real=True)",
+  "s": "walk"
+ },
+ {
+  "names": [
+   "warning"
+  ],
+  "real": "Symbol('warning', real=True)",
+  "s": "warning"
+ },
+ {
+  "names": [
+   "wave"
+  ],
+  "real": "Symbol('wave', real=True)",
+  "s": "wave"
+ },
+ {
+  "names": [
+   "wave2"
+  ],
+  "real": "Symbol('wave2', real=True)",
+  "s": "wave2"
+ },
+ {
+  "names": [
+   "wb"
+  ],
+  "real": "Symbol('wb', real=True)",
+  "s": "wb"
+ },
+ {
+  "names": [
+   "weak"
+  ],
+  "real": "Symbol('weak', real=True)",
+  "s": "weak"
+ },
+ {
+  "names": [
+   "web"
+  ],
+  "real": "Symbol('web', real=True)",
+  "s": "web"
+ },
+ {
+  "names": [
+   "window"
+  ],
+  "real": "Symbol('window', real=True)",
+  "s": "window"
+ },
+ {
+  "names": [
+   "wood"
+  ],
+  "real": "Symbol('wood', real=True)",
+  "s": "wood"
+ },
+ {
+  "names": [
+   "word"
+  ],
+  "real": "Symbol('word', real=True)",
+  "s": "word"
+ },
+ {
+  "names": [
+   "world"
+  ],
+  "real": "Symbol('world', real=True)",
+  "s": "world"
+ },
+ {
+  "names": [
+   "worlds"
+  ],
+  "real": "Symbol('worlds', real=True)",
+  "s": "worlds"
+ },
+ {
+  "names": [
+   "write"
+  ],
+  "real": "Symbol('write', real=True)",
+  "s": "write"
+ },
+ {
+  "names": [
+   "wrote"
+  ],
+  "real": "Symbol('wrote', real=True)",
+  "s": "wrote"
+ },
+ {
+  "names": [
+   "x"
+  ],
+  "real": "Symbol('x', real=True)",
+  "s": "x"
+ },
+ {
+  "names": [
+   "x",
+   "y"
+  ],
+  "real": "Add(Symbol('x', real=True), Mul(Float('0.29999999999999999', precision=53), Symbol('y', real=True)))",
+  "s": "x + 0.3 * y"
+ },
+ {
+  "names": [
+   "x"
+  ],
+  "real": "Pow(Symbol('x', real=True), Integer(2))",
+  "s": "x**2"
+ },
+ {
+  "names": [
+   "x_value"
+  ],
+  "real": "Symbol('x_value', real=True)",
+  "s": "x_value"
+ },
+ {
+  "names": [
+   "y"
+  ],
+  "real": "Symbol('y', real=True)",
+  "s": "y"
+ },
+ {
+  "complex": "Symbol('z')",
+  "names": [
+   "z"
+  ],
+  "real": "Symbol('z', real=True)",
+  "s": "z"
+ },
+ {
+  "complex": "Pow(Symbol('z'), Integer(2))",
+  "names": [
+   "z"
+  ],
+  "real": "Pow(Symbol('z', real=True), Integer(2))",
+  "s": "z**2"
+ },
+ {
+  "names": [
+   "zero"
+  ],
+  "real": "Symbol('zero', real=True)",
+  "s": "zero"
+ },
+ {
+  "names": [
+   "zeros"
+  ],
+  "real": "Symbol('zeros', real=True)",
+  "s": "zeros"
+ },
+ {
+  "names": [
+   "zeros_"
+  ],
+  "real": "Symbol('zeros_', real=True)",
+  "s": "zeros_"
+ },
+ {
+  "names": [
+   "zeros_eq"
+  ],
+  "real": "Symbol('zeros_eq', real=True)",
+  "s": "zeros_eq"
+ },
+ {
+  "names": [
+   "zoom"
+  ],
+  "real": "Symbol('zoom', real=True)",
+  "s": "zoom"
+ }
+]
