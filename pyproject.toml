@@ -101,6 +101,9 @@ select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
 # The maths converter maps Unicode letters and symbols (π, ≤, ℝ) to LaTeX on purpose.
 "phasor/core/texconv.py" = ["RUF001"]
 "tests/test_texconv.py" = ["RUF001"]
+# Explorer rows read the Unicode people type (σ, −, ×, x′) on purpose.
+"phasor/domains/rows.py" = ["RUF001", "RUF002"]
+"tests/test_rows.py" = ["RUF001"]
 
 # ---------------------------------------------------------------- pytest
 [tool.pytest.ini_options]
