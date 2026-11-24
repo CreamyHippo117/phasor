@@ -671,9 +671,12 @@ from phasor.core.pycode import read_tweaks, with_tweaks
 
 folder = Path(tempfile.mkdtemp())
 script = folder / "tweaked.py"
-script.write_text("from phasor import Dot, Scene\n"
-                  "s = Scene('tweaked', passes=None)\n"
-                  "s.add(Dot(id='pole', r=0.2))\n", encoding="utf-8")
+script.write_text(
+    "from phasor import Dot, Scene\n"
+    "s = Scene('tweaked', passes=None)\n"
+    "s.add(Dot(id='pole', r=0.2))\n",
+    encoding="utf-8",
+)
 e = load(script)
 e.apply({"op": "set_param", "path": "pole.r", "value": 0.3})  # a tweak: into the overrides
 text = with_tweaks(script.read_text(encoding="utf-8"), e.overrides, "s")
@@ -2501,9 +2504,10 @@ assert job.command("s.phasor.json")[-5:] == ["s.phasor.json", "-o", str(job.out)
 
 folder = Path(tempfile.mkdtemp())
 script = folder / "app.py"
-script.write_text("from phasor import Dot, Scene\n"
-                  "s = Scene('app', passes=None)\n"
-                  "s.add(Dot(id='pole', r=0.2))\n", encoding="utf-8")
+script.write_text(
+    "from phasor import Dot, Scene\ns = Scene('app', passes=None)\ns.add(Dot(id='pole', r=0.2))\n",
+    encoding="utf-8",
+)
 ed = Editor(open_workspace(str(script)))
 assert ed.is_script and ed.line_of("pole") == 3 and ed.object_at_line(3) == "pole"
 ed.set_param("pole", "r", "0.3")  # a tweak: written into the tweaks block

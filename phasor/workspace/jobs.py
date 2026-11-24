@@ -26,6 +26,7 @@ MAX_RUNNING = 2  # renders at once (each shares the one GL thread with the edito
 KEEP_FINISHED = 16  # finished jobs whose status can still be read
 CANCEL_WAIT = 5.0  # seconds ``cancel`` waits for the render to stop and clean up
 
+
 def _render(engine: Any, out: Path, **kwargs: Any) -> dict[str, Any]:
     """The render a job runs (a seam: tests put a fake here, so jobs are tested without
     OpenGL). One process: ``scene.render`` with one worker, its kernels on every core."""
