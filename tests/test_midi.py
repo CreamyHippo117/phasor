@@ -19,6 +19,7 @@ import pytest
 
 from phasor import Dot, Notes, Scene
 from phasor.core.issues import DocumentError
+from phasor.core.proc import NO_WINDOW
 from phasor.domains import midi_math as mm
 from phasor.time import narration as nar
 from tests.test_lint import MODES
@@ -339,7 +340,8 @@ def test_the_same_samples_in_another_process():
     here = _digest(MIXED)
     code = "from tests.test_midi import _digest, MIXED; print(_digest(MIXED))"
     out = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True,
-                         text=True, timeout=300, encoding="utf-8")  # fmt: skip
+                         text=True, timeout=300, encoding="utf-8",
+                         creationflags=NO_WINDOW)  # fmt: skip
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip() == here
 
@@ -650,3 +652,63 @@ def test_example_golden_storyboard():
     times = [m["intro"] + 0.8, m["glide"] + 0.3, m["glide"] + 1.2, m["fade"] + 0.8]
     sheet = e.storyboard(times, size=(320, 180))["image"]
     _golden("notes_overlay", sheet, e.pass_runner().renderer_class())
+
+
+# ---------------------------------------------------------------- the object at its bounds
+
+
+def test_one_object_at_the_note_bound_lints_in_bounded_time_and_memory(tmp_path):
+    """1563 script notes repeated 64 times: cut at MAX_NOTES (a whole repeat at a time),
+    most dropped past the voices. Measured here: 4.5 s to place them the first time, 2 s
+    for a whole lint (the summary is made once, not per lint sample), 60 MiB peak."""
+    from phasor.domains import midi
+
+    midi._cache.clear()
+    s = scene(tmp_path, 60.0)
+    base = [(40 + (i * 7) % 48, i * 0.0005, 0.05, 90) for i in range(1563)]
+    s.add(Notes(id="dense", notes=base, repeat=64))
+    tracemalloc.start()
+    t = time.perf_counter()
+    sem = s.engine.inspect(0.0, id="dense")["objects"][0]["semantic"]
+    codes = {i.code for i in s.engine.lint()}
+    seconds = time.perf_counter() - t
+    mib = tracemalloc.get_traced_memory()[1] / 2**20
+    tracemalloc.stop()
+    assert sem["count"] == 63 * 1563 and sem["voices_dropped"] > 0
+    assert {"notes_limit", "truncated"} <= codes
+    assert seconds < 300 and mib < 512
+
+
+def test_the_samples_the_notes_make_are_bounded(tmp_path, monkeypatch):
+    """``MAX_SYNTH_WORK``: one synthesizer stops taking notes past it, and a scene's
+    synthesizers together are left out past it (the mix and lint agree on which)."""
+    from phasor.domains import midi
+
+    monkeypatch.setattr(mm, "MAX_SYNTH_WORK", 10 * mm.RATE)  # 10 s of one voice
+    midi._cache.clear()
+    s = scene(tmp_path, 20.0)
+    s.add(Notes(id="a", notes=[(60, 2.0 * i, 1.0, 90) for i in range(9)], instrument="sine"))
+    s.add(Notes(id="b", notes=[(64, 0.0, 1.0, 90)], instrument="sine"))
+    st = s.engine.state_at(0.0)
+    a = st["a"].impl.placed(st)
+    assert a.over_work == a.dropped > 0 and a.work <= 10 * mm.RATE
+    problems: list[str] = []
+    s.engine.audio_track(problems)
+    assert any("'b' left out" in p and "samples" in p for p in problems)
+    got = [i for i in s.engine.lint() if i.code == "notes_limit"]
+    assert {i.ids for i in got} == {("a",), ("b",)}
+    assert any("makes at most" in i.message for i in got if i.ids == ("a",))
+    midi._cache.clear()
+
+
+def test_many_small_objects_stay_cached_and_huge_ones_are_bounded(tmp_path):
+    from phasor.domains import midi
+
+    midi._cache.clear()
+    s = scene(tmp_path)
+    for k in range(40):
+        s.add(Notes(id=f"n{k}", notes=[(60 + k % 12, 0.05 * k, 0.1, 90)]))
+    s.engine.lint()
+    assert len(midi._cache) >= 40
+    assert sum(len(v.notes) for v in midi._cache.values()) <= midi.CACHED_NOTES
+    midi._cache.clear()

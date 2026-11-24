@@ -469,6 +469,11 @@ def write_smf(tracks: Sequence[tuple[str, Iterable[Note]]], *, bpm: float = BPM,
 
 RATE = 48000  # the synthesizer's sample rate; the mixer resamples to the track's
 MAX_VOICES = 64  # notes sounding at once (with their release); later ones are dropped
+# Samples made in all, summed over the notes (a voice's every sample costs about the same):
+# one synthesizer, and a scene's notes together (``Engine.audio_track``), make at most this
+# many; later notes are left out. Measured: about 11 million a second on one core here, so
+# the bound is a few minutes of work (a dense hour of 64 voices would be an hour).
+MAX_SYNTH_WORK = 1 << 31
 _SUB = 1 << 16  # samples made at a time inside one read (bounded temporaries)
 _TABLE_BITS = 12
 _TABLE = 1 << _TABLE_BITS  # samples in a waveform table
@@ -513,10 +518,14 @@ def timbre_of(program: int, channel: int, instrument: str = "auto") -> str:
         return "drums"
     if instrument != "auto":
         return instrument
-    family = program // 8
-    return {0: "pluck", 1: "bell", 2: "organ", 3: "pluck", 4: "pluck", 5: "pad", 6: "pad",
-            7: "lead", 8: "lead", 9: "lead", 10: "lead", 11: "pad", 12: "bell", 13: "pluck",
-            14: "bell", 15: "sine"}[family]  # fmt: skip
+    return _FAMILY[(program // 8) & 15]
+
+
+# The voice of each General MIDI family of eight programs (pianos, chromatic percussion,
+# organs, guitars, basses, strings, ensembles, brass, reeds, pipes, synth leads, synth pads,
+# synth effects, ethnic, percussive, sound effects).
+_FAMILY = ("pluck", "bell", "organ", "pluck", "pluck", "pad", "pad", "lead", "lead", "lead",
+           "lead", "pad", "bell", "pluck", "bell", "sine")  # fmt: skip
 
 
 @functools.lru_cache(maxsize=64)
@@ -582,7 +591,7 @@ def _drum(pitch: int) -> tuple[int, float, float, float]:
     return _TICK, 0.15, 0.03, 0.0
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _Voice:
     first: int  # the track sample (at ``RATE``) the note starts on
     held: int  # samples it is held
@@ -598,8 +607,9 @@ class Synth:
     """Notes as a ``time.narration.Source`` at ``RATE``: ``frames`` covers the last note's
     release (at most ``MAX_SECONDS``); ``read(skip, count)`` makes those samples a window
     at a time. At most ``MAX_VOICES`` notes sound at once (a note starting when that many
-    are sounding is dropped: ``dropped``). ``noise``: the drum kit's noise (``rng(id,
-    seed)``: the only randomness)."""
+    are sounding is dropped: ``dropped``), and at most ``MAX_SYNTH_WORK`` samples are made
+    in all (``work``; notes past it are dropped too: ``over_work``). ``noise``: the drum
+    kit's noise (``rng(id, seed)``: the only randomness)."""
 
     def __init__(self, notes: Sequence[Note], instrument: str = "auto",
                  noise: np.ndarray | None = None) -> None:  # fmt: skip
@@ -621,17 +631,22 @@ class Synth:
                                  (j * 7919) % _NOISE))  # fmt: skip
         voices.sort(key=lambda v: v.first)  # stable: notes keep their order at one start
         kept, ends = [], []  # min-heap of the kept voices' last samples
-        self.dropped = 0
+        self.dropped = 0  # notes left out: past MAX_VOICES at once, or past the work
+        self.over_work = 0  # ... of them, past MAX_SYNTH_WORK
         self.dropped_at: float | None = None  # seconds: the first note dropped
+        self.work = 0  # samples made in all (each note's, with its release)
         for v in voices:
             while ends and ends[0] <= v.first:
                 heapq.heappop(ends)
-            if len(ends) >= MAX_VOICES:
+            busy = len(ends) >= MAX_VOICES
+            if busy or self.work + v.total > MAX_SYNTH_WORK:
                 self.dropped += 1
+                self.over_work += not busy
                 if self.dropped_at is None:
                     self.dropped_at = v.first / RATE
                 continue
             heapq.heappush(ends, v.first + v.total)
+            self.work += v.total
             kept.append(v)
         self.voices = tuple(kept)
         self._starts = [v.first for v in kept]

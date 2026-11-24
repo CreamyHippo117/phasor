@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import functools
 import math
+import threading
+from collections import OrderedDict
 from typing import Any, ClassVar, Literal
 
 import numpy as np
@@ -188,15 +190,7 @@ class Notes(ObjectBase):
                                "start": p.start, "gain": p.gain, "count": len(pl.notes),
                                "instrument": p.instrument,
                                "drawn": 1.0 if p.show else 0.0}  # fmt: skip
-        if pl.notes:
-            a = np.array([(n.pitch, n.start, n.start + n.length) for n in pl.notes])
-            out["span"] = [round(float(a[:, 1].min()), 6), round(float(a[:, 2].max()), 6)]
-            out["pitch_range"] = [float(a[:, 0].min()), float(a[:, 0].max())]
-            out["channels"] = sorted({n.channel for n in pl.notes})
-            out["programs"] = sorted({"Drum kit" if n.channel == mm.DRUMS else
-                                      mm.GM_NAMES[n.program] for n in pl.notes})  # fmt: skip
-            out["voices"] = sorted({mm.timbre_of(n.program, n.channel, p.instrument)
-                                    for n in pl.notes})  # fmt: skip
+        out.update({k: list(v) if isinstance(v, list) else v for k, v in pl.summary.items()})
         if pl.dropped:
             out["voices_dropped"] = pl.dropped
         if pl.out_of_range:
@@ -245,9 +239,10 @@ class Notes(ObjectBase):
         note's start from there, and where the synthesizer dropped one (seconds)."""
         p = self.me(state).params
         pl = self.placed(state)
-        return {"start": p.start, "starts": [n.start for n in pl.notes],
-                "dropped": pl.dropped, "dropped_at": pl.dropped_at,
-                "voices": mm.MAX_VOICES}  # fmt: skip
+        return {"start": p.start, "starts": pl.table[:, 1],
+                "dropped": pl.dropped, "dropped_at": pl.dropped_at, "over_work": pl.over_work,
+                "work": pl.work, "voices": mm.MAX_VOICES,
+                "max_work": mm.MAX_SYNTH_WORK}  # fmt: skip
 
     def draw(self, ctx: DrawContext, state: SceneState) -> None:
         """A piano roll when ``show``: each note a bar (time across, pitch up) in a frame;
@@ -255,7 +250,7 @@ class Notes(ObjectBase):
         moves across. Without ``show``, nothing: notes are heard, not seen."""
         me = self.me(state)
         p = me.params
-        notes = self.placed(state).notes
+        pl = self.placed(state)
         if not p.show or p.opacity <= 0:
             return
         cam = state.camera_for(me)
@@ -265,9 +260,9 @@ class Notes(ObjectBase):
         frame = with_alpha(me.style["frame"], p.opacity)
         segment_batch(ctx, cam, corners, np.roll(corners, -1, axis=0), me.style["stroke"] * 0.4,
                       colors=frame, glow=1.0)  # fmt: skip
-        if not notes:
+        if not pl.notes:
             return
-        a = np.array([(n.pitch, n.start, n.start + n.length) for n in notes])
+        a = pl.table
         span = max(float(a[:, 2].max()), 1e-6)
         lo, hi = float(a[:, 0].min()) - 1, float(a[:, 0].max()) + 1
         pad = 0.04 * p.width
@@ -296,13 +291,29 @@ class _Placed:
     """The notes of one ``Notes`` as heard, and their synthesizer."""
 
     def __init__(self, notes: tuple[mm.Note, ...], synth: mm.Synth, cut: str | None,
-                 out_of_range: int) -> None:  # fmt: skip
+                 out_of_range: int, instrument: str) -> None:  # fmt: skip
         self.notes, self.synth, self.cut, self.out_of_range = notes, synth, cut, out_of_range
         self.dropped = synth.dropped
         self.dropped_at = synth.dropped_at
+        self.over_work = synth.over_work
+        self.work = synth.work
+        # (pitch, start, end) a row: what the semantics, the roll and lint read, made once
+        self.table = np.array([(n.pitch, n.start, n.start + n.length) for n in notes],
+                              dtype=np.float64).reshape(-1, 3)  # fmt: skip
+        self.summary: dict[str, Any] = {}
+        if notes:
+            kinds = {(n.channel == mm.DRUMS, n.program, n.channel) for n in notes}
+            self.summary = {
+                "span": [round(float(self.table[:, 1].min()), 6),
+                         round(float(self.table[:, 2].max()), 6)],
+                "pitch_range": [float(self.table[:, 0].min()), float(self.table[:, 0].max())],
+                "channels": sorted({c for _, _, c in kinds}),
+                "programs": sorted({"Drum kit" if d else mm.GM_NAMES[p] for d, p, _ in kinds}),
+                "voices": sorted({mm.timbre_of(p, c, instrument) for _, p, c in kinds}),
+            }  # fmt: skip
 
 
-@functools.lru_cache(maxsize=16)
+@functools.lru_cache(maxsize=4)
 def _read_song(stamp: tuple) -> mm.Song:
     """The ``.mid`` file ``stamp`` names (cached by its path, time and size: read again when
     it changes)."""
@@ -313,8 +324,29 @@ def _read_song(stamp: tuple) -> mm.Song:
     return mm.read_smf(data)
 
 
-@functools.lru_cache(maxsize=32)
+CACHED_NOTES = 400_000  # notes kept placed (with their synthesizers) across objects
+_cache: OrderedDict[tuple, _Placed] = OrderedDict()
+_lock = threading.Lock()
+
+
 def _placed(key: tuple) -> _Placed:
+    """``_place(key)``, cached: the most recently used are kept while they hold at most
+    ``CACHED_NOTES`` notes in all (at least one), so many small objects all stay cached and
+    a few huge ones cost a bounded amount of memory."""
+    with _lock:
+        hit = _cache.get(key)
+        if hit is not None:
+            _cache.move_to_end(key)
+            return hit
+    made = _place(key)
+    with _lock:
+        _cache[key] = made
+        while len(_cache) > 1 and sum(len(v.notes) for v in _cache.values()) > CACHED_NOTES:
+            _cache.popitem(last=False)
+    return made
+
+
+def _place(key: tuple) -> _Placed:
     object_id, stamp, script, transpose, scale, instrument, program, channels, repeat, seed = key
     song = _read_song(stamp) if stamp is not None and stamp[1] is not None else None
     cut = song.cut if song is not None else None
@@ -343,4 +375,4 @@ def _placed(key: tuple) -> _Placed:
         notes += [n._replace(start=n.start + r * period) for n in moved]
     notes.sort(key=lambda n: (n.start, n.channel, n.pitch))
     synth = mm.Synth(notes, instrument, mm.drum_noise(rng(object_id, seed)))
-    return _Placed(tuple(notes), synth, cut, out_of_range)
+    return _Placed(tuple(notes), synth, cut, out_of_range, instrument)

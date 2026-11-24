@@ -490,6 +490,7 @@ def notes_rules(c: Compiled, state_at: Callable[[float], SceneState]) -> list[Is
     markers = c.doc.timeline.markers
     end = c.duration
     out: list[Issue] = []
+    work = 0  # samples the synthesizers make, in the scene's order
     for o in reporting:
         r = o.impl.note_report(state)
         at = r["start"]
@@ -503,22 +504,34 @@ def notes_rules(c: Compiled, state_at: Callable[[float], SceneState]) -> list[Is
                     "another marker"))  # fmt: skip
                 continue
             at = markers[at]
-        late = [float(at) + t for t in r["starts"] if float(at) + t >= end]
-        if late:
+        starts = float(at) + np.asarray(r["starts"], dtype=np.float64)
+        late = starts[starts >= end]
+        if len(late):
             out.append(Issue(
-                "notes_limit", f"{o.id}: {len(late)} of its {len(r['starts'])} notes start "
-                f"at or after the scene's end ({end:g} s), from {min(late):g} s; they are not "
+                "notes_limit", f"{o.id}: {len(late)} of its {len(starts)} notes start "
+                f"at or after the scene's end ({end:g} s), from {late.min():g} s; they are not "
                 "heard", severity="warning", ids=(o.id,), times=(round(end, 6),),
                 fix_hint="make the scene longer (a later marker), start the notes earlier, "
                 "or raise tempo_scale"))  # fmt: skip
         if r["dropped"]:
             when = float(at) + r["dropped_at"]
+            why = (f"the synthesizer plays at most {r['voices']} notes at once (with their "
+                   "release)")  # fmt: skip
+            if r["over_work"]:
+                why += f", and makes at most {r['max_work']} samples ({r['over_work']} notes)"
             out.append(Issue(
                 "notes_limit", f"{o.id}: {r['dropped']} notes are dropped, from {when:g} s: "
-                f"the synthesizer plays at most {r['voices']} notes at once (with their "
-                "release)", severity="warning", ids=(o.id,), times=(round(when, 6),),
+                f"{why}", severity="warning", ids=(o.id,), times=(round(when, 6),),
                 fix_hint="fewer or shorter notes at once, or split them over two Notes "
                 "objects"))  # fmt: skip
+        if r["work"] and work + r["work"] > r["max_work"]:  # as Engine.audio_track counts
+            out.append(Issue(
+                "notes_limit", f"{o.id}: the scene's notes together would make more than "
+                f"{r['max_work']} samples; this object is not heard", severity="warning",
+                ids=(o.id,), times=(0.0,), fix_hint="fewer, shorter or sparser notes; the "
+                "objects before it in the scene are heard"))  # fmt: skip
+        else:
+            work += r["work"]
     return out
 
 

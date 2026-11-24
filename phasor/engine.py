@@ -608,20 +608,31 @@ class Engine:
 
     def _at_markers(self, clips: list, problems: list[str] | None) -> list:
         """Clips that start at a marker (``Clip.marker``: ``Notes(start="beat")``) placed at
-        the marker's time; one whose marker the scene does not have is left out and said."""
+        the marker's time; one whose marker the scene does not have is left out and said, as
+        are synthesizers past ``midi_math.MAX_SYNTH_WORK`` for the scene's notes together."""
         import dataclasses
+
+        from phasor.domains.midi_math import MAX_SYNTH_WORK
 
         markers = self.document.timeline.markers
         out = []
+        work = 0  # samples the synthesizers make, all clips together
         for c in clips:
-            if getattr(c, "marker", None) is None:
-                out.append(c)
-            elif c.marker in markers:
-                out.append(dataclasses.replace(c, start=float(markers[c.marker]) + c.start,
-                                               marker=None))  # fmt: skip
-            elif problems is not None:
-                problems.append(f"{c.path!r} left out: it starts at the marker {c.marker!r}, "
-                                "which the scene does not have")  # fmt: skip
+            if getattr(c, "marker", None) is not None:
+                if c.marker not in markers:
+                    if problems is not None:
+                        problems.append(f"{c.path!r} left out: it starts at the marker "
+                                        f"{c.marker!r}, which the scene does not have")  # fmt: skip
+                    continue
+                c = dataclasses.replace(c, start=float(markers[c.marker]) + c.start, marker=None)
+            made = getattr(c.source, "work", 0)
+            if made and work + made > MAX_SYNTH_WORK:
+                if problems is not None:
+                    problems.append(f"{c.path!r} left out: the scene's notes would make more "
+                                    f"than {MAX_SYNTH_WORK} samples")  # fmt: skip
+                continue
+            work += made
+            out.append(c)
         return out
 
     def export_midi(self, path: str | Path) -> dict[str, Any]:
