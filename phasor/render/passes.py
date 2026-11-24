@@ -569,9 +569,11 @@ class GLRenderer:
         height = (t1 - t0) * ul
         # The background is in the key: fields fill their empty parts with it (Fractal,
         # cloud, image), and a scene may choose its own (M18).
+        # ``cache_key`` on the pixels function: what else its picture depends on (a video's
+        # file and frame, Milestone 24), so a clip that plays is not served one frame.
         key = (obj.type, obj.params, tuple(sorted(obj.roles.items())), pw, ph,
                round(center[0], 12), round(center[1], 12), round(height, 15),
-               tuple(state.background))  # fmt: skip
+               tuple(state.background), getattr(c["pixels"], "cache_key", None))  # fmt: skip
         if key not in self._fields:
             pixels = np.asarray(c["pixels"](pw, ph, center, height), dtype=np.float32)
             if pixels.shape != (ph, pw, 4):

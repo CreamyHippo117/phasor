@@ -109,7 +109,10 @@ class DrawContext(Protocol):
         a view in quad coordinates (``center`` and ``height`` measured along ``right`` and
         ``up`` from ``corner``, in world units), and expects linear RGBA (h, w, 4) float32,
         row 0 = top. Alpha is a per-pixel glow weight (0-1): with ``glow`` above 1 a pixel
-        shines brighter and feeds the bloom by that weight; at ``glow`` 1 alpha is unused."""
+        shines brighter and feeds the bloom by that weight; at ``glow`` 1 alpha is unused.
+        The renderer keeps the pixels by the object's parameters and the view; a ``pixels``
+        function whose picture depends on more (a video's frame) names it in an attribute
+        ``cache_key`` (hashable)."""
         ...
 
     def surface(

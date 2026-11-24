@@ -132,6 +132,16 @@ kind = "basics"
 tier = "technique"
 teaches = "A picture in a scene: a PNG next to the script, placed, sized, framed and animated like any object"
 
+[examples.video_input]
+kind = "basics"
+tier = "technique"
+teaches = "Footage: Scene.from_video makes a clip the whole frame (the scene as long as it plays), a trimmed looping inset of it, text on it"
+
+[examples.picture_scene]
+kind = "basics"
+tier = "technique"
+teaches = "A scene from pictures: a PNG sequence (frames/x_%02d.png) played as the background, a still and the sequence placed as objects"
+
 [examples.phase_portrait]
 kind = "physics"
 tier = "technique"

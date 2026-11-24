@@ -49,6 +49,7 @@ from phasor.time import verbs as _verbs
 from phasor.time.narration import block_of, repace
 
 TimeArg = float | tuple[str, float] | str  # seconds, ("marker", offset) or "marker"
+BACKGROUND_Z = -1000  # ``Scene.background``: drawn before everything else
 
 
 def expr(source: str) -> ExprSpec:
@@ -363,6 +364,52 @@ class Scene:
 
     def save(self, path: str | Path) -> None:
         self.engine.save(path)
+
+    # ------------------------------------------------------------ footage (Milestone 24)
+
+    def background(self, path: str, *, id: str = "background", **params: Any) -> ObjectBase:
+        """A picture, a picture sequence (``frames/shot_%04d.png``) or a video clip (``.mp4``)
+        filling the whole frame behind everything else: it fills the camera's view
+        (``fill``; the 2D camera), cut to it (``fit="cover"``), drawn first (``z_index``
+        -1000), and labels may sit on it (a backdrop). Other parameters (``start``,
+        ``trim``, ``speed``, ``loop``, ``opacity``, ...) as for ``Image`` and ``Video``."""
+        from phasor.core.files import VIDEO_EXT
+        from phasor.domains.frames import extension
+        from phasor.domains.media import Image
+        from phasor.domains.video import Video
+
+        cls = Video if extension(path) in VIDEO_EXT else Image
+        params = {"fill": True, "fit": "cover", "z_index": BACKGROUND_Z, **params}
+        return self.add(cls(id=id, path=path, **params))
+
+    @classmethod
+    def from_video(cls, path: str, *, title: str | None = None, id: str = "clip",
+                   clip: dict[str, Any] | None = None, **scene_kwargs: Any) -> Scene:  # fmt: skip
+        """A scene made of a clip (or a picture sequence): it fills the frame
+        (``background``, its parameters in ``clip``: ``start``, ``trim``, ``speed``, ...)
+        and the scene lasts as long as it plays (``meta.duration``, read from the file when
+        this runs, at most ``media_math.MAX_SECONDS``; a looping clip plays once). Put
+        objects on it as on any scene. Other keyword arguments go to ``Scene``."""
+        from phasor.core.files import VIDEO_EXT
+        from phasor.domains import media_math as mm
+        from phasor.domains.frames import extension
+
+        scene_kwargs.setdefault("base_dir", _caller_dir())
+        caller = sys._getframe(1).f_globals
+        scene_kwargs.setdefault("allow_scripts", script_of(caller) is not None)
+        scene = cls(title or file_stem(Path(path).name) or "clip", **scene_kwargs)
+        clip = dict(clip or {})
+        scene.background(path, id=id, **clip)
+        video = extension(path) in VIDEO_EXT
+        probe = mm.open_source(scene.engine.base_dir, path, video=video,
+                               fps=float(clip.get("fps", 24.0))).probe()  # fmt: skip
+        if probe.ok:
+            a, b = mm.clip_range(tuple(clip.get("trim", (0.0, 0.0))), probe.seconds)
+            speed = float(clip.get("speed", 1.0))
+            seconds = float(clip.get("start", 0.0)) + (b - a) / speed
+            seconds = round(min(seconds, mm.MAX_SECONDS), 6)
+            scene._apply(SetMeta(field="duration", value=seconds))
+        return scene
 
 
 def load(path: str | Path, **engine_kwargs: Any) -> Engine:

@@ -28,6 +28,8 @@ returns one issue per problem with the times it was seen. Rules in this mileston
 | glyph_limit | warning | as shapes, glyphs not drawn (past ``MAX_GLYPHS`` or ``MAX_COORD``) |
 | morph_missing | warning | a morph whose source is gone or has no outline: it draws itself |
 | morph_limit | warning | a morph with more subpaths than morph (``MAX_SUBPATHS``): the rest fade |
+| video_too_big | warning | a clip or picture sequence past a cap (size, frames, length): unseen |
+| clip_ended | warning | a clip shown past its end with ``loop`` off: its last frame holds  |
 
 ``missing_extra`` also warns when a type draws without its extra, plainer (``Code`` without
 pygments is drawn in one color).
@@ -46,7 +48,7 @@ from typing import Any
 
 import numpy as np
 
-from phasor.core import extras, record, ticks
+from phasor.core import extras, files, record, ticks
 from phasor.core import text as text_metrics
 from phasor.core.color import contrast_ratio, over
 from phasor.core.constraints import LABEL_SUFFIX
@@ -289,6 +291,14 @@ class _Frame:
             if on_it and self.covered(label_id, obj.id) > 0.5:
                 under = obj.style["color"]
                 bg = over((*under[:3], under[3] * obj.params.opacity), bg)
+            elif (other is not None and other["semantic"].get("backdrop")
+                  and obj.params.opacity > FAINT and hasattr(obj.impl, "average_color")
+                  and self.covered(label_id, obj.id) > 0.5):  # fmt: skip
+                # footage or a picture behind text (Milestone 24): the mean colour of the
+                # frame shown stands for it (with OpenGL the real picture is measured)
+                mean = obj.impl.average_color(self.state)
+                if mean is not None:
+                    bg = over((*mean, obj.params.opacity), bg)
         return contrast_ratio(over((*c[:3], alpha), bg), bg)
 
 
@@ -371,7 +381,6 @@ def file_rules(c: Compiled) -> list[Issue]:
     that is not in the scene's folder. The object draws nothing until the file is there.
     ``missing_extra``: a type needs an optional package (its ``Requires``: module -> extra)
     that is not installed; it draws nothing until the extra is installed."""
-    from phasor.core import extras, files
     from phasor.time.compile import file_values
 
     out = []
@@ -693,6 +702,10 @@ def run(
             if sem.get("unreadable") or sem.get("skipped"):
                 f.add("bad_file", (e["id"],), t, why=sem.get("unreadable"),
                       skipped=sem.get("skipped", 0), file=sem.get("file"))  # fmt: skip
+            if sem.get("too_big"):
+                f.add("video_too_big", (e["id"],), t, why=sem["too_big"], file=sem.get("file"))
+            if sem.get("ended") and e["opacity"] > FAINT:
+                f.add("clip_ended", (e["id"],), t)
             if sem.get("too_complex"):
                 f.add("svg_too_complex", (e["id"],), t, why=sem["too_complex"],
                       file=sem.get("file"))  # fmt: skip
@@ -814,7 +827,9 @@ def run(
             ext = str(info["file"]).lower().rsplit(".", 1)[-1]
             again = {"svg": "export the file again (plain SVG)",
                      "wav": "save the file again as PCM WAV (16-bit, 48 kHz)",
-                     "wave": "save the file again as PCM WAV (16-bit, 48 kHz)"}.get(
+                     "wave": "save the file again as PCM WAV (16-bit, 48 kHz)",
+                     **dict.fromkeys(files.VIDEO_EXT, "export the clip again as H.264 mp4"),
+                     **dict.fromkeys(files.PICTURE_EXT, "save the picture again as PNG")}.get(
                 ext, "save the file again as UTF-8 text")  # fmt: skip
             return Issue(
                 code,
@@ -863,6 +878,16 @@ def run(
                          f"other{step} on screen {when}", "warning", ids, path=info["path"],
                          times=ts, fix_hint=f"{hint}a larger scale, a smaller 'numbers' text "
                          "role, or turn the camera")  # fmt: skip
+        if code == "video_too_big":
+            return Issue(code, f"{ids[0]!r}: the file {info['file']!r} is past a cap "
+                         f"({info['why']}); it is not drawn", "warning", ids, times=ts,
+                         fix_hint="make it smaller (ffmpeg -vf scale=1920:-2), shorter, or "
+                         "split it into several files")  # fmt: skip
+        if code == "clip_ended":
+            return Issue(code, f"{ids[0]!r} has played to its end and holds its last frame "
+                         f"{when} (loop is off)", "warning", ids, times=ts,
+                         fix_hint="loop it (loop=True), play it slower (speed), trim less, "
+                         "or fade it out before it ends")  # fmt: skip
         if code == "svg_too_complex":
             return Issue(code, f"{ids[0]!r}: the file {info['file']!r} is past a reading "
                          f"limit ({info['why']}); its drawing is empty or cut short",

@@ -65,7 +65,7 @@
 - `galois_diagram`: flash, primes, pos, width, height, gap
 - `graph`: flash, function, xmin, xmax, pos
 - `homomorphism`: flash, n, m, a, pos, r, gap, progress
-- `image`: flash, path, pos, width, height, frame
+- `image`: flash, pos, width, height, frame, fit, fill, backdrop, start, trim, speed, loop, path, fps
 - `image_sources`: flash, size, source, order, material, absorption, r
 - `impulse_response`: flash, size, source, listener, order, material, absorption, pos, extent, duration, reveal, show_rt60
 - `limit`: flash, function, a, epsilon, xmin, xmax, pos, bands
@@ -114,6 +114,7 @@
 - `value`: flash, value
 - `vector_field`: flash, p, q, pos, extent, spacing, color_by_size, length_by
 - `vector_field_3d`: flash, fp, fq, fr, pos, extent, counts, spacing, color_by_size, length_by
+- `video`: flash, pos, width, height, frame, fit, fill, backdrop, start, trim, speed, loop, path
 - `wavefront`: flash, center, radius, rings
 - `wavefront3d`: flash, room, source, time, speed, hue_step, order, shell, samples
 

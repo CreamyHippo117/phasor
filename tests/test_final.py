@@ -45,6 +45,7 @@ REQUIRED = {
     "path": {"subpaths": [[[0, 0, 0], [0.5, 1, 0], [1.5, 1, 0], [2, 0, 0]]]},
     "svg": {"path": "examples/assets/emblem.svg"},  # relative: tests run from the repo root
     "sound": {"path": "examples/assets/chime.wav"},
+    "video": {"path": "examples/assets/clip.mp4"},  # relative: tests run from the repo root
     "table": {"cells": [["x", "$x^2$"], ["2", "4"]]},
     "code": {"code": "def f(x):\n    return x * x"},
     "code_line": {"text": "return x * x", "classes": "kkkkkkpppppp"},
@@ -58,7 +59,12 @@ IN_ROOM = {"sound_rays", "wavefront3d"}
 EXAMPLES = sorted(p.stem for p in (ROOT / "examples").glob("*.py")
                   if p.stem not in {"domain_coloring"} and not p.stem.startswith("manim_"))  # fmt: skip
 # Types and examples that need an optional package (an extra): skipped without it.
-NEEDS = {"svg": ("svgelements",), "vector_toolkit": ("shapely", "svgelements")}
+NEEDS = {
+    "svg": ("svgelements",),
+    "vector_toolkit": ("shapely", "svgelements"),
+    "video": ("av",),
+    "video_input": ("av",),
+}
 # Slow to build (minutes for riemann_sqrt's labels through an orbit): checked by their own
 # tests, and here only for lint.
 SLOW = {"deep_zoom", "residue_theorem", "riemann_sqrt"}

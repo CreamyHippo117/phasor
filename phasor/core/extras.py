@@ -11,6 +11,7 @@ EXTRAS: dict[str, tuple[str, str]] = {
     "shapely": ("boolean", "boolean operations on shapes"),
     "svgelements": ("svg", "SVG drawings"),
     "pygments": ("code", "highlighting code"),
+    "av": ("encode", "reading video files"),
 }
 
 
