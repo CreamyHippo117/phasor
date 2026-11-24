@@ -208,12 +208,17 @@ def read_bytes(path: str | Path, limit: int) -> bytes:
     return data
 
 
-def open_regular(path: str | Path, expect: tuple | None = None):
+def open_regular(path: str | Path, expect: tuple | None = None, *, nofollow: bool = False):
     """The regular file at ``path`` opened for reading (binary), never blocking on a FIFO
     (opened non-blocking, then checked); ``ValueError`` when it is not a regular file, or
     when ``expect`` (a ``stamp``'s modification time and size) no longer matches: the file
-    changed since it was stamped. For readers that stream a file (a video decoder)."""
+    changed since it was stamped. For readers that stream a file (a video decoder).
+    ``nofollow``: a link there is refused (``path`` is one ``stamp`` resolved, so a link
+    there now was swapped in after the check; where the system has no ``O_NOFOLLOW``, only
+    the stamp check applies)."""
     flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
+    if nofollow:
+        flags |= getattr(os, "O_NOFOLLOW", 0)
     try:
         fd = os.open(path, flags)
     except OSError as e:

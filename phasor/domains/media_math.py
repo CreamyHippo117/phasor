@@ -20,9 +20,12 @@ linear only for the part a draw samples, through a lookup table: once either way
 with transparency are sampled premultiplied (no dark fringes), then laid over the
 background.
 
-Decoding seeks to the keyframe at or before the wanted frame and decodes forward, keeping a
-cursor per file (``MAX_OPEN`` at most, per process, each behind a lock), so playing frames in
-order decodes each once and never seeks. Every limit is a constant here: a file past one is
+Decoding seeks to the keyframe whose time is at or before the wanted frame (from the
+probe's list of keyframes, so an open GOP's leading frames decode as in a decode from the
+start) and decodes forward. Cursors are kept open (``PER_FILE`` per file, ``MAX_OPEN`` in
+all, per process, each behind a lock) and a frame goes to the cursor just behind it, so
+clips played in order decode each frame once and never seek. Only an exact frame is taken
+from a cursor: the same frame comes out whichever way the decoder got there. Every limit is a constant here: a file past one is
 ``bad_file`` (not a picture or video, or an absurd size) or ``video_too_big`` (past a cap)
 and draws nothing; it never raises, hangs or fills memory.
 """
@@ -65,7 +68,8 @@ EPS = 1e-6  # seconds: a time this close before a frame already shows it
 FRAME_CACHE_BYTES = 256 * 2**20  # decoded frames kept, per process
 FRAME_CACHE_ENTRIES = 256
 PROBE_CACHE_BYTES = 64 * 2**20
-MAX_OPEN = 4  # video files kept open for decoding, per process
+MAX_OPEN = 16  # decoders (cursors in video files) kept open, per process
+PER_FILE = 4  # cursors in one video file (a clip shown at several times at once)
 BAND_ROWS = 256  # a frame is sampled this many output rows at a time
 FORWARD = 90  # decode forward instead of seeking when the frame is at most this far ahead
 
@@ -102,6 +106,8 @@ class Probe:
     needs: str = ""
     opaque: bool = True
     pts: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.int64))  # video
+    # video: (pts, seek time) of each keyframe, by pts: where decoding a frame starts
+    keys: np.ndarray = field(default_factory=lambda: np.zeros((0, 2), dtype=np.int64))
     store: tuple[int, int] = (0, 0)  # video: the size frames are kept at
 
     @property
@@ -331,17 +337,23 @@ class VideoSource(Source):
             if w * h > MAX_FRAME_PIXELS:
                 return Probe(too_big=f"its frames are {w} x {h} pixels, past 8K "
                              f"({MAX_FRAME_PIXELS:,} pixels)")  # fmt: skip
-            pts = []
+            pts, keys = [], []
             for packet in box.container.demux(s):
                 t = packet.pts if packet.pts is not None else packet.dts
                 if t is None or packet.size == 0:
+                    continue
+                if packet.is_keyframe:  # where decoding can start (discarded ones too)
+                    d = packet.dts if packet.dts is not None else t
+                    keys.append((int(t), int(min(t, d))))
+                if packet.is_discard:  # cut by an edit list: never shown
                     continue
                 pts.append(int(t))
                 if len(pts) > MAX_FRAMES:
                     return Probe(too_big=f"more than {MAX_FRAMES:,} frames")
             if not pts:
                 return Probe(problem="it has no frames")
-            pts = np.unique(np.asarray(pts, dtype=np.int64))
+            pts = np.unique(np.asarray(pts, dtype=np.int64))  # the first shown is time 0
+            keys = np.unique(np.asarray(keys, dtype=np.int64).reshape(-1, 2), axis=0)
             base = Fraction(s.time_base) if s.time_base else None
             if not base or base <= 0:
                 return Probe(problem="its frames have no time base")
@@ -353,19 +365,24 @@ class VideoSource(Source):
                 return Probe(problem=f"its frames come faster than {MAX_FPS:g} per second")
             store = _store_size(w, h)
             try:
-                first = box.decode_at(int(pts[0]), store)
+                first = box.decode_at(int(pts[0]), store, keys)
             except Exception as e:
                 return Probe(problem=f"its first frame cannot be decoded ({_why(e)})")
             if first is None:
                 return Probe(problem="its first frame cannot be decoded")
         first.flags.writeable = False
         _FRAMES.put((self.kind, self.stamp, 0), first)
-        times.flags.writeable = pts.flags.writeable = False
+        times.flags.writeable = pts.flags.writeable = keys.flags.writeable = False
         return Probe(width=w, height=h, times=times, frame_seconds=step, opaque=True, pts=pts,
-                     store=store)  # fmt: skip
+                     store=store, keys=keys)  # fmt: skip
 
     def _read(self, index: int, probe: Probe) -> np.ndarray | None:
-        return _decoder(self.path, self.stamp).frame(index, probe.pts, probe.store)
+        for _ in range(3):  # a decoder another thread closed meanwhile: take another
+            out = _decoder(self.path, self.stamp, index, probe.pts).frame(index, probe)
+            if out is not _CLOSED:
+                return out
+        with _Container(self.path, self.stamp) as box:  # still contended: one of its own
+            return box.decode_at(int(probe.pts[index]), probe.store, probe.keys)
 
 
 def _frame_seconds(times: np.ndarray, stream: Any) -> float:
@@ -388,12 +405,14 @@ def _store_size(w: int, h: int) -> tuple[int, int]:
 class _Container:
     """A video file opened for PyAV from a regular file this process opened itself (PyAV
     never gets a path: a FIFO swapped in after the check would block it), checked against
-    its stamp."""
+    its stamp. Frames are converted by its own single-threaded scaler (swscale's thread pool
+    deadlocks in a process forked after the parent used it)."""
 
     def __init__(self, path: Path, stamp: tuple) -> None:
         import av
+        from av.video.reformatter import VideoReformatter
 
-        self.file = files.open_regular(path, stamp[1:])
+        self.file = files.open_regular(path, stamp[1:], nofollow=True)
         try:
             try:
                 self.container = av.open(self.file, mode="r")
@@ -406,6 +425,7 @@ class _Container:
         except BaseException:
             self.close()
             raise
+        self.scaler = VideoReformatter()
         self.it = None  # the decode iterator, positioned after ``last``
         self.last: int | None = None  # pts of the frame decoded last
 
@@ -424,89 +444,137 @@ class _Container:
         with contextlib.suppress(Exception):
             self.file.close()
 
-    def decode_at(self, target: int, size: tuple[int, int], prev_pts: int | None = None):
-        """The frame whose time is ``target`` (pts), decoded forward from where the decoder
-        is when it is just behind (``prev_pts``: the frame before it was the last decoded),
-        else from the keyframe at or before it. The last frame at or before ``target`` if
-        none has that time exactly; None if none decodes."""
+    def decode_at(self, target: int, size: tuple[int, int], keys: np.ndarray,
+                  prev_pts: int | None = None):  # fmt: skip
+        """The frame whose time is ``target`` (pts) as sRGB RGBA uint8 at ``size``.
+
+        Decoded on from where the decoder is when it is just behind (``prev_pts``: the frame
+        before it was the last decoded), else from the keyframe (``keys``) with the latest
+        time at or before it. A frame shown before its keyframe (an open GOP's leading
+        B-frames: decoded after the keyframe but referring to the GOP before it) decodes
+        there, as in a decode from the start, whatever the demuxer seeks by. If that does
+        not give the frame, from the keyframe before. Only an exact hit is taken from the
+        first two ways, so the frame does not depend on how the decoder got there; when no
+        way gives it exactly (a damaged clip), the last frame before it from the earliest
+        start, else None."""
         ahead = (self.it is not None and self.last is not None and prev_pts is not None
                  and self.last <= prev_pts < target)  # fmt: skip
-        if not ahead:
-            self.container.seek(target, stream=self.stream, backward=True, any_frame=False)
+        if ahead:
+            hit = self._decode_to(target)
+            if hit is not None and hit[0] == target:
+                return self._rgba(hit[1], size)
+        best = None
+        for start in _seek_points(keys, target):
+            self.container.seek(start, stream=self.stream, backward=True, any_frame=False)
             self.it = self.container.decode(self.stream)
             self.last = None
+            best = self._decode_to(target)
+            if best is not None and best[0] == target:
+                break
+        return None if best is None else self._rgba(best[1], size)
+
+    def _decode_to(self, target: int):
+        """Decode on to ``target``: (pts, frame) of it, or of the last frame before it when
+        the decode passes it (the decoder is then no longer just behind anything)."""
         best = None
         for frame in self.it:
             p = frame.pts
             if p is None:
                 continue
             if p > target:
-                # past it (a frame missing from the decode): the one before, and the decoder
-                # is no longer just behind the next frame
                 self.it, self.last = None, None
-                break
+                return best
             self.last = p
-            if p == target or best is None or p >= best[0]:
+            if best is None or p >= best[0]:
                 best = (p, frame)
             if p == target:
-                break
-        else:
-            self.it, self.last = None, None
-        if best is None:
-            return None
+                return best
+        self.it, self.last = None, None
+        return best
+
+    def _rgba(self, frame: Any, size: tuple[int, int]) -> np.ndarray:
         w, h = size
-        return best[1].to_ndarray(format="rgba", width=w, height=h)
+        return self.scaler.reformat(frame, width=w, height=h, format="rgba",
+                                    threads=1).to_ndarray()  # fmt: skip
+
+
+def _seek_points(keys: np.ndarray, target: int) -> list[int]:
+    """Where to seek for the frame at ``target``: the keyframe with the latest time at or
+    before it, then the one before that (its seek time: the smaller of its pts and dts, so
+    a demuxer that seeks by either lands on it or earlier). Just ``target`` without keys."""
+    if len(keys) == 0:
+        return [int(target)]
+    j = int(np.searchsorted(keys[:, 0], target, side="right")) - 1
+    return [int(keys[i, 1]) for i in dict.fromkeys((max(j, 0), max(j - 1, 0)))]
+
+
+_CLOSED = object()  # what a decoder closed by another thread gives: ask for another
 
 
 class _Decoder:
-    """A file kept open for decoding, with a lock: one per (process, stamp)."""
+    """A cursor in a file kept open for decoding, with a lock. A file has up to
+    ``PER_FILE`` of them per process (one per place it is played from)."""
 
     def __init__(self, path: Path, stamp: tuple) -> None:
         self.box = _Container(path, stamp)
         self.lock = threading.Lock()
 
-    def frame(self, index: int, pts: np.ndarray, size: tuple[int, int]):
+    def behind(self, i: int, pts: np.ndarray) -> int | None:
+        """How many frames this cursor is behind frame ``i`` (1 to ``FORWARD``), or None."""
+        last = self.box.last
+        if last is None:
+            return None
+        j = int(np.searchsorted(pts, last))
+        if j < len(pts) and pts[j] == last and j < i <= j + FORWARD:
+            return i - j
+        return None
+
+    def frame(self, index: int, probe: Probe):
+        pts = probe.pts
         i = min(max(index, 0), len(pts) - 1)
         with self.lock:
             if self.box.container is None:
-                return None
-            prev, last = None, self.box.last
-            if last is not None:  # just behind, within FORWARD frames: decode on, no seek
-                j = int(np.searchsorted(pts, last))
-                if j < len(pts) and pts[j] == last and j < i <= j + FORWARD:
-                    prev = int(pts[i - 1])
-            return self.box.decode_at(int(pts[i]), size, prev)
+                return _CLOSED
+            prev = int(pts[i - 1]) if self.behind(i, pts) else None  # decode on, no seek
+            return self.box.decode_at(int(pts[i]), probe.store, probe.keys, prev)
 
     def close(self) -> None:
         with self.lock:
             self.box.close()
 
 
-_DECODERS: OrderedDict[tuple, _Decoder] = OrderedDict()
+_DECODERS: OrderedDict[tuple, _Decoder] = OrderedDict()  # (stamp, n) -> cursor
 _DECODERS_LOCK = threading.Lock()
 _PID = os.getpid()
 
 
-def _decoder(path: Path, stamp: tuple) -> _Decoder:
-    """The open decoder of this file version, in this process (a render worker opens its
-    own; one inherited across a fork is dropped, never shared). At most ``MAX_OPEN``: the
-    least recently used is closed (on Windows an open file cannot be replaced)."""
+def _decoder(path: Path, stamp: tuple, index: int, pts: np.ndarray) -> _Decoder:
+    """A cursor in this file version for frame ``index``, in this process (a render worker
+    opens its own; one inherited across a fork is dropped, never shared): the one closest
+    behind it (it decodes on); else a new one while the file has fewer than ``PER_FILE``;
+    else its least recently used. At most ``MAX_OPEN`` in all: the least recently used is
+    closed (on Windows an open file cannot be replaced), as is any of an older version."""
     global _PID
     with _DECODERS_LOCK:
         if os.getpid() != _PID:  # a forked child: the parent's handles are not ours
             _DECODERS.clear()
             _PID = os.getpid()
-        d = _DECODERS.get(stamp)
-        if d is not None:
-            _DECODERS.move_to_end(stamp)
-            return d
-        for old in [k for k in _DECODERS if k[0] == stamp[0]]:  # an older version of it
-            _DECODERS.pop(old).close()
-        d = _Decoder(path, stamp)
-        _DECODERS[stamp] = d
-        while len(_DECODERS) > MAX_OPEN:
-            _DECODERS.popitem(last=False)[1].close()
-        return d
+        for old in [k for k in _DECODERS if k[0][0] == stamp[0] and k[0] != stamp]:
+            _DECODERS.pop(old).close()  # an older version of it
+        mine = [k for k in _DECODERS if k[0] == stamp]
+        near = [(gap, k) for k in mine if (gap := _DECODERS[k].behind(index, pts))]
+        if near:
+            key = min(near)[1]
+        elif len(mine) >= PER_FILE:
+            key = mine[0]  # least recently used first
+        else:
+            n = next(n for n in range(PER_FILE) if (stamp, n) not in _DECODERS)
+            key = (stamp, n)
+            _DECODERS[key] = _Decoder(path, stamp)
+            while len(_DECODERS) > MAX_OPEN:
+                _DECODERS.popitem(last=False)[1].close()
+        _DECODERS.move_to_end(key)
+        return _DECODERS[key]
 
 
 def close_all() -> None:

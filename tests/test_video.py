@@ -271,27 +271,194 @@ def test_every_frame_is_the_same_decoded_in_order_out_of_order_or_afresh(tmp_pat
     assert abs(int(r) - 100) <= 4 and abs(int(g) - 130) <= 4 and abs(int(b) - 90) <= 4
 
 
+def _open_gop(path: Path, n: int = 40) -> Path:
+    """An open-GOP H.264 clip (``open-gop=1``, a keyframe every 8, 3 B-frames, pyramid): after
+    each keyframe but the first come B-frames shown before it that refer to the GOP before
+    (leading frames). A square moves so no two frames are alike. Skips without libx264."""
+    av = pytest.importorskip("av")
+    try:
+        av.codec.Codec("libx264", "w")
+    except Exception:
+        pytest.skip("PyAV here has no libx264 (open GOPs are an x264 option)")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with av.open(str(path), "w") as c:
+        s = c.add_stream("libx264", rate=FPS)
+        s.width, s.height, s.pix_fmt = 64, 36, "yuv420p"
+        s.options = {"crf": "8", "x264-params": "open-gop=1:keyint=8:min-keyint=8:scenecut=0:"
+                     "bframes=3:b-adapt=0:b-pyramid=normal"}  # fmt: skip
+        for i in range(n):
+            a = np.zeros((36, 64, 3), np.uint8)
+            a[:] = _color(i)
+            a[4:12, (3 * i) % 56 : (3 * i) % 56 + 8] = 255
+            for p in s.encode(av.VideoFrame.from_ndarray(a, format="rgb24")):
+                c.mux(p)
+        for p in s.encode():
+            c.mux(p)
+    with av.open(str(path)) as c:
+        packets = [(p.pts, p.is_keyframe) for p in c.demux(video=0) if p.size]
+    leading = [q for k, (pts, key) in enumerate(packets) if key and k
+               for q, _ in packets[k + 1 : k + 4] if q < pts]  # fmt: skip
+    assert leading, "the encoder made no leading frames: the clip does not test open GOPs"
+    return path
+
+
+def _full_decode(path: Path) -> dict[int, np.ndarray]:
+    """Every frame of a clip decoded from the start, in order, by pts (the reference)."""
+    import av
+
+    with av.open(str(path)) as c:
+        return {f.pts: f.to_ndarray(format="rgba") for f in c.decode(video=0)}
+
+
+def test_an_open_gop_clip_gives_every_frame_the_same_in_any_order(tmp_path):
+    """Leading B-frames of an open GOP are shown before their keyframe but decoded after it:
+    seeking to the keyframe the demuxer finds for them (mp4 seeks by decode time) gave none,
+    or another frame. Every frame now equals a decode from the start, in order, shuffled
+    and afresh (Milestone 24 audit, B1)."""
+    _open_gop(tmp_path / "og.mp4")
+    ref = _full_decode(tmp_path / "og.mp4")
+    src = mm.open_source(tmp_path, "og.mp4", video=True)
+    probe = src.probe()
+    assert probe.frames == 40 == len(ref)
+    want = [ref[int(p)] for p in probe.pts]
+    for i in range(40):
+        assert np.array_equal(src.frame(i), want[i]), i
+    for seed in range(3):
+        mm.close_all()
+        src = mm.open_source(tmp_path, "og.mp4", video=True)
+        for i in np.random.default_rng(seed).permutation(40):
+            got = src.frame(int(i))
+            assert got is not None and np.array_equal(got, want[i]), i
+
+
+def _edit_list(src: Path, dst: Path, cut: int) -> Path:
+    """``src`` remuxed with its first ``cut`` frames before time 0: the mp4 gets an edit
+    list, and those frames come out of the demuxer as discarded packets with negative times
+    (what ``ffmpeg -ss 0.37 -i a.mp4 -c copy b.mp4`` makes)."""
+    import av
+
+    with av.open(str(src)) as i, av.open(str(dst), "w") as o:
+        s = i.streams.video[0]
+        t = o.add_stream_from_template(s)
+        shift = cut * int(1 / (s.time_base * FPS))
+        for p in i.demux(s):
+            if p.dts is None:
+                continue
+            p.pts, p.dts, p.stream = p.pts - shift, p.dts - shift, t
+            o.mux(p)
+    with av.open(str(dst)) as c:
+        assert any(p.is_discard for p in c.demux(video=0)), "no edit list was written"
+    return dst
+
+
+def test_a_clip_with_an_edit_list_starts_at_its_first_shown_frame(tmp_path):
+    """Packets an mp4 edit list cuts are never shown: they are not frames of the clip, and
+    its time 0 is the first frame shown (they made the clip ``bad_file``: audit, B2)."""
+    _open_gop(tmp_path / "og.mp4")
+    _edit_list(tmp_path / "og.mp4", tmp_path / "cut.mp4", 9)
+    src = mm.open_source(tmp_path, "cut.mp4", video=True)
+    probe = src.probe()
+    assert probe.ok, probe.problem
+    assert probe.frames == 31 and probe.times[0] == 0.0
+    ref = _full_decode(tmp_path / "cut.mp4")
+    assert _which(src.frame(0)[30, 5]) == 9  # the tenth frame encoded is the first shown
+    for i in np.random.default_rng(0).permutation(31):
+        assert np.array_equal(src.frame(int(i)), ref[int(probe.pts[i])]), i
+
+
+def test_a_decoder_closed_by_another_thread_is_replaced_not_a_missing_frame(tmp_path,
+                                                                            monkeypatch):  # fmt: skip
+    """Another thread may close a decoder (too many open) between this thread taking it and
+    locking it: the frame comes from another decoder, never None (audit, S2)."""
+    _clip(tmp_path / "c.mp4", n=8)
+    src = mm.open_source(tmp_path, "c.mp4", video=True)
+    src.probe()
+    real, calls = mm._decoder, []
+
+    def evicted(*a, **k):
+        d = real(*a, **k)
+        if not calls:
+            d.close()  # what an eviction does to it meanwhile
+        calls.append(d)
+        return d
+
+    monkeypatch.setattr(mm, "_decoder", evicted)
+    got = src.frame(5)
+    assert got is not None and _which(got[5, 5]) == 5
+
+
+def test_five_clips_played_together_each_decode_on_without_seeking(tmp_path, monkeypatch):
+    """More clips than the old four decoders, and one file shown at two times: each keeps
+    its own cursor, so playing on never seeks (each frame was a seek: audit, S1)."""
+    for k in range(5):
+        _clip(tmp_path / f"c{k}.mp4", n=48)
+    srcs = [mm.open_source(tmp_path, f"c{k}.mp4", video=True) for k in range(5)]
+    for s in srcs:
+        s.probe()
+    seeks = []
+    real = mm._seek_points
+    monkeypatch.setattr(mm, "_seek_points", lambda keys, t: seeks.append(t) or real(keys, t))
+    monkeypatch.setattr(mm, "FRAME_CACHE_BYTES", 0)
+    for i in range(1, 12):
+        for s in srcs:
+            s.frame(i)
+        srcs[0].frame(i + 30)  # the same file 30 frames later: a second cursor
+    assert len(seeks) == 6, seeks  # one to start each cursor
+    assert len(mm._DECODERS) == 6 <= mm.MAX_OPEN
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="no fork on this system")
+def test_a_forked_process_decodes_after_its_parent_did(tmp_path):
+    """A render worker forked after the parent decoded: swscale's thread pool, inherited
+    mid-use, deadlocked the child's first conversion (audit, S4). Each decoder now converts
+    with its own single-threaded scaler."""
+    import multiprocessing
+
+    _clip(tmp_path / "c.mp4", n=24, w=320, h=180)
+    src = mm.open_source(tmp_path, "c.mp4", video=True)
+    want = [np.array(src.frame(i)) for i in (3, 17)]
+    mm.close_all()
+
+    def child(q):
+        s = mm.open_source(tmp_path, "c.mp4", video=True)
+        q.put([np.array(s.frame(i)) for i in (3, 17)])
+
+    ctx = multiprocessing.get_context("fork")
+    q = ctx.Queue()
+    proc = ctx.Process(target=child, args=(q,))
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)  # fork with threads: the point
+        proc.start()
+    try:
+        got = q.get(timeout=60)
+    finally:
+        proc.join(5)
+        if proc.is_alive():
+            proc.kill()
+    assert all(np.array_equal(a, b) for a, b in zip(got, want, strict=True))
+
+
 def test_playing_in_order_never_seeks_and_jumping_does(tmp_path, monkeypatch):
     _clip(tmp_path / "c.mp4", n=24)
     src = mm.open_source(tmp_path, "c.mp4", video=True)
     src.probe()
     seeks = []
-    real = mm._Container.decode_at
+    real = mm._seek_points  # called exactly when the decoder seeks
 
-    def counting(self, target, size, prev_pts=None):
-        ahead = (self.it is not None and self.last is not None and prev_pts is not None
-                 and self.last <= prev_pts < target)  # fmt: skip
-        seeks.append(not ahead)
-        return real(self, target, size, prev_pts)
+    def counting(keys, target):
+        seeks.append(target)
+        return real(keys, target)
 
-    monkeypatch.setattr(mm._Container, "decode_at", counting)
+    monkeypatch.setattr(mm, "_seek_points", counting)
     for i in range(1, 24):
         src.frame(i)
-    assert seeks[0] and not any(seeks[1:])  # one seek to start, then straight on
+    assert len(seeks) == 1  # one seek to start, then straight on
     seeks.clear()
     mm._FRAMES.entries.clear()
     src.frame(3)
-    assert seeks == [True]  # going back: a seek
+    assert len(seeks) == 1  # going back: a seek
 
 
 def test_the_decoded_frames_cache_is_bounded_by_bytes(tmp_path, monkeypatch):
@@ -316,7 +483,7 @@ def test_decoders_are_bounded_and_a_changed_file_closes_the_old_one(tmp_path, mo
     os.utime(f, ns=(st.st_atime_ns, st.st_mtime_ns + 10**9))
     after = mm.open_source(tmp_path, "c0.mp4", video=True)
     assert after.stamp != before.stamp and after.frame(3) is not None
-    assert sum(1 for k in mm._DECODERS if k[0] == before.stamp[0]) == 1
+    assert [k[0] for k in mm._DECODERS if k[0][0] == before.stamp[0]] == [after.stamp]
 
 
 # ---------------------------------------------------------------- 4. the Video object
@@ -754,12 +921,19 @@ def test_a_video_draws_the_frame_of_each_time(tmp_path):
 
 @pytest.mark.gl
 @pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
-@pytest.mark.parametrize("background", ["png_sequence", "mp4"])
+@pytest.mark.parametrize("background", ["png_sequence", "mp4", "open_gop"])
 def test_a_parallel_render_of_footage_equals_the_serial_render(tmp_path, background):
     from phasor.render.job import render_file
     from phasor.scene import parallel_frames
 
-    if background == "mp4":
+    fps, n, chunk = 12.0, 12, 3
+    if background == "open_gop":
+        # the second worker starts at scene frame 47 = clip frame 94, a leading B-frame of the
+        # keyframe at 96, too far ahead to decode on to: it seeks (audit, B1)
+        _open_gop(tmp_path / "og.mp4", n=200)
+        s = Scene.from_video("og.mp4", base_dir=tmp_path)
+        n, chunk = 100, 47
+    elif background == "mp4":
         from phasor import Video
 
         _clip(tmp_path / "c.mp4", n=24)
@@ -772,14 +946,31 @@ def test_a_parallel_render_of_footage_equals_the_serial_render(tmp_path, backgro
         s = _gl_scene(tmp_path)
         s.background(_frames(tmp_path / "fr", 6), id="back", fps=6.0, opacity=0.5)
     e = s.engine
-    serial = render_file(e, tmp_path / "serial", preset="preview", fps=12.0)
-    many = render_file(e, tmp_path / "many", preset="preview", fps=12.0,
-                       frame_source=parallel_frames(e, 2, chunk=3))  # fmt: skip
-    assert serial["frames"] == many["frames"] == 12
+    serial = render_file(e, tmp_path / "serial", preset="preview", fps=fps)
+    many = render_file(e, tmp_path / "many", preset="preview", fps=fps,
+                       frame_source=parallel_frames(e, 2, chunk=chunk))  # fmt: skip
+    assert serial["frames"] == many["frames"] == n
     a = [p.read_bytes() for p in sorted((tmp_path / "serial").glob("frame_*.png"))]
     b = [p.read_bytes() for p in sorted((tmp_path / "many").glob("frame_*.png"))]
-    assert len(a) == 12 and a == b
-    assert len(set(a)) > 6  # the clip plays: the frames differ
+    assert len(a) == n and a == b
+    assert len(set(a)) > n // 2  # the clip plays: the frames differ
+
+
+@pytest.mark.gl
+@pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
+def test_a_frame_a_decoder_failed_to_give_is_drawn_again_when_it_can(tmp_path, monkeypatch):
+    """A frame that could not be had once (a decoder closed meanwhile, a passing read error)
+    draws the background that time, and is not kept: the next draw at that time shows the
+    frame (the field cache kept the stand-in: audit, B1/S2)."""
+    s = _gl_scene(tmp_path)
+    runner = s.engine.pass_runner()
+    real = mm.VideoSource.frame
+    monkeypatch.setattr(mm.VideoSource, "frame", lambda self, i: None)
+    blank = runner.color(s.engine.state_at(5 / FPS), (64, 36))
+    monkeypatch.setattr(mm.VideoSource, "frame", real)
+    shown = runner.color(s.engine.state_at(5 / FPS), (64, 36))
+    assert not np.array_equal(blank, shown)
+    assert np.array_equal(shown, runner.color(s.engine.state_at(5 / FPS), (64, 36)))
 
 
 # ---------------------------------------------------------------- 9. examples

@@ -217,7 +217,8 @@ class Picture(ObjectBase):
 
         def pixels(pw: int, ph: int, center: tuple[float, float], height: float) -> np.ndarray:
             frame = src.frame(index)  # decoded here, when the renderer needs the pixels
-            if frame is None:  # a frame a damaged file cannot give: the background
+            if frame is None:  # a frame a damaged file cannot give: the background,
+                pixels.uncached = True  # type: ignore[attr-defined]  # never kept (passes.py)
                 out = np.empty((ph, pw, 4), dtype=np.float32)
                 out[..., :3], out[..., 3] = bg, 0.0
                 return out
