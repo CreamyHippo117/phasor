@@ -108,10 +108,10 @@ Gate (the `phasor-milestone-gate` steps, run by the authoring model):
 6. `render/encode.py` (not this milestone's area): the AAC priming fix above, with a test at 8,
    22.05 and 48 kHz. Every render with sound now starts its track 1024 samples earlier than
    before (21 ms at 48 kHz): correct per ffmpeg and PyAV, not heard in a player.
-8. A render worker's file check (`file_stamps`) now includes the recording a narration is cut
+7. A render worker's file check (`file_stamps`) now includes the recording a narration is cut
    from: re-recording it while a render runs stops the render (as for any file the scene
    names).
-7. `render/cpu/backend.cache_dir` now uses `core/files.user_cache` (factored out, same paths).
+8. `render/cpu/backend.cache_dir` now uses `core/files.user_cache` (factored out, same paths).
 
 ## Deferred
 
