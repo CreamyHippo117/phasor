@@ -248,6 +248,11 @@ def mux_audio(video: str | Path, samples: np.ndarray, rate: int) -> None:
         pcm = np.ascontiguousarray(samples, dtype=np.int16).reshape(1, -1)
         frame = av.AudioFrame.from_ndarray(pcm, format="s16", layout="mono")
         frame.sample_rate = rate
+        # The first sample is at 0 s: with a time the encoder's priming (1024 samples of AAC,
+        # 0.13 s at 8 kHz) is written as a skip, so players and decoders drop it (M22; it
+        # was heard that much late before)
+        frame.pts = 0
+        frame.time_base = Fraction(1, rate)
         for packet in aout.encode(frame):
             dst.mux(packet)
         for packet in aout.encode(None):

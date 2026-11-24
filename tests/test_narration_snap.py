@@ -392,3 +392,27 @@ def test_example_golden_storyboard():
     times = [m["intro"] + 0.8, m["move"] + 0.5, m["glide"] + 0.6, m["fade"] + 0.8]
     sheet = e.storyboard(times, size=(320, 180))["image"]
     _golden("narrated_from_audio", sheet, e.pass_runner().renderer_class())
+
+
+@pytest.mark.parametrize("rate", [8000, 22050, 48000])
+def test_the_muxed_sound_starts_on_time_whatever_its_rate(tmp_path, rate):
+    """AAC primes its encoder with 1024 samples (0.13 s at 8 kHz): the muxed track must say
+    so (a skip), or a narration at a low rate is heard late. Decoded here as a player does."""
+    av = pytest.importorskip("av")
+    from phasor.render.encode import EncodeError, mux_audio, open_writer
+
+    out = tmp_path / "v.mp4"
+    try:
+        w = open_writer(out, 64, 64, 10)
+    except EncodeError as e:
+        pytest.skip(f"no video encoder here: {e}")
+    for _ in range(20):
+        w.write(np.zeros((64, 64, 3), np.uint8))
+    w.close()
+    track = np.zeros(2 * rate, np.int16)
+    track[rate // 2 : rate // 2 + rate // 5] = 12000
+    mux_audio(out, track, rate)
+    with av.open(str(out)) as f:
+        pcm = np.concatenate([fr.to_ndarray().ravel() for fr in f.decode(f.streams.audio[0])])
+    loud = np.flatnonzero(np.abs(pcm.astype(float)) > 0.3 * np.abs(pcm).max())
+    assert abs(loud[0] / rate - 0.5) < 0.02, loud[0] / rate
