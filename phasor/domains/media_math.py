@@ -15,7 +15,8 @@ One frame source serves ``Image`` (a still, or a sequence ``frames/shot_%04d.png
   ``sample`` turns the visible part of a frame into linear RGBA pixels.
 
 Colour: files are sRGB 8-bit with straight alpha. A still is converted to linear float when
-read (as ``Image`` always did); sequence and video frames are kept as 8-bit and converted to
+read (as ``Image`` always did, through the lookup table: the same numbers, a fraction of the
+memory) and kept in a cache of its own; sequence and video frames are kept as 8-bit and converted to
 linear only for the part a draw samples, through a lookup table: once either way. Pictures
 with transparency are sampled premultiplied (no dark fringes), then laid over the
 background.
@@ -25,9 +26,11 @@ probe's list of keyframes, so an open GOP's leading frames decode as in a decode
 start) and decodes forward. Cursors are kept open (``PER_FILE`` per file, ``MAX_OPEN`` in
 all, per process, each behind a lock) and a frame goes to the cursor just behind it, so
 clips played in order decode each frame once and never seek. Only an exact frame is taken
-from a cursor: the same frame comes out whichever way the decoder got there. Every limit is a constant here: a file past one is
-``bad_file`` (not a picture or video, or an absurd size) or ``video_too_big`` (past a cap)
-and draws nothing; it never raises, hangs or fills memory.
+from a cursor: the same frame comes out whichever way the decoder got there.
+
+Every limit is a constant here: a file past one is ``bad_file`` (not a picture or video, or
+an absurd size) or ``video_too_big`` (past a cap) and draws nothing; it never raises, hangs
+or fills memory.
 """
 
 from __future__ import annotations
@@ -44,9 +47,8 @@ from typing import Any
 
 import numpy as np
 
-from phasor.core import files
+from phasor.core import color, files
 from phasor.core.cache import ByteCache
-from phasor.core.color import srgb_to_linear
 
 # ---------------------------------------------------------------- limits
 
@@ -65,10 +67,14 @@ VIDEO_EXT, PICTURE_EXT = files.VIDEO_EXT, files.PICTURE_EXT
 NATIVE_ROWS = 1080  # fit "none": a frame 1080 pixels tall fills the camera's height
 EPS = 1e-6  # seconds: a time this close before a frame already shows it
 
-FRAME_CACHE_BYTES = 256 * 2**20  # decoded frames kept, per process
+FRAME_CACHE_BYTES = 256 * 2**20  # decoded frames of sequences and clips kept, per process
 FRAME_CACHE_ENTRIES = 256
+# stills kept, per process, apart from the frames a clip streams through: a photo is decoded
+# once (linear float, 16 bytes a pixel: an 8192 x 5464 one is 716 MB)
+STILL_CACHE_BYTES = 2 * 2**30
+STILL_CACHE_ENTRIES = 64
 PROBE_CACHE_BYTES = 64 * 2**20
-MAX_OPEN = 16  # decoders (cursors in video files) kept open, per process
+MAX_OPEN = 8  # decoders (cursors in video files) kept open, per process (~30 MB each, HD)
 PER_FILE = 4  # cursors in one video file (a clip shown at several times at once)
 BAND_ROWS = 256  # a frame is sampled this many output rows at a time
 FORWARD = 90  # decode forward instead of seeking when the frame is at most this far ahead
@@ -84,7 +90,7 @@ def picture_pixels_cap() -> int:
 
 
 # sRGB byte -> linear float32, exactly as ``srgb_to_linear(byte / 255)`` in float32
-_LUT = np.asarray(srgb_to_linear(np.arange(256, dtype=np.float32) / 255.0), dtype=np.float32)
+_LUT = np.asarray(color.srgb_to_linear(np.arange(256, dtype=np.float32) / 255.0), dtype=np.float32)
 
 
 # ---------------------------------------------------------------- what a source is
@@ -155,7 +161,7 @@ class Source:
             return None
         i = min(max(int(index), 0), probe.frames - 1)
         key = (self.kind, self.stamp, i)
-        hit = _FRAMES.peek(key)
+        hit = self.cache.peek(key)
         if hit is not None:
             return hit
         try:
@@ -164,8 +170,13 @@ class Source:
             img = None
         if img is not None:
             img.flags.writeable = False
-            _FRAMES.put(key, img)
+            self.cache.put(key, img)
         return img
+
+    @property
+    def cache(self) -> ByteCache:
+        """Where its frames are kept."""
+        return _FRAMES
 
     def _probe_key(self) -> tuple:
         return ()
@@ -193,6 +204,7 @@ def _why(e: BaseException) -> str:
 
 _PROBES = ByteCache(lambda: PROBE_CACHE_BYTES, 1024)
 _FRAMES = ByteCache(lambda: FRAME_CACHE_BYTES, FRAME_CACHE_ENTRIES)
+_STILLS = ByteCache(lambda: STILL_CACHE_BYTES, STILL_CACHE_ENTRIES)
 
 
 # ---------------------------------------------------------------- pictures (Pillow)
@@ -241,7 +253,9 @@ def _decode_picture(path: Path, stamp: tuple | None, max_pixels: int, side: int)
 
 class StillSource(Source):
     """One picture (``Image`` with a single file): frame 0 is it, as linear float32
-    premultiplied by its alpha (exactly what ``Image`` drew before Milestone 24)."""
+    premultiplied by its alpha (exactly what ``Image`` drew before Milestone 24), kept in a
+    cache of its own (``STILL_CACHE_BYTES``): a photo is decoded once. (In the frame cache a
+    large photo did not fit and was decoded again for every draw: Milestone 24 audit.)"""
 
     kind = "still"
 
@@ -249,23 +263,26 @@ class StillSource(Source):
         super().__init__(stamp)
         self.path = path
 
+    @property
+    def cache(self) -> ByteCache:
+        return _STILLS
+
     def _probe(self) -> Probe:
         try:
             img = self._linear()
         except PictureTooBig as e:  # a still: bad_file (video_too_big is for clips)
             return Probe(problem=f"the picture is {e}")
-        key = (self.kind, self.stamp, 0)
         img.flags.writeable = False
-        _FRAMES.put(key, img)
+        _STILLS.put((self.kind, self.stamp, 0), img)
         h, w = img.shape[:2]
         opaque = bool(img[..., 3].min() >= 1.0)
         return Probe(width=w, height=h, times=np.zeros(1), frame_seconds=1.0, opaque=opaque)
 
     def _linear(self) -> np.ndarray:
-        a = _decode_picture(self.path, self.stamp, picture_pixels_cap(), MAX_SOURCE_PX)
-        a = a.astype(np.float32) / 255.0
-        rgb = np.asarray(srgb_to_linear(a[..., :3]), dtype=np.float32)
-        return np.concatenate([rgb * a[..., 3:], a[..., 3:]], axis=-1)
+        """Read: ``linear`` gives what ``srgb_to_linear(byte / 255)`` in float32 did, bit
+        for bit, without its float64 temporaries (a 9000 x 9000 picture peaked at 7.5 GB)."""
+        return linear(_decode_picture(self.path, self.stamp, picture_pixels_cap(),
+                                      MAX_SOURCE_PX), premultiply=True)  # fmt: skip
 
     def _read(self, index: int, probe: Probe) -> np.ndarray | None:
         return self._linear()
@@ -583,7 +600,7 @@ def close_all() -> None:
     with _DECODERS_LOCK:
         while _DECODERS:
             _DECODERS.popitem()[1].close()
-    for cache in (_FRAMES, _PROBES):
+    for cache in (_FRAMES, _STILLS, _PROBES):
         with cache.lock:
             cache.entries.clear()
             cache.used = 0

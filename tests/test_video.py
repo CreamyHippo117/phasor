@@ -600,6 +600,39 @@ def test_a_one_frame_sequence_draws_as_its_still(tmp_path):
     np.testing.assert_allclose(a, b, atol=1e-6)
 
 
+def test_stills_are_decoded_once_whatever_the_frame_cache_holds(tmp_path, monkeypatch):
+    """Stills live in a cache of their own: two photos larger than the frame cache were
+    decoded again for every draw (eleven times slower than before Milestone 24: audit, B3)."""
+    monkeypatch.setattr(mm, "FRAME_CACHE_BYTES", 1024)  # holds no picture
+    for name in ("a.png", "b.png"):
+        _png(tmp_path / name, (200, 120, 40, 255), w=64, h=48)
+    reads = []
+    real = mm._decode_picture
+    monkeypatch.setattr(mm, "_decode_picture", lambda *a: reads.append(a[0]) or real(*a))
+    srcs = [mm.open_source(tmp_path, n) for n in ("a.png", "b.png")]
+    for _ in range(5):
+        for s in srcs:
+            assert s.frame(0) is not None
+    assert len(reads) == 2
+
+
+def test_a_still_reads_as_image_always_did_bit_for_bit(tmp_path):
+    """Linear premultiplied float32 exactly as ``srgb_to_linear(byte / 255)`` gave it (now
+    through the lookup table, without float64 temporaries: a 9000 x 9000 picture peaked at
+    7.5 GB, now 1.9 GB: audit, S6)."""
+    from PIL import Image as PILImage
+
+    from phasor.core.color import srgb_to_linear
+
+    rng = np.random.default_rng(2)
+    a = rng.integers(0, 256, (37, 53, 4), dtype=np.uint8)
+    PILImage.fromarray(a, "RGBA").save(tmp_path / "n.png")
+    f = a.astype(np.float32) / 255.0
+    rgb = np.asarray(srgb_to_linear(f[..., :3]), dtype=np.float32)
+    want = np.concatenate([rgb * f[..., 3:], f[..., 3:]], axis=-1)
+    assert np.array_equal(mm.open_source(tmp_path, "n.png").frame(0), want)
+
+
 def test_a_gif_shows_its_first_frame(tmp_path):
     from PIL import Image as PILImage
 
