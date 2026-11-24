@@ -159,7 +159,7 @@ def test_a_seed_moves_the_same_alone_or_in_a_batch(formula):
     """Advice section 5 item 11: seed k's path with 1, 7 and 1000 seeds is bit-identical."""
     if formula == "lorenz":
         s, vals = _lorenz(), _lorenz().values_of(LORENZ)
-        seeds = [*np.random.default_rng(1).normal(0, 6, (1000, 3)), 0, 0, 25]
+        seeds = np.random.default_rng(1).normal(0, 6, (1000, 3)) + np.array([0.0, 0.0, 25.0])
     else:
         s, vals = fm.System.parse(("sin(3*y) + exp(-x**2)", "cos(x*y) - 0.1*y")), ()
         seeds = np.random.default_rng(2).normal(0, 2, (1000, 2))
@@ -180,18 +180,20 @@ def test_backward_lorenz_is_bounded_by_the_escape_radius():
     assert np.isnan(path.points[0, path.at[0] :]).all()
 
 
-def test_a_stiff_field_is_stopped_not_flung():
+@pytest.mark.parametrize("passes", MODES)
+def test_a_stiff_field_is_stopped_not_flung(passes):
     s = fm.System.parse(("-1e6*x", "-y"))
     _q, code = fm.step(s.fn, (), np.array([[1.0, 1.0], [0.0, 1.0]]), 0.01, 0.4)
     assert code.tolist() == [fm.TOO_FAST, fm.ALIVE]
-    sc = Scene("stiff", passes=None)
+    sc = Scene("stiff", passes=passes)
     sc.add(flow.System(id="st", equations=("-1e6*x", "-y"), tau=0.5))
     sc.add(flow.FlowSet(id="st.disk", center=(1.0, 0.0), size=0.5, count=50))
     assert "flow_too_fast" in {i.code for i in sc.engine.lint()}
 
 
+@pytest.mark.parametrize("passes", MODES)
 @pytest.mark.parametrize("formula", ["x**1e9", "exp(exp(exp(x)))", "1/(x-y)", "log(x)"])
-def test_hostile_formulas_draw_and_finish(formula):
+def test_hostile_formulas_draw_and_finish(formula, passes):
     """Advice section 5 item 4: 1000 seeds, 1000 steps, no exception, no hang."""
     s = fm.System.parse((formula, "-y + 0.5"))
     seeds = np.random.default_rng(3).uniform(-2, 2, (1000, 2))
@@ -200,13 +202,15 @@ def test_hostile_formulas_draw_and_finish(formula):
     assert time.perf_counter() - start < 60.0  # a guard against a hang, not a timer
     assert path.points.shape == (1000, 1001, 2)
     fm.equilibria(s, {}, (-2, -2), (2, 2), 9)  # non-finite starts are skipped
-    sc = Scene("hostile", passes=None)
+    sc = Scene("hostile", passes=passes)
     sc.add(flow.System(id="h", equations=(formula, "-y + 0.5"), tau=1.0, window=((-2, 2), (-2, 2))))
     for child in (flow.FieldArrows(id="h.field"), flow.FlowSet(id="h.set", count=300),
                   flow.Tracer(id="h.probe", x0=(0.5, 0.1)), flow.Equilibria(id="h.eq")):  # fmt: skip
         sc.add(child)
     json.dumps(sc.engine.inspect(1.0))
     assert not [i for i in sc.engine.lint() if i.severity == "error"]
+    if passes is not None:
+        assert sc.engine.still(1.0, (320, 180)).shape == (180, 320, 3)  # it draws
 
 
 # ---------------------------------------------------------------- the set as a Simulation
@@ -280,9 +284,10 @@ def test_a_set_stops_growing_at_its_cap_and_says_when():
     assert len(st["s"]) <= 200 and int(st["under"]) > 0
 
 
-def test_set_under_resolved_is_a_lint(monkeypatch):
+@pytest.mark.parametrize("passes", MODES)
+def test_set_under_resolved_is_a_lint(monkeypatch, passes):
     monkeypatch.setattr(fm, "MAX_SET_POINTS", 300)
-    sc = Scene("under", passes=None)
+    sc = Scene("under", passes=passes)
     sc.add(flow.System(id="lo", tau=1.0, **flow.preset("lorenz")))
     sc.add(flow.FlowSet(id="lo.ring", shape="circle", center=(1, 1, 20), size=2.0, samples=32))
     sem = sc.engine.inspect(0.0, id="lo.ring")["objects"][0]["semantic"]
@@ -381,8 +386,9 @@ def test_bad_systems_are_refused_with_a_reason():
     assert v == pytest.approx([0.5, 2.0 / 1.01 - np.sin(1.0)])  # vortex + uniform + pendulum
 
 
-def test_budgets_are_clamped_and_linted():
-    s = Scene("budget", passes=None)
+@pytest.mark.parametrize("passes", MODES)
+def test_budgets_are_clamped_and_linted(passes):
+    s = Scene("budget", passes=passes)
     s.add(flow.System(id="b3", **flow.preset("rossler")))
     s.add(flow.FieldArrows(id="b3.field", counts=200))  # 8e6 asked
     s.add(flow.Tracer(id="b3.probe", x0=(1, 1, 1)))
@@ -410,25 +416,72 @@ def _peak(fn):
 @pytest.mark.slow
 def test_each_type_at_its_documented_maximum_is_bounded():
     """Advice section 5 item 7: time and peak memory at the documented maxima (generous
-    bounds: guards against a blow-up, not timers)."""
+    bounds: guards against a blow-up, not timers). A set of MAX_POINTS points (with the
+    longest trail its points allow) asked for a long flow time is clamped by MAX_WORK, an
+    outline likewise; a field of 200 per side is thinned; Newton's starts are capped."""
     s = Scene("max", passes=None)
     s.add(flow.System(id="m", **flow.preset("lorenz")))
-    s.set("m.tau", 0.03)
+    s.set("m.tau", 2000.0)  # 200000 steps: 4e10 point-steps unless clamped
     s.add(flow.FlowSet(id="m.set", count=fm.MAX_POINTS, center=(1, 1, 20), size=3,
                        shape="ball", trail=fm.MAX_TRAIL))  # fmt: skip
+    s.add(flow.FlowSet(id="m.ring", shape="ball", fill="boundary", center=(1, 1, 20), size=3,
+                       samples=4096, rings=8))  # fmt: skip
     s.add(flow.FieldArrows(id="m.field", counts=200))
     s.add(flow.Equilibria(id="m.eq", grid=64))
+    s.add(flow.Tracer(id="m.probe", x0=(1, 1, 1)))
+    s.add(flow.Manifold(id="m.wu", near=(0, 0, 0), length=1e4))
     e = s.engine
     sem, took, peak = _peak(lambda: {o["id"]: o["semantic"] for o in e.inspect(0.0)["objects"]})
-    assert sem["m.set"]["points"] == fm.MAX_POINTS
+    work = sem["m.set"]["budget"]
+    assert sem["m.set"]["points"] == fm.MAX_POINTS and "work" in work["clamped"]
+    assert work["points"] * work["steps"] <= fm.MAX_WORK
+    assert "work" in sem["m.ring"]["budget"]["clamped"]
+    assert sem["m.field"]["arrows"] <= flow.MAX_ARROWS
     assert sem["m.eq"]["starts"] <= fm.MAX_STARTS
-    assert took < 300 and peak < 2_000_000_000, (took, peak)
-    probe = Scene("max_probe", passes=None)
-    probe.add(flow.System(id="m", **flow.preset("lorenz")))
-    probe.add(flow.Tracer(id="m.probe", x0=(1, 1, 1)))
-    probe.set("m.tau", 1e4)
-    sem, took, peak = _peak(lambda: probe.engine.inspect(0.0, id="m.probe"))
-    assert took < 300 and peak < 500_000_000, (took, peak)
+    assert sem["m.probe"]["steps"] == fm.MAX_PROBE_STEPS
+    assert took < 600 and peak < 3_000_000_000, (took, peak)
+    assert {"flow_budget"} <= {i.code for i in e.lint()}
+
+
+def _clear_memos():
+    from phasor.domains import flow as fl
+
+    fl._PATHS.clear()
+    fl._MAN.clear()
+    fl._EQ.clear()
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        ("p.window", [[-3.0, 5.0], [-3.0, 3.0]]),  # shifted, same size
+        ("p.window", [[-5.0, 5.0], [-4.0, 4.0]]),  # resized
+        ("p.escape", 3.0),
+        ("p.dt", 0.05),
+        ("p.constants", "gamma=0.5"),
+        ("gamma.value", 0.1),
+    ],
+)
+def test_memos_hold_every_input(path, value):
+    """Advice section 5 item 9 for the module memos: change one input; what the engine
+    says equals a run with every memo cleared."""
+    sc = Scene("memo", passes=None)
+    sc.add(flow.System(id="p", equations=("y", "-sin(x) - gamma*y"), constants="gamma=0.3",
+                       window=((-4, 4), (-3, 3)), tau=6.0))  # fmt: skip
+    sc.add(flow.Variable(id="gamma", name="gamma", value=0.3, min=0, max=2))
+    sc.add(flow.Tracer(id="p.probe", x0=(2.5, 1.5)))
+    sc.add(flow.Manifold(id="p.sep", near=(3.1, 0), length=6.0))
+    sc.add(flow.Equilibria(id="p.eq"))
+    e = sc.engine
+
+    def seen():
+        return json.dumps(e.inspect(0.0)["objects"], sort_keys=True)
+
+    seen()  # fills the memos
+    assert e.apply({"op": "set_param", "path": path, "value": value}).ok
+    warm = seen()
+    _clear_memos()
+    assert warm == seen()
 
 
 # ---------------------------------------------------------------- the exit demo

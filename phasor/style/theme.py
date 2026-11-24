@@ -64,6 +64,8 @@ _SECTION = {
     "dash": "dash",
 }
 LUT_SIZE = 256
+# Keys added after themes were written elsewhere: a theme without them takes these.
+_TABLE_DEFAULTS = {"lint": {"flow_work": 5e7, "flow_arrows": 4000.0}}
 
 
 _TABLES = {
@@ -212,7 +214,7 @@ def load_theme(name: str) -> Theme:
     _check_paths(name, values)
     extra = {}
     for section, required in _TABLES.items():
-        data = raw.get(section, {})
+        data = {**_TABLE_DEFAULTS.get(section, {}), **raw.get(section, {})}
         missing = [k for k in required if k not in data]
         if missing:
             raise ThemeError(f"theme {name!r} is missing [{section}] keys {missing}")

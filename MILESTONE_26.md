@@ -22,9 +22,10 @@ the Windows suite has no OpenGL, so every new type is tested with `passes=None` 
 | One table | `domains/cloud_math.py` | `ATTRACTORS["lorenz"]` reads `PRESETS["lorenz"]` (same numbers) |
 | Objects | `domains/flow.py` (`from phasor import flow`) | `Variable` (drawless), `System` (`flow_system`: equations, terms, constants, window, tau, rate, dt, escape, pos, scale, frame, label), `FieldArrows` (`flow_arrows`: cones in 3D, flat arrows in 2D, one draw call each), `Tracer` (`flow_tracer`), `FlowSet` (`flow_set`), `Equilibria` (`flow_equilibria`), `EquilibriumView` (`flow_equilibrium_view`: by `near`, never by index or label), `Manifold` (`flow_manifold`); `flow.preset(name, **overrides)` |
 | Batched strokes | `domains/strokes.py` | `arrow_batch` (camera-facing arrows) and `cone_batch` (camera-free cones), one `ctx.triangles` each |
-| Lint | `inspect/lint.py`, `style/theme.py`, themes | `flow_budget` (points x steps past `[lint] flow_work` 5e7, arrows past `[lint] flow_arrows` 4000, or clamped at a hard limit), `flow_too_fast`, `set_under_resolved`; `variable` is drawless (no `orphan`) |
+| Work bounded | `flow_math.MAX_WORK`, `flow.FlowSet` | a set runs at most `MAX_WORK` (1e8) point-steps: its steps are clamped before it starts to `MAX_WORK / (points + outline cap)` (an outline alone: 762 steps), refinement inserts no more than the work left allows, and `FlowSim` stops (`halted`) past it as a backstop; semantics `budget.clamped` names `work`, lint `flow_budget`. Module memos (`_PATHS`, `_MAN`, `_EQ`) are keyed by every argument passed to the integration (`Resolved.run_key`: dt, escape centre and radius, max_step; and eps) |
+| Lint | `inspect/lint.py`, `style/theme.py`, themes | `flow_budget` (points x steps past `[lint] flow_work` 5e7 (a theme without the key gets the default, `_TABLE_DEFAULTS`), arrows past `[lint] flow_arrows` 4000, or clamped at a hard limit), `flow_too_fast`, `set_under_resolved`; `variable` is drawless (no `orphan`) |
 | Docs, example, kit | `docs/ai/API.md`, `examples/lorenz_explorer.py`, `kit/examples.toml`, `core/pycode.py` | the "Flows" section (a running block), three lint rows; the exit demo; the `flow` alias for "convert to script" |
-| Tests | `tests/test_flow_parser.py`, `tests/test_flow.py`, `tests/test_final.py` | towers under 0.1 s; long, deep, broken input; extras and the complex whitelist; corpus before/after; Lorenz numbers (maths and objects); 3D classification table at three scales; non-isolated; presets; batch independence (1, 7, 1000 seeds, Lorenz and a sin/exp field, with sub-stepping on); bounded backward Lorenz; stiff field lint; four hostile formulas (1000 seeds x 1000 steps, objects inspect and lint); every `FlowSim` input in the cache key; an unused constant leaves the key alone; scrub order vs a fresh runner (refinement included); refined points are true images; the cap and its lint; children read the parent and a fresh engine agrees; a `Variable` overrides a constant; budgets clamped and linted; each type at its maximum (time and `tracemalloc` peak); the exit demo; golden storyboard (`tests/golden/software/lorenz_explorer.png`, tau <= 5); every flow type in `test_final` (2D and orbit, `passes=None`, drawn with GL; partner `System` "sys") |
+| Tests | `tests/test_flow_parser.py`, `tests/test_flow.py`, `tests/test_final.py` | towers under 0.1 s; long, deep, broken input; extras and the complex whitelist; corpus before/after; Lorenz numbers (maths and objects); 3D classification table at three scales; non-isolated; presets; batch independence (1, 7, 1000 seeds, Lorenz and a sin/exp field, with sub-stepping on); bounded backward Lorenz; stiff field lint; four hostile formulas (1000 seeds x 1000 steps, objects inspect and lint); every `FlowSim` input in the cache key; an unused constant leaves the key alone; scrub order vs a fresh runner (refinement included); refined points are true images; the cap and its lint; children read the parent and a fresh engine agrees; a `Variable` overrides a constant; budgets clamped and linted; every type at its maximum in one scene, asked for flow time 2000 (200000 points with the longest trail they allow, a 4096-sample 8-ring outline, a 200-per-side field, a 64-grid Newton, a tracer and a manifold past their step caps: clamped, time and `tracemalloc` peak asserted); each memo checked against a cold run after changing one input (window shift, resize, escape, dt, constants, a Variable); the stiff, budget, cap and hostile tests in both `MODES` (the hostile ones also render a still with GL); the exit demo; golden storyboard (`tests/golden/software/lorenz_explorer.png`, tau <= 5); every flow type in `test_final` (2D and orbit, `passes=None`, drawn with GL; partner `System` "sys") |
 
 ## Measured here (4 cores, llvmpipe, shared with other sessions; not a benchmark)
 
@@ -52,9 +53,15 @@ the Windows suite has no OpenGL, so every new type is tested with `passes=None` 
    is refused at once instead of becoming an unbound-variable lint. Milestone 27's row
    classifier writes the constant when it creates the `Variable`.
 5. **`Obstacle` is deferred** (allowed by the task).
-6. **Positions in semantics only up to `SAFE_TAU` (10)**, a fixed rule rather than an
-   estimate of the Lyapunov time: past it `Tracer.at`, `FlowSet.box` and `Manifold` lengths
-   for long runs are `None` with a note.
+6. **Positions and chaotic counts in semantics only up to `SAFE_TAU` (10)**, a fixed rule
+   rather than an estimate of the Lyapunov time: past it `Tracer.at`, `FlowSet.box`, its
+   `outline`/`alive`/`escaped`/`not_finite` counts and `Manifold` lengths are `None` with a
+   note. `too_fast` and `under_resolved_since` stay (the lint rules read them); the latter
+   is a step on the refinement grid and may differ across machines near its threshold.
+12. **Outlines are short-lived by budget**: counting an outline at its cap (2^17) bounds a
+   set with an outline to 762 steps at `MAX_WORK` 1e8 (flow time 7.6 at dt 0.01) even when
+   the outline stays small; a tighter bound needs work estimates the parameters alone do not
+   give. Clamped and linted, never a hang.
 7. **3D kinds**: a 3D focus is named `stable spiral` / `unstable spiral` (the 2D strings);
    the one new string is `saddle-focus`. A pure-imaginary pair in 3D is `non-hyperbolic`
    (there is no 3D `centre`).

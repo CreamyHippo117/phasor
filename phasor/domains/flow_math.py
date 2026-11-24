@@ -77,6 +77,7 @@ MAX_TRAIL = 64  # trail samples per seed
 MAX_POINTS_X_TRAIL = 4_000_000
 MAX_SET_POINTS = 2**17  # a refined curve set stops growing here (lint set_under_resolved)
 MAX_STEPS = 200_000  # steps a set is run to (flow time / dt)
+MAX_WORK = 1e8  # point-steps one set may compute in all (about 25 s here); then it stops
 MAX_EQUILIBRIA = 64
 MAX_STARTS = 4096  # Newton starts (grid ** dim)
 NEWTON_ITERS = 60
@@ -588,6 +589,7 @@ class FlowSim:
     escape: tuple | None = None  # (centre, radius)
     trail: int = 0
     direction: float = 1.0  # -1: backward (bounded by ``escape``)
+    max_work: float = MAX_WORK  # point-steps in all, refinement included; then it stops
 
     def params(self) -> dict[str, Any]:
         pts = np.ascontiguousarray(self.points, dtype=np.float64)
@@ -599,7 +601,8 @@ class FlowSim:
             "h_max": self.h_max, "refine_every": self.refine_every, "cap": self.cap,
             "max_step": self.max_step, "escape": None if self.escape is None else
             [list(map(float, self.escape[0])), float(self.escape[1])],
-            "trail": self.trail, "direction": self.direction, "method": "rk4",
+            "trail": self.trail, "direction": self.direction, "max_work": self.max_work,
+            "method": "rk4",
             "dtype": "float64",
         }  # fmt: skip
 
@@ -615,7 +618,8 @@ class FlowSim:
                            ) if self.loops else np.zeros((0, d))  # fmt: skip
         out = {"p": pts.copy(), "pc": np.zeros(len(pts), np.int8), "s": s, "loop": loop,
                "q": q, "qc": np.zeros(len(q), np.int8), "n": np.array(0),
-               "under": np.array(-1)}  # fmt: skip
+               "under": np.array(-1), "work": np.array(0.0),
+               "halted": np.array(-1)}  # fmt: skip
         if self.trail:
             out["trail"] = np.repeat(pts[None].astype(np.float32), self.trail, axis=0)
         return out
@@ -638,7 +642,15 @@ class FlowSim:
         return p, code
 
     def step(self, state, dt: float):
+        """One step of the whole set. Past ``max_work`` point-steps the set stops where it is
+        (``halted``: the step it stopped at), so no flow time or count can hang a frame."""
         dt = dt * self.direction
+        n = int(state["n"]) + 1
+        if int(state["halted"]) >= 0:
+            return {**state, "n": np.array(n)}
+        work = float(state["work"]) + len(state["p"]) + len(state["q"])
+        if work > self.max_work:
+            return {**state, "n": np.array(n), "halted": np.array(n - 1)}
         both = np.concatenate([state["p"], state["q"]])
         codes = np.concatenate([state["pc"], state["qc"]])
         moved, codes = self._advance(both, codes, dt)
@@ -646,8 +658,7 @@ class FlowSim:
         out = dict(state)
         out["p"], out["pc"] = moved[:k], codes[:k]
         out["q"], out["qc"] = moved[k:], codes[k:]
-        n = int(state["n"]) + 1
-        out["n"] = np.array(n)
+        out["n"], out["work"] = np.array(n), np.array(work)
         if self.trail:
             out["trail"] = np.concatenate([state["trail"][1:],
                                            out["p"][None].astype(np.float32)])  # fmt: skip
@@ -659,7 +670,8 @@ class FlowSim:
         """Insert a parameter between neighbours further apart than ``h_max`` (both alive),
         integrated from flow time 0 to step ``n``; deterministic (a function of the state)."""
         s, loop, q, qc = st["s"], st["loop"], st["q"], st["qc"]
-        room = self.cap - len(s)
+        # room under the cap, and under the work left (each new point costs n steps)
+        room = min(self.cap - len(s), int((self.max_work - float(st["work"])) // max(n, 1)))
         new_s, new_loop = [], []
         for k, c in enumerate(self.loops):
             idx = np.flatnonzero(loop == k)
@@ -698,6 +710,7 @@ class FlowSim:
                                    if (nl == k).any()])  # fmt: skip
         ns, nl = ns[order_in], nl[order_in]
         pq, pc = self._from_start(x0, n, dt)
+        out["work"] = np.array(float(st["work"]) + len(x0) * n)
         s2 = np.concatenate([s, ns])
         l2 = np.concatenate([loop, nl])
         order = np.lexsort((s2, l2))

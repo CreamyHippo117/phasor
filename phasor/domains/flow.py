@@ -175,6 +175,11 @@ class Resolved:
         self.scale = float(p.scale)
         self.key = self.sys.key(self.values)
 
+    def run_key(self) -> tuple:
+        """What an integration takes besides the field and the seeds: ``dt``, the escape
+        centre and radius, ``max_step`` (memo keys are built from it, so none is missed)."""
+        return (self.dt, tuple(map(float, self.escape[0])), float(self.escape[1]), self.max_step)
+
     def steps(self, tau: float | None = None) -> tuple[int, bool]:
         """Steps to reach flow time ``tau`` (default: now), and whether that was clamped."""
         n = round(abs(self.tau if tau is None else tau) / self.dt)
@@ -443,7 +448,7 @@ _PATHS: OrderedDict[tuple, fm.Path] = OrderedDict()
 def _path(r: Resolved, x0: tuple[float, ...], n: int, direction: float) -> fm.Path:
     """The stored path of one seed to step ``n``: the longest one computed is kept and
     extended (the same steps, so the answer does not depend on what was asked before)."""
-    key = (r.key, tuple(map(float, x0)), r.dt, direction, r.escape[1], r.max_step)
+    key = (r.key, tuple(map(float, x0)), direction, *r.run_key())
     have = _PATHS.get(key)
     if have is None or have.points.shape[1] - 1 < n:
         more = n - (0 if have is None else have.points.shape[1] - 1)
@@ -649,6 +654,12 @@ class FlowSet(_Child):
         n, over = r.steps()
         if over:
             clamped.append("steps")
+        # the work is bounded before it starts: points x steps, an outline counted at its cap
+        size = len(sim.points) + (sim.cap if sim.loops else 0)
+        most = int(fm.MAX_WORK // max(size, 1))
+        if n > most:
+            n = most
+            clamped.append("work")
         runner = runner_for(sim, every=CHECKPOINT_EVERY)
         return r, sim, n, clamped, runner.state_at(n * sim.dt)
 
@@ -675,6 +686,11 @@ class FlowSet(_Child):
             fin = both[np.isfinite(both).all(axis=1)]
             if len(fin):
                 out["box"] = [_rv(fin.min(axis=0)), _rv(fin.max(axis=0))]
+        else:  # counts that depend on where chaotic points went: not reproducible
+            for k in ("outline", "alive", "escaped", "not_finite"):
+                out[k] = None
+            out["note"] = (f"counts and positions are given up to flow time {fm.SAFE_TAU:g} "
+                           "only (a chaotic set is not reproducible across machines)")  # fmt: skip
         return out
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
@@ -969,7 +985,8 @@ class Manifold(_Child):
         if c is None:
             return r, None, []
         steps = round(p.length / r.dt)
-        key = (r.key, tuple(np.round(c["at"], 12)), p.which, steps, r.dt, r.escape[1])
+        # every argument of ``manifolds`` below is in the key
+        key = (r.key, tuple(map(float, c["at"])), p.which, steps, 1e-3 * r.diag, *r.run_key())
         if key not in _MAN:
             _MAN[key] = fm.manifolds(r.sys, r.vals, c["at"], which=p.which, dt=r.dt,
                                      steps=min(steps, fm.MAX_PROBE_STEPS), escape=r.escape,
