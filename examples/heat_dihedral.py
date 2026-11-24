@@ -9,9 +9,9 @@ Run:  uv run python examples/heat_dihedral.py      (prints the readings at each 
 (The third part of the roadmap's demo, a 1e-30 deep fractal zoom, waits for Milestone 9b.)
 """
 
-from phasor import Scene, algebra, expr, pde
+from phasor import Equation, Scene, algebra, expr, pde
 
-s = Scene("heat_dihedral", look="calm")
+s = Scene("heat_dihedral", look="prism_everywhere")
 s.set("camera.height", 11)
 
 s.add(
@@ -24,7 +24,6 @@ s.add(
         time=expr("t / 10"),
         pos=(-9, 1.0, 0),
         extent=(5.5, 2.6),
-        preset="glowing",
     )
 )
 s.add(
@@ -41,6 +40,14 @@ s.add(
 
 s.add(algebra.Polygon(id="square", n=4, pos=(0.2, 2.4, 0), r=1.5))
 s.add(algebra.CayleyTable(id="table", group="D4", pos=(5.4, -1.2, 0), cell=0.7))
+
+# the two laws at work, drifting over the dark (the prism look)
+s.add(Equation(id="heat_eq", pos=(-6.2, 4.3, 0),
+               parts=("$\\partial_t u =$", "$\\alpha$", "$\\,\\partial_x^2 u$"),
+               colors=("primary", "secondary", "primary")))  # fmt: skip
+s.add(Equation(id="d4_eq", pos=(-1.3, -0.6, 0),
+               parts=("$D_4 = \\langle r, s \\mid r^4 = s^2 = e,\\ srs = r^{-1} \\rangle$",),
+               colors=("highlight",), style={"size": "label"}))  # fmt: skip
 
 s.marker("turn", 2.0)
 s.marker("flip", 4.0)
