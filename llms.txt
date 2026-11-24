@@ -67,7 +67,7 @@
 - `equation`: flash, morph_from, morph, morph_kind, parts, colors, pos, write, drift, keys, from_parts, from_colors, from_keys, from_pos, from_id, arc, as_shapes, fill_opacity, stroke_opacity
 - `fixed_points`: flash, f, g, constants, pos, extent, rays, labels, ray_length, reveal, grid
 - `flow_arrows`: flash, system, counts, shape, length_by, size
-- `flow_bifurcation`: flash, pos, extent, system, variable, range, count, mode, coord, sample, normal, offset, x0, transient, sample_time, grid, refine, marks, radius
+- `flow_bifurcation`: flash, pos, extent, system, variable, range, count, mode, coord, sample, normal, offset, x0, transient, sample_time, grid, marks, radius
 - `flow_divergence`: flash, smooth, isolines, hue_cycles, hue, fade, ambient, contrast, system, counts, z, disk_center, disk_radius
 - `flow_equilibria`: flash, system, grid, radius, reveal
 - `flow_equilibrium_view`: flash, system, near, radius, name, card, grid

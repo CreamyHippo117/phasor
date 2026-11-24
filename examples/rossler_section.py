@@ -20,9 +20,9 @@ from phasor import Scene, Text, flow
 
 s = Scene("rossler_section", look="prism")
 s.use_camera("orbit")
-s.set("camera.target", (0.0, 0.0, 0.0))
-s.set("camera.distance", 9.0)
-s.set("camera.elevation", 24.0)
+s.set("camera.target", (-1.0, 0.0, 0.4))  # the attractor right of the strips
+s.set("camera.distance", 13.0)
+s.set("camera.elevation", 22.0)
 s.set("camera.azimuth", -58.0)
 
 s.add(flow.System(id="ro", scale=0.2, pos=(0, 0, -1.6), frame=False, **flow.preset("rossler")))
@@ -33,13 +33,14 @@ s.add(flow.Section(id="ro.section", of="ro.cloud", normal=(0, 1, 0), direction="
 s.add(flow.Probe(id="ro.probe", x0=(1, 1, 0), trail=40.0, opacity=0.0))
 s.add(flow.TwinProbes(id="ro.twins", x0=(1, 1, 0), eps=1e-6, lyapunov=300.0, trail=8.0,
                       dot=False, opacity=0.0))  # fmt: skip
+# two strips stacked in the lower left, narrow enough for 9:16 too
 s.add(flow.TimeSeries(id="ro.series", source="ro.probe", components="xz", span=60.0,
-                      layer="overlay", pos=(0.06, 0.36), extent=(0.62, 0.2),
+                      layer="overlay", pos=(0.04, 0.72), extent=(0.48, 0.16),
                       opacity=0.0))  # fmt: skip
 s.add(flow.TimeSeries(id="ro.distance", source="ro.twins", layer="overlay",
-                      pos=(0.06, 0.94), extent=(0.62, 0.2), opacity=0.0))  # fmt: skip
-s.add(Text(id="title", text="Rossler: a section and two probes", pos=(8 / 9, 0.07),
-           layer="overlay", style={"size": "title"}))  # fmt: skip
+                      pos=(0.04, 0.95), extent=(0.48, 0.16), opacity=0.0))  # fmt: skip
+s.add(Text(id="title", text="Rossler: a section", pos=(8 / 9, 0.07), layer="overlay",
+           style={"size": "title"}))  # fmt: skip
 
 s.marker("start", 0.3)
 s.marker("parts", 0.8)

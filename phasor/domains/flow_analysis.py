@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import threading
 from collections import OrderedDict
 from typing import Any, ClassVar, Literal
 
@@ -70,15 +71,49 @@ NOT_DETECTED = ("global bifurcations (homoclinic and heteroclinic loops, saddle-
                 "samples show; anything outside the window, between Newton's grid of starts "
                 "or between two swept values")  # fmt: skip
 MEMO = 32  # entries per analysis memo
+_LOCK = threading.RLock()  # the memos are shared by worker threads (advice 5.23)
 
 
 def _memo(table: OrderedDict, key: tuple, make):
-    if key not in table:
-        table[key] = make()
+    """A value from a memo keyed by every input; computed outside the lock (two threads may
+    both compute it: the same answer), stored and read under it."""
+    with _LOCK:
+        if key in table:
+            table.move_to_end(key)
+            return table[key]
+    value = make()
+    with _LOCK:
+        table.setdefault(key, value)
+        table.move_to_end(key)
         while len(table) > MEMO:
             table.popitem(last=False)
-    table.move_to_end(key)
-    return table[key]
+        return table[key]
+
+
+def clear_memos() -> None:
+    """Empty every analysis memo and the flow objects' (tests compare a warm engine with a
+    cold one this way)."""
+    from phasor.domains import flow as fl
+
+    with _LOCK:
+        for memo in (_SEC, _LYA, _AREA, _SWP, _CYC, fl._PATHS, fl._MAN, fl._EQ):
+            memo.clear()
+
+
+def _ref(state: SceneState, rid: str, kinds: tuple, r: Resolved | None, what: str):
+    """The object ``rid`` names if it is one of ``kinds`` and of the same System, else
+    (None, why) for semantics and the lint ``flow_ref``."""
+    if rid not in state:
+        return None, f"{what} names {rid!r}, which is not in the scene"
+    other = state[rid]
+    if not isinstance(other.impl, kinds):
+        return None, (f"{what} names {rid!r}, a {other.impl.type}, not one of "
+                      f"{', '.join(k.type for k in kinds)}")  # fmt: skip
+    theirs = other.impl._sys(state)
+    if r is not None and (theirs is None or theirs.id != r.id):
+        return None, (f"{what} names {rid!r}, which belongs to "
+                      f"{None if theirs is None else theirs.id!r}, not {r.id!r}")  # fmt: skip
+    return other, None
 
 
 def _stat_list(v, spread: float) -> list[float | None]:
@@ -194,12 +229,15 @@ def _plane_polygon(normal: np.ndarray, offset: float, lo, hi) -> np.ndarray:
 @register
 class Section(_Child):
     """A Poincare section: where seeds cross the plane ``normal . p = offset`` (a line in
-    2D) up to the system's flow time, each crossing found by linear interpolation inside its
-    step. ``direction``: ``up`` (along ``normal``), ``down`` or ``both``. The seeds are
+    2D) up to the system's flow time, each crossing bracketed by a step and refined to
+    rounding (``flow_analysis_math.refine_crossings``). ``direction``: ``up`` (along
+    ``normal``), ``down`` or ``both``. The seeds are
     ``seeds``, or those of the ``Probe`` or ``FlowSet`` named by ``of``; crossings before
     ``transient`` flow time are left out. Drawn as dots (ready for a splat) on a faint plane
     clipped to the window. At most ``MAX_SECTION_SEEDS`` seeds and ``MAX_SECTION_WORK``
-    seed-steps (clamped, lint ``flow_budget``); the first ``MAX_CROSSINGS`` are kept."""
+    seed-steps (clamped, lint ``flow_budget``); the first ``MAX_CROSSINGS`` are kept. An
+    ``of`` that names nothing, another type or another System's object is lint ``flow_ref``
+    (and no seeds)."""
 
     type: ClassVar[str] = "flow_section"
     Style: ClassVar = {
@@ -236,16 +274,18 @@ class Section(_Child):
                 _finite_vec(q, "each seed")
             return v
 
-    def _seeds(self, state: SceneState, r: Resolved) -> np.ndarray:
+    def _seeds(self, state: SceneState, r: Resolved) -> tuple[np.ndarray, str | None]:
         p = self.me(state).params
-        if p.of and p.of in state:
-            other = state[p.of]
+        if p.of:
+            other, why = _ref(state, p.of, (Probe, FlowSet), r, "of")
+            if other is None:
+                return np.zeros((0, r.dim)), why
             if isinstance(other.impl, Probe):
-                return np.array([_seed(other.params.x0, r.dim)])
-            if isinstance(other.impl, FlowSet):
-                sim, _, _ = other.impl._sim(other.params, r)
-                return np.asarray(sim.points, dtype=np.float64).reshape(-1, r.dim)
-        return np.array([_seed(q, r.dim) for q in p.seeds], dtype=np.float64).reshape(-1, r.dim)
+                return np.array([_seed(other.params.x0, r.dim)]), None
+            sim, _, _ = other.impl._sim(other.params, r)
+            return np.asarray(sim.points, dtype=np.float64).reshape(-1, r.dim), None
+        return (np.array([_seed(q, r.dim) for q in p.seeds],
+                         dtype=np.float64).reshape(-1, r.dim), None)  # fmt: skip
 
     def _run(self, state: SceneState):
         r = self._sys(state)
@@ -256,7 +296,7 @@ class Section(_Child):
         if not np.linalg.norm(normal):
             return r, None, 0, [], np.zeros((0, r.dim))
         sampler = fa.Sampler.plane(normal, p.offset, _DIRS[p.direction])
-        seeds = self._seeds(state, r)
+        seeds, why = self._seeds(state, r)
         clamped = []
         if len(seeds) > fa.MAX_SECTION_SEEDS:
             seeds, clamped = seeds[: fa.MAX_SECTION_SEEDS], ["seeds"]
@@ -274,10 +314,10 @@ class Section(_Child):
                                                     sampler, escape=r.escape,
                                                     max_step=r.max_step))  # fmt: skip
         run.advance(n)
-        cr = run.crossings(upto=n)
+        cr = run.crossings(upto=n)  # "full": anything cut at or before step n (not later)
         keep = np.abs(cr["times"]) >= p.transient
-        cr = {k: v[keep] for k, v in cr.items()}
-        cr["full"] = run.full
+        cr = {k: (v[keep] if isinstance(v, np.ndarray) else v) for k, v in cr.items()}
+        cr["bad_ref"] = why
         return r, sampler, n, clamped, seeds, cr
 
     def semantics(self, state: SceneState) -> dict[str, Any]:
@@ -299,7 +339,9 @@ class Section(_Child):
                          zip(cr["points"][safe][:8], cr["times"][safe][:8], cr["seed"][safe][:8],
                              strict=True)],
                "full": bool(cr["full"]) if abs(r.tau) <= fm.SAFE_TAU else None,
-               "budget": _budget(points=len(seeds), steps=n, clamped=clamped)}  # fmt: skip
+               "bad_ref": cr["bad_ref"],
+               "budget": _budget(points=max(len(seeds), fa.LOOP_POINTS) if len(seeds) else 0,
+                                 steps=n, clamped=clamped)}  # fmt: skip
         if abs(r.tau) <= fm.SAFE_TAU:
             out["crossings"] = len(cr["times"])
         else:
@@ -331,7 +373,7 @@ class Section(_Child):
                 k = len(pts)
                 tris = np.stack([np.full(k, k), np.arange(k), (np.arange(k) + 1) % k], axis=1)
                 ctx.triangles(np.vstack([pts, c[None]]), tris,
-                              color=with_alpha(me.style["plane"], p.opacity * 0.12))  # fmt: skip
+                              color=with_alpha(me.style["plane"], p.opacity * 0.05))  # fmt: skip
         pts = cr["points"]
         if len(pts):
             stride = max(1, -(-len(pts) // MAX_DRAWN_POINTS))
@@ -353,16 +395,22 @@ def _lyapunov(r: Resolved, x0: tuple[float, ...], T: float, transient: float) ->
 
 
 def _lyapunov_semantic(res: dict) -> dict[str, Any]:
+    """Rounded no finer than the spread (a statistic agrees across machines within it, and a
+    last digit that flips with a change of x0 in its last bit is not reported)."""
     spread = res["spread"]
     beyond = res["chaotic_beyond"]
-    return {"value": None if res["value"] is None else fa.statistic(res["value"], spread),
-            "spread": None if spread is None else float(f"{spread:.2g}"),
+    coarse = None if spread is None else max(spread, 1e-6) * 10  # one digit coarser
+    return {"value": None if res["value"] is None else fa.statistic(res["value"], coarse),
+            "spread": None if spread is None else float(f"{spread:.1g}"),
+            "trend": None if res["trend"] is None else fa.statistic(res["trend"], coarse),
             "converged": res["converged"], "T": _r(res["T"]) if res["T"] else None,
             "transient": _r(res["transient"]), "stopped": res["stopped"],
-            "chaotic_beyond": None if beyond is None else
-            fa.statistic(beyond, beyond * spread / max(res["value"], 1e-300)),
+            "chaotic_beyond": None if beyond is None else float(f"{beyond:.1g}"),
             "method": "Benettin, two trajectories, renormalised every "
-                      f"{res['renorm']:g}; spread: standard error over blocks",
+                      f"{res['renorm']:g}; spread: standard error over blocks; converged: "
+                      "small spread and no trend across blocks; chaotic_beyond only for a "
+                      f"converged value above {fa.CHAOS_FLOOR:g} and three spreads",
+            "clamped": res["clamped"],
             "statistic": True}  # fmt: skip
 
 
@@ -450,7 +498,9 @@ class TwinProbes(_Child):
             out["lyapunov"] = _lyapunov_semantic(res)
             steps += res["steps"]
             clamped = clamped or bool(res["clamped"])
-        out["budget"] = _budget(points=2, steps=steps, clamped=["steps"] if clamped else [])
+        # steps of one or two points in a Python loop: weighed as LOOP_POINTS points each
+        out["budget"] = _budget(points=fa.LOOP_POINTS, steps=steps,
+                                clamped=["steps"] if clamped else [])  # fmt: skip
         return out
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
@@ -492,7 +542,7 @@ class TimeSeries(_Panel, _Child):
         "z": ("emphasis", "primary"),
         "axis": ("emphasis", "muted"),
         "text": ("emphasis", "muted"),
-        "size": ("text", "annotation"),
+        "size": ("text", "label"),
         "stroke": ("stroke", "regular"),
         "glow": ("glow", "none"),
     }
@@ -519,7 +569,12 @@ class TimeSeries(_Panel, _Child):
     def _series(self, state: SceneState):
         """(resolved system, times, {name: values}, log scale, reference line or None, what)"""
         p = self.me(state).params
-        src = state[p.source] if p.source and p.source in state else None
+        src, why = None, None
+        if p.source:
+            src, why = _ref(state, p.source, (Probe, TwinProbes), None, "source")
+            if src is None:
+                r = self._sys(state)
+                return None if r is None else (r, np.zeros(0), {}, False, None, None, why)
         if src is not None and isinstance(src.impl, TwinProbes):
             run = src.impl._run(state)
             if run is None:
@@ -533,8 +588,12 @@ class TimeSeries(_Panel, _Child):
                 res = _lyapunov(r, _seed(src.params.x0, r.dim), src.params.lyapunov,
                                 src.params.transient)  # fmt: skip
                 if res["value"] is not None:
-                    ref = (math.log10(src.params.eps), res["value"] / math.log(10))
-            return r, t, {"log10 d": logd}, True, ref, src.id
+                    ref = (
+                        math.log10(src.params.eps),
+                        res["value"] / math.log(10),
+                        res["spread"] / math.log(10),
+                    )
+            return r, t, {"log10 d": logd}, True, ref, src.id, None
         if src is not None and isinstance(src.impl, Probe):
             run = src.impl._run(state)
             if run is None:
@@ -553,7 +612,7 @@ class TimeSeries(_Panel, _Child):
         t = np.arange(len(pts)) * r.dt * (-1 if r.tau < 0 else 1)
         comps = {c: pts[:, fm.COORDS.index(c)] for c in p.components
                  if fm.COORDS.index(c) < r.dim}  # fmt: skip
-        return r, t, comps, False, None, what
+        return r, t, comps, False, None, what, None
 
     def _shown(self, state, t):
         span = self.me(state).params.span
@@ -565,11 +624,12 @@ class TimeSeries(_Panel, _Child):
         got = self._series(state)
         if got is None:
             return self._none("flow_time_series")
-        r, t, comps, log, ref, what = got
+        r, t, comps, log, ref, what, why = got
         keep = self._shown(state, t)
         out = {"kind": "flow_time_series", "system": r.id, "source": what,
                "components": list(comps), "log": log, "samples": int(keep.sum()),
-               "span": [_r(t[keep][0]), _r(t[keep][-1])] if keep.any() else None}  # fmt: skip
+               "span": [_r(t[keep][0]), _r(t[keep][-1])] if keep.any() else None,
+               "bad_ref": why}  # fmt: skip
         if abs(r.tau) <= fm.SAFE_TAU:
             out["range"] = {k: [_r(np.nanmin(v[keep])), _r(np.nanmax(v[keep]))]
                             if np.isfinite(v[keep]).any() else None
@@ -578,8 +638,8 @@ class TimeSeries(_Panel, _Child):
             out["range"] = None
             out["note"] = (f"values are given up to flow time {fm.SAFE_TAU:g} only (a chaotic "
                            "path is not reproducible across machines)")  # fmt: skip
-        if ref is not None:
-            out["reference_slope"] = fa.statistic(ref[1], 1e-3)
+        if ref is not None:  # no finer than the exponent's spread (one digit coarser)
+            out["reference_slope"] = fa.statistic(ref[1], 10 * max(ref[2], 1e-7))
         return out
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
@@ -592,7 +652,7 @@ class TimeSeries(_Panel, _Child):
         got = self._series(state)
         if got is None:
             return
-        _, t, comps, _log, ref, _ = got
+        _, t, comps, _log, ref, _, _ = got
         keep = self._shown(state, t)
         t = t[keep]
         if len(t) < 2:
@@ -621,6 +681,8 @@ class TimeSeries(_Panel, _Child):
 # ---------------------------------------------------------------- DivergenceMap
 
 _AREA: OrderedDict[tuple, dict] = OrderedDict()
+DISK_CAP = 4096  # outline points of the advected disk
+DISK_STEPS = 2000  # steps it is carried (flow time 20 at dt 0.01): clamped, flow_budget
 
 
 @register
@@ -677,15 +739,14 @@ class DivergenceMap(_Child):
         c = np.asarray(_seed(p.disk_center, 2))
         loops = fm.curves("disk", c, p.disk_radius, 2)
         sim = fm.FlowSim(r.sys, r.vals, r.dt, points=np.zeros((0, 2)), loops=loops,
-                         samples=64, h_max=0.01 * r.diag, refine_every=10, cap=fm.MAX_SET_POINTS,
+                         samples=64, h_max=0.01 * r.diag, refine_every=10, cap=DISK_CAP,
                          max_step=r.max_step, escape=(tuple(map(float, r.escape[0])),
                                                       r.escape[1]),
                          direction=-1.0 if r.tau < 0 else 1.0)  # fmt: skip
         n, over = r.steps()
         clamped = ["steps"] if over else []
-        most = int(fm.MAX_WORK // sim.cap)
-        if n > most:
-            n, clamped = most, [*clamped, "work"]
+        if n > DISK_STEPS:  # outline x steps, refinement included, stays under 1e7
+            n, clamped = DISK_STEPS, [*clamped, "work"]
         st = runner_for(sim, every=CHECKPOINT_EVERY, cache_dir=None).state_at(n * sim.dt)
         sgn = -1.0 if r.tau < 0 else 1.0
         key = (r.key, tuple(c), n, sgn, *r.run_key())
@@ -720,10 +781,14 @@ class DivergenceMap(_Child):
         got = self._disk(state, r)
         if got is not None:
             _, st, n, clamped, integral = got
-            a0 = math.pi * p.disk_radius**2
+            # A0: the polygon of the same outline parameters at flow time 0 (so the ratio
+            # compares like with like: the circle's own area is a little larger)
+            loop = fm.curves("disk", np.asarray(_seed(p.disk_center, 2)), p.disk_radius, 2)[0]
+            a0 = fa.polygon_area(fm._on_curve(loop, st["s"]))
             disk: dict[str, Any] = {"center": _rv(_seed(p.disk_center, 2)),
-                                    "radius": _r(p.disk_radius), "area0": _r(a0),
-                                    "tau": _r(r.tau)}  # fmt: skip
+                                    "radius": _r(p.disk_radius),
+                                    "area0": _r(math.pi * p.disk_radius**2),
+                                    "polygon0": _r(a0), "tau": _r(r.tau)}  # fmt: skip
             q = st["q"]
             whole = bool((st["qc"] == fm.ALIVE).all()) and int(st["under"]) < 0
             if abs(r.tau) <= fm.SAFE_TAU and whole:
@@ -733,8 +798,8 @@ class DivergenceMap(_Child):
                 disk["ratio"] = (_r(area / (a0 * math.exp(integral)))
                                  if integral is not None else None)  # fmt: skip
                 disk["outline"] = len(q)
-                disk["predicted_by"] = ("A0 exp(integral of div along the centre's path): "
-                                        "exact when the divergence is constant")  # fmt: skip
+                disk["predicted_by"] = ("polygon0 exp(integral of div along the centre's "
+                                        "path): exact when the divergence is constant")  # fmt: skip
             else:
                 disk["area"] = None
                 disk["why"] = ("past flow time 10 or the outline lost points (escaped, too "
@@ -787,10 +852,14 @@ class DivergenceMap(_Child):
 
 _SWP: OrderedDict[tuple, dict] = OrderedDict()
 _SHORT = {
-    "onset of chaos or a long period": "chaos?",
+    "onset of chaos or a long period": "chaos",
     "period doubling": "doubling",
     "period halving": "halving",
+    "enters or leaves the window": "edge",
+    "a periodic window": "window",
 }  # fmt: skip  (drawn labels; semantics keep the words)
+GRID_2D = 27  # Newton's grid per side in a sweep: 729 starts
+GRID_3D = 9  # 729 starts
 
 
 @register
@@ -799,13 +868,18 @@ class BifurcationDiagram(_Panel, _Child):
     a panel (``pos``, ``extent``). ``mode="equilibria"``: every equilibrium's ``coord`` at
     each value, stable ones in the stable colour, and the candidate bifurcations (where the
     count changes or an eigenvalue crosses the imaginary axis) refined by bisection and
-    labelled: ``saddle-node``, ``pitchfork``, ``transcritical``, ``Hopf`` (or a ``window
-    edge``). ``mode="attractor"``: from ``x0``, after ``transient`` flow time, the samples of
+    labelled by ``explore_math.sweep`` (the one equilibria sweep): ``saddle-node``,
+    ``pitchfork``, ``transcritical``, ``Hopf``, ``enters or leaves the window`` or ``not
+    named``; at most ``explore_math.MAX_SWEEP`` values and a Newton grid of at most
+    ``GRID_2D`` (``GRID_3D`` in 3D) per side (clamped, ``flow_budget``).
+    ``mode="attractor"``: from ``x0``, after ``transient`` flow time, the samples of
     ``sample_time`` (the maxima of ``coord``, or crossings of the plane ``normal``/``offset``
-    with ``sample="section"``): a period-doubling cascade, with its period per value. Not
-    detected: global bifurcations (homoclinic, heteroclinic, crises) and anything between
-    swept values (``flow_analysis.NOT_DETECTED``). At most ``flow_analysis_math.MAX_SWEEP``
-    values and ``MAX_SWEEP_WORK`` value-steps."""
+    with ``sample="section"``): a period-doubling cascade, with its period and state per
+    value (``periodic``, ``not settled``, ``chaos or a long period``). Not detected: global
+    bifurcations (homoclinic, heteroclinic, crises) and anything between swept values
+    (``flow_analysis.NOT_DETECTED``). At most ``flow_analysis_math.MAX_SWEEP`` values and
+    ``MAX_SWEEP_WORK`` value-steps. A variable the system does not use draws the panel and
+    says why."""
 
     type: ClassVar[str] = "flow_bifurcation"
     Style: ClassVar = {
@@ -815,7 +889,7 @@ class BifurcationDiagram(_Panel, _Child):
         "points": ("emphasis", "highlight"),
         "axis": ("emphasis", "muted"),
         "text": ("emphasis", "muted"),
-        "size": ("text", "annotation"),
+        "size": ("text", "label"),
         "stroke": ("stroke", "regular"),
         "glow": ("glow", "soft"),
     }
@@ -833,7 +907,6 @@ class BifurcationDiagram(_Panel, _Child):
         transient: float = Field(50.0, ge=0, le=1e4)
         sample_time: float = Field(30.0, gt=0, le=1e4)
         grid: int = Field(9, ge=2, le=64)
-        refine: bool = True
         marks: bool = True
         radius: float = Field(0.004, gt=0, le=0.05)
 
@@ -842,6 +915,8 @@ class BifurcationDiagram(_Panel, _Child):
             lo, hi = self.range
             if not (math.isfinite(lo) and math.isfinite(hi) and lo < hi):
                 raise ValueError(f"range is (lo, hi), finite with lo < hi, not {self.range}")
+            if not math.isfinite(hi - lo):
+                raise ValueError(f"the range's span hi - lo must be finite, not {self.range}")
             _finite_vec(self.x0, "x0")
             _finite_vec(self.normal, "normal")
             if not any(self.normal):
@@ -854,7 +929,12 @@ class BifurcationDiagram(_Panel, _Child):
             return None
         p = self.me(state).params
         if p.variable not in r.values:
-            return r, None
+            return (
+                r,
+                None,
+                0,
+                f"the system has no variable {p.variable!r}; it has {sorted(r.values)}",
+            )
         k = fm.COORDS.index(p.coord)
         if k >= r.dim:
             k = 0
@@ -866,61 +946,78 @@ class BifurcationDiagram(_Panel, _Child):
             extra = (sampler.key(), _seed(p.x0, r.dim), p.transient, p.sample_time)
         else:
             sampler = None
-            extra = (tuple(r.lo), tuple(r.hi), p.grid, p.refine)
+            extra = (tuple(r.lo), tuple(r.hi), self._grid(p, r)[0])
         base = r.sys.key({**others, p.variable: 0.0})  # the exprs and every other value
-        key = (base, p.variable, tuple(p.range), p.count, p.mode, *extra, *r.run_key())
+        key = (base, p.variable, tuple(p.range), p.count, p.mode, *extra, *r.run_key(), r.diag)
 
         def make():
-            return fa.sweep(r.sys, {**others, p.variable: 0.0}, p.variable, p.range[0],
-                            p.range[1], p.count, mode=p.mode, lo=r.lo, hi=r.hi, grid=p.grid,
-                            x0=_seed(p.x0, r.dim), dt=r.dt, transient=p.transient,
-                            sample_time=p.sample_time, sampler=sampler, escape=r.escape,
-                            max_step=r.max_step, refine=p.refine)  # fmt: skip
+            try:
+                return fa.sweep(r.sys, {**others, p.variable: 0.0}, p.variable, p.range[0],
+                                p.range[1], p.count, mode=p.mode, lo=r.lo, hi=r.hi,
+                                grid=self._grid(p, r)[0], x0=_seed(p.x0, r.dim), dt=r.dt,
+                                transient=p.transient, sample_time=p.sample_time,
+                                sampler=sampler, escape=r.escape, max_step=r.max_step,
+                                scale=r.diag)  # fmt: skip
+            except fm.FunctionError as e:
+                return {"why": str(e)}
 
-        return r, _memo(_SWP, key, make), k
+        sw = _memo(_SWP, key, make)
+        if "why" in sw:
+            return r, None, k, sw["why"]
+        return r, sw, k, None
+
+    @staticmethod
+    def _grid(p, r: Resolved) -> tuple[int, bool]:
+        """Newton's grid per side, at most GRID_2D in 2D and GRID_3D in 3D (a sweep runs it
+        at every value and at every bisection step)."""
+        most = GRID_3D if r.dim == 3 else GRID_2D
+        return min(p.grid, most), p.grid > most
 
     def semantics(self, state: SceneState) -> dict[str, Any]:
         got = self._sweep(state)
         if got is None:
             return self._none("flow_bifurcation")
-        r, sw = got[0], got[1]
+        r, sw, _, why = got
         p = self.me(state).params
         out: dict[str, Any] = {"kind": "flow_bifurcation", "system": r.id,
                                "variable": p.variable, "range": _rv(p.range),
                                "count": p.count, "mode": p.mode, "coord": p.coord,
                                "not_detected": NOT_DETECTED}  # fmt: skip
         if sw is None:
-            out.update(rows=[], candidates=[], drawn=0.0,
-                       why=f"the system has no variable {p.variable!r}; it has "
-                           f"{sorted(r.values)}")  # fmt: skip
+            out.update(rows=[], candidates=[], drawn=0.0, why=why)
             return out
+        clamped = list(sw["clamped"])
         if sw["mode"] == "equilibria":
-            out["columns"] = ["value", "count", "stable", "max_real"]
+            grid, cut = self._grid(p, r)
+            if cut:
+                clamped.append("grid")
+            out["columns"] = ["value", "count", "stable", "max_real", "non_isolated"]
             out["rows"] = [[_r(row["value"]), row["count"], row["stable"],
-                            None if row["max_real"] is None else _r(row["max_real"])]
-                           for row in sw["rows"]]  # fmt: skip
-            work = len(sw["rows"]) * fm.MAX_STARTS
-            out["grid"] = p.grid
+                            None if row["max_real"] is None else _r(row["max_real"]),
+                            bool(row["non_isolated"])] for row in sw["rows"]]  # fmt: skip
+            out["grid"] = grid
+            # each value and each bisection step is a Newton run from grid^dim starts
+            points, steps = len(sw["rows"]), grid**r.dim * (1 + 40 * len(sw["candidates"]))
         else:
-            out["columns"] = ["value", "period", "samples"]
+            out["columns"] = ["value", "period", "state", "samples"]
             # a chaotic row's count of samples depends on the machine: None with its period
-            out["rows"] = [[_r(row["value"]), row["period"],
+            out["rows"] = [[_r(row["value"]), row["period"], row["state"],
                             None if row["period"] is None else row["samples"]]
                            for row in sw["rows"]]  # fmt: skip
             out["transient"] = _r(sw["transient"])
-            out["periods_note"] = ("periods are clusters of the samples of an attracting "
-                                   "orbit (None: chaos or a period past 16)")  # fmt: skip
-            work = sw["steps"]
+            out["periods_note"] = ("a period is the number of windings after which the samples "
+                                   "repeat within 1e-5 of the window (flow_analysis_math."
+                                   "returns_repeat); not settled: still closing in (near a "
+                                   "doubling, a longer transient helps)")  # fmt: skip
+            points, steps = max(len(sw["rows"]), fa.LOOP_POINTS), sw["steps"]
         width = (p.range[1] - p.range[0]) * 1e-6
         out["candidates"] = [
-            {"label": c["label"], "change": c["change"],
+            {"label": c["label"], "change": c.get("change"), "converged": c.get("converged"),
              "value": None if c["value"] is None else fa.statistic(c["value"], width),
              "between": [fa.statistic(c["between"][0], width),
                          fa.statistic(c["between"][1], width)]}
             for c in sw["candidates"]]  # fmt: skip
-        out["budget"] = _budget(points=p.count, steps=work // max(p.count, 1) if
-                                sw["mode"] == "equilibria" else work,
-                                clamped=list(sw["clamped"]))  # fmt: skip
+        out["budget"] = _budget(points=points, steps=steps, clamped=clamped)
         return out
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
@@ -933,7 +1030,7 @@ class BifurcationDiagram(_Panel, _Child):
         got = self._sweep(state)
         if got is None or got[1] is None:
             return
-        r, sw, k = got
+        r, sw, k, _ = got
         rect = self._rect(state)
         lo_v, hi_v = p.range
         dot = unit * p.radius
@@ -941,10 +1038,12 @@ class BifurcationDiagram(_Panel, _Child):
             lo, hi = float(r.lo[k]), float(r.hi[k])
             xs, ys, roles = [], [], []
             for row in sw["rows"]:
-                for q, ev in zip(row["points"], row["eigs"], strict=True):
-                    s = fa._stable(ev)
+                for e in row["equilibria"]:
+                    s = fa._stable_kind(e["kind"])
+                    if e["at"][k] is None:
+                        continue
                     xs.append(row["value"])
-                    ys.append(q[k])
+                    ys.append(e["at"][k])
                     roles.append("stable" if s is True else "unstable" if s is False else "neutral")
             if xs:
                 pts = self._place(rect, _share(xs, lo_v, hi_v), _share(ys, lo, hi))
@@ -1004,7 +1103,7 @@ class LimitCycle(_Child):
         x0: tuple[float, ...] = (1.0, 0.0)
         transient: float = Field(50.0, ge=0, le=1e4)
         max_time: float = Field(100.0, gt=0, le=1e4)
-        tol: float = Field(1e-6, gt=0, le=1e-2)
+        tol: float = Field(1e-6, gt=0, le=1e-5)  # looser: chaos passes for a cycle
         progress: float = Field(1.0, ge=0, le=1)
 
         @field_validator("x0")
@@ -1030,17 +1129,24 @@ class LimitCycle(_Child):
             return self._none("flow_limit_cycle")
         r, c = got
         p = self.me(state).params
-        spread = p.tol * r.diag
+        # fixed-step RK4: the period and the points are accurate to about dt^2 relative (the
+        # tolerance only says the returns repeat), so no digit finer than that is shown
+        acc = max(p.tol, r.dt * r.dt)
+        spread = acc * r.diag
         out = {"kind": "flow_limit_cycle", "system": r.id, "x0": _rv(_seed(p.x0, r.dim)),
                "found": c["kind"], "converged": c["converged"], "loops": c["loops"],
+               "note": c["note"],
                # a count of returns that never settled depends on the chaos: not reported
                "returns": c["returns"] if c["kind"] in ("cycle", "equilibrium") else None,
                "period": None if c["period"] is None else
-               fa.statistic(c["period"], p.tol * max(c["period"], 1.0)),
+               fa.statistic(c["period"], acc * max(c["period"], 1.0)),
+               "period_accuracy": (f"about {acc:.0e} relative: limited by dt "
+                                   f"({r.dt:g}, fixed-step RK4) and tol; halve dt to check"),
                "point": None if c["point"] is None else _stat_list(c["point"], spread),
                "box": None if c["box"] is None else [_stat_list(b, spread) for b in c["box"]],
-               "isolated": "not checked",
-               "budget": _budget(points=1, steps=c["steps"], clamped=c["clamped"])}  # fmt: skip
+               "isolated": "not checked (a drift of the returns is: a centre is not a cycle)",
+               "budget": _budget(points=fa.LOOP_POINTS, steps=c["steps"],
+                                 clamped=c["clamped"])}  # fmt: skip
         return out
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
@@ -1079,7 +1185,7 @@ def lyapunov(system, x0, T: float = 100.0, *, state: SceneState | None = None, v
         if state is None or system not in state or not isinstance(state[system].impl, System):
             raise ValueError(f"no System {system!r} in the state")
         r = state[system].impl.resolve(state)
-        res = fa.lyapunov(r.sys, np.asarray(_seed(x0, r.dim)), T, values=r.vals,
+        res = fa.lyapunov(r.sys, np.asarray(x0, dtype=np.float64), T, values=r.vals,
                           dt=r.dt if dt is None else dt, transient=transient, escape=r.escape,
                           max_step=r.max_step, **kw)  # fmt: skip
     else:

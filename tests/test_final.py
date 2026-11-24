@@ -218,8 +218,11 @@ def test_every_example_survives_save_and_load(name, tmp_path):
     assert d["same"], d["changes"][:3]
     top = list(json.loads(path.read_text(encoding="utf-8")))
     assert top == sorted(top)  # sorted keys, so a diff of two saves is readable
+    from phasor.domains.flow_analysis import clear_memos
+
     for t in (0.0, e.duration / 2):
         a = e.inspect(t, detail="brief")
+        clear_memos()  # the loaded scene computes cold: a memo key missing an input shows
         b = again.inspect(t, detail="brief")
         assert json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
 
