@@ -12,6 +12,7 @@ failed patch changes nothing.
 from __future__ import annotations
 
 import contextlib
+import os
 import re
 import threading
 from pathlib import Path
@@ -22,9 +23,10 @@ from phasor.core.diff import diff_documents
 from phasor.core.ids import file_stem
 from phasor.core.issues import DocumentError, Issue
 from phasor.core.objects import is_builtin, registered_types
+from phasor.core.pycode import read_tweaks, with_tweaks
 from phasor.core.schema import Document, Meta
 from phasor.engine import Engine
-from phasor.scene import Scene, load
+from phasor.scene import Scene, run_script
 from phasor.style.looks import DEFAULT_THEME, available_looks, default_look, load_look
 from phasor.style.theme import ROLE_GROUPS, available_themes
 from phasor.time import verbs as _verbs
@@ -107,6 +109,14 @@ class Workspace:
         # Set on the thread that runs an attached AI's call (``workspace.remote``): that call
         # never makes new code run, whatever the person allowed (``_no_new_code``).
         self._caller = threading.local()
+        # A script scene (ADR 0004): the name its Scene has (the tweaks block calls
+        # ``<var>.tweak``), the line that added each object, and the script as this
+        # workspace last read or wrote it (text, stamp): a file that differs was changed
+        # outside (the editor's file watching).
+        self.script_var = "s"
+        self.script_lines: dict[str, int] = {}
+        self.script_disk: tuple[str, tuple[int, int]] | None = None
+        self._jobs: dict[str, Any] = {}  # render jobs (``render_start``)
 
     # ------------------------------------------------------------ plumbing
 
@@ -182,9 +192,47 @@ class Workspace:
             self.path = p.with_suffix(io.DOC_SUFFIX)
             self.import_notes = result.warnings
             return {**self.summary(), "imported_from": "manim", "notes": result.warnings}
-        self._engine = self._guard(lambda: load(p, allow_scripts=allow_scripts))
+        if p.suffix != ".py":
+            self._engine = self._guard(lambda: Engine.open(p, allow_scripts=allow_scripts))
+            self.path = p
+            self.script_disk = None
+            self.script_lines = {}
+            return self.summary()
+        run = self._guard(lambda: run_script(p, allow_scripts=allow_scripts))
+        self._engine = run.engine
         self.path = p
-        return self.summary()
+        self.script_var, self.script_lines = run.var, run.lines
+        self.script_disk = (read_text(p), file_stamp(p))
+        out = self.summary()
+        if run.overrides_file is not None:
+            # ADR 0004: an old overrides file is folded into the script's tweaks block the
+            # first time the script is opened here, then removed (its tweaks are in the code).
+            self._write_script(with_tweaks(self.script_disk[0], run.engine.overrides,
+                                           self.script_var))  # fmt: skip
+            run.overrides_file.unlink(missing_ok=True)
+            out["migrated"] = str(run.overrides_file)
+        return out
+
+    def _write_script(self, text: str) -> None:
+        """Write the open script (its line endings as they are) and remember what was
+        written, so the editor does not take this write for an outside edit."""
+        assert self.path is not None and self.path.suffix == ".py"
+        write_text(self.path, text)
+        self.script_disk = (text, file_stamp(self.path))
+
+    def _save_tweaks(self) -> Path:
+        """A script scene's save: its tweaks go into the block at the end of the script
+        (ADR 0004); the code outside the block is not touched. An old overrides file beside
+        it is removed (its tweaks are in the block now)."""
+        assert self.path is not None
+        text = read_text(self.path)
+        new = with_tweaks(text, self.engine.overrides, self.script_var)
+        if new != text:
+            self._write_script(new)
+        else:
+            self.script_disk = (text, file_stamp(self.path))
+        self.path.with_name(self.path.stem + io.OVERRIDES_SUFFIX).unlink(missing_ok=True)
+        return self.path
 
     def _trust_code(self) -> dict[str, Any]:
         """Let the open scene's own modules (``meta.modules``) run: the person at the editor
@@ -300,15 +348,23 @@ class Workspace:
         return self._open(path, allow_scripts=self.allow_scripts and not self._by_ai)
 
     def scene_save(self, path: str | None = None) -> dict[str, Any]:
-        """Save the document (``name.phasor.json``); tweaks to a script scene go to its
-        overrides file beside it."""
+        """Save the document (``name.phasor.json``). A script scene keeps its tweaks in the
+        script itself: saving writes them into the tweaks block at its end (``# --- phasor
+        tweaks``) and leaves its other code as it is; ``path`` (a ``.phasor.json``) instead
+        saves a copy of it as a document."""
         e = self.engine
         if path is None and self.path is None:
             raise ToolError("this scene has no path yet: pass path, e.g. 'residues.phasor.json'")
         target = self._inside(path) if path else self.path
         assert target is not None
         if target.suffix == ".py":
-            target = target.with_name(target.stem + io.DOC_SUFFIX)
+            if target != self.path or not e.scripted:
+                raise ToolError(
+                    "a scene is saved as a script only to the script it runs "
+                    "from; pass a .phasor.json path to save a copy as a document"
+                )
+            self._guard(self._save_tweaks)
+            return {"saved": str(target), "version": e.version}
         if not target.name.endswith(io.DOC_SUFFIX):
             raise ToolError(f"scene files end in {io.DOC_SUFFIX}, got {target.name}")
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -529,8 +585,13 @@ class Workspace:
             return self.engine.document
         if ref == "saved":
             path = self.path
-            if path is not None and path.suffix == ".py":  # a script's saved document
-                path = path.with_name(path.stem + io.DOC_SUFFIX)
+            if path is not None and path.suffix == ".py" and path.exists():
+                # A script's saved tweaks are its block (read, not run): laid over the
+                # document its code makes now.
+                from phasor.core.patch import apply_overrides
+
+                saved = read_tweaks(read_text(path))
+                return self._guard(lambda: apply_overrides(self.engine.base, saved)[0])
             if path is None or not path.exists():
                 raise ToolError("nothing saved yet")
             # The saved document as it takes effect: base plus its overrides, like "current".
@@ -1025,6 +1086,27 @@ class Workspace:
             "themes": available_themes(),
             "looks": available_looks(),
         }
+
+
+def read_text(path: Path) -> str:
+    """A script as it is on disk: UTF-8, line endings kept (a tweak never changes them)."""
+    with open(path, encoding="utf-8", newline="") as f:
+        return f.read()
+
+
+def write_text(path: Path, text: str) -> None:
+    """Write ``text`` as it is (no line-ending translation), replacing the file in one step."""
+    tmp = path.with_name(f".{path.name}.phasor-tmp")
+    with open(tmp, "w", encoding="utf-8", newline="") as f:
+        f.write(text)
+    os.replace(tmp, path)
+
+
+def file_stamp(path: Path) -> tuple[int, int]:
+    """(modification time in ns, size): what the editor compares to notice an outside edit
+    (with the text itself, since Windows' clock is coarse)."""
+    st = path.stat()
+    return st.st_mtime_ns, st.st_size
 
 
 def _jsonable(v: Any) -> Any:

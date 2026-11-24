@@ -154,8 +154,9 @@ def test_tweaks_to_a_script_scene_are_kept_when_saved(home):
                       "s.add(Dot(id='p', pos=(0, 0)))\n", encoding="utf-8")  # fmt: skip
     ed = _editor(script)
     ed.set_param("p", "r", "0.4")
-    ed.save()
-    assert (home / "scene.overrides.json").exists()
+    ed.save()  # ADR 0004: the tweak is written into the script's tweaks block
+    assert "s.tweak('p.r', 0.4)" in script.read_text(encoding="utf-8")
+    assert not (home / "scene.overrides.json").exists()
     assert load(script, passes=None).document.object("p").params["r"] == 0.4
 
 

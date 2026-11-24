@@ -174,7 +174,7 @@ def test_scripts_are_refused_unless_allowed(tmp_path):
         Workspace(tmp_path).scene_open("evil.py")
 
 
-def test_a_script_scene_keeps_its_structure_and_takes_tweaks_as_overrides(tmp_path):
+def test_a_script_scene_keeps_its_structure_and_takes_tweaks_into_its_block(tmp_path):
     (tmp_path / "s.py").write_text(
         "from phasor import Dot, Scene\ns = Scene('s')\ns.add(Dot(id='d', pos=(0, 0)))\n",
         encoding="utf-8",
@@ -185,8 +185,9 @@ def test_a_script_scene_keeps_its_structure_and_takes_tweaks_as_overrides(tmp_pa
     assert not w.scene_edit({"op": "remove_object", "id": "d"})["ok"]
     with pytest.raises(ToolError, match="built by a script"):
         w.animate("reveal", 1.0, ["d"])
-    w.scene_save()
-    assert (tmp_path / "s.overrides.json").exists()
+    w.scene_save()  # ADR 0004: the tweak goes into the script's tweaks block
+    assert "s.tweak('d.r', 0.5)" in (tmp_path / "s.py").read_text(encoding="utf-8")
+    assert not (tmp_path / "s.overrides.json").exists()
 
 
 # ---------------------------------------------------------------- seeing

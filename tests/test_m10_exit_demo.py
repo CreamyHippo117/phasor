@@ -83,19 +83,18 @@ def test_one_scene_edited_by_hand_and_by_ai_in_one_session(tmp_path):
         assert win.inspector.roles["glow"].currentText() == "strong"
         assert ed.engine.document.object("zeros_eq").params["pos"] == (0.0, 0.4, 0.0)
 
-        # 4. Save: a script scene keeps both editors' tweaks in its overrides file...
+        # 4. Save: a script scene keeps both editors' tweaks in its tweaks block (ADR 0004)...
         saved = ed.save()
-        overrides = json.loads(
-            (tmp_path / "prism_primes.overrides.json").read_text(encoding="utf-8")
-        )
-        text = json.dumps(overrides)
-        assert "hue_along" in text and "zeros_eq" in text and "error_eq" in text
+        text = scene.read_text(encoding="utf-8")
+        block = text[text.index("# --- phasor tweaks") :]
+        assert "hue_along" in block and "zeros_eq" in block and "error_eq" in block
+        assert not (tmp_path / "prism_primes.overrides.json").exists()
         # ...and re-running the script keeps them all (contract 2).
         again = load(scene, passes=None)
         assert again.document.object("truth").params["hue_along"] == 1.5
         assert again.document.object("error_eq").params["pos"] == pytest.approx(moved)
         assert again.state_at(0.0)["zeros_60"].roles["glow"] == "strong"
-        assert saved["saved"].endswith(".phasor.json")
+        assert saved["saved"] == str(scene)
     finally:
         win.timer.stop()
         server.stop()

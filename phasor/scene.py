@@ -33,6 +33,10 @@ from phasor.core.patch import (
     SetMeta,
     SetNarration,
     SetParam,
+    SetStyle,
+    merge_overrides,
+    parse_patch,
+    record_tweaks,
 )
 from phasor.core.schema import (
     Control,
@@ -41,6 +45,7 @@ from phasor.core.schema import (
     MarkerRef,
     Meta,
     ObjectSpec,
+    Overrides,
     Segment,
 )
 from phasor.engine import Engine
@@ -241,6 +246,8 @@ class Scene:
         caller = sys._getframe(1).f_globals
         engine_kwargs.setdefault("allow_scripts", script_of(caller) is not None)
         self.engine = Engine(Document(meta=meta), **engine_kwargs)
+        self.lines: dict[str, tuple[str, int]] = {}  # id -> (file, line) of the code adding it
+        self._orphans = Overrides()  # tweaks whose object the script no longer makes
 
     @classmethod
     def of(cls, engine: Engine) -> Scene:
@@ -248,6 +255,8 @@ class Scene:
         client gets the same verbs as a script)."""
         scene = cls.__new__(cls)
         scene.engine = engine
+        scene.lines = {}
+        scene._orphans = Overrides()
         look = engine.document.meta.look
         scene.look = load_look(look) if look else None
         return scene
@@ -259,6 +268,9 @@ class Scene:
         """Add an object: ``s.add(Dot(id="dot", pos=(1, 2)))``. Returns it for chaining.
         The scene's look fills in what the object leaves unset (the values are stored)."""
         self._apply(self.add_ops(obj))
+        where = _script_line()
+        if where is not None:
+            self.lines.setdefault(obj.id, where)
         return obj
 
     def add_ops(self, obj: ObjectBase) -> list[Any]:
@@ -384,6 +396,41 @@ class Scene:
         """Place a narration marker at ``t`` seconds."""
         self._apply(SetMarker(name=name, t=t))
 
+    # ------------------------------------------------------------ tweaks (ADR 0004)
+
+    def tweak(self, path: str, value: Any) -> None:
+        """A tweak made in the editor or by an AI, as the script keeps it (the managed block
+        at its end, ``# --- phasor tweaks ...``): set parameter ``path`` to ``value`` on top
+        of what the script built. Unlike ``set``, a tweak whose object the script no longer
+        makes is kept (lint ``orphan_override``) and the script still runs."""
+        self._tweak(SetParam(path=path, value=value), (path.rpartition(".")[0],))
+
+    def tweak_style(self, id: str, key: str, value: Any) -> None:
+        """A tweaked style: ``key`` of object ``id`` takes the role (or explicit value)
+        ``value``. Kept like ``tweak`` when the object is gone."""
+        self._tweak(SetStyle(id=id, key=key, role=value), (id,))
+
+    def tweak_rule(self, rule: str, *, priority: str = "strong") -> None:
+        """A layout rule added in the editor or by an AI, on top of the script's own
+        (``constrain``). Kept like ``tweak`` when an object it names is gone."""
+        from phasor.core.constraints import rule_ids
+
+        self._tweak(AddConstraint(rule=rule, priority=priority), rule_ids(rule))
+
+    def _tweak(self, op: Any, ids: tuple[str, ...]) -> None:
+        doc = self.engine.document
+        known = {o.id for o in doc.objects} | {c.id for c in doc.cameras}
+        if all(i in known for i in ids):
+            # A script's scene records it in its overrides (``Engine.apply``), never its base.
+            self.engine.apply(op, origin="tweak").raise_for_errors()
+        else:
+            self._orphans = record_tweaks(self._orphans, parse_patch([op]))
+
+    @property
+    def tweaks(self) -> Overrides:
+        """Every tweak the script made (``tweak*``), those whose object is gone included."""
+        return merge_overrides(self.engine.overrides, self._orphans)
+
     def at(self, when: str | float, offset: float = 0.0) -> At:
         """A time to animate from: a marker name or seconds, plus an optional offset."""
         return At(self, when, offset)
@@ -454,22 +501,65 @@ class Scene:
         return self.engine.export_midi(path, overwrite=overwrite)
 
 
-def load(path: str | Path, **engine_kwargs: Any) -> Engine:
-    """Open a scene for any client: a ``.phasor.json`` document, or a ``.py`` script that
-    builds a ``Scene``. Tweaks in ``name.overrides.json`` beside it are applied on top."""
+def _script_line() -> tuple[str, int] | None:
+    """(file, line) of the innermost caller outside phasor's own package: the script line
+    that made an object (the editor shows it when the object is selected)."""
+    here = Path(__file__).resolve().parent
+    frame = sys._getframe(2)
+    while frame is not None:
+        name = frame.f_code.co_filename
+        if name.endswith(".py"):
+            path = Path(name)
+            if here not in path.resolve().parents:
+                return str(path.resolve()), frame.f_lineno
+        frame = frame.f_back
+    return None
+
+
+class ScriptRun:
+    """What running a scene script gave: the ``engine`` (the script's document with its
+    tweaks laid over it), the name the script binds its ``Scene`` to (``var``, where the
+    tweaks block calls ``s.tweak``), the line that added each object (``lines``), and the
+    old ``name.overrides.json`` read with it, if there was one (``overrides_file``)."""
+
+    def __init__(self, engine: Engine, var: str, lines: dict[str, int],
+                 overrides_file: Path | None) -> None:  # fmt: skip
+        self.engine, self.var, self.lines = engine, var, lines
+        self.overrides_file = overrides_file
+
+
+def run_script(path: str | Path, **engine_kwargs: Any) -> ScriptRun:
+    """Run a ``.py`` scene script (it must define exactly one ``Scene`` at module level) and
+    build its engine: the document the script made, with the tweaks it made (its tweaks
+    block, ADR 0004) and those of an old ``name.overrides.json`` beside it laid on top."""
     path = Path(path)
-    if path.suffix != ".py":
-        return Engine.open(path, **engine_kwargs)
-    scenes = [v for v in runpy.run_path(str(path), run_name="__phasor__").values()
-              if isinstance(v, Scene)]  # fmt: skip
+    found = [(k, v) for k, v in runpy.run_path(str(path), run_name="__phasor__").items()
+             if isinstance(v, Scene)]  # fmt: skip
+    scenes = list({id(v): v for _, v in found}.values())
     if len(scenes) != 1:
         raise ValueError(
             f"{path} must define exactly one Scene at module level, found {len(scenes)}"
         )
-    overrides = io.load_overrides(path.with_name(path.stem + io.OVERRIDES_SUFFIX))
+    scene = scenes[0]
+    var = next(k for k, v in found if v is scene)
+    opath = path.with_name(path.stem + io.OVERRIDES_SUFFIX)
+    overrides = merge_overrides(scene.tweaks, io.load_overrides(opath))
     engine_kwargs.setdefault("base_dir", path.parent)
     engine_kwargs.setdefault("allow_scripts", True)  # the person ran this script: its code runs
-    return Engine(scenes[0].engine.base, overrides=overrides, **engine_kwargs)
+    engine = Engine(scene.engine.base, overrides=overrides, **engine_kwargs)
+    mine = str(path.resolve())
+    lines = {i: n for i, (f, n) in scene.lines.items() if f == mine}
+    return ScriptRun(engine, var, lines, opath if opath.exists() else None)
+
+
+def load(path: str | Path, **engine_kwargs: Any) -> Engine:
+    """Open a scene for any client: a ``.phasor.json`` document, or a ``.py`` script that
+    builds a ``Scene``. A script's tweaks (its tweaks block, and an old ``name.overrides.json``
+    beside it) are applied on top; a document's ``name.overrides.json`` likewise."""
+    path = Path(path)
+    if path.suffix != ".py":
+        return Engine.open(path, **engine_kwargs)
+    return run_script(path, **engine_kwargs).engine
 
 
 MAX_WORKERS = 64  # render processes at most (Scene.render, `phasor render --workers`)

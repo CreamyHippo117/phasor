@@ -457,6 +457,16 @@ def record_tweaks(overrides: Overrides, patch: Patch) -> Overrides:
     return Overrides(params=params, styles=styles, constraints=tuple(constraints))
 
 
+def merge_overrides(first: Overrides, then: Overrides) -> Overrides:
+    """Two sets of tweaks as one: ``then`` wins on the same parameter or style; its layout
+    rules follow ``first``'s (a rule both hold is kept once, where ``first`` has it). How a
+    script's tweaks block and an old ``name.overrides.json`` beside it are read together."""
+    have = {c.rule for c in first.constraints}
+    rules = (*first.constraints, *(c for c in then.constraints if c.rule not in have))
+    return Overrides(params={**first.params, **then.params},
+                     styles={**first.styles, **then.styles}, constraints=rules)  # fmt: skip
+
+
 __all__ = [
     "AddConstraint",
     "AddControl",
@@ -478,6 +488,7 @@ __all__ = [
     "SetTags",
     "apply_ops",
     "apply_overrides",
+    "merge_overrides",
     "parse_patch",
     "record_tweaks",
 ]  # fmt: skip
