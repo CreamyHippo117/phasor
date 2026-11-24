@@ -28,7 +28,8 @@ s.use_camera("orbit", target=(0.0, 0.0, 0.0), azimuth=-90.0, elevation=89.0,
              fov=FLAT_FOV, drift=0.0)  # fmt: skip
 s.set("camera.distance", expr(f"{FRAME} / (2 * tan(camera.fov * pi / 360))"))
 s.add(pde.Surface(id="drum", kind="wave", mode=(2, 3), scale=1.2, height=0.01, n=64,
-                  time=expr("t / 4"), size=(6.0, 6.0)))  # fmt: skip
+                  time=expr("(t + 3.35) / 4"), size=(6.0, 6.0)))  # fmt: skip
+# the phase is shifted so the drum is at full swing when the camera lands (t = 10)
 
 for name, t in (("start", 0.0), ("depth", 3.0), ("tilt", 5.5), ("rise", 6.5),
                 ("landed", 10.0), ("end", 16.0)):  # fmt: skip
