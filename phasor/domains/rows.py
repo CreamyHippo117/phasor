@@ -872,6 +872,5 @@ def group_ode_rows(rows: Iterable[Row]) -> OdeSystem:
 
 
 def _safe_text(text: object) -> str:
-    if not isinstance(text, str):
-        return ""
-    return text.strip()[:MAX_CHARS]
+    """A refused row keeps its whole text, so reading it again refuses it again."""
+    return text.strip() if isinstance(text, str) else ""
