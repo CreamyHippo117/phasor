@@ -57,6 +57,12 @@ REQUIRED = {
             "flow_set",
             "flow_equilibria",
             "flow_equilibrium_view",
+            "flow_section",  # Milestone 30: at tau 0 the plane and the seed's line show
+            "flow_twins",
+            "flow_time_series",
+            "flow_divergence",
+            "flow_bifurcation",  # the pendulum has no variable: the panel and a reason
+            "flow_limit_cycle",  # a damped pendulum: it settles on a rest point (a dot)
         )
     },
     "flow_manifold": {"system": "sys", "near": [3.14, 0.0]},  # a saddle: it has manifolds
@@ -68,7 +74,9 @@ IN_ROOM = {"sound_rays", "wavefront3d"}
 # Parts of a flow (Milestone 26): the scene gets a System called "sys" (a damped pendulum,
 # saddles at +-pi) and the type names it.
 IN_SYSTEM = {"flow_arrows", "flow_probe", "flow_set", "flow_equilibria",
-             "flow_equilibrium_view", "flow_manifold"}  # fmt: skip
+             "flow_equilibrium_view", "flow_manifold", "flow_section", "flow_twins",
+             "flow_time_series", "flow_divergence", "flow_bifurcation",
+             "flow_limit_cycle"}  # fmt: skip
 # Examples that build a Scene called ``s``: not domain_coloring (a script that renders the
 # kernel directly) or manim_reverb (a Manim script, run through the importer in its own test).
 EXAMPLES = sorted(p.stem for p in (ROOT / "examples").glob("*.py")

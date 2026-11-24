@@ -2065,9 +2065,80 @@ assert seen["lorenz.cplus"]["card"][1] == "eigenvalues -13.84, 0.08516 +/- 10.15
 assert seen["lorenz.ball"]["alive"] == 500
 ```
 
+**The analysis pack** (Milestone 30; numerics in `flow_analysis_math`, pure NumPy). Children
+of a `System` like the parts above:
+
+- `flow.Section(normal=, offset=, direction="up"|"down"|"both", seeds=, of=, transient=,
+  plane=)`: a Poincare section, where seeds cross the plane `normal . p = offset` (a line in
+  2D) up to the flow time, each crossing found by linear interpolation inside its step, drawn
+  as dots on the faint plane clipped to the window. `of` names a `Probe` or `FlowSet` whose
+  seeds to use. At most 4096 seeds, 2*10^7 seed-steps (clamped, `flow_budget`), the first
+  2*10^5 crossings. Semantics: the count (up to flow time 10 only), the first crossings with
+  their flow times.
+- `flow.TwinProbes(x0=, eps=, lyapunov=, transient=)`: two probes `eps` apart (the
+  direction a hash of the system and the start: no random numbers); semantics give their
+  distance, its growth `rate` (fitted before it saturates, up to flow time 10) and the
+  largest Lyapunov exponent from `x0` over `lyapunov` flow time (Benettin: a twin
+  renormalised every 0.5; `value` and `spread`, the standard error over 8 blocks, a
+  `statistic` rounded to its spread; `converged`; `chaotic_beyond` = ln(1e16) / value, the
+  flow time after which a path is not reproducible across machines).
+- `flow.TimeSeries(source=, x0=, components="xyz", span=, pos=, extent=)`: a panel (`pos`
+  the lower-left corner, `extent` the size; on the overlay `layer="overlay"`, frame heights,
+  y down: `pos=(0.05, 0.95)`) of x(t), y(t), z(t) of a `Probe` (or its own probe from `x0`),
+  or log10 of a `TwinProbes`' distance with the line of slope lambda.
+- `flow.DivergenceMap(counts=, z=, disk_center=, disk_radius=)`: div F as a heat map over
+  the window (a 3D system at height `z`; the heat-map parameters `smooth`, `isolines`, ...):
+  warm where areas grow, cool where they shrink. With `disk_radius`, a 2D disk carried to
+  the flow time; semantics give its `area` beside A0 exp(integral of div along the centre's
+  path) (equal for a constant divergence). A backdrop.
+- `flow.BifurcationDiagram(variable=, range=, count=, mode="equilibria"|"attractor",
+  coord=, x0=, transient=, sample_time=, sample="maxima"|"section", grid=, refine=)`: a
+  panel. `equilibria`: every equilibrium's `coord` per value (stable and unstable colours),
+  and candidates where the count changes or an eigenvalue crosses the imaginary axis,
+  refined by bisection and labelled `saddle-node`, `pitchfork`, `transcritical`, `Hopf` or
+  `window edge`. `attractor`: every value run at once from `x0`, the maxima of `coord` (or
+  crossings of a plane) after the transient: a period-doubling cascade, the period per value
+  (None: chaos or long), candidates between values (not refined). **Not detected**: global
+  bifurcations (homoclinic and heteroclinic loops, saddle-node of cycles, crises),
+  bifurcations of cycles other than the period changes the samples show, anything outside
+  the window, between Newton's starts or between two values. At most 256 values and 10^7
+  value-steps.
+- `flow.LimitCycle(x0=, transient=, max_time=, tol=, progress=)`: the attracting cycle
+  reached from `x0`: returns to the plane across the flow until they repeat (after `loops`
+  windings: 2 past a period doubling) within `tol`; `found` is `cycle` (period, point,
+  box), `equilibrium`, `stopped` or `none` (chaos, a torus, not settled). A centre's closed
+  orbits also return: whether a cycle is isolated is not checked.
+- `flow.lyapunov(system, x0, T, state=)`: the exponent as plain data, for tools: `system` a
+  document System's id with `state=engine.state_at(t)`, or a `flow_math.System` (with
+  `values=`).
+
+```python
+from phasor import Scene, flow
+
+s = Scene("hopf_analysis", passes=None)
+s.add(flow.System(id="h", **flow.preset("hopf", mu=0.5)))
+s.add(flow.LimitCycle(id="h.cycle", x0=(1.0, 0.3), transient=20.0, max_time=40.0))
+s.add(flow.BifurcationDiagram(id="h.sweep", variable="mu", range=(-1.0, 1.0), count=12))
+s.add(flow.Section(id="h.cut", normal=(0, 1), seeds=((1.0, 0.0),), direction="down"))
+s.add(flow.TwinProbes(id="h.twins", x0=(1.0, 0.0), lyapunov=0.0))
+s.set("h.tau", 7.0)
+seen = {o["id"]: o["semantic"] for o in s.engine.inspect(0.0)["objects"]}
+assert seen["h.cycle"]["found"] == "cycle" and abs(seen["h.cycle"]["period"] - 6.283185) < 1e-5
+assert [c["label"] for c in seen["h.sweep"]["candidates"]] == ["Hopf"]
+assert seen["h.cut"]["crossings"] == 1  # one turn of the cycle in 7 time units
+st = s.engine.state_at(0.0)
+assert abs(flow.lyapunov("h", (1.0, 0.3), 40.0, state=st)["value"]) < 0.05  # a cycle: 0
+```
+
+Examples: `examples/rossler_section.py` (a section of the Rossler band, twin probes and the
+exponent) and `examples/period_doubling.py` (the cascade of the Rossler system over c, and
+the cycle that closes after two loops).
+
 Numbers in semantics are rounded to 6 digits. A chaotic path is reproducible on one machine
 only (Lorenz parts across machines near flow time 40), so positions of probes and sets are
-reported only up to `flow_math.SAFE_TAU` (10). The numerics (`flow_math`: `System`,
+reported only up to `flow_math.SAFE_TAU` (10); numbers from longer runs are statistics
+(a Lyapunov exponent, rounded to its spread) or settle on an attracting cycle (a period,
+rounded to the cycle's tolerance, reproducible to it). The numerics (`flow_math`: `System`,
 `integrate`, `FlowSim`, `equilibria`, `classify`, `manifolds`) are plain NumPy and SymPy;
 `dyn` is a 2D front of the same core. Examples: `examples/lorenz_explorer.py` (3D) and `examples/pendulum_flow.py` (2D, a
 slider, separatrices, a probe).
