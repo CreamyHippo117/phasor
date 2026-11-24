@@ -221,11 +221,15 @@ def open_regular(path: str | Path, expect: tuple | None = None, *, nofollow: boo
     when ``expect`` (a ``stamp``'s modification time and size) no longer matches: the file
     changed since it was stamped. For readers that stream a file (a video decoder).
     ``nofollow``: a link there is refused (``path`` is one ``stamp`` resolved, so a link
-    there now was swapped in after the check; where the system has no ``O_NOFOLLOW``, only
-    the stamp check applies)."""
+    there now was swapped in after the check; where the system has no ``O_NOFOLLOW`` (Windows)
+    a link is refused by a check just before opening, which a swap in that instant can
+    still beat; the stamp check applies as well)."""
     flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
     if nofollow:
-        flags |= getattr(os, "O_NOFOLLOW", 0)
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        elif os.path.islink(path):
+            raise ValueError(f"{path}: is a link")
     try:
         fd = os.open(path, flags)
     except OSError as e:
