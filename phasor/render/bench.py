@@ -233,7 +233,8 @@ def run_view_bench(engine: Any, name: str, t: float, motions: tuple[str, ...], *
     sRGB bytes read back, ``quality`` as asked. Each motion draws ``count`` frames after one
     warm-up: ``orbit``/``pan`` move the camera only (a session camera, as while the mouse is
     down), ``flow`` advances the scene time by ``step`` a frame (the flow time with it when
-    the system has a ``rate``). ``cpu_expand``: batches expanded on the CPU instead of in the
+    the system has a ``rate``). Each call starts with no batch buffers on the card, so runs
+    at the same times are comparable. ``cpu_expand``: batches expanded on the CPU instead of in the
     vertex shader (the cost of building triangles every frame, as strokes do). Reports
     milliseconds per frame (mean, median), fps from the median, batch buffers uploaded per
     frame, and the load average (POSIX) so a shared machine's numbers can be judged."""
@@ -245,11 +246,12 @@ def run_view_bench(engine: Any, name: str, t: float, motions: tuple[str, ...], *
     from phasor.render.presets import DRAFT
 
     runner = engine.pass_runner()
-    theme = engine._snap.compiled.theme  # (as Engine._finished reads it; no public accessor)
+    theme = engine.theme
     size = (int(width), int(height))
     out: dict[str, Any] = {}
     old = runner.expand_on_cpu
     runner.expand_on_cpu = bool(cpu_expand)
+    runner.forget_batches()  # every run uploads from nothing: runs are comparable
     try:
         for motion in motions:
             if motion not in VIEW_MOTIONS:

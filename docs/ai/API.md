@@ -175,8 +175,12 @@ and `ctx.arrows3d(tails, tips, width=..., shape="flat" | "cone")`. Sizes are in 
 `"world"`, measured at each item or at one `anchor` point. `colors` is one RGBA or one per
 item; `opacity` multiplies every alpha. The arrays never depend on the camera: the vertex
 shader faces them to it, so an orbit uploads nothing and a frame where only the points moved
-uploads only the points (the renderer finds buffers by content). Arrays that are not finite
-`(n, 3)` numbers are repaired, not raised, and lint `batch_input` says what was done:
+uploads only the points (the renderer finds buffers by content). The derived bounds are the
+items padded by their sizes as the object's camera sees them (`px` sizes at the scene's own
+picture height), so the inspector and lint see a dot's whole disc, not its centre. Arrays
+that are not finite `(n, 3)` numbers (or past `core.batches.MAX_COORD`, 1e18) are repaired,
+not raised, and lint `batch_input` says what was done, also for a type that writes its own
+semantics:
 
 ```python
 @register
@@ -202,6 +206,8 @@ k2 = Scene("swarm")
 k2.add(Swarm(id="swarm"))
 seen = k2.engine.inspect(0.0, id="swarm", detail="full")["objects"][0]
 assert "curve" in seen["features"]  # its one line strip is a stroke: start, end, curve
+x0, y0, x1, y1 = seen["bbox"]["px"]
+assert y1 - y0 > 0.006 * 1080  # the dots' and arrows' sizes are in the box
 assert not [i for i in k2.engine.lint() if i.code == "batch_input"]
 ```
 

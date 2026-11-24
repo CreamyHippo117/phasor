@@ -32,7 +32,6 @@ from tests.conftest import gl_available
 
 ROOT = Path(__file__).resolve().parents[1]
 MODES = [None, pytest.param("auto", marks=pytest.mark.gl)]
-needs_gl = [pytest.mark.gl, pytest.mark.skipif(not gl_available(), reason="needs OpenGL")]
 
 
 @pytest.fixture(autouse=True)
@@ -178,6 +177,8 @@ def _batches(units="height", anchor=None):
     return {"points": pts, "lines": lines, "flat": flat, "cone": cone}
 
 
+@pytest.mark.gl
+@pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
 @pytest.mark.parametrize("cam_name", sorted(CAMERAS))
 @pytest.mark.parametrize(
     ("units", "anchor"),
@@ -343,8 +344,11 @@ def test_bounds_and_features_come_from_what_the_batch_records():
     impl = state["c"].impl
     box = impl.world_bounds(state)
     sp = _spiral()
-    assert np.allclose(box.lo, sp.min(axis=0), atol=1e-6)
-    assert np.allclose(box.hi, sp.max(axis=0), atol=1e-6)
+    # the points' box padded by half the line's width (0.008 of the frame height) on screen
+    half = 0.008 * state.camera.units_per_height() / 2
+    pad = np.array([half, half, 0.0])
+    assert np.allclose(box.lo, sp.min(axis=0) - pad, atol=1e-6)
+    assert np.allclose(box.hi, sp.max(axis=0) + pad, atol=1e-6)
     f = impl.features(state)
     assert np.allclose(f["start"], sp[0], atol=1e-6) and np.allclose(f["end"], sp[-1], atol=1e-6)
     assert "batch_input" not in e.inspect(0.0, id="c")["objects"][0]["semantic"]
@@ -369,11 +373,7 @@ def _scene_of(kind: str, cam: str) -> Scene:
     ("units", "anchor"),
     [("height", None), ("px", None), ("world", None), ("height", (0.3, -0.2, 0.1))],
 )
-def test_the_vertex_shader_equals_the_cpu_expansion(cam_name, units, anchor, request):
-    for m in needs_gl:
-        request.applymarker(m)
-    if not gl_available():
-        pytest.skip("needs OpenGL")
+def test_the_vertex_shader_equals_the_cpu_expansion(cam_name, units, anchor):
     from phasor.render.passes import default_renderer
 
     r = default_renderer()
@@ -386,13 +386,11 @@ def test_the_vertex_shader_equals_the_cpu_expansion(cam_name, units, anchor, req
         assert np.abs(gl[valid] - ref[valid]).max() <= 2e-6 * max(scale, 1.0), name
 
 
+@pytest.mark.gl
+@pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
 @pytest.mark.parametrize("cam_name", sorted(CAMERAS))
 @pytest.mark.parametrize("kind", ["lines", "points", "flat", "cone"])
-def test_gl_and_cpu_expanded_pictures_agree(kind, cam_name, request):
-    for m in needs_gl:
-        request.applymarker(m)
-    if not gl_available():
-        pytest.skip("needs OpenGL")
+def test_gl_and_cpu_expanded_pictures_agree(kind, cam_name):
     e = _scene_of(kind, cam_name).engine
     r = e.pass_runner()
     try:
@@ -416,14 +414,12 @@ def _lorenz():
     return s.engine
 
 
-def test_orbiting_uploads_nothing_and_flow_time_uploads_one_positions_array(request):
+@pytest.mark.gl
+@pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
+def test_orbiting_uploads_nothing_and_flow_time_uploads_one_positions_array():
     """Advice 1.4, measured: the M26 Lorenz scene. After the first frame an orbit (twelve
     azimuths) uploads no batch buffer at all; advancing the flow time uploads one array per
     batch that moves (the ball's positions), never its colours or sizes."""
-    for m in needs_gl:
-        request.applymarker(m)
-    if not gl_available():
-        pytest.skip("needs OpenGL")
     e = _lorenz()
     r = e.pass_runner()
     t = 4.0  # field, equilibria and the ball shown; the flow time is moving
@@ -443,14 +439,12 @@ def test_orbiting_uploads_nothing_and_flow_time_uploads_one_positions_array(requ
     assert sum(b.kind == "points" and b.n == 2000 for b in moving) == 1
 
 
-def test_a_growing_path_uploads_only_its_positions(request):
+@pytest.mark.gl
+@pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
+def test_a_growing_path_uploads_only_its_positions():
     """A probe's path gains points as the flow time runs: one colour and one width are kept
     once and one strip needs no strip array, so each new frame uploads one array per batch
     (the path's points and the moving dot's)."""
-    for m in needs_gl:
-        request.applymarker(m)
-    if not gl_available():
-        pytest.skip("needs OpenGL")
     s = Scene("grow")
     s.add(flow.System(id="p", equations=("y", "-sin(x) - 0.3*y"), window=((-4, 4), (-3, 3)),
                       rate=1.0, frame=False))  # fmt: skip
@@ -493,11 +487,9 @@ def test_interactive_quality_thins_the_field_and_strides_the_set():
     assert sem["arrows"] == 120 * 120
 
 
-def test_interactive_quality_is_checked_and_keys_the_frame_plan(request):
-    for m in needs_gl:
-        request.applymarker(m)
-    if not gl_available():
-        pytest.skip("needs OpenGL")
+@pytest.mark.gl
+@pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
+def test_interactive_quality_is_checked_and_keys_the_frame_plan():
     from phasor.engine import Engine
 
     eng = Engine(_big().engine.document, passes="auto")
@@ -561,13 +553,11 @@ def test_a_batch_keeps_nothing_that_depends_on_the_camera():
     assert keys[0] == keys[1] and len(keys[0]) >= 4
 
 
-def test_the_live_view_bench_reports_frame_rates_and_uploads(request):
+@pytest.mark.gl
+@pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
+def test_the_live_view_bench_reports_frame_rates_and_uploads():
     """``phasor bench --explorer``'s measurement on a small case: an orbit uploads nothing,
     flow frames upload the moving points; the CPU-expanded run uploads no batch at all."""
-    for m in needs_gl:
-        request.applymarker(m)
-    if not gl_available():
-        pytest.skip("needs OpenGL")
     from phasor.cli import _explorer_cases
     from phasor.render.bench import run_view_bench
 
@@ -589,14 +579,12 @@ def test_the_live_view_bench_reports_frame_rates_and_uploads(request):
         run_view_bench(e, "small", 0.2, ("spin",), count=1)
 
 
-def test_a_long_flow_keeps_few_buffers_on_the_card(request):
+@pytest.mark.gl
+@pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
+def test_a_long_flow_keeps_few_buffers_on_the_card():
     """Each flow-time frame makes new positions; the old ones are dead and let go of after
     ``BATCH_KEEP_RENDERS`` renders, so a long render keeps a bounded handful of buffers (not
     every frame's positions), and an orbit afterwards still uploads nothing."""
-    for m in needs_gl:
-        request.applymarker(m)
-    if not gl_available():
-        pytest.skip("needs OpenGL")
     from phasor.render.passes import BATCH_KEEP_RENDERS, BATCH_SPARE, GLRenderer
 
     s = Scene("long_flow")

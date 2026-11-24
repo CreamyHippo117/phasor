@@ -292,14 +292,12 @@ def _cmd_bench_explorer(args: argparse.Namespace) -> int:
 
     results = []
     for name, engine, t, motions, _ in _explorer_cases():
-        for k, opts in enumerate(({}, {"cpu_expand": True}, {"quality": "interactive"})):
+        for opts in ({}, {"cpu_expand": True}, {"quality": "interactive"}):
             if opts and name.startswith("2d portrait"):
                 continue  # strokes: nothing to expand or thin
-            # each run starts where the last stopped: flow frames it has not drawn before
-            # (buffers are found by content; a repeated frame would upload nothing)
-            start = t + k * (args.count + 1) / 30
+            # the same frames for every way (each run starts with no buffers on the card)
             try:
-                r = run_view_bench(engine, name, start, motions, width=args.width,
+                r = run_view_bench(engine, name, t, motions, width=args.width,
                                    height=args.height, count=args.count, **opts)  # fmt: skip
             except RuntimeError as e:  # no OpenGL
                 print(f"phasor bench: {e}", file=sys.stderr)

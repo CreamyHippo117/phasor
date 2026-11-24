@@ -5,7 +5,9 @@ A type that defines only ``Params`` and ``draw`` still has bounds, features and 
 read what it emitted. Pure NumPy, so ``core`` stays free of GPU libraries.
 
 - ``world_bounds``: the box around every recorded vertex; for a ``field`` the quad's four
-  corners (its ``pixels`` callback is never called); for text the box the text occupies.
+  corners (its ``pixels`` callback is never called); for text the box the text occupies;
+  for a world-space batch its items padded by their sizes as the object's camera sees them
+  at the scene's picture height (``core.batches.extent``).
 - ``features``: ``center`` and the box's compass points (``top``, ``top_right``, ...: the
   box's sides as the camera sees them), plus ``start``, ``end`` and ``curve`` when the
   object drew exactly one stroke (through ``domains/strokes.py``).
@@ -21,8 +23,10 @@ read-only.
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -47,9 +51,14 @@ COMPASS = {
 class Recorder:
     """A ``DrawContext`` that keeps the geometry of what is drawn and draws nothing."""
 
-    def __init__(self, right, up) -> None:
+    def __init__(self, right, up, camera=None, frame_px: int = 1080) -> None:
         self.right = np.asarray(right, dtype=np.float64)
         self.up = np.asarray(up, dtype=np.float64)
+        # The camera and picture height a batch's sizes are measured with (screen units:
+        # ``height`` and ``px``, the scene's own picture height for ``px``); without a
+        # camera a batch's box is its items' centres.
+        self.camera = camera
+        self.frame_px = int(frame_px)
         self.points: list[np.ndarray] = []  # (N, 3) blocks of world positions
         self.kinds: list[str] = []  # one per command: triangles | field | surface | text | batch
         self.strokes: list[np.ndarray] = []  # center lines noted by domains/strokes.py
@@ -94,6 +103,9 @@ class Recorder:
         if b is None:
             return
         self._add("batch", b.positions if b.tips is None else np.r_[b.positions, b.tips])
+        if self.camera is not None:  # the box includes the items' sizes (audit B1)
+            lo, hi = batches.extent(b, self.camera, self.frame_px)
+            self.points.append(np.stack([lo, hi]))
         if b.kind == "lines":
             cuts = [] if b.strips is None else np.flatnonzero(np.diff(b.strips)) + 1
             for run in np.split(b.positions.astype(np.float64), cuts):
@@ -236,11 +248,11 @@ def record(impl, state: SceneState) -> Recording:
     me = state[impl.id]
     cam = state.camera_for(me)
     key = (type(impl), impl.id, *_fingerprint(state, impl.id), state.base_dir,
-           _files_key(impl, state, me))  # fmt: skip
+           _files_key(impl, state, me), state.height)  # fmt: skip
     hit = _CACHE.peek(key)
     if hit is not None and _still(state, hit[0]):
         return hit[1]
-    rec_ctx = Recorder(cam.right, cam.up)
+    rec_ctx = Recorder(cam.right, cam.up, cam, state.height)
     watch = _Watch(state, impl.id)
     impl.draw(rec_ctx, watch, "color")
     pts = np.vstack(rec_ctx.points) if rec_ctx.points else np.zeros((0, 3))
@@ -293,6 +305,24 @@ def derived_features(self, state: SceneState) -> dict[str, np.ndarray]:
     """``center``, the box's compass points, and ``start``/``end``/``curve`` for one stroke."""
     rec = record(self, state)
     return features_of(rec, bounds_of(rec, _anchor(state, self.id)))
+
+
+_BATCH_CALLS = ("points3d(", "lines3d(", "arrows3d(")
+
+
+@functools.cache
+def uses_batches(cls: type) -> bool:
+    """Whether the file that defines ``cls`` calls a world-space batch: lint then records a
+    type that writes its own semantics too, so repairs to its batch input are reported
+    (``batch_input``) without drawing every other object once more."""
+    from phasor.core.objects import source_file
+
+    path = source_file(cls)
+    try:
+        text = Path(path).read_text(encoding="utf-8") if path else ""
+    except OSError:
+        return False
+    return any(c in text for c in _BATCH_CALLS)
 
 
 def derived_semantics(self, state: SceneState) -> dict[str, Any]:

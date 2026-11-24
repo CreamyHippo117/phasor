@@ -901,6 +901,10 @@ def run(
             if sem.get("too_fast"):
                 f.add("flow_too_fast", (e["id"],), t, n=sem["too_fast"])
             repairs = sem.get("batch_input")  # world-space batch input repaired (M28)
+            if repairs is None and e["id"] in state:  # a type with its own semantics (audit S1)
+                impl = state[e["id"]].impl
+                if record.uses_batches(type(impl)):
+                    repairs = list(record.record(impl, state).issues) or None
             if isinstance(repairs, list) and len(repairs) > th["batch_repairs"]:
                 f.add("batch_input", (e["id"],), t, what="; ".join(map(str, repairs[:4])),
                       n=len(repairs))  # fmt: skip

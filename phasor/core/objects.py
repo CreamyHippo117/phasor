@@ -82,6 +82,11 @@ class DrawContext(Protocol):
     """What an object may ask a renderer to draw. Renderer-agnostic and pass-agnostic: the
     renderer decides what a command means in the ``color``, ``id`` and ``solo`` passes."""
 
+    # A render hint (Milestone 28): "full", or "interactive" while a person drags (draw less:
+    # fewer arrows, strided points). Never a document change; the recorder, the inspector's
+    # passes and lint always say "full". Read it with ``getattr(ctx, "quality", "full")``.
+    quality: str
+
     def triangles(
         self,
         positions: np.ndarray,  # (N, 3) world space

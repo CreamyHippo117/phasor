@@ -40,9 +40,15 @@ KINDS = ("points", "lines", "arrows")
 UNITS = ("world", "height", "px")
 ARROW_SHAPES = ("flat", "cone")
 MAX_ITEMS = 4_200_000  # points, line points or arrows in one batch (points x trail is 4e6)
+# Coordinates past this are skipped like non-finite ones: float32 holds them, but the
+# shader squares lengths (an arrow's |d|^2), which overflows float32 past about 1.8e19.
+MAX_COORD = 1e18
 DISC_SEGMENTS = 12  # as strokes.disc_batch
 CONE_SEGMENTS = 8  # as strokes.cone_batch
 MITER_MIN = 0.25  # miter limit 4x, as strokes.polylines
+# A segment whose direction in the camera plane is below this share of its length runs
+# (nearly) along the view: in perspective its side is taken from its direction on screen.
+ALONG_VIEW = 1e-3
 HEAD = 0.35  # an arrow's head, a share of its length (strokes.arrow_batch)
 CONE_SHADE = (0.55,) * CONE_SEGMENTS + (1.0, 0.4)  # ring, tip, base centre
 
@@ -205,9 +211,11 @@ def _common(units: Any, anchor: Any, glow: Any, opacity: Any, issues: list[str])
 
 
 def _finite_rows(*arrays: np.ndarray) -> np.ndarray:
+    """Rows that are finite and within ``MAX_COORD`` (so finite in float32 and squarable)."""
     ok = np.ones(len(arrays[0]), dtype=bool)
-    for a in arrays:
-        ok &= np.isfinite(a).all(axis=1)
+    with np.errstate(invalid="ignore"):
+        for a in arrays:
+            ok &= (np.abs(a) <= MAX_COORD).all(axis=1)
     return ok
 
 
@@ -224,7 +232,8 @@ def _colors_sizes(colors, sizes, n, ok, issues, size_name):
     (the items ``ok`` keeps), or one for all (1 row). Also whether the colour was one."""
     cols, one = _per_item(colors, n, "colors", 4, issues, np.ones(4))
     cols = np.array(cols if one else cols[ok], dtype=np.float64)
-    if not np.isfinite(cols).all() or (cols < 0).any() or (cols[:, 3] > 1).any():
+    if not np.isfinite(cols).all() or (cols < 0).any() or (cols > 1e4).any() \
+            or (cols[:, 3] > 1).any():  # fmt: skip
         issues.append("colors had values that are not finite, negative, or an alpha above 1: "
                       "clamped")  # fmt: skip
         cols = np.clip(np.nan_to_num(cols, nan=0.0, posinf=0.0, neginf=0.0), 0.0, 1e4)
@@ -242,7 +251,7 @@ def _colors_sizes(colors, sizes, n, ok, issues, size_name):
 def _skipped(ok: np.ndarray, issues: list[str], what: str) -> None:
     bad = int((~ok).sum())
     if bad:
-        issues.append(f"{bad:,} {what} not finite: skipped")
+        issues.append(f"{bad:,} {what} not finite (or past {MAX_COORD:g}): skipped")
 
 
 def make_points(centers, *, radius, units="height", colors=(1.0, 1.0, 1.0, 1.0), opacity=1.0,
@@ -291,8 +300,8 @@ def make_lines(points, *, width, units="height", colors=(1.0, 1.0, 1.0, 1.0), op
             strip = np.zeros(total, dtype=np.int64)
         else:
             strip = np.repeat(np.arange(len(ln)), ln.astype(np.int64))
-    elif raw.ndim == 3:
-        strip = np.repeat(np.arange(raw.shape[0]), raw.shape[1])
+    elif raw.ndim >= 3:  # (..., l, 3): every leading index is one strip of l points
+        strip = np.repeat(np.arange(int(np.prod(raw.shape[:-2]))), raw.shape[-2])
     else:
         strip = np.zeros(total, dtype=np.int64)
     n = _cut(total, issues, "line points")
@@ -350,13 +359,19 @@ def make_arrows(tails, tips, *, width, units="height", colors=(1.0, 1.0, 1.0, 1.
 
 
 def _head(x: Any, n: int, total: int) -> Any:
-    """A per-item array of ``total`` items cut to the first ``n`` (past ``MAX_ITEMS``)."""
-    if n < total and isinstance(x, np.ndarray) and x.ndim >= 1 and len(x) == total:
-        return x[:n]
+    """A per-item value of ``total`` items (an array or a list, flat or shaped like the
+    points) cut to the first ``n`` (past ``MAX_ITEMS``); anything else as it was."""
+    if n >= total or isinstance(x, str):
+        return x
+    try:
+        a = np.asarray(x, dtype=np.float64)
+    except (TypeError, ValueError, OverflowError):
+        return x
+    if a.ndim == 1 and len(a) == total:
+        return a[:n]
+    if a.ndim >= 2 and int(np.prod(a.shape[:-1])) == total:
+        return a.reshape(total, a.shape[-1])[:n]
     return x
-
-
-# ---------------------------------------------------------------- the expansion (CPU)
 
 
 def world_sizes(cam: Camera, at: np.ndarray, sizes: np.ndarray, units: str, frame_px: int,
@@ -397,13 +412,20 @@ def _points_instances(b: Batch, cam, frame_px):
 def _lines_instances(b: Batch, cam, frame_px):
     """Instance j is the segment from point j to j + 1 (valid when both are in one strip);
     its four vertices are point j's two sides, then point j + 1's (strokes.polylines)."""
-    right, up, _, _ = _camera(cam)
+    right, up, forward, eye = _camera(cam)
     p = b.positions.astype(np.float64)
     n = len(p)
     s = b.strips if b.strips is not None else np.zeros(n, dtype=np.int32)
-    flat = np.c_[p @ right, p @ up]
-    d = flat[1:] - flat[:-1]
+    # each segment's direction in the camera plane, from the difference (no cancellation)
+    dp = p[1:] - p[:-1]
+    d = np.c_[dp @ right, dp @ up]
     norm = np.sqrt(d[:, 0] * d[:, 0] + d[:, 1] * d[:, 1])
+    if cam.perspective:  # nearly along the view: its direction on screen, from the eye
+        rel = p - eye
+        q = np.c_[rel @ right, rel @ up] / np.maximum(rel @ forward, 1e-6)[:, None]
+        along = norm <= ALONG_VIEW * np.sqrt((dp * dp).sum(axis=1))
+        d = np.where(along[:, None], q[1:] - q[:-1], d)
+        norm = np.sqrt(d[:, 0] * d[:, 0] + d[:, 1] * d[:, 1])
     u = d / np.where(norm == 0, 1.0, norm)[:, None]
     perp = np.c_[-u[:, 1], u[:, 0]]  # (n - 1, 2): the normal of segment i -> i + 1
     has_prev = np.r_[False, s[1:] == s[:-1]]
@@ -457,6 +479,37 @@ def _cone_instances(b: Batch, cam, frame_px):
                                 + np.sin(ang)[None, :, None] * v[:, None, :])  # fmt: skip
     verts = np.concatenate([ring, tip[:, None, :], a[:, None, :]], axis=1)
     return verts, np.ones(len(a), dtype=bool), np.asarray(CONE_SHADE)
+
+
+def extent(b: Batch, cam: Camera, frame_px: int) -> tuple[np.ndarray, np.ndarray]:
+    """A box around what ``b`` draws seen by ``cam`` at ``frame_px`` pixels high: each item
+    padded by its size (a dot's radius, half a line's width, an arrow head's half-width, a
+    cone's radius) in world units. Camera-facing pads lie along the camera's right and up;
+    an arrow's and a cone's in every direction. Miter spikes are not counted. What the
+    recorder gives as bounds (``core/record.py``)."""
+    right, up, _, _ = _camera(cam)
+    p = b.positions.astype(np.float64)
+    sizes = b.per_item()[1]
+    facing = np.abs(right) + np.abs(up)
+    if b.kind == "points":
+        pads = [(p, world_sizes(cam, p, sizes, b.units, frame_px, b.anchor)[:, None] * facing)]
+    elif b.kind == "lines":
+        half = world_sizes(cam, p, sizes, b.units, frame_px, b.anchor) / 2.0
+        pads = [(p, half[:, None] * facing)]
+    else:
+        tip = b.tips.astype(np.float64)
+        if b.shape == "cone":
+            r = world_sizes(cam, p, sizes, b.units, frame_px, b.anchor) / 2.0
+            pads = [(p, np.repeat(r[:, None], 3, axis=1)), (tip, np.zeros_like(tip))]
+        else:
+            mid = (p + tip) / 2.0
+            w = world_sizes(cam, mid, sizes, b.units, frame_px, b.anchor) / 2.0
+            length = np.sqrt(((tip - p) ** 2).sum(axis=1))
+            hw = np.maximum(w * 2.2, length * b.head * 0.45)[:, None]
+            pads = [(p, np.repeat(hw, 3, axis=1)), (tip, np.repeat(hw, 3, axis=1))]
+    lo = np.min([np.min(q - e, axis=0) for q, e in pads], axis=0)
+    hi = np.max([np.max(q + e, axis=0) for q, e in pads], axis=0)
+    return lo, hi
 
 
 def _template(kind: str, shape: str) -> np.ndarray:

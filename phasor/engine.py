@@ -520,6 +520,11 @@ class Engine:
     def duration(self) -> float:
         return self._snap.compiled.duration
 
+    @property
+    def theme(self) -> Any:
+        """The resolved theme the document renders with (its look applied)."""
+        return self._snap.compiled.theme
+
     def lint(
         self,
         step: float = lint_rules.DEFAULT_STEP,

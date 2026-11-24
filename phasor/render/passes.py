@@ -283,8 +283,15 @@ void emit(vec3 p) {
 vec2 flat2(vec3 p) { return vec2(dot(p, u_right), dot(p, u_up)); }
 // the normal (in the camera plane) of the segment from point i to i + 1
 vec2 seg_normal(int i) {
-    vec2 d = flat2(P(i + 1)) - flat2(P(i));
+    vec3 dp = P(i + 1) - P(i);  // project the difference: no cancellation
+    vec2 d = flat2(dp);
     float n = sqrt(d.x * d.x + d.y * d.y);
+    if (u_persp == 1 && n <= 1e-3 * sqrt(dot(dp, dp))) {  // along the view: its screen direction
+        vec3 r0 = P(i) - u_eye;
+        vec3 r1 = P(i + 1) - u_eye;
+        d = flat2(r1) / max(dot(r1, u_forward), 1e-6) - flat2(r0) / max(dot(r0, u_forward), 1e-6);
+        n = sqrt(d.x * d.x + d.y * d.y);
+    }
     vec2 u = d / (n == 0.0 ? 1.0 : n);
     return vec2(-u.y, u.x);
 }
@@ -386,6 +393,7 @@ BATCH_KINDS = {("points", "disc"): "b_points", ("lines", "strip"): "b_lines",
 BATCH_BUFFERS = 512  # storage buffers kept by content (``GLRenderer._batch_buffer``)
 BATCH_BYTES = 768 * 2**20  # ... and their bytes
 BATCH_SPARE = 8  # evicted buffers kept for reuse instead of released
+BATCH_SPARE_BYTES = 4 * 2**20  # ... only those this small (a bigger one is released)
 BATCH_KEEP_RENDERS = 32  # renders (any pass) a batch buffer outlives its last use
 QUALITIES = ("full", "interactive")
 MATERIALS = {"solid": 0, "glass": 1, "wire": 2, "emissive": 3}
@@ -590,6 +598,7 @@ class GLRenderer:
         # Draw batches as plain triangles expanded on the CPU (``core.batches.expand``)
         # instead of in the vertex shader: the reference picture the tests compare against.
         self.expand_on_cpu = False
+        self._limits: dict[str, int] | None = None  # storage-buffer limits, read once
         # Uploads, for tests and ``phasor bench``: "batch" storage buffers written (and their
         # bytes), "arena" vertex and index buffers refilled for the other draw calls.
         self.uploads = {"batch": 0, "batch_bytes": 0, "arena": 0}
@@ -689,8 +698,7 @@ class GLRenderer:
         if buf is not None:
             self._batch_cache.move_to_end(key)
             return buf
-        buf = self._batch_spare.pop() if self._batch_spare else self.ctx.buffer(
-            reserve=max(a.nbytes, 16))  # fmt: skip
+        buf = self._spare_for(a.nbytes) or self.ctx.buffer(reserve=max(a.nbytes, 16))
         _refill(buf, a)
         self.uploads["batch"] += 1
         self.uploads["batch_bytes"] += a.nbytes
@@ -698,11 +706,22 @@ class GLRenderer:
         self._evict_batches()
         return buf
 
+    def _spare_for(self, nbytes: int):
+        """A spare buffer that fits ``nbytes`` without being much larger (audit S2: a small
+        array must not sit in a buffer of megabytes), or None."""
+        fits = [b for b in self._batch_spare if b.size <= 4 * max(nbytes, ARENA_MIN_BYTES)]
+        if not fits:
+            return None
+        best = max(fits, key=lambda b: b.size)
+        self._batch_spare.remove(best)
+        return best
+
     def _evict_batches(self) -> None:
         """Let go of buffers not drawn in the last ``BATCH_KEEP_RENDERS`` renders (a flow
         that moves makes new positions every frame: the old ones are dead), and past the
         caps the least recently used; never one drawn in the current render."""
         total = sum(x.size for x in self._batch_cache.values())
+        total += sum(x.size for x in self._batch_spare)  # spares count against the cap
         for old in list(self._batch_cache):
             stale = self._renders - self._batch_seen.get(old, -1) > BATCH_KEEP_RENDERS
             over = len(self._batch_cache) > BATCH_BUFFERS or total > BATCH_BYTES
@@ -711,10 +730,53 @@ class GLRenderer:
             gone = self._batch_cache.pop(old)
             self._batch_seen.pop(old, None)
             total -= gone.size
-            if len(self._batch_spare) < BATCH_SPARE and gone.size <= 64 * 2**20:
+            if len(self._batch_spare) < BATCH_SPARE and gone.size <= BATCH_SPARE_BYTES:
                 self._batch_spare.append(gone)
+                total += gone.size
             else:
                 gone.release()
+
+    def _limits_current(self) -> dict[str, int]:
+        """The storage-buffer limits of this context (the context must be current): the
+        largest block in bytes, and how many blocks a vertex shader may read. GL 4.3 only
+        promises 16 MB and none in the vertex stage (audit S5)."""
+        if self._limits is None:
+            info = self.ctx.info
+            self._limits = {
+                "block_bytes": int(info.get("GL_MAX_SHADER_STORAGE_BLOCK_SIZE", 0) or 0),
+                "vertex_blocks": int(info.get("GL_MAX_VERTEX_SHADER_STORAGE_BLOCKS", 0) or 0),
+            }
+        return self._limits
+
+    def storage_limits(self) -> dict[str, int]:
+        """``{"block_bytes", "vertex_blocks"}``, read on the GL thread."""
+
+        def read() -> dict[str, int]:
+            with self.ctx:
+                return dict(self._limits_current())
+
+        return on_gl_thread(read)
+
+    def _fits(self, b: batches.Batch) -> bool:
+        """Whether the shader can draw ``b``: four storage blocks in the vertex stage and every
+        array within the largest block. Otherwise it is drawn from the CPU expansion (the
+        same triangles, built each frame)."""
+        lim = self._limits_current()
+        biggest = max(a.nbytes for a in b.arrays().values())
+        return lim["vertex_blocks"] >= 4 and biggest <= lim["block_bytes"]
+
+    def forget_batches(self) -> None:
+        """Let go of every batch buffer (a benchmark starting each run from nothing)."""
+
+        def run() -> None:
+            with self.ctx:
+                for buf in [*self._batch_cache.values(), *self._batch_spare]:
+                    buf.release()
+            self._batch_cache.clear()
+            self._batch_spare.clear()
+            self._batch_seen.clear()
+
+        on_gl_thread(run)
 
     def batch_memory(self) -> dict[str, int]:
         """Storage buffers kept for batches (and spares) and their bytes on the card."""
@@ -810,7 +872,7 @@ class GLRenderer:
         for kind, c in self._commands(state, obj, pass_) if commands is None else commands:
             if kind == "batch":
                 b = c["batch"]
-                if not self.expand_on_cpu:
+                if not self.expand_on_cpu and self._fits(b):
                     prog = self._program(pass_, BATCH_KINDS[(b.kind, b.shape)])
                     self._object_uniforms(prog, obj, pass_, cam, order, zoom,
                                           (1.0, 1.0, 1.0, b.opacity), b.glow)  # fmt: skip

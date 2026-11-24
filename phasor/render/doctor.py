@@ -230,6 +230,9 @@ def _exercise_opengl(ctx) -> Check:
         "version": info.get("GL_VERSION"),
         "version_code": ctx.version_code,
         "software": "llvmpipe" in str(info.get("GL_RENDERER", "")).lower(),
+        # world-space batches (Milestone 28) read storage buffers in the vertex shader
+        "storage_block_bytes": int(info.get("GL_MAX_SHADER_STORAGE_BLOCK_SIZE", 0) or 0),
+        "vertex_storage_blocks": int(info.get("GL_MAX_VERTEX_SHADER_STORAGE_BLOCKS", 0) or 0),
     }
     size = 64
     tri = np.array([-0.8, -0.8, 0.8, -0.8, 0.0, 0.8], dtype="f4")
@@ -270,6 +273,22 @@ def _exercise_opengl(ctx) -> Check:
     if not ok:
         detail += f"; triangle_ok={data['triangle_ok']} id_pass_ok={data['id_pass_ok']}"
     return Check("opengl", ok, detail, data)
+
+
+def check_batches(gl: Check) -> Check:
+    """World-space batches (Milestone 28): drawn in the vertex shader from storage buffers
+    when the context allows four blocks in that stage; an array larger than one block, or a
+    context without them, is drawn from triangles built on the CPU (slower, same picture)."""
+    if not gl.ok:
+        return Check("batches", None, "skipped: no OpenGL")
+    blocks = int(gl.data.get("vertex_storage_blocks", 0))
+    size = int(gl.data.get("storage_block_bytes", 0))
+    data = {"vertex_storage_blocks": blocks, "storage_block_bytes": size}
+    if blocks < 4:
+        return Check("batches", False, f"{blocks} storage blocks in the vertex shader (4 "
+                     "needed): batches are drawn from CPU-built triangles", data)  # fmt: skip
+    return Check("batches", True, f"in the vertex shader; arrays up to {size / 2**20:.0f} MB "
+                 "a block (larger ones: CPU-built triangles)", data)  # fmt: skip
 
 
 # ------------------------------------------------------------------ encoders
@@ -400,7 +419,8 @@ def run_doctor() -> DoctorReport:
         checks.append(Check("rawkernel", None, "skipped: no CUDA"))
         checks.append(_guard("nvidia_smi", check_nvidia_smi))
         checks.append(_guard("cpu_kernels", check_cpu_kernels))
-    checks.append(_guard("opengl", check_opengl))
+    gl = _guard("opengl", check_opengl)
+    checks += [gl, _guard("batches", lambda: check_batches(gl))]
     pyav = _guard("pyav", check_pyav)
     ffmpeg = _guard("ffmpeg", check_ffmpeg)
     checks += [pyav, ffmpeg, _guard("extras", check_extras)]
