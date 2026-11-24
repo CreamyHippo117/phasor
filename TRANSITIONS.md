@@ -46,10 +46,10 @@ timing from the theme `[motion]`, docs, an example, tests, a storyboard golden.
 - **A `lift` verb** (`s.at("m").lift(elevation=32, until="landed")`): it would write the
   distance expression and the two morphs. That touches `time/verbs.py`, needs theme
   `[motion]` timing and order-independence tests, so it waits for the owner's OK.
-- **Text in a lifted scene**: in a test still of `prism_domain` tilted to 35 degrees, the
-  equation (a world-layer billboard at z = 0) lost its lower half. Probably it sits
-  in the field quad's plane and is hidden by depth; not investigated yet. Until then, put text
-  in lifted scenes on the overlay layer.
+- **Text in a lifted scene**: tilted, a world-layer equation at z = 0 lost its lower half
+  (it went below the plane and the depth test dropped it). The fix is
+  `pending/text_depth.patch`, waiting for the owner's OK; until then put text in lifted
+  scenes on the overlay layer.
 - **Drift**: keep `drift=0` while flat (near top-down, azimuth sway rotates the whole
   picture); orbit after landing instead.
 - **Plane larger than the frame** for domain colouring: tilted, a frame-sized plane shows its

@@ -20,3 +20,23 @@ Each change is a patch against the branch it sits on, plus pictures. Apply with
 - Pictures: `lift_verb_before.png` (the example done by hand with `morph`), and
   `lift_verb_after.png` (with the verb; the drum's phase shifted so it is at full swing as
   the camera lands). Times 2, 4.5, 6.5/6, 8/7.5, 10, 14 s.
+
+## `text_depth.patch`: text no longer cut by the plane it stands on when the camera tilts
+
+- Cause: world text is a billboard facing the camera, centred on its origin. Tilted, the
+  part below the baseline (a fraction's denominator) goes below z = 0, behind a plane at
+  z = 0 (domain colouring, a heat map), and the depth test drops it. Top-down the text lies
+  in the plane, so draw order decides and it shows.
+- Fix (`render/passes.py`): a text corner below the horizontal plane through its origin is
+  depth-tested where its view ray crosses that plane: same pixel, nearer depth. Only text,
+  only `gl_Position.z`; the id/solo passes share it, so the inspector agrees. Ortho is
+  unchanged by construction; all eight 3D examples render byte-identical.
+- Trade-off: an opaque object in a thin slab just in front of the text's lower part no
+  longer hides it (biggest at grazing angles: a dot 5% of the way to the eye at 10 degrees
+  elevation goes from 21% to 93% visible; at 30% of the way nothing changes). The
+  alternative, hinging text at its bottom edge, moves text on screen in every 3D view and
+  changes goldens.
+- SPEC.md (Milestone 6 "as built") gets one sentence. Tests: `tests/test_camera3d.py`
+  (cut at 20/35/60 degrees before, whole after; still hidden by what is in front).
+- Picture: `text_depth_before_after.png` (top left before at 35 degrees; then after at 35,
+  10, 60).

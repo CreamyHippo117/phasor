@@ -1,0 +1,149 @@
+diff --git a/SPEC.md b/SPEC.md
+index 9bc6197..7f72bc8 100644
+--- a/SPEC.md
++++ b/SPEC.md
+@@ -282,7 +282,7 @@ The AI never guesses where things are from pixels: the renderer reports ground t
+ - Solve at markers, spline between them, then verify 10 Hz samples along the path. Failures become lint issues with times.
+ - The result is baked into camera tracks like any other layout.
+ 
+-**As built (Milestone 6).** Camera goals are constraint rules on the active camera: `camera keep_visible(a, b)`, `camera center(a)`, `camera thirds(a)`, `camera avoid_occlusion(a)`, `camera min_size(a, share)`, with the usual priorities. The solver chooses only the orbit-camera parameters the document leaves unset (azimuth, elevation, distance, target; the field of view is never solved, since with distance free it only adds ambiguity), so an animated azimuth (the `orbit` verb) is kept and framed around. A parameter animated but never set, whose first motion starts after 0 (a `focus_pull` or `orbit` at a marker), is solved until that motion starts, and the motion then starts from the solved value: an `orbit` turns by its angle from there (the verb writes its turn relative to the document's own angle, not the baked one), any other motion eases the difference away over its own duration (with its own easing). Stage 1 frames with projected bounding-box corners (a flat surface seen edge-on is thin; its sphere would never say so) and uses spheres only for occlusion; depth is clamped with a graded penalty so the cost stays smooth. `smooth` penalizes jerks (distance from the straight-line continuation of the two previous solves) plus angular speed, not following a moving object. Overlay text claims its strip of the frame, so framing keeps the world out of a title. Solved at markers, transition ends and 1 Hz, joined with PCHIP, checked at every 10 Hz key and re-solved where a goal fails, up to three rounds; what still fails is `unsolved` with times. `frame(ids, during)` is not a query: add a `camera keep_visible` rule (goals hold for the whole scene). `thirds` is a goal you ask for, not on by default (a centered subject orbits better). 3D labels live at their anchor's depth, nudged 4% toward the camera, slide only sideways, and avoid only what is in front of them (the oracle's `depth`); there is no `facing` field because every label is a billboard. `z_fight` is not a lint rule yet. Glass uses per-triangle back-to-front sorting instead of OIT: exact except where translucent triangles cut through each other.
++**As built (Milestone 6).** Camera goals are constraint rules on the active camera: `camera keep_visible(a, b)`, `camera center(a)`, `camera thirds(a)`, `camera avoid_occlusion(a)`, `camera min_size(a, share)`, with the usual priorities. The solver chooses only the orbit-camera parameters the document leaves unset (azimuth, elevation, distance, target; the field of view is never solved, since with distance free it only adds ambiguity), so an animated azimuth (the `orbit` verb) is kept and framed around. A parameter animated but never set, whose first motion starts after 0 (a `focus_pull` or `orbit` at a marker), is solved until that motion starts, and the motion then starts from the solved value: an `orbit` turns by its angle from there (the verb writes its turn relative to the document's own angle, not the baked one), any other motion eases the difference away over its own duration (with its own easing). Stage 1 frames with projected bounding-box corners (a flat surface seen edge-on is thin; its sphere would never say so) and uses spheres only for occlusion; depth is clamped with a graded penalty so the cost stays smooth. `smooth` penalizes jerks (distance from the straight-line continuation of the two previous solves) plus angular speed, not following a moving object. Overlay text claims its strip of the frame, so framing keeps the world out of a title. Solved at markers, transition ends and 1 Hz, joined with PCHIP, checked at every 10 Hz key and re-solved where a goal fails, up to three rounds; what still fails is `unsolved` with times. `frame(ids, during)` is not a query: add a `camera keep_visible` rule (goals hold for the whole scene). `thirds` is a goal you ask for, not on by default (a centered subject orbits better). 3D labels live at their anchor's depth, nudged 4% toward the camera, slide only sideways, and avoid only what is in front of them (the oracle's `depth`); there is no `facing` field because every label is a billboard. A billboard is centered on its origin, so a tilted camera puts its lower part below the origin's height; that part is depth-tested where its view ray crosses that height (same pixel, nearer), so a surface at the text's own level, such as the plane an equation sits on, does not cut it, and draw order breaks the tie as it does top-down. The cost: an opaque object inside that thin slab (its depth is the text's extent below the origin times cot(elevation)) no longer hides the text's lower part. `z_fight` is not a lint rule yet. Glass uses per-triangle back-to-front sorting instead of OIT: exact except where translucent triangles cut through each other.
+ 
+ ## Rendering pipeline and visual quality
+ 
+diff --git a/phasor/render/passes.py b/phasor/render/passes.py
+index 84ee0d9..da41e8d 100644
+--- a/phasor/render/passes.py
++++ b/phasor/render/passes.py
+@@ -45,9 +45,18 @@ out vec2 v_uv;
+ in vec4 in_color;
+ out vec4 v_color;
+ #endif
++#ifdef DEPTHPOS
++in vec3 in_zpos;  // where this vertex is depth-tested (text: see _text_depth_positions)
++#endif
+ void main() {
+     gl_Position = u_vp * vec4(in_pos, 1.0);
+     gl_Position.xy *= u_zoom;
++#ifdef DEPTHPOS
++    if (in_zpos != in_pos) {  // same place on screen, nearer depth
++        vec4 zc = u_vp * vec4(in_zpos, 1.0);
++        gl_Position.z = zc.z / zc.w * gl_Position.w;
++    }
++#endif
+     gl_Position.z -= u_bias * gl_Position.w;
+ #ifdef TEXTURED
+     v_uv = in_uv;
+@@ -230,11 +239,40 @@ def _light_dirs(cam, light) -> list[tuple[float, float, float]]:
+     return out
+ 
+ 
++TEXT_PULL_MIN = 0.1  # a text vertex is pulled at most this close to the eye (share of its distance)
++
++
++def _text_depth_positions(points, origin, cam) -> np.ndarray:
++    """Where each corner of a text quad is depth-tested. Text is a camera-facing billboard
++    centered on ``origin``; once the camera tilts, the part below the origin's height pokes
++    under it, so a surface at that height (the plane a label sits on) would hide the lower
++    half. A corner on the far side of the horizontal plane through ``origin`` is
++    depth-tested where its view ray crosses that plane instead: the same pixel, nearer. Text
++    on a surface at its own height then ties with it, and draw order decides, as it does
++    top-down. The cost: an opaque object inside that pulled slab (above the origin's height
++    but behind where the corner is now tested) no longer hides the lower part of the text.
++    The slab is about (text extent below the origin) x cot(elevation) deep, so it grows at
++    grazing views; ``TEXT_PULL_MIN`` keeps the corners off the near plane. Orthographic
++    cameras look straight down at flat text, so nothing moves there."""
++    pts = np.asarray(points, dtype=np.float64)
++    if not cam.perspective:
++        return pts
++    level, eye = float(origin[2]), np.asarray(cam.eye, dtype=np.float64)
++    side = eye[2] - level
++    far = (pts[:, 2] - level) * side < 0
++    if abs(side) < 1e-9 or not far.any():
++        return pts
++    t = np.clip((level - eye[2]) / (pts[far, 2] - eye[2]), TEXT_PULL_MIN, 1.0)
++    out = pts.copy()
++    out[far] = eye + t[:, None] * (pts[far] - eye)
++    return out
++
++
+ def _define(src: str, kind: str) -> str:
+     """``kind``: ``mesh`` (flat color), ``vmesh`` (a color per vertex, color pass only),
+     ``text`` (coverage bitmap) or ``image`` (RGBA)."""
+     head, _, rest = src.strip().partition("\n")
+-    defines = {"mesh": "", "vmesh": "#define VCOLOR", "text": "#define TEXTURED",
++    defines = {"mesh": "", "vmesh": "#define VCOLOR", "text": "#define TEXTURED\n#define DEPTHPOS",
+                "image": "#define TEXTURED\n#define IMAGE"}  # fmt: skip
+     return f"{head}\n{defines[kind]}\n{rest}"
+ 
+@@ -505,7 +543,10 @@ class GLRenderer:
+                     ],
+                     dtype="f4",
+                 )
+-                vao, n = self._vertex_array(prog, (("3f 2f", "in_pos", "in_uv"),), [quad])
++                zpos = _text_depth_positions(quad[:, :3], c["origin"], cam).astype("f4")
++                vao, n = self._vertex_array(
++                    prog, (("3f 2f 3f", "in_pos", "in_uv", "in_zpos"),), [np.hstack([quad, zpos])]
++                )
+             elif kind == "vmesh":
+                 layout = (("3f", "in_pos"), ("4f", "in_color"))
+                 vao, n = self._vertex_array(prog, layout, [c["positions"], c["colors"]],
+diff --git a/tests/test_camera3d.py b/tests/test_camera3d.py
+index 7f659a6..f3ac607 100644
+--- a/tests/test_camera3d.py
++++ b/tests/test_camera3d.py
+@@ -217,6 +217,54 @@ def test_a_label_does_not_cut_a_box_out_of_glass_behind_it():
+     assert darker < 0.02
+ 
+ 
++def _tilted_equation(elevation: float, blocker: bool = False):
++    """A world-layer equation at z = 0 over a domain-coloured plane at z = 0, tilted: the
++    text faces the camera, so the half below its anchor dips under the plane."""
++    from phasor import Equation
++
++    s = Scene("tilted_eq", passes="auto")
++    fov = 35.0
++    s.use_camera("orbit", target=(0, 0, 0), azimuth=-90.0, elevation=elevation, fov=fov,
++                 distance=4.5 / (2 * math.tan(math.radians(fov / 2))), drift=0.0)  # fmt: skip
++    s.add(cx.DomainColoring(id="plane", function="(z**5 - 1)/(z**2 + 0.6j)", size=(8.0, 4.5)))
++    s.add(Equation(id="f_eq", pos=(0.0, 1.85, 0.0),
++                   parts=(r"$f(z) = \dfrac{z^5 - 1}{z^2 + 0.6\,i}$",)))  # fmt: skip
++    if blocker:  # a solid disc above the plane, between the camera and the equation
++        eye = s.engine.state_at(0).camera.eye
++        at = np.array([0.0, 1.85, 0.0]) + (eye - np.array([0.0, 1.85, 0.0])) * 0.3
++        s.add(Dot(id="blocker", pos=tuple(float(x) for x in at), r=0.5))
++    return s.engine
++
++
++def _seen_share(e, object_id: str, size=(640, 360)) -> float:
++    # At the inspector's own size (480 x 270) this equation is a few dozen pixels and the
++    # loss hardly shows; measure at a real output size.
++    st = e.state_at(1.0)
++    runner = e.pass_runner()
++    solo = runner.solo_mask(st, size, object_id)
++    return float((runner.id_buffer(st, size)[solo] == st[object_id].index).sum() / solo.sum())
++
++
++@pytest.mark.gl
++@pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
++@pytest.mark.parametrize("elevation", [20.0, 35.0, 60.0])
++def test_text_is_not_cut_by_the_plane_it_stands_on(elevation):
++    # A billboard centered on its anchor pokes below the anchor's level when the camera
++    # tilts; that part is depth-tested as if it stood at the anchor's level (as it does
++    # top-down), so the plane the text sits on does not swallow its lower half.
++    assert _seen_share(_tilted_equation(elevation), "f_eq") > 0.97
++
++
++@pytest.mark.gl
++@pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
++@pytest.mark.parametrize("elevation", [10.0, 35.0])
++def test_text_is_still_hidden_by_what_is_in_front_of_it(elevation):
++    # The blocker is 30% of the way to the eye, well in front of the pulled slab (whose
++    # depth is the text's extent below its origin times cot(elevation)); an object inside
++    # that slab no longer hides the lower part of the text, the fix's known cost.
++    assert _seen_share(_tilted_equation(elevation, blocker=True), "f_eq") < 0.5
++
++
+ @pytest.mark.parametrize("doc_pos", [(-5, -5, 0), (4, 3, 1), (8, 8, 0)])
+ def test_baked_3d_label_lands_exactly_where_the_placer_put_it(doc_pos):
+     """The bake stores each label's screen offset from its anchor at every key time; reading
