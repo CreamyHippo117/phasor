@@ -401,23 +401,24 @@ class Engine:
                 raw = spec.params.get(name)
                 if not isinstance(raw, str) or not raw:
                     continue
-                try:
-                    src, dst = (
-                        files.regular_file(self.base_dir, raw),
-                        folder / files.relative_path(raw),
-                    )
-                except ValueError:
-                    continue
-                if not src.is_file() or src.resolve() == dst.resolve():
-                    continue
-                # never write through a link: a symlink at the destination (or a linked
-                # folder on the way) could point anywhere; the file is left behind (lint
-                # missing_file says so where the scene is opened)
-                inside, parent = folder.resolve(), dst.parent.resolve()
-                if dst.is_symlink() or (parent != inside and inside not in parent.parents):
-                    continue
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src, dst)
+                for one in files.members(self.base_dir, raw):  # a sequence: every frame
+                    try:
+                        src, dst = (
+                            files.regular_file(self.base_dir, one),
+                            folder / files.relative_path(one),
+                        )
+                    except ValueError:
+                        continue
+                    if not src.is_file() or src.resolve() == dst.resolve():
+                        continue
+                    # never write through a link: a symlink at the destination (or a linked
+                    # folder on the way) could point anywhere; the file is left behind (lint
+                    # missing_file says so where the scene is opened)
+                    inside, parent = folder.resolve(), dst.parent.resolve()
+                    if dst.is_symlink() or (parent != inside and inside not in parent.parents):
+                        continue
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src, dst)
 
     # ------------------------------------------------------------ read
 

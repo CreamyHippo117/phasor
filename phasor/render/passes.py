@@ -569,22 +569,29 @@ class GLRenderer:
         height = (t1 - t0) * ul
         # The background is in the key: fields fill their empty parts with it (Fractal,
         # cloud, image), and a scene may choose its own (M18).
+        # ``cache_key`` on the pixels function: what else its picture depends on (a video's
+        # file and frame, Milestone 24), so a clip that plays is not served one frame.
         key = (obj.type, obj.params, tuple(sorted(obj.roles.items())), pw, ph,
                round(center[0], 12), round(center[1], 12), round(height, 15),
-               tuple(state.background))  # fmt: skip
-        if key not in self._fields:
+               tuple(state.background), getattr(c["pixels"], "cache_key", None))  # fmt: skip
+        # ``uncached`` set on it by the call: these pixels stand in for a picture that could
+        # not be had this time (a frame a decoder failed to give): drawn, never kept.
+        pixels = self._fields.get(key)
+        if pixels is None:
             pixels = np.asarray(c["pixels"](pw, ph, center, height), dtype=np.float32)
             if pixels.shape != (ph, pw, 4):
                 raise ValueError(
                     f"{obj.id}: field pixels must be {(ph, pw, 4)}, got {pixels.shape}"
                 )
-            self._fields[key] = pixels
-            if len(self._fields) > FIELD_CACHE:
-                self._fields.popitem(last=False)
-        self._fields.move_to_end(key)
+            if not getattr(c["pixels"], "uncached", False):
+                self._fields[key] = pixels
+                if len(self._fields) > FIELD_CACHE:
+                    self._fields.popitem(last=False)
+        if key in self._fields:
+            self._fields.move_to_end(key)
         if self._bridge is None:
             self._bridge = CopyBridge(self.ctx)
-        tex = self._bridge.upload(self._fields[key])
+        tex = self._bridge.upload(pixels)
         q = [p0 + s * r + t * u for s, t in ((s0, t0), (s1, t0), (s0, t1), (s1, t1))]
         uv = [(0, 0), (1, 0), (0, 1), (1, 1)]  # the bridge stores rows bottom-up: v = 0 is low
         order_ = (0, 1, 2, 1, 3, 2)

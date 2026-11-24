@@ -109,7 +109,10 @@ class DrawContext(Protocol):
         a view in quad coordinates (``center`` and ``height`` measured along ``right`` and
         ``up`` from ``corner``, in world units), and expects linear RGBA (h, w, 4) float32,
         row 0 = top. Alpha is a per-pixel glow weight (0-1): with ``glow`` above 1 a pixel
-        shines brighter and feeds the bloom by that weight; at ``glow`` 1 alpha is unused."""
+        shines brighter and feeds the bloom by that weight; at ``glow`` 1 alpha is unused.
+        The renderer keeps the pixels by the object's parameters and the view; a ``pixels``
+        function whose picture depends on more (a video's frame) names it in an attribute
+        ``cache_key`` (hashable)."""
         ...
 
     def surface(
@@ -170,6 +173,11 @@ class ObjectBase:
     # The parameters that name files the type reads (core/files.py): relative to the scene's
     # folder and inside it; a missing one is the lint issue ``missing_file``.
     Files: ClassVar[tuple[str, ...]] = ()
+    # Parameters that hold one value for the whole scene: a track, an expression or an
+    # updater on one is a validation error (``bad_param``). A clip's timing (``Video``):
+    # its clip time is worked out from them at each t, so a changing speed would play it
+    # backwards (Milestone 24 audit).
+    Fixed: ClassVar[tuple[str, ...]] = ()
 
     def __init__(
         self,

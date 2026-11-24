@@ -17,7 +17,8 @@ from phasor.core.objects import is_builtin, registered_types
 from phasor.core.schema import Document, ExprSpec, MarkerRef
 
 # class module -> how the generated script reaches it
-_TOP = {"phasor.domains.basic", "phasor.domains.media"}  # from phasor import Dot, Image, ...
+# from phasor import Dot, Image, Video, ...
+_TOP = {"phasor.domains.basic", "phasor.domains.media", "phasor.domains.video"}
 _ALIAS = {
     "phasor.domains.cx": "cx",
     "phasor.domains.acoustics": "ac",
@@ -106,6 +107,9 @@ def document_to_python(doc: Document) -> str:
     if m.modules:  # code in the scene's folder (ADR 0005): its types and updaters
         modules = _op("set_meta", field="modules", value=list(m.modules))
         lines.append(f"s.engine.apply({modules}, origin='script')")
+    if m.duration is not None:  # set by the scene (Scene.from_video: as long as its clip)
+        duration = _op("set_meta", field="duration", value=m.duration)
+        lines.append(f"s.engine.apply({duration}, origin='script')")
     for o in doc.objects:
         cls = registered_types().get(o.type)
         if o.always or cls is None or not is_builtin(cls):

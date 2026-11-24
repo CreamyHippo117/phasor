@@ -22,12 +22,15 @@ returns one issue per problem with the times it was seen. Rules in this mileston
 | svg_too_complex | warning | an SVG past a reading limit: its drawing is empty or cut short |
 | dash_limit | warning | a dashed or dotted path with more dashes than are drawn per path |
 | crowded_ticks | warning | numbers along an axis (or a chart's bar names) too close to read |
-| truncated | warning | a file a table or code block reads is past a limit: only part shown |
+| truncated | warning | a table's, code's or picture sequence's file past a limit: part shown |
 | unknown_language | warning | code in a language pygments does not know: drawn plain   |
 | clamped   | warning  | less drawn than asked (ticks past ``MAX_TICKS``, bars past a range) |
 | glyph_limit | warning | as shapes, glyphs not drawn (past ``MAX_GLYPHS`` or ``MAX_COORD``) |
 | morph_missing | warning | a morph whose source is gone or has no outline: it draws itself |
 | morph_limit | warning | a morph with more subpaths than morph (``MAX_SUBPATHS``): the rest fade |
+| video_too_big | warning | a clip or picture sequence past a cap (size, frames, length): unseen |
+| clip_ended | warning | a clip past its end (``loop`` off) or trimmed past it: last frame holds |
+| too_many_clips | warning | more clips playing at once than decoders are kept open: slow    |
 
 ``missing_extra`` also warns when a type draws without its extra, plainer (``Code`` without
 pygments is drawn in one color).
@@ -46,7 +49,7 @@ from typing import Any
 
 import numpy as np
 
-from phasor.core import extras, record, ticks
+from phasor.core import extras, files, record, ticks
 from phasor.core import text as text_metrics
 from phasor.core.color import contrast_ratio, over
 from phasor.core.constraints import LABEL_SUFFIX
@@ -289,6 +292,14 @@ class _Frame:
             if on_it and self.covered(label_id, obj.id) > 0.5:
                 under = obj.style["color"]
                 bg = over((*under[:3], under[3] * obj.params.opacity), bg)
+            elif (other is not None and other["semantic"].get("backdrop")
+                  and obj.params.opacity > FAINT and hasattr(obj.impl, "average_color")
+                  and self.covered(label_id, obj.id) > 0.5):  # fmt: skip
+                # footage or a picture behind text (Milestone 24): the mean colour of the
+                # frame shown stands for it (with OpenGL the real picture is measured)
+                mean = obj.impl.average_color(self.state)
+                if mean is not None:
+                    bg = over((*mean, obj.params.opacity), bg)
         return contrast_ratio(over((*c[:3], alpha), bg), bg)
 
 
@@ -303,6 +314,22 @@ class _Findings:
     def issues(self, make: Callable[..., Issue]) -> list[Issue]:
         return [make(code, ids, **info) for (code, ids, _), info in sorted(self.found.items(),
                 key=lambda kv: (kv[0][0], kv[0][1], kv[0][2] or ""))]  # fmt: skip
+
+
+def _clip_streams(f: Any, entries: Any, t: float) -> None:
+    """``too_many_clips``: more clips shown at once than a process keeps decoders open (all
+    told, or of one file; the limits come in the clips' semantics, ``decoders``)."""
+    shown = [e for e in entries if e["semantic"].get("decoders") and e["opacity"] > FAINT
+             and not e["semantic"].get("missing")]  # fmt: skip
+    if not shown:
+        return
+    most, per_file = shown[0]["semantic"]["decoders"]
+    by_file: dict[str, int] = {}
+    for e in shown:
+        by_file[e["semantic"]["path"]] = by_file.get(e["semantic"]["path"], 0) + 1
+    if len(shown) > most or max(by_file.values()) > per_file:
+        f.add("too_many_clips", tuple(sorted(e["id"] for e in shown)), t, most=most,
+              per_file=per_file)  # fmt: skip
 
 
 def _when(times: list[float]) -> str:
@@ -371,7 +398,6 @@ def file_rules(c: Compiled) -> list[Issue]:
     that is not in the scene's folder. The object draws nothing until the file is there.
     ``missing_extra``: a type needs an optional package (its ``Requires``: module -> extra)
     that is not installed; it draws nothing until the extra is installed."""
-    from phasor.core import extras, files
     from phasor.time.compile import file_values
 
     out = []
@@ -693,6 +719,10 @@ def run(
             if sem.get("unreadable") or sem.get("skipped"):
                 f.add("bad_file", (e["id"],), t, why=sem.get("unreadable"),
                       skipped=sem.get("skipped", 0), file=sem.get("file"))  # fmt: skip
+            if sem.get("too_big"):
+                f.add("video_too_big", (e["id"],), t, why=sem["too_big"], file=sem.get("file"))
+            if sem.get("ended") and e["opacity"] > FAINT:
+                f.add("clip_ended", (e["id"],), t, past=sem.get("trim_past_end"))
             if sem.get("too_complex"):
                 f.add("svg_too_complex", (e["id"],), t, why=sem["too_complex"],
                       file=sem.get("file"))  # fmt: skip
@@ -704,6 +734,7 @@ def run(
                 f.add("unknown_language", (e["id"],), t, language=sem["unknown_language"])
             if sem.get("plain_without"):  # a type that draws without its extra, plainer
                 f.add("missing_extra", (e["id"],), t, module=sem["plain_without"])
+        _clip_streams(f, fr.entries.values(), t)
         if persp:
             for e in labels:
                 v = e["visible_fraction"]
@@ -814,7 +845,9 @@ def run(
             ext = str(info["file"]).lower().rsplit(".", 1)[-1]
             again = {"svg": "export the file again (plain SVG)",
                      "wav": "save the file again as PCM WAV (16-bit, 48 kHz)",
-                     "wave": "save the file again as PCM WAV (16-bit, 48 kHz)"}.get(
+                     "wave": "save the file again as PCM WAV (16-bit, 48 kHz)",
+                     **dict.fromkeys(files.VIDEO_EXT, "export the clip again as H.264 mp4"),
+                     **dict.fromkeys(files.PICTURE_EXT, "save the picture again as PNG")}.get(
                 ext, "save the file again as UTF-8 text")  # fmt: skip
             return Issue(
                 code,
@@ -863,6 +896,27 @@ def run(
                          f"other{step} on screen {when}", "warning", ids, path=info["path"],
                          times=ts, fix_hint=f"{hint}a larger scale, a smaller 'numbers' text "
                          "role, or turn the camera")  # fmt: skip
+        if code == "video_too_big":
+            return Issue(code, f"{ids[0]!r}: the file {info['file']!r} is past a cap "
+                         f"({info['why']}); it is not drawn", "warning", ids, times=ts,
+                         fix_hint="make it smaller (ffmpeg -vf scale=1920:-2), shorter, or "
+                         "split it into several files")  # fmt: skip
+        if code == "clip_ended" and info.get("past") is not None:
+            return Issue(code, f"{ids[0]!r} is trimmed from at or past its end (the clip is "
+                         f"{info['past']:g} s long): it shows only its last frame {when}",
+                         "warning", ids, times=ts, fix_hint="trim it from a time inside the "
+                         "clip (trim=(in, out), in seconds)")  # fmt: skip
+        if code == "clip_ended":
+            return Issue(code, f"{ids[0]!r} has played to its end and holds its last frame "
+                         f"{when} (loop is off)", "warning", ids, times=ts,
+                         fix_hint="loop it (loop=True), play it slower (speed), trim less, "
+                         "or fade it out before it ends")  # fmt: skip
+        if code == "too_many_clips":
+            return Issue(code, f"{len(ids)} clips play at once {when}, more than the "
+                         f"{info['most']} decoders kept open ({info['per_file']} a file): "
+                         "their frames are found by seeking, so drawing is much slower",
+                         "warning", ids, times=ts, fix_hint="show fewer clips at once, or "
+                         "join them into one clip (ffmpeg's hstack or overlay)")  # fmt: skip
         if code == "svg_too_complex":
             return Issue(code, f"{ids[0]!r}: the file {info['file']!r} is past a reading "
                          f"limit ({info['why']}); its drawing is empty or cut short",

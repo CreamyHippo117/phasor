@@ -41,7 +41,8 @@ s.set("camera.height", 6)  # world units visible top to bottom
 
 | `Value` | `value` (a named number to animate; nothing is drawn: see "Your own types") | none |
 | `Sound` | `path` (a WAV file in the scene's folder), `start` (seconds into the scene), `gain` (dB, -60 to 24); nothing is drawn: `phasor render` mixes it in (see "Narrate") | none |
-| `Image` | `path` (a PNG/JPEG/WebP file, relative to the scene's folder), `pos` (centre), `width`, `height` (0: keep the picture's shape), `frame` (an outline of light) | `glow` (glow, none: bright parts shine), `frame` (emphasis, muted), `stroke` (stroke, hairline). Presets `plain`, `framed`, `luminous`. A missing file is issue `missing_file`; transparent parts show the background; an AI may only name files inside its folder |
+| `Image` | `path` (a PNG/JPEG/WebP file, relative to the scene's folder; a GIF shows its first frame; `frames/shot_%04d.png` is a picture sequence played at `fps`, default 24), `pos` (centre), `width`, `height` (0: keep the picture's shape), `frame` (an outline of light), `fit`, `fill`, `backdrop`, and for a sequence `start`, `trim`, `speed`, `loop` (as `Video`; see "Footage and picture sequences") | `glow` (glow, none: bright parts shine), `frame` (emphasis, muted), `stroke` (stroke, hairline). Presets `plain`, `framed`, `luminous`. A missing file is issue `missing_file`, an unreadable one `bad_file`; transparent parts show the background; an AI may only name files inside its folder |
+| `Video` | `path` (an `.mp4`, `.mov`, `.m4v`, `.webm` or `.mkv` file in the scene's folder; needs the `encode` extra), `start` (scene seconds where it begins; before it, its first frame), `trim` ((in, out) seconds inside the clip; out 0: its end), `speed` (0-64), `loop` (off: it holds its last frame, lint `clip_ended`), `pos`, `width`, `height` (0: the clip's shape), `fit` (`stretch`, `contain`, `cover`, `none`), `fill` (fill the camera's view: a full-frame background, 2D camera), `backdrop` (labels may sit on it), `frame` | as `Image`. Nothing is heard (use `Sound`). Missing: `missing_file`; not a video: `bad_file`; past a cap: `video_too_big`; without PyAV: `missing_extra`; each draws nothing |
 | `Text` | `text` (`$...$` is typeset math), `pos`, `anchor` (`center`/`left`/`right`), `leader`, `leader_on` (set by layout) | `color` (emphasis, primary), `size` (text, label), `leader` (stroke, hairline) |
 | `Equation` | `parts` (math or text, set on one baseline), `colors` (an emphasis role per part), `pos` | `color` (emphasis, primary), `size` (text, math), `glow` (glow, none) |
 
@@ -566,9 +567,12 @@ Each issue has `code`, `severity`, `message`, `ids`, `times`, `fix_hint`, and `f
 | `sound_limit` | warning | a sound clip the mix leaves out: past `narration.MAX_SOUNDS` (256) clips in one scene; or a clip whose `start` or `gain` is animated (the mix reads them once, at 0 s, so the animation is not heard) |
 | `svg_too_complex` | warning | an SVG past a reading limit (size, elements once `<use>` is expanded, nesting, shapes, segments): its drawing is empty or cut short |
 | `crowded_ticks` | warning | numbers along an axis (or a chart's bar names) closer **on screen** than `[lint] tick_gap` text heights (every pair, so an axis a 3D camera sees end-on is caught); `path` names the axis (`ax.x`), the hint the smallest nice step that clears them, or to turn the camera when the axis points at it |
-| `truncated` | warning | a file a `Table` or `Code` reads is past a limit (rows, columns, lines); only its first part is shown |
+| `truncated` | warning | a file a `Table` or `Code` reads is past a limit (rows, columns, lines), or a picture sequence has more than 3000 pictures; only its first part is shown (plays) |
 | `unknown_language` | warning | a `Code` language pygments does not know: drawn plain |
 | `clamped` | warning | less is drawn than asked: an axis range past 100 ticks (drawn at a wider nice step), a span lost in rounding (no ticks), axis labels past one per axis or that cannot be typeset (left out), bars outside a chart's `y_range` (cut at it) |
+| `video_too_big` | warning | a clip or picture sequence past a cap (a frame past 8K, more than 216 000 frames, longer than 4 hours): it is not drawn |
+| `clip_ended` | warning | a clip or sequence shown past its end with `loop` off, or trimmed from at or past its end: it holds its last frame (no fix: loop it, slow it, trim less or fade it out) |
+| `too_many_clips` | warning | more `Video` objects shown at once than a process keeps decoders open (8, or 4 of one file): each frame is found by seeking, so drawing is much slower |
 
 `engine.autofix()` applies every `fix` the linter offers (add `near` for a child label that
 overlaps, `on_screen` for something cut by the frame), lints again, and returns
@@ -613,6 +617,88 @@ engine.inspect(3.0, id="pole_i", detail="full")  # adds projected feature points
 - `"occlusion": "pixel"` means measured from the id and solo render passes. `"analytic"`
   means no OpenGL here: geometry is still exact, `visible_fraction` and `hidden_by` are `null`.
 - `note` is set when an object is too thin to measure at inspector resolution (480x270).
+
+## Footage and picture sequences
+
+`Video` plays a clip from the scene's folder; `Image` plays a picture sequence (a path with
+`%04d` in its file name: frames 0, 1, 2, ... or from the first of 0-4 that is there, up to the
+first gap, at most 3000). Both place, size and animate like any object, and play from
+`start` (scene seconds) the part `trim` keeps, at `speed`, looping or holding their last
+frame. The frame shown at t is the last one whose presentation time is at or before the
+clip time t maps to: the same t shows the same frame in any order and in any render worker.
+
+`fit` says how the picture sits in its `width` x `height` box: `stretch` (the default, as
+`Image` always did), `contain` (inside, keeping its shape), `cover` (filling it, cut to
+it), `none` (its own size: 1080 pixels fill the camera's height, cut to the box). `fill`
+makes the box the camera's whole view (2D camera; ignored in perspective). `backdrop` (always
+with `fill`) lets labels sit on it: layout does not avoid it, lint `overlap` does not count
+it, and `contrast` judges text against the picture (without OpenGL, against the mean colour
+of the frame shown). Semantics add `frames`, `fps`, `seconds`, `frame` (shown at t),
+`clip_time`, `looping`, `trimmed`, `ended`. `start`, `trim`, `speed` (and a sequence's
+`fps`) hold one value for the whole scene: a track, an expression or an updater on one is a
+validation error (`bad_param`), since clip time is worked out from them at each t (to
+change speed part-way, play two objects one after the other).
+
+`s.background(path, **params)` puts a picture, a sequence or a clip behind everything
+(`fill`, `fit="cover"`, `z_index` -1000); `Scene.from_video(path, clip={...})` makes a scene
+of one, as long as it plays (`meta.duration`, read from the file when the script runs).
+
+```python
+import tempfile
+from pathlib import Path
+
+import numpy as np
+from PIL import Image as PILImage
+
+from phasor import Image, Scene, Text
+
+folder = Path(tempfile.mkdtemp())
+(folder / "frames").mkdir()
+for i in range(6):  # six pictures: frames/shot_0000.png ... shot_0005.png
+    PILImage.new("RGB", (32, 18), (40 * i, 60, 120)).save(folder / "frames" / f"shot_{i:04d}.png")
+s7 = Scene("stills", passes=None, base_dir=folder)
+s7.background("frames/shot_%04d.png", fps=3.0, loop=True)  # the whole frame, playing
+s7.add(Image(id="still", path="frames/shot_0002.png", width=2.0, pos=(2.5, 1.2, 0)))
+s7.add(Text(id="note", text="on the pictures", pos=(0, -1.5, 0)))
+s7.marker("end", 4.0)
+sem = s7.engine.inspect(1.0, id="background")["objects"][0]["semantic"]
+assert sem["frames"] == 6 and sem["frame"] == 3 and sem["backdrop"]
+assert "overlap" not in {i.code for i in s7.engine.lint()}
+```
+
+```python
+import av  # PyAV: the ``encode`` extra
+
+from phasor import Video
+
+with av.open(str(folder / "clip.mp4"), "w") as c:  # one second, getting lighter
+    st = c.add_stream("mpeg4", rate=24)
+    st.width, st.height, st.pix_fmt = 64, 36, "yuv420p"
+    for i in range(24):
+        frame = av.VideoFrame.from_ndarray(np.full((36, 64, 3), 10 * i, np.uint8), "rgb24")
+        for packet in st.encode(frame):
+            c.mux(packet)
+    for packet in st.encode():
+        c.mux(packet)
+s8 = Scene.from_video("clip.mp4", base_dir=folder, passes=None, clip={"speed": 0.5})
+assert s8.engine.document.meta.duration == 2.0  # at half speed it plays two seconds
+s8.add(
+    Video(id="inset", path="clip.mp4", width=1.6, pos=(2.6, -1.2, 0), trim=(0.25, 0.75), loop=True)
+)
+sem = s8.engine.inspect(1.0, id="inset")["objects"][0]["semantic"]
+assert sem["frame"] == 6 and sem["looping"] and sem["trimmed"]  # 1 s in: looped to 0.25 s
+```
+
+Limits (`domains/media_math.py`): a frame past 8K (7680 x 4320), more than 216 000 frames,
+longer than 4 hours or a file over 64 GB is `video_too_big`; a file that is not a video, has
+no video stream, no frames, frames that do not decode or an absurd size is `bad_file`; a
+picture past Pillow's own bomb limit (about 179 million pixels) is `bad_file`. Each draws
+nothing. A sequence past 3000 pictures plays its first 3000 (`truncated`). Frames larger
+than 4096 pixels are scaled down when decoded; decoded frames are kept in a cache of at most
+256 MB per process, stills in one of their own (2 GB). Clips decode forward when played in
+order and otherwise seek to the keyframe before the frame (open GOPs and mp4 edit lists
+included); a process keeps at most 8 decoders open, 4 of one file (`too_many_clips` past
+that).
 
 ## Stills and files
 
@@ -1214,7 +1300,10 @@ camera.
   `ray_segments` (what has been reached by a distance), `sphere_wall_arcs`, `front_visible`.
 
 An object type that reads files lists the parameters that name them in `Files = ("path",)`
-(`phasor.core.files`): validated to stay in the folder, checked by `missing_file`.
+(`phasor.core.files`): validated to stay in the folder, checked by `missing_file`. A type
+that reads some parameters as one value for the whole scene lists them in `Fixed` (as
+`Image` and `Video` do `start`, `trim`, `speed`, `fps`): a track, an expression or an
+updater on one is the validation error `bad_param`.
 
 ```python
 from phasor import Scene, ac, expr

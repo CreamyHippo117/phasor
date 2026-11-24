@@ -378,6 +378,15 @@ def compile_document(
                if o.id in style_tracks else o for o in objects]  # fmt: skip
     if any(o.always for o in doc.objects) and not issues:
         _attach_updaters(doc, nodes, objects, placeholders, modules, missing, add, scope)
+    for o in objects:  # parameters a type reads as one value for the whole scene
+        for name in getattr(type(o.impl), "Fixed", ()):
+            path = f"{o.id}.{name}"
+            if path in nodes and not isinstance(nodes[path], Const):
+                add(Issue("bad_param", f"{path} cannot change over time (a track, an "
+                          f"expression or an updater): a {o.type} reads it as one value for "
+                          "the whole scene", ids=(o.id,), path=path,
+                          fix_hint="set it once; to change it part-way, use two objects "
+                          "(one after the other)"))  # fmt: skip
 
     for path, node in nodes.items():
         if isinstance(node, CompiledExpr):
