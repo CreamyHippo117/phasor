@@ -143,6 +143,35 @@ class DrawContext(Protocol):
         reveal: float = 1.0,  # the share shown, left to right (the ``write`` verb)
     ) -> None: ...
 
+    # World-space batches (Milestone 28, ``core/batches.py``): plain world arrays whose
+    # camera-facing expansion is the renderer's (the vertex shader on GL), so the arrays do
+    # not depend on the camera and an orbit uploads nothing. Sizes are in ``units``:
+    # "world", "height" (a share of the frame height, as stroke roles are) or "px",
+    # measured at each item or at ``anchor``. ``colors``: one RGBA or one per item (linear,
+    # not premultiplied); ``opacity`` multiplies every alpha. Bad input is dropped, cut or
+    # clamped and reported by the lint rule ``batch_input``; it never raises.
+
+    def points3d(self, centers: np.ndarray, *, radius, units: str = "height", colors=(1, 1, 1, 1),
+                 opacity: float = 1.0, glow: float = 1.0, anchor=None) -> None:  # fmt: skip
+        """Round dots facing the camera: ``centers`` (n, 3), ``radius`` one or (n,)."""
+        ...
+
+    def lines3d(self, points: np.ndarray, *, width, units: str = "height", colors=(1, 1, 1, 1),
+                opacity: float = 1.0, glow: float = 1.0, anchor=None,
+                lengths=None) -> None:  # fmt: skip
+        """Polylines with mitered joins: ``points`` (n, 3) is one, (s, l, 3) is ``s`` of
+        ``l`` points, or (n, 3) with ``lengths`` (summing to n). A non-finite point ends its
+        strip. ``width`` one or one per point; ``colors`` one or one per point."""
+        ...
+
+    def arrows3d(self, tails: np.ndarray, tips: np.ndarray, *, width, units: str = "height",
+                 colors=(1, 1, 1, 1), opacity: float = 1.0, glow: float = 1.0, anchor=None,
+                 shape: str = "flat", head: float = 0.35) -> None:  # fmt: skip
+        """Arrows ``tails`` -> ``tips`` (n, 3): ``shape="flat"`` faces the camera (shaft
+        ``width``, the head ``head`` of the length); ``"cone"`` is a solid cone of base
+        diameter ``width``."""
+        ...
+
 
 @runtime_checkable
 class SceneObject(Protocol):

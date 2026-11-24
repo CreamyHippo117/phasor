@@ -1,0 +1,321 @@
+{
+  "cases": [
+    {
+      "case": "2d portrait (strokes)",
+      "cores": 4,
+      "expand": "shader",
+      "frame": [
+        640,
+        360
+      ],
+      "frames": 30,
+      "gl_renderer": "llvmpipe (LLVM 20.1.2, 256 bits)",
+      "load_average": [
+        3.08,
+        3.89,
+        3.64
+      ],
+      "motions": {
+        "pan": {
+          "batch_uploads_per_frame": 0.0,
+          "fps": 13.9,
+          "ms_mean": 73.78,
+          "ms_median": 71.9
+        }
+      },
+      "platform": "Linux-6.18.44-fc-v819-x86_64-with-glibc2.39",
+      "quality": "full"
+    },
+    {
+      "case": "2d field, 2500 arrows + 2000 points",
+      "cores": 4,
+      "expand": "shader",
+      "frame": [
+        640,
+        360
+      ],
+      "frames": 30,
+      "gl_renderer": "llvmpipe (LLVM 20.1.2, 256 bits)",
+      "load_average": [
+        3.0,
+        3.85,
+        3.63
+      ],
+      "motions": {
+        "flow": {
+          "batch_uploads_per_frame": 4.0,
+          "fps": 19.3,
+          "ms_mean": 51.36,
+          "ms_median": 51.94
+        },
+        "pan": {
+          "batch_uploads_per_frame": 0.0,
+          "fps": 23.4,
+          "ms_mean": 44.08,
+          "ms_median": 42.75
+        }
+      },
+      "platform": "Linux-6.18.44-fc-v819-x86_64-with-glibc2.39",
+      "quality": "full"
+    },
+    {
+      "case": "2d field, 2500 arrows + 2000 points",
+      "cores": 4,
+      "expand": "cpu",
+      "frame": [
+        640,
+        360
+      ],
+      "frames": 30,
+      "gl_renderer": "llvmpipe (LLVM 20.1.2, 256 bits)",
+      "load_average": [
+        3.0,
+        3.85,
+        3.63
+      ],
+      "motions": {
+        "flow": {
+          "batch_uploads_per_frame": 0.0,
+          "fps": 19.2,
+          "ms_mean": 52.6,
+          "ms_median": 52.1
+        },
+        "pan": {
+          "batch_uploads_per_frame": 0.0,
+          "fps": 19.7,
+          "ms_mean": 50.6,
+          "ms_median": 50.84
+        }
+      },
+      "platform": "Linux-6.18.44-fc-v819-x86_64-with-glibc2.39",
+      "quality": "full"
+    },
+    {
+      "case": "2d field, 2500 arrows + 2000 points",
+      "cores": 4,
+      "expand": "shader",
+      "frame": [
+        640,
+        360
+      ],
+      "frames": 30,
+      "gl_renderer": "llvmpipe (LLVM 20.1.2, 256 bits)",
+      "load_average": [
+        2.92,
+        3.82,
+        3.62
+      ],
+      "motions": {
+        "flow": {
+          "batch_uploads_per_frame": 4.0,
+          "fps": 19.2,
+          "ms_mean": 63.38,
+          "ms_median": 52.0
+        },
+        "pan": {
+          "batch_uploads_per_frame": 0.0,
+          "fps": 20.2,
+          "ms_mean": 50.88,
+          "ms_median": 49.4
+        }
+      },
+      "platform": "Linux-6.18.44-fc-v819-x86_64-with-glibc2.39",
+      "quality": "interactive"
+    },
+    {
+      "case": "3d Lorenz, 4913 cones + 10,000 tracers with 8-step trails",
+      "cores": 4,
+      "expand": "shader",
+      "frame": [
+        640,
+        360
+      ],
+      "frames": 30,
+      "gl_renderer": "llvmpipe (LLVM 20.1.2, 256 bits)",
+      "load_average": [
+        3.29,
+        3.86,
+        3.64
+      ],
+      "motions": {
+        "flow": {
+          "batch_uploads_per_frame": 2.0,
+          "fps": 3.1,
+          "ms_mean": 330.64,
+          "ms_median": 326.26
+        },
+        "orbit": {
+          "batch_uploads_per_frame": 0.0,
+          "fps": 4.2,
+          "ms_mean": 239.38,
+          "ms_median": 236.91
+        }
+      },
+      "platform": "Linux-6.18.44-fc-v819-x86_64-with-glibc2.39",
+      "quality": "full"
+    },
+    {
+      "case": "3d Lorenz, 4913 cones + 10,000 tracers with 8-step trails",
+      "cores": 4,
+      "expand": "cpu",
+      "frame": [
+        640,
+        360
+      ],
+      "frames": 30,
+      "gl_renderer": "llvmpipe (LLVM 20.1.2, 256 bits)",
+      "load_average": [
+        3.15,
+        3.79,
+        3.62
+      ],
+      "motions": {
+        "flow": {
+          "batch_uploads_per_frame": 0.0,
+          "fps": 2.8,
+          "ms_mean": 354.2,
+          "ms_median": 356.97
+        },
+        "orbit": {
+          "batch_uploads_per_frame": 0.0,
+          "fps": 4.2,
+          "ms_mean": 245.23,
+          "ms_median": 236.27
+        }
+      },
+      "platform": "Linux-6.18.44-fc-v819-x86_64-with-glibc2.39",
+      "quality": "full"
+    },
+    {
+      "case": "3d Lorenz, 4913 cones + 10,000 tracers with 8-step trails",
+      "cores": 4,
+      "expand": "shader",
+      "frame": [
+        640,
+        360
+      ],
+      "frames": 30,
+      "gl_renderer": "llvmpipe (LLVM 20.1.2, 256 bits)",
+      "load_average": [
+        3.19,
+        3.78,
+        3.62
+      ],
+      "motions": {
+        "flow": {
+          "batch_uploads_per_frame": 2.0,
+          "fps": 4.4,
+          "ms_mean": 225.59,
+          "ms_median": 228.85
+        },
+        "orbit": {
+          "batch_uploads_per_frame": 0.0,
+          "fps": 7.7,
+          "ms_mean": 131.16,
+          "ms_median": 130.11
+        }
+      },
+      "platform": "Linux-6.18.44-fc-v819-x86_64-with-glibc2.39",
+      "quality": "interactive"
+    },
+    {
+      "case": "3d Lorenz, 343 cones + 100,000 tracers",
+      "cores": 4,
+      "expand": "shader",
+      "frame": [
+        640,
+        360
+      ],
+      "frames": 30,
+      "gl_renderer": "llvmpipe (LLVM 20.1.2, 256 bits)",
+      "load_average": [
+        3.0,
+        3.69,
+        3.59
+      ],
+      "motions": {
+        "flow": {
+          "batch_uploads_per_frame": 1.0,
+          "fps": 2.9,
+          "ms_mean": 345.3,
+          "ms_median": 343.78
+        },
+        "orbit": {
+          "batch_uploads_per_frame": 0.0,
+          "fps": 3.5,
+          "ms_mean": 284.32,
+          "ms_median": 283.89
+        }
+      },
+      "platform": "Linux-6.18.44-fc-v819-x86_64-with-glibc2.39",
+      "quality": "full"
+    },
+    {
+      "case": "3d Lorenz, 343 cones + 100,000 tracers",
+      "cores": 4,
+      "expand": "cpu",
+      "frame": [
+        640,
+        360
+      ],
+      "frames": 30,
+      "gl_renderer": "llvmpipe (LLVM 20.1.2, 256 bits)",
+      "load_average": [
+        2.93,
+        3.63,
+        3.57
+      ],
+      "motions": {
+        "flow": {
+          "batch_uploads_per_frame": 0.0,
+          "fps": 2.4,
+          "ms_mean": 414.71,
+          "ms_median": 418.74
+        },
+        "orbit": {
+          "batch_uploads_per_frame": 0.0,
+          "fps": 3.0,
+          "ms_mean": 346.07,
+          "ms_median": 335.94
+        }
+      },
+      "platform": "Linux-6.18.44-fc-v819-x86_64-with-glibc2.39",
+      "quality": "full"
+    },
+    {
+      "case": "3d Lorenz, 343 cones + 100,000 tracers",
+      "cores": 4,
+      "expand": "shader",
+      "frame": [
+        640,
+        360
+      ],
+      "frames": 30,
+      "gl_renderer": "llvmpipe (LLVM 20.1.2, 256 bits)",
+      "load_average": [
+        2.85,
+        3.59,
+        3.56
+      ],
+      "motions": {
+        "flow": {
+          "batch_uploads_per_frame": 1.0,
+          "fps": 6.2,
+          "ms_mean": 166.03,
+          "ms_median": 161.98
+        },
+        "orbit": {
+          "batch_uploads_per_frame": 0.0,
+          "fps": 10.9,
+          "ms_mean": 91.85,
+          "ms_median": 91.51
+        }
+      },
+      "platform": "Linux-6.18.44-fc-v819-x86_64-with-glibc2.39",
+      "quality": "interactive"
+    }
+  ],
+  "commit": "83c5f6b",
+  "machine": "vm",
+  "when": "2026-11-24T22:28:56+00:00"
+}

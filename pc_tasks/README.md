@@ -16,6 +16,7 @@ fast renders), so they are done on the PC. Each has its own instruction file her
 | `09_pc_checks_after_14_15.md` | Milestones 14 and 15: Windows CPU backend, GPU kernels, Riemann timing, GPU golden for `open_contract`, decisions | `claude/eloquent-mayer-jiqxs9` (no new branch) | `C:\Users\Atlas\phasor-dev` |
 | `10_manim_real.md` | Milestone 20: the Manim import against real Manim CE, on Windows (passed on Linux) | `claude/eloquent-mayer-jiqxs9` (no new branch) | `C:\Users\Atlas\phasor-dev` |
 | `11_platforms_after_20.md` | Milestone 20: a full Windows pass (sound heard in renders), and what a Mac can run | `claude/eloquent-mayer-jiqxs9` (no new branch) | `C:\Users\Atlas\phasor-dev` |
+| `12_world_batches.md` | Milestone 28: the Explorer's world-space batches, frame rates on the RTX card against the cloud box, the GPU flow golden | the M28 branch (no new branch) | `C:\Users\Atlas\phasor-dev` |
 
 ## Starting the three at once (PowerShell)
 

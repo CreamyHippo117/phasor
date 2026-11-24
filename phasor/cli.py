@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from typing import Any
 
 # command -> (milestone, help)
 PLANNED: dict[str, tuple[int, str]] = {}  # nothing planned left: gui arrived in Milestone 10
@@ -247,7 +248,79 @@ def _cmd_style(args: argparse.Namespace) -> int:
     return 0
 
 
+def _explorer_cases() -> list[tuple[str, Any, float, tuple[str, ...], dict[str, Any]]]:
+    """The cases of the advice's frame-rate table (explorer advice 1.5, Milestone 28): (name,
+    engine, time, motions, options). Built in code, so ``phasor bench --explorer`` measures
+    the same scenes on every machine."""
+    from phasor import Scene, dyn, flow
+
+    cases = []
+    s = Scene("bench_portrait_strokes")  # today's path: an M2-era 2D portrait (strokes)
+    s.add(dyn.PhasePortrait(id="flow", f="y", g="-sin(x) - 0.3 * y", extent=(12, 6.6),
+                            n_seeds=14, t_end=12.0, progress=1.0))  # fmt: skip
+    cases.append(("2d portrait (strokes)", s.engine, 0.0, ("pan",), {}))
+    s = Scene("bench_field_2d")  # a few thousand world-space arrows and points, 2D
+    s.add(flow.System(id="p", equations=("y", "-sin(x) - 0.3*y"), window=((-6.5, 6.5),
+                      (-3.2, 3.2)), rate=1.0, scale=0.9))  # fmt: skip
+    s.add(flow.FieldArrows(id="p.field", counts=50))
+    s.add(flow.FlowSet(id="p.set", center=(-1.5, 2.0), size=0.8, count=2000, fill="both"))
+    s.add(flow.Probe(id="p.probe", x0=(1.5, 1.5)))
+    cases.append(("2d field, 2500 arrows + 2000 points", s.engine, 0.5, ("pan", "flow"), {}))
+    for n, trail, arrows in ((10_000, 8, 17), (100_000, 0, 7)):
+        s = Scene(f"bench_lorenz_{n}")
+        s.use_camera("orbit")
+        s.set("camera.distance", 15.0)
+        s.set("camera.elevation", 16.0)
+        s.add(flow.System(id="lo", scale=0.12, pos=(0, 0, -3.2), rate=1.0,
+                          **flow.preset("lorenz")))  # fmt: skip
+        s.add(flow.FieldArrows(id="lo.field", counts=arrows))
+        s.add(flow.Equilibria(id="lo.eq"))
+        s.add(flow.FlowSet(id="lo.set", shape="ball", center=(1, 1, 20), size=3, count=n,
+                           trail=trail))  # fmt: skip
+        name = f"3d Lorenz, {arrows**3} cones + {n:,} tracers" + (
+            f" with {trail}-step trails" if trail else ""
+        )
+        cases.append((name, s.engine, 0.5, ("orbit", "flow"), {}))
+    return cases
+
+
+def _cmd_bench_explorer(args: argparse.Namespace) -> int:
+    """The live-view frame rates of explorer advice 1.5 (Milestone 28): each case with the
+    batches expanded in the vertex shader, on the CPU (as strokes did), and thinned while
+    dragging (``quality="interactive"``)."""
+    from phasor.render.bench import run_view_bench, save_view
+
+    results = []
+    for name, engine, t, motions, _ in _explorer_cases():
+        for k, opts in enumerate(({}, {"cpu_expand": True}, {"quality": "interactive"})):
+            if opts and name.startswith("2d portrait"):
+                continue  # strokes: nothing to expand or thin
+            # each run starts where the last stopped: flow frames it has not drawn before
+            # (buffers are found by content; a repeated frame would upload nothing)
+            start = t + k * (args.count + 1) / 30
+            try:
+                r = run_view_bench(engine, name, start, motions, width=args.width,
+                                   height=args.height, count=args.count, **opts)  # fmt: skip
+            except RuntimeError as e:  # no OpenGL
+                print(f"phasor bench: {e}", file=sys.stderr)
+                return 1
+            results.append(r)
+            how = f"{r['expand']}, {r['quality']}"
+            for motion, m in r["motions"].items():
+                print(
+                    f"  {name:52s} {how:20s} {motion:6s} {m['ms_median']:8.1f} ms "
+                    f"{m['fps']:6.1f} fps  uploads/frame {m['batch_uploads_per_frame']}"
+                )
+    path = save_view(results, args.dir)
+    load = results[0]["load_average"] if results else None
+    print(f"GL on {results[0]['gl_renderer'] if results else '?'}; load average {load}")
+    print(f"saved {path}")
+    return 0
+
+
 def _cmd_bench(args: argparse.Namespace) -> int:
+    if args.explorer:
+        return _cmd_bench_explorer(args)
     if args.frames:
         return _cmd_bench_frames(args)
     from phasor.render.bench import run_bench, save
@@ -405,7 +478,11 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--dir", default="benchmarks", help="where results are saved")
     b.add_argument("--frames", metavar="SCENE", help="time whole frames of SCENE (a file or "
                    "an example name) stage by stage, instead of single kernels")  # fmt: skip
-    b.add_argument("--count", type=int, default=60, help="frames to time (with --frames)")
+    b.add_argument("--explorer", action="store_true", help="live-view frame rates of the "
+                   "Explorer cases (orbit, pan, flow; world-space batches against CPU-built "
+                   "triangles); use with --width 640 --height 360 --count 30")  # fmt: skip
+    b.add_argument("--count", type=int, default=60, help="frames to time (with --frames or "
+                   "--explorer)")  # fmt: skip
     b.add_argument("--preset", default="final", choices=sorted(PRESETS),
                    help="render preset (with --frames)")  # fmt: skip
     b.add_argument("--allow-scripts", action="store_true", help=ALLOW_SCRIPTS_HELP)

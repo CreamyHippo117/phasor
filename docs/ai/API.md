@@ -165,6 +165,52 @@ assert seen["semantic"]["type"] == "doc_kite" and "top" in seen["features"]
   (`state["other"]`), `state.t` and `state.values`, and the recording is made again when what
   it read changes. Its arrays (`curve`, `start`, `end`) are shared and read-only.
 
+**World-space batches (Milestone 28).** For many points, lines or arrows (a field of
+thousands, a set of tracers, their trails) hand the renderer plain world arrays instead of
+building triangles: `ctx.points3d(centers, radius=...)`, `ctx.lines3d(points, width=...)`
+(one polyline, `(s, l, 3)` for `s` of them, or `lengths=`; a non-finite point ends a strip)
+and `ctx.arrows3d(tails, tips, width=..., shape="flat" | "cone")`. Sizes are in `units`:
+`"height"` (a share of the frame height, as stroke roles are; the default), `"px"` or
+`"world"`, measured at each item or at one `anchor` point. `colors` is one RGBA or one per
+item; `opacity` multiplies every alpha. The arrays never depend on the camera: the vertex
+shader faces them to it, so an orbit uploads nothing and a frame where only the points moved
+uploads only the points (the renderer finds buffers by content). Arrays that are not finite
+`(n, 3)` numbers are repaired, not raised, and lint `batch_input` says what was done:
+
+```python
+@register
+class Swarm(ObjectBase):
+    type: ClassVar[str] = "doc_swarm"
+
+    class Params(ParamsBase):
+        n: int = 200
+
+    def draw(self, ctx, state):
+        t = np.linspace(0, 6 * np.pi, self.me(state).params.n)
+        pts = np.c_[np.cos(t) * t / 10, np.sin(t) * t / 10, np.zeros_like(t)]
+        ctx.lines3d(pts, width=0.004, colors=(1.0, 0.6, 0.2, 1.0))
+        ctx.points3d(
+            pts[::10],
+            radius=0.006,
+            colors=np.c_[t[::10] / t[-1], 0.5 + 0 * t[::10], 1 - t[::10] / t[-1], 1 + 0 * t[::10]],
+        )
+        ctx.arrows3d(pts[::25], pts[::25] + (0.2, 0.0, 0.0), width=0.003)
+
+
+k2 = Scene("swarm")
+k2.add(Swarm(id="swarm"))
+seen = k2.engine.inspect(0.0, id="swarm", detail="full")["objects"][0]
+assert "curve" in seen["features"]  # its one line strip is a stroke: start, end, curve
+assert not [i for i in k2.engine.lint() if i.code == "batch_input"]
+```
+
+The same call draws in the final render, the draft and (Milestone 29) the Explorer's
+viewport. A renderer may pass a hint while a person drags: `ctx.quality` is `"full"` or
+`"interactive"` (`Engine.frame(t, size, quality="interactive")`; the flow field then draws
+at most `flow.INTERACTIVE_ARROWS` arrows and a set `flow.INTERACTIVE_POINTS` points).
+Drawing at a smaller size meanwhile is the caller's choice; draw again at `"full"` when the
+input stops. The inspector, lint and the id pass always see the full drawing.
+
 **Composites.** `build(self, state)` instead of `draw` returns other objects. Each part
 gets the id `<composite>.<name>`, is drawn and inspected as itself (`"part_of"` in the
 inspector), fades with its composite and may not reuse a retired id. The composite's bounds
@@ -663,6 +709,7 @@ Each issue has `code`, `severity`, `message`, `ids`, `times`, `fix_hint`, and `f
 | `clip_ended` | warning | a clip or sequence shown past its end with `loop` off, or trimmed from at or past its end: it holds its last frame (no fix: loop it, slow it, trim less or fade it out) |
 | `too_many_clips` | warning | more `Video` objects shown at once than a process keeps decoders open (8, or 4 of one file): each frame is found by seeking, so drawing is much slower |
 | `flow_budget` | warning | a flow object past its budget: a set or path whose points x steps pass the theme's `[lint] flow_work`, a field with more arrows than `[lint] flow_arrows`, or work cut at a hard limit (`flow_math.MAX_POINTS`, `MAX_PROBE_STEPS`, `MAX_STEPS`, `flow.MAX_ARROWS`, points x trail) |
+| `batch_input` | warning | a type handed `points3d`/`lines3d`/`arrows3d` arrays that had to be repaired (not finite, wrong shape or dtype, a colour or size list of the wrong length, more than `core.batches.MAX_ITEMS` items); the repairs are listed. Threshold: the theme's `[lint] batch_repairs` |
 | `flow_too_fast` | warning | points of a flow that moved further in one step than the window allows even after 16 sub-steps (a stiff field such as `1e6*x`): they are stopped, not flung across the screen |
 | `duplicate_variable` | warning | a `flow.Variable` whose name an earlier `Variable` already has: systems read the first, so this one changes nothing |
 | `explorer_row` | warning | an Explorer row kept as a `flow.Note`: one that does not read (its error), or a kind the Explorer does not draw yet (graph, curve, surface, heat map) |
@@ -2237,6 +2284,13 @@ raised past the 100th power is refused with a reason, in every domain.
   subspaces inside a ring, and a card in plain characters.
 - `flow.Manifold(near=, which="both"|"stable"|"unstable", length=, progress=)`: the 1D
   stable and unstable manifolds of a saddle, integrated from its eigen-directions.
+
+The field, paths, sets (points and trails), equilibria, manifolds and the system's frame draw
+as world-space batches (Milestone 28, above under "Your own types"): orbiting a flow scene
+uploads nothing to the card, and a frame where the flow time moved uploads the moving points
+only. While a person drags, `quality="interactive"` thins the field to
+`flow.INTERACTIVE_ARROWS` (4000) and strides a set to `flow.INTERACTIVE_POINTS` (5000).
+`EquilibriumView` still draws through `strokes.py`.
 
 ```python
 from phasor import Scene, flow

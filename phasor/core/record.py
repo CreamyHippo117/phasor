@@ -27,7 +27,7 @@ from typing import Any
 
 import numpy as np
 
-from phasor.core import files
+from phasor.core import batches, files
 from phasor.core import text as text_metrics
 from phasor.core.cache import ByteCache
 from phasor.core.objects import Bounds
@@ -51,8 +51,10 @@ class Recorder:
         self.right = np.asarray(right, dtype=np.float64)
         self.up = np.asarray(up, dtype=np.float64)
         self.points: list[np.ndarray] = []  # (N, 3) blocks of world positions
-        self.kinds: list[str] = []  # one per command: triangles | field | surface | text
+        self.kinds: list[str] = []  # one per command: triangles | field | surface | text | batch
         self.strokes: list[np.ndarray] = []  # center lines noted by domains/strokes.py
+        self.issues: list[str] = []  # repairs made to batch input (lint ``batch_input``)
+        self.quality = "full"  # bounds, features and lint judge the full drawing
 
     def _add(self, kind: str, pts) -> None:
         pts = np.asarray(pts, dtype=np.float64).reshape(-1, 3)
@@ -83,6 +85,30 @@ class Recorder:
         kept.flags.writeable = False
         self.strokes.append(kept)
 
+    # World-space batches: their points (sizes on screen are not counted in the box), each
+    # line strip as a stroke, and what was repaired in the input (lint ``batch_input``).
+
+    def _batch(self, made) -> None:
+        b, issues = made
+        self.issues.extend(issues)
+        if b is None:
+            return
+        self._add("batch", b.positions if b.tips is None else np.r_[b.positions, b.tips])
+        if b.kind == "lines":
+            cuts = [] if b.strips is None else np.flatnonzero(np.diff(b.strips)) + 1
+            for run in np.split(b.positions.astype(np.float64), cuts):
+                if len(run) >= 2:
+                    self.note_path(run)
+
+    def points3d(self, centers, **kw) -> None:
+        self._batch(batches.make_points(centers, **kw))
+
+    def lines3d(self, points, **kw) -> None:
+        self._batch(batches.make_lines(points, **kw))
+
+    def arrows3d(self, tails, tips, **kw) -> None:
+        self._batch(batches.make_arrows(tails, tips, **kw))
+
 
 @dataclass(frozen=True)
 class Recording:
@@ -91,6 +117,7 @@ class Recording:
     strokes: tuple[np.ndarray, ...]
     right: np.ndarray
     up: np.ndarray
+    issues: tuple[str, ...] = ()  # repairs made to batch input (``core/batches.py``)
 
 
 class _Values(Mapping):
@@ -218,7 +245,8 @@ def record(impl, state: SceneState) -> Recording:
     impl.draw(rec_ctx, watch, "color")
     pts = np.vstack(rec_ctx.points) if rec_ctx.points else np.zeros((0, 3))
     pts.flags.writeable = False  # shared by everyone who asks: nobody may change it
-    rec = Recording(pts, tuple(rec_ctx.kinds), tuple(rec_ctx.strokes), rec_ctx.right, rec_ctx.up)
+    rec = Recording(pts, tuple(rec_ctx.kinds), tuple(rec_ctx.strokes), rec_ctx.right, rec_ctx.up,
+                    tuple(dict.fromkeys(rec_ctx.issues)))  # fmt: skip
     _CACHE.put(key, (watch.reads(state), rec))
     return rec
 
@@ -268,9 +296,14 @@ def derived_features(self, state: SceneState) -> dict[str, np.ndarray]:
 
 
 def derived_semantics(self, state: SceneState) -> dict[str, Any]:
-    """``{"type", "params"}``: what a type that says nothing more about itself is."""
+    """``{"type", "params"}``: what a type that says nothing more about itself is; plus
+    ``batch_input`` (what was repaired in arrays given to a world-space batch) when any was."""
     me = state[self.id]
-    return {"type": me.type, "params": me.params.model_dump(mode="json")}
+    out = {"type": me.type, "params": me.params.model_dump(mode="json")}
+    issues = record(self, state).issues
+    if issues:
+        out["batch_input"] = list(issues)
+    return out
 
 
 def parts(state: SceneState, object_id: str):

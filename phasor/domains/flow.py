@@ -23,8 +23,14 @@ overrides one, so a slider moves it), the window, ``dt`` and the flow time ``tau
 - ``EquilibriumView``: one equilibrium close up: its subspaces and a card with the numbers.
 - ``Manifold``: the 1D stable and unstable manifolds of a saddle.
 
-Numerics are in ``flow_math``. Everything draws through ``strokes`` for now (world-space
-batches are Milestone 28). Semantics are numbers with where they came from, rounded to 6
+Numerics are in ``flow_math``. Fields, paths, sets, equilibria and manifolds draw through
+the world-space batches (``ctx.points3d``, ``lines3d``, ``arrows3d``; Milestone 28): their
+arrays do not depend on the camera, so orbiting re-uploads nothing and advancing the flow
+time re-uploads the moving points only. Sizes are stroke roles (shares of the frame height)
+measured at the window's middle (``anchor``), as before. The close-up (``EquilibriumView``)
+still draws through ``strokes``. While a person drags (``ctx.quality == "interactive"``) a
+field is thinned to ``INTERACTIVE_ARROWS`` and a set strided to ``INTERACTIVE_POINTS``.
+Semantics are numbers with where they came from, rounded to 6
 digits; positions of a path are given only up to flow time ``flow_math.SAFE_TAU`` (a chaotic
 path is not reproducible across machines after that).
 """
@@ -33,6 +39,7 @@ from __future__ import annotations
 
 import functools
 import math
+import weakref
 from collections import OrderedDict
 from typing import Any, ClassVar, Literal
 
@@ -45,16 +52,7 @@ from phasor.core.simulation import runner_for
 from phasor.core.state import ObjectState, SceneState
 from phasor.core.values import Vec3
 from phasor.domains import flow_math as fm
-from phasor.domains.strokes import (
-    arrow_batch,
-    circle,
-    cone_batch,
-    disc_batch,
-    lut_colors,
-    polyline,
-    segment_batch,
-    with_alpha,
-)
+from phasor.domains.strokes import circle, lut_colors, polyline, with_alpha
 
 __all__ = [
     "Equilibria",
@@ -71,6 +69,8 @@ __all__ = [
 
 MAX_ARROWS = 20000  # arrows of one field (a grid is thinned to this)
 MAX_DRAWN_POINTS = 50000  # points of a set drawn as dots (a stride past this)
+INTERACTIVE_ARROWS = 4000  # arrows of a field while a person drags (``quality``)
+INTERACTIVE_POINTS = 5000  # points of a set drawn while a person drags
 CHECKPOINT_EVERY = 50  # set steps between cached checkpoints
 MAX_TAU = 1e5
 MAX_ROW_SOURCE = 8000  # characters of a row's stored text (above the rows layer's own cap)
@@ -383,8 +383,8 @@ class System(ObjectBase):
                      if (corners[i] != corners[j]).sum() == 1]  # fmt: skip
             a = r.world(corners[[i for i, _ in pairs]])
             b = r.world(corners[[j for _, j in pairs]])
-            segment_batch(ctx, cam, a, b, me.style["stroke"],
-                          colors=with_alpha(me.style["frame"], p.opacity * 0.5))  # fmt: skip
+            ctx.lines3d(np.stack([a, b], axis=1), width=me.style["stroke"], units="height",
+                        colors=me.style["frame"], opacity=p.opacity * 0.5)  # fmt: skip
         if p.label:
             unit = float(cam.units_per_height(r.world(r.centre[None])[0]))
             size = me.style["size"] * unit
@@ -443,6 +443,16 @@ def _budget(**kw) -> dict[str, Any]:
     return {k: v for k, v in kw.items() if v is not None}
 
 
+def _interactive(ctx: DrawContext) -> bool:
+    """Whether the renderer asks for a thinner drawing while a person drags (a hint only)."""
+    return getattr(ctx, "quality", "full") == "interactive"
+
+
+def _middle(r: Resolved) -> tuple[float, float, float]:
+    """The window's middle in the world: where a system's stroke sizes are measured."""
+    return tuple(float(x) for x in r.world(r.centre[None])[0])
+
+
 # ---------------------------------------------------------------- FieldArrows
 
 
@@ -466,10 +476,10 @@ class FieldArrows(_Child):
         length_by: Literal["soft", "size"] = "soft"
         size: float = Field(0.85, gt=0, le=3)  # the longest arrow, as a share of the spacing
 
-    def _grid(self, p, r: Resolved):
+    def _grid(self, p, r: Resolved, budget: int = MAX_ARROWS):
         n = p.counts or (15 if r.dim == 2 else 7)
         want = n**r.dim
-        n = min(n, int(MAX_ARROWS ** (1 / r.dim) + 1e-9))
+        n = min(n, int(budget ** (1 / r.dim) + 1e-9))
         axes = [np.linspace(a + (b - a) / (2 * n), b - (b - a) / (2 * n), n)
                 for a, b in zip(r.lo, r.hi, strict=True)]  # fmt: skip
         pts = np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1).reshape(-1, r.dim)
@@ -500,8 +510,8 @@ class FieldArrows(_Child):
             return
         me = self.me(state)
         p = me.params
-        cam = state.camera_for(me)
-        pts, spacing, _ = self._grid(p, r)
+        budget = INTERACTIVE_ARROWS if _interactive(ctx) else MAX_ARROWS
+        pts, spacing, _ = self._grid(p, r, budget)
         v = r.sys.fn.velocity(pts, r.vals)
         mag = np.linalg.norm(v, axis=1)
         ok = np.isfinite(mag) & (mag > 1e-12)
@@ -517,13 +527,14 @@ class FieldArrows(_Child):
         b = r.world(pts + d / 2)
         lo, hi = float(np.log1p(mag.min())), float(np.log1p(mag.max()))
         u = (np.log1p(mag) - lo) / max(hi - lo, 1e-12)
-        cols = np.c_[lut_colors(me.style["colormap"], u)[:, :3], np.full(len(u), p.opacity)]
+        cols = lut_colors(me.style["colormap"], u)
         shape = p.shape if p.shape != "auto" else ("cone" if r.dim == 3 else "arrow")
-        if shape == "cone":
-            cone_batch(ctx, a, b, length * r.scale * 0.22, colors=cols, glow=me.style["glow"])
+        if shape == "cone":  # base diameter in world units, in proportion to the length
+            ctx.arrows3d(a, b, width=length * r.scale * 0.44, units="world", colors=cols,
+                         opacity=p.opacity, glow=me.style["glow"], shape="cone")  # fmt: skip
         else:
-            w = me.style["stroke"] * self._unit(state, me, r)
-            arrow_batch(ctx, cam, a, b, w, colors=cols, glow=me.style["glow"])
+            ctx.arrows3d(a, b, width=me.style["stroke"], units="height", anchor=_middle(r),
+                         colors=cols, opacity=p.opacity, glow=me.style["glow"])  # fmt: skip
 
 
 # ---------------------------------------------------------------- Probe
@@ -629,22 +640,49 @@ class Probe(_Child):
         pts = path.points[0]
         if p.trail > 0:
             pts = pts[max(0, len(pts) - 1 - round(p.trail / r.dt)) :]
-        w = me.style["stroke"] * self._unit(state, me, r)
-        for run_ in _finite_runs(pts):
-            polyline(ctx, cam, r.world(run_), w, color=with_alpha(me.style["color"], p.opacity),
-                     glow=me.style["glow"])  # fmt: skip
+        mid = _middle(r)
+        _strips(ctx, r, _finite_runs(pts), width=me.style["stroke"], anchor=mid,
+                colors=me.style["color"], opacity=p.opacity, glow=me.style["glow"])  # fmt: skip
         fin = pts[np.isfinite(pts).all(axis=1)]
         if not len(fin):
             return
         at = r.world(fin[-1:])[0]
-        unit = self._unit(state, me, r)
         if p.dot:
-            disc_batch(ctx, cam, at[None], unit * 0.012,
-                       colors=with_alpha(me.style["dot"], p.opacity), glow=2.0)  # fmt: skip
+            ctx.points3d(at[None], radius=0.012, units="height", anchor=mid,
+                         colors=me.style["dot"], opacity=p.opacity, glow=2.0)  # fmt: skip
         if p.label:
+            unit = self._unit(state, me, r)
             size = me.style["size"] * unit
             ctx.text(p.label, at + (cam.right + cam.up) * size * 0.8, size,
                      color=with_alpha(me.style["text"], p.opacity), anchor="left")  # fmt: skip
+
+
+def _strips(ctx: DrawContext, r: Resolved, runs: list[np.ndarray], **kw) -> None:
+    """Coordinate polylines ``runs`` as one ``lines3d`` batch (sizes: shares of the frame
+    height)."""
+    runs = [q for q in runs if len(q) >= 2]
+    if runs:
+        ctx.lines3d(r.world(np.concatenate(runs)), lengths=[len(q) for q in runs],
+                    units="height", **kw)  # fmt: skip
+
+
+_TRAILS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()  # runner -> (n, back) -> lines
+
+
+def _trail(runner, sim: fm.FlowSim, n: int, back: int) -> np.ndarray:
+    """A set's last ``back`` positions at step ``n``, kept per runner (a runner is one set's
+    parameters exactly), so a frame drawn again (an orbit: only the camera moves) does not
+    step the set again. Read-only: it is shared."""
+    memo = _TRAILS.setdefault(runner, OrderedDict())
+    key = (n, back)
+    if key not in memo:
+        lines = sim.trail_from(runner.state_at((n - back) * sim.dt), back)
+        lines.flags.writeable = False
+        memo[key] = lines
+        while len(memo) > 4:
+            memo.popitem(last=False)
+    memo.move_to_end(key)
+    return memo[key]
 
 
 def _finite_runs(pts: np.ndarray) -> list[np.ndarray]:
@@ -754,7 +792,7 @@ class FlowSet(_Child):
         back = min(trail, n)
         lines = None
         if back and with_trail:  # a few steps from an earlier state, not checkpointed
-            lines = sim.trail_from(runner.state_at((n - back) * sim.dt), back)
+            lines = _trail(runner, sim, n, back)
         return r, sim, n, clamped, runner.state_at(n * sim.dt), lines
 
     def semantics(self, state: SceneState) -> dict[str, Any]:
@@ -796,42 +834,46 @@ class FlowSet(_Child):
         r, sim, _n, _, st, lines = run
         me = self.me(state)
         p = me.params
-        cam = state.camera_for(me)
-        unit = self._unit(state, me, r)
+        mid = _middle(r)
         lut = me.style["colormap"]
         pts = st["p"]
         if len(pts):
             start = np.asarray(sim.points)
             u = (start[:, 0] - start[:, 0].min()) / max(float(np.ptp(start[:, 0])), 1e-12)
             ok = np.isfinite(pts).all(axis=1)
-            stride = max(1, -(-int(ok.sum()) // MAX_DRAWN_POINTS))
+            most = INTERACTIVE_POINTS if _interactive(ctx) else MAX_DRAWN_POINTS
+            stride = max(1, -(-int(ok.sum()) // most))
             idx = np.flatnonzero(ok)[::stride]
-            cols = np.c_[lut_colors(lut, u[idx])[:, :3], np.full(len(idx), p.opacity)]
+            cols = lut_colors(lut, u[idx])
             if lines is not None and lines.shape[0] > 1 and len(idx):
                 tr = lines[:, idx]  # (T + 1, K, dim)
                 good = np.isfinite(tr).all(axis=(0, 2))
-                a = r.world(tr[:-1, good].reshape(-1, r.dim))
-                b = r.world(tr[1:, good].reshape(-1, r.dim))
-                fade = np.repeat(np.linspace(0.1, 0.7, tr.shape[0] - 1), int(good.sum()))
-                tc = np.tile(cols[good], (tr.shape[0] - 1, 1))
-                tc[:, 3] *= fade
-                segment_batch(ctx, cam, a, b, me.style["stroke"] * 0.6, colors=tc)
-            disc_batch(ctx, cam, r.world(pts[idx]), unit * p.radius, colors=cols,
-                       glow=me.style["glow"])  # fmt: skip
+                steps = tr.shape[0]
+                # one strip per point, oldest first, fading in toward the point
+                trail = r.world(np.swapaxes(tr[:, good], 0, 1).reshape(-1, r.dim))
+                tc = np.repeat(cols[good][:, None, :], steps, axis=1)
+                tc[..., 3] = np.linspace(0.1, 0.7, steps)[None, :]
+                ctx.lines3d(trail.reshape(-1, steps, 3), width=me.style["stroke"] * 0.6,
+                            units="height", colors=tc, opacity=p.opacity)  # fmt: skip
+            ctx.points3d(r.world(pts[idx]), radius=p.radius, units="height", anchor=mid,
+                         colors=cols, opacity=p.opacity, glow=me.style["glow"])  # fmt: skip
         if len(st["q"]):
-            col = with_alpha(me.style["outline"], p.opacity)
             under = int(st["under"]) >= 0
+            runs, dots = [], []
             for k, c in enumerate(sim.loops):
                 q = st["q"][st["loop"] == k]
                 if under:
-                    fin = q[np.isfinite(q).all(axis=1)]
-                    disc_batch(ctx, cam, r.world(fin), unit * p.radius * 0.6, colors=col)
+                    dots.append(q[np.isfinite(q).all(axis=1)])
                     continue
                 if c[0] == "circle" and len(q) > 2:
                     q = np.vstack([q, q[:1]])
-                w = me.style["stroke"] * unit
-                for run_ in _finite_runs(q):
-                    polyline(ctx, cam, r.world(run_), w, color=col, glow=me.style["glow"])
+                runs += _finite_runs(q)
+            if dots:
+                ctx.points3d(r.world(np.concatenate(dots)), radius=p.radius * 0.6,
+                             units="height", anchor=mid, colors=me.style["outline"],
+                             opacity=p.opacity)  # fmt: skip
+            _strips(ctx, r, runs, width=me.style["stroke"], anchor=mid, glow=me.style["glow"],
+                    colors=me.style["outline"], opacity=p.opacity)  # fmt: skip
 
 
 # ---------------------------------------------------------------- Equilibria
@@ -922,11 +964,10 @@ class Equilibria(_Child):
         k = int(np.floor(p.reveal * len(pts) + 1e-9))
         if not k:
             return
-        cam = state.camera_for(me)
         at = r.world(np.array([c["at"] for c in pts[:k]]))
-        cols = np.array([with_alpha(me.style[_eq_role(c)], p.opacity) for c in pts[:k]])
-        disc_batch(ctx, cam, at, self._unit(state, me, r) * p.radius, colors=cols,
-                   glow=me.style["glow"])  # fmt: skip
+        cols = np.array([me.style[_eq_role(c)] for c in pts[:k]], dtype=np.float64)
+        ctx.points3d(at, radius=p.radius, units="height", anchor=_middle(r), colors=cols,
+                     opacity=p.opacity, glow=me.style["glow"])  # fmt: skip
 
 
 # ---------------------------------------------------------------- EquilibriumView
@@ -1123,13 +1164,10 @@ class Manifold(_Child):
             return
         me = self.me(state)
         p = me.params
-        cam = state.camera_for(me)
-        w = me.style["stroke"] * self._unit(state, me, r)
+        if p.progress <= 0:
+            return
+        mid = _middle(r)
         for b in br:
-            pts = b["points"]
-            k = max(2, round(p.progress * len(pts)))
-            if p.progress <= 0:
-                continue
-            polyline(ctx, cam, r.world(pts[:k]), w,
-                     color=with_alpha(me.style[b["which"]], p.opacity),
-                     glow=me.style["glow"])  # fmt: skip
+            run = b["points"][: max(2, round(p.progress * len(b["points"])))]
+            _strips(ctx, r, [run], width=me.style["stroke"], anchor=mid, glow=me.style["glow"],
+                    colors=me.style[b["which"]], opacity=p.opacity)  # fmt: skip

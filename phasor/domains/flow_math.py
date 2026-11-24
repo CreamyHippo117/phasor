@@ -230,6 +230,13 @@ def compiled(exprs: tuple[sp.Expr, ...], variables: tuple[str, ...]) -> Compiled
     return Compiled(exprs, variables)
 
 
+@functools.lru_cache(maxsize=256)
+def _sreprs(exprs: tuple[sp.Expr, ...]) -> tuple[str, ...]:
+    """The expressions' exact text (``srepr``), once per system: a key is asked for at every
+    draw, and printing is the slow part of it (Milestone 28, measured)."""
+    return tuple(sp.srepr(e) for e in exprs)
+
+
 @dataclass(frozen=True)
 class System:
     """x' = F(x) in ``dim`` (2 or 3) coordinates: ``exprs`` in the coordinates and the
@@ -293,7 +300,7 @@ class System:
     def key(self, values: dict[str, float] | None = None) -> str:
         """A hash of what decides the field: the expressions and the values of the
         variables the system actually uses (a slider it does not use changes nothing)."""
-        blob = repr(([sp.srepr(e) for e in self.exprs], self.values_of(values)))
+        blob = repr((list(_sreprs(self.exprs)), self.values_of(values)))
         return hashlib.sha256(blob.encode()).hexdigest()[:20]
 
     def jacobian_exact(self, point, values=None) -> np.ndarray:

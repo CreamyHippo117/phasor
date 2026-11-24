@@ -124,3 +124,27 @@ def smooth_cycle(stops: np.ndarray, n: int) -> np.ndarray:
     t = (x - i)[:, None]
     t = t * t * (3 - 2 * t)
     return oklab_to_linear(lab[i % k] * (1 - t) + lab[(i + 1) % k] * t)
+
+
+def hue_colors(pts, lut, cycles: float, shift: float = 0.0, total: float | None = None):
+    """(N, 4) colors running ``lut`` (a wrapped ramp) along a polyline by arc length:
+    ``cycles`` times over ``total`` length (default: this polyline's), shifted by ``shift``.
+    (The theme's ``[strokes]`` hue along glowing strokes: ``domains/strokes.py`` and the
+    renderer's world-space lines use this one function.)"""
+    pts = np.asarray(pts, dtype=np.float64)
+    along = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(pts, axis=0), axis=1))])
+    total = max(float(along[-1] if total is None else total), 1e-12)
+    return lut_colors(lut, along / total * cycles + shift)
+
+
+def lut_colors(lut, where):
+    """(N, 4) opaque colors of ``lut`` (a wrapped ramp) at positions ``where`` (N,), each a
+    share of the ramp (wrapping at 1)."""
+    lut = np.asarray(lut, dtype=np.float64)
+    g = (np.asarray(where, dtype=np.float64) % 1.0) * len(lut)
+    k0 = np.floor(g).astype(int) % len(lut)
+    f = (g - np.floor(g))[:, None]
+    rgb = lut[k0] * (1 - f) + lut[(k0 + 1) % len(lut)] * f
+    out = np.empty((len(rgb), 4))
+    out[:, :3], out[:, 3] = rgb, 1.0
+    return out
