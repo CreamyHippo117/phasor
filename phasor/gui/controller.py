@@ -178,10 +178,26 @@ class Editor:
                 for seg in new]  # fmt: skip
         return self._edit(ops, f"{path} span {index} -> {t0:.3g}..{t1:.3g}s")
 
-    def waveform(self, audio: str, bins: int = 200) -> list[float]:
+    def waveform(self, audio: str, bins: int = 200,
+                 span: tuple[float, float] | list[float] | None = None) -> list[float]:  # fmt: skip
         """Loudness of a narration audio file in ``bins`` steps (0 to 1, of full scale); an
-        empty list when the file is missing or not 16-bit WAV."""
+        empty list when the file is missing or not 16-bit WAV. ``span``: only seconds (a, b)
+        of it (a block of a recording, M22: any sound file ``domains.audio`` reads; only that
+        part is read)."""
         from phasor.time.narration import parse_wav
+
+        if span is not None:
+            from phasor.domains import audio as sound
+
+            try:
+                x, _ = sound.samples(self.engine.base_dir, audio, (float(span[0]), float(span[1])))
+            except Exception:  # a missing or hostile file: no waveform, never a crash
+                return []
+            if x.size == 0:
+                return []
+            edges = np.linspace(0, x.size, bins + 1).astype(int)
+            return [min(1.0, float(np.abs(x[a:b]).max())) if b > a else 0.0
+                    for a, b in itertools.pairwise(edges)]  # fmt: skip
 
         path = Path(self.engine.base_dir) / audio
         try:  # the one WAV header walk: a hostile file is an empty list, never a crash

@@ -64,7 +64,7 @@ def test_a_sound_is_a_drawless_object_with_semantics_and_bounds(tmp_path):
 
 
 @pytest.mark.parametrize("params", [
-    {"path": "a.mp3"}, {"path": "../a.wav"}, {"path": "/etc/a.wav"}, {"path": ""},
+    {"path": "a.txt"}, {"path": "../a.wav"}, {"path": "/etc/a.wav"}, {"path": ""},
     {"path": "a.wav", "start": -1}, {"path": "a.wav", "start": 2e6},
     {"path": "a.wav", "gain": 30}, {"path": "a.wav", "gain": float("nan")},
     {"path": "a.wav", "start": float("inf")},

@@ -45,8 +45,9 @@ free name is a variable; creating its ``Variable`` is the caller's job, at commi
 
 Hostile input is an error row, never an exception or a hang: the text is capped
 (``MAX_CHARS``, ``MAX_TOKENS``, ``MAX_DEPTH``, ``MAX_DIGITS``) and constant powers whose
-result would pass ``10**MAX_MAGNITUDE`` are refused before SymPy builds them (Milestone 27
-Deviation 1: these caps may become redundant once ``parse_expression`` is hardened).
+result would pass ``10**MAX_MAGNITUDE`` are refused before SymPy builds them. Each cap is the
+stricter of the rows layer's and the hardened parser's (``codegen.MAX_SOURCE`` and the rest;
+Milestone 27 Deviation 1), so a row meets the same limits whichever reads it first.
 """
 
 from __future__ import annotations
@@ -62,13 +63,18 @@ from functools import lru_cache
 
 import sympy as sp
 
+from phasor.render.gpu import codegen
 from phasor.render.gpu.codegen import parse_expression
 
-MAX_CHARS = 2000
-MAX_TOKENS = 400
-MAX_DEPTH = 30
+# The rows layer's caps, each the stricter of its own and the hardened parser's (Milestone 26
+# put length, node, depth and power limits into ``parse_expression``; a row is read by both,
+# so the stricter one is what a person meets first, in the rows layer's words).
+MAX_CHARS = min(2000, codegen.MAX_SOURCE)
+MAX_TOKENS = min(400, codegen.MAX_NODES)
+MAX_DEPTH = min(30, codegen.MAX_DEPTH)
 MAX_DIGITS = 50
-MAX_MAGNITUDE = 300  # log10 of the largest constant a row may build
+# log10 of the largest constant a row may build (the parser's own guard: e**MAX_POWER)
+MAX_MAGNITUDE = min(300, int(codegen.MAX_POWER / math.log(10)))
 
 COORDINATES = ("x", "y", "z", "t", "u", "v", "r", "theta")
 CONSTANTS = ("pi", "e", "i")

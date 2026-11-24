@@ -29,6 +29,7 @@ from phasor.style.looks import DEFAULT_THEME, available_looks, default_look, loa
 from phasor.style.theme import ROLE_GROUPS, available_themes
 from phasor.time import verbs as _verbs
 from phasor.workspace import docs
+from phasor.workspace import explorer as _explorer
 
 VERBS = (
     "reveal",
@@ -100,6 +101,9 @@ class Workspace:
         # Who changed the scene, in order: the editor's person ("you") and an attached AI ("ai").
         self.activity: list[dict[str, Any]] = []
         self.import_notes: list[str] = []  # what the last Manim import could not carry over
+        # Explorer rows the person is typing in (row id -> the text so far): an edit of one
+        # from anyone else is refused until they commit or leave it (``_explorer_typing``).
+        self._drafts: dict[str, str] = {}
         # Set on the thread that runs an attached AI's call (``workspace.remote``): that call
         # never makes new code run, whatever the person allowed (``_no_new_code``).
         self._caller = threading.local()
@@ -452,16 +456,30 @@ class Workspace:
         start = base + offset
         return {"verb": verb, "start": start, "end": start + step._end, "version": e.version}
 
-    def narrate(self, script: str, voice: str = "auto", pace: bool = True) -> dict[str, Any]:
+    def narrate(self, script: str = "", voice: str = "auto", pace: bool = True,
+                audio: str | None = None) -> dict[str, Any]:  # fmt: skip
         """Set the narration. ``[[name]]`` puts a marker at the next word. Every animation
         anchored to a marker follows the voice. ``pace`` adds breathing room after busy
-        sentences."""
+        sentences. ``audio``: a recording in the scene's folder (a WAV, or an mp4, m4a, mp3,
+        ogg or flac) instead of a voice; ``script`` is then what it says (its sentences are
+        found in the audio), or empty (its phrases become the blocks). A recording keeps its
+        own timing, so ``pace`` is not applied to it; ``snap_to_narration`` moves your
+        markers onto it."""
         e = self.engine
         if e.scripted:
             raise ToolError("this scene is built by a script: change the narration there")
         scene = Scene.of(e)
+        if audio is not None:
+            self._inside(e.base_dir / audio)  # (and the scene's folder: core/files.py)
+        from phasor.voice import VoiceError
 
         def go():
+            if audio is not None:
+                try:
+                    scene.narrate(script, audio=audio)
+                except VoiceError as err:
+                    raise ToolError(str(err)) from err
+                return
             scene.narrate(script, voice=voice)
             if pace:
                 scene.pace()
@@ -472,6 +490,20 @@ class Workspace:
             "duration": e.duration,
             "voice": e.document.narration.voice if e.document.narration else None,
         }
+
+    def snap_to_narration(self, dry_run: bool = True, anchors: dict[str, int] | None = None,
+                          allow_short: bool = False) -> dict[str, Any]:  # fmt: skip
+        """Move the markers you placed by hand onto the narration's sentence starts (or where
+        speech resumes after a pause), keeping their order and each scene long enough for its
+        motions. ``dry_run`` (the default) only previews: ``moves`` lists marker, from, to,
+        why and confidence. Call again with ``dry_run: false`` to apply (one undo step).
+        ``anchors`` pins a marker to a narration block index (``{"poles": 2}``)."""
+        e = self.engine
+        if e.scripted and not dry_run:
+            raise ToolError("this scene is built by a script: add s.snap_to_narration() there, "
+                            "after s.narrate(...)")  # fmt: skip
+        return self._guard(lambda: e.snap_to_narration(dry_run=dry_run, anchors=anchors,
+                                                       allow_short=allow_short))  # fmt: skip
 
     # ------------------------------------------------------------ checkpoints
 
@@ -716,26 +748,238 @@ class Workspace:
         }
 
     def render(
-        self, preset: str = "preview", out: str | None = None, start: float | None = None,
-        end: float | None = None, frame: float | None = None,
+        self, preset: str = "preview", out: str | None = None, start: float | str | None = None,
+        end: float | str | None = None, frame: float | str | None = None,
     ) -> dict[str, Any]:  # fmt: skip
-        """Render a video (preset: preview 960x540@30, final, 4k) or one PNG (``frame``)."""
+        """Render a video or one PNG (``frame``). ``preset``: ``draft`` (quick look: long side
+        640, 15 fps, no bloom, lens, fog or life, still frames repeated, not redrawn),
+        ``preview`` (960x540@30), ``final`` or ``4k``. ``start``/``end``/``frame``: seconds
+        or a marker name (a draft of one stretch: ``start="intro", end="proof"``). A draft
+        is written to ``<scene>.draft.mp4`` by default."""
         from phasor.render.encode import EncodeError
-        from phasor.render.job import PRESETS, render_file
+        from phasor.render.job import PRESETS
 
-        if preset not in PRESETS:
+        if not isinstance(preset, str) or preset not in PRESETS:
             raise ToolError(f"preset is one of {sorted(PRESETS)}")
         e = self.engine
-        stem = file_stem(e.document.meta.title)
+        stem = file_stem(e.document.meta.title) + (".draft" if preset == "draft" else "")
         default = self.out_dir / (f"{stem}.png" if frame is not None else f"{stem}.mp4")
         target = self._inside(out) if out else default
         target.parent.mkdir(parents=True, exist_ok=True)
         try:
-            return render_file(e, target, preset=preset, start=start, end=end, frame=frame)
+            return e.render(target, preset=preset, start=start, end=end, frame=frame)
         except (RuntimeError, EncodeError, OSError, ValueError) as err:
             raise ToolError(str(err)) from err
 
     # ------------------------------------------------------------ learning
+
+    # ------------------------------------------------------------ the Explorer (Milestone 27)
+
+    def _explorer(self, fn):
+        try:
+            return self._guard(fn)
+        except _explorer.EditError as e:
+            raise ToolError(str(e)) from e
+
+    def explorer_state(self, t: float = 0.0) -> dict[str, Any]:
+        """Call this first in the Explorer. The rows as typed (``id``, ``kind``, ``text``,
+        ``error``, ``visible``, ``version``, ``locked`` while the person types in one), each
+        system (equations, LaTeX, variables, divergence, window, ``dt``, flow time ``tau``,
+        and its equilibria with eigenvalues, kinds and the window and grid searched), the
+        variables and their slider ranges, the camera and lint. ``t`` is the scene time (the
+        playhead is the editor's, not the document's)."""
+        return self._explorer(lambda: _explorer.state(self.engine, t, self._drafts))
+
+    def _row_refusals(self, rows: Any) -> list[dict[str, Any]]:
+        """A row the person is typing in, or one changed since the ``version`` an edit names,
+        is not edited (the whole call is refused)."""
+        if not isinstance(rows, list | tuple):
+            return []
+        current = {e["id"]: e for e in _explorer.rows_of(self.engine.document)}
+        objects: dict[str, list[str]] = {}
+        for e in current.values():
+            objects.setdefault(e["object"], []).append(e["id"])
+        out = []
+        for ed in rows:
+            key = ed.get("id") if isinstance(ed, dict) else None
+            if not isinstance(key, str):
+                continue  # a new row, or an edit the planner refuses with its reason
+            keys = [key] if key in current else objects.get(key, [])
+            for k in keys:
+                if k in self._drafts:
+                    out.append({"code": "row_locked", "row": k, "version": current[k]["version"],
+                                "message": f"the person is typing in row {k!r}; read "
+                                "explorer_state again; retry once it is not locked"})  # fmt: skip
+            want = ed.get("version")
+            if want is not None and keys and current[keys[0]]["version"] != want:
+                out.append({"code": "row_changed", "row": key,
+                            "version": current[keys[0]]["version"],
+                            "message": f"row {key!r} changed since version {want}; read it "
+                            "again (explorer_state)"})  # fmt: skip
+        return out
+
+    def _locked_by(self, ops: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """The rows the person is typing in that these ops would touch: the row's object, its
+        parts (``system.field``), or any other row of the same object (an ODE line's
+        system). Decided from the planned ops, so a new row that rewrites a locked one (a
+        second ``rho = ...``, a third ``x' = ...``) is caught as well as an edit by id."""
+        if not self._drafts:
+            return []
+        from phasor.core.ids import split_path
+
+        current = {e["id"]: e for e in _explorer.rows_of(self.engine.document)}
+        touched: set[str] = set()
+        for op in ops:
+            kind = op.get("op")
+            path = None
+            if kind in ("remove_object", "set_style"):
+                touched.add(op["id"])
+            elif kind == "add_object":
+                touched.add(op["object"]["id"])
+            elif kind == "set_param":
+                path = op["path"]
+            elif kind == "add_control":
+                path = op["control"]["path"]
+            elif kind == "remove_control":
+                path = op["path"]
+            if path is not None:
+                touched.add(split_path(path)[0])
+        out = []
+        for key in sorted(self._drafts):
+            row = current.get(key)
+            if row is None:
+                continue
+            obj = row["object"]
+            if obj in touched or any(t.startswith(f"{obj}.") for t in touched):
+                out.append({"code": "row_locked", "row": key, "version": row["version"],
+                            "message": f"the person is typing in row {key!r}, and this edit "
+                            "would change it; read explorer_state again and retry once it "
+                            "is not locked"})  # fmt: skip
+        return out
+
+    def explorer_edit(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
+        """Add, retype, remove, show, hide, recolour and reorder Explorer rows and set
+        variables, as one undoable edit. Each entry: ``{"text": "x' = sigma*(y - x)"}`` adds
+        a row; ``{"id": "rho", "value": 24.74}`` (also ``min``, ``max``, ``step``), ``{"id":
+        ..., "text": ...}``, ``{"id": ..., "remove": true}``, ``"visible"``, ``"color"`` (a
+        role), ``"kind"`` (over the guess), ``"at"`` (its place), a system's ``window``,
+        ``dt``, ``tau``, ``rate``; ``"version"`` refuses the edit if the row changed since;
+        ``"base"`` on a new row is the id its object is named from (``"lorenz"``). A call
+        that would change a row the person is typing in is refused whole (``row_locked``).
+        Text is read like typing (``x^2``, ``2x``, Greek letters, ``x'``); a row that does not read
+        is kept with its ``error``. Names no variable defines get a slider. Returns the rows
+        changed (ids, kinds, errors) and the lint delta: read them before you answer."""
+        e = self.engine
+        if e.scripted:
+            raise ToolError("Explorer rows edit a .phasor.json document; this scene is a script "
+                            "(edit the script, or start one with scene_new)")  # fmt: skip
+        refused = self._row_refusals(rows)
+        if refused:
+            return {"ok": False, "version": e.version, "errors": refused}
+        cam = e.document.cameras[0].kind if e.document.cameras else "ortho"
+        ops, report = self._explorer(lambda: _explorer.plan(e.document, rows, cam))
+        locked = self._locked_by(ops)
+        if locked:
+            return {"ok": False, "version": e.version, "errors": locked}
+        return self._explorer_commit_ops(ops, report)
+
+    def _explorer_commit_ops(self, ops: list[dict[str, Any]], report: dict[str, Any]) -> dict:
+        e = self.engine
+        if not ops:
+            return {"ok": True, "version": e.version, "errors": [], "changed": False, **report}
+        r = self.scene_edit(ops)
+        if r.get("ok"):
+            now = {x["object"]: x for x in _explorer.rows_of(e.document)}
+            for row in report["rows"]:
+                if row["id"] in now:
+                    row["version"] = now[row["id"]]["version"]
+        return {**r, "changed": bool(r.get("ok")), **report}
+
+    def explorer_preset(self, name: str, replace: bool = True) -> dict[str, Any]:
+        """Load a classic system as rows (``lorenz``, ``rossler``, ``van_der_pol``,
+        ``pendulum``, ``hopf``, ``saddle_node``, ``pitchfork``, ... : the list is in the
+        error for an unknown name): its ODE rows, a slider per variable with the preset's
+        range, the window and ``dt``. ``replace`` (default) removes the other rows in the same
+        edit. Returns what ``explorer_edit`` returns."""
+        e = self.engine
+        if not isinstance(replace, bool):
+            raise ToolError(f"replace is true or false, not {replace!r}")
+
+        def go():
+            edits = _explorer.preset_edits(name, _explorer.rows_of(e.document), replace)
+            return self.explorer_edit(edits)
+
+        return self._explorer(go)
+
+    def find_equilibria(self, window: list[list[float]] | None = None, grid: int = 9,
+                        variables: dict[str, float] | None = None, system: str | None = None,
+                        t: float = 0.0) -> dict[str, Any]:  # fmt: skip
+        """Every equilibrium Newton finds from a ``grid`` of starts per side of the ``window``
+        (default: the system's), each with eigenvalues, kind, subspace dimensions, trace and
+        determinant; ``variables`` ({"rho": 24}) try other values on a fork: nothing in the
+        scene changes. Quote the window and grid: none found there is not none exist."""
+        return self._explorer(lambda: _explorer.find_equilibria(
+            self.engine, window, grid, variables, system, t))  # fmt: skip
+
+    def flow_probe(self, x0: list[float] | list[list[float]], T: float = 10.0,
+                   samples: int = 16, variables: dict[str, float] | None = None,
+                   system: str | None = None, t: float = 0.0) -> dict[str, Any]:  # fmt: skip
+        """Integrate one point ``x0`` (or up to 16) for flow time ``T`` (negative: backward)
+        on a fork: ``samples`` positions (at most 64; only up to ``positions_until``, the
+        smaller of ``chaotic_beyond`` and where ``dt`` and ``dt/2`` part, then statistics),
+        escaped and when, bounding box, final speed, a period estimate, the largest Lyapunov
+        exponent with its spread, and the dt check. At most 4000 steps (``clamped``)."""
+        return self._explorer(lambda: _explorer.flow_probe(
+            self.engine, x0, T, samples, variables, system, t))  # fmt: skip
+
+    def sweep_parameter(self, name: str, lo: float, hi: float, n: int = 17,
+                        measure: str = "equilibria", window: list[list[float]] | None = None,
+                        grid: int = 9, variables: dict[str, float] | None = None,
+                        system: str | None = None, t: float = 0.0) -> dict[str, Any]:  # fmt: skip
+        """Move one variable from ``lo`` to ``hi`` (``n`` values, at most 64) on a fork: the
+        equilibria at each (count, kinds, largest real part), and candidate bifurcations
+        refined by bisection, each named by the local test that found it (saddle-node or
+        pitchfork: the count changes; Hopf: a complex pair crosses; transcritical: a real
+        eigenvalue crosses with the count unchanged), with its ``precision``. A count change
+        at the window's edge is ``enters or leaves the window``; one beside non-isolated
+        equilibria is ``not named``. Global bifurcations (homoclinic, crises) are not
+        detected; say so."""
+        return self._explorer(lambda: _explorer.sweep_parameter(
+            self.engine, name, lo, hi, n, measure, window, grid, variables, system, t))  # fmt: skip
+
+    # Not tools: the editor's own (an attached AI cannot call a name starting with _). The
+    # Explorer panel (Milestone 29) must call these under the shared lock (``Editor.lock``),
+    # like every other edit, so a lock and an AI call never interleave.
+
+    def _explorer_typing(self, row: str, text: str) -> str:
+        """The person is typing ``text`` in ``row``: it is locked to them until
+        ``_explorer_commit`` or ``_explorer_leave``. Returns the row's version."""
+        current = {e["id"]: e for e in _explorer.rows_of(self.engine.document)}
+        if row not in current:
+            raise ToolError(f"no row {row!r}")
+        self._drafts[row] = text
+        return current[row]["version"]
+
+    def _explorer_leave(self, row: str) -> None:
+        self._drafts.pop(row, None)
+
+    def _explorer_commit(self, row: str, text: str) -> dict[str, Any]:
+        """The person's row is done: unlock it and commit its text (one undoable edit)."""
+        self._drafts.pop(row, None)
+        return self.explorer_edit([{"id": row, "text": text}])
+
+    def _explorer_preview(self, rows: list[dict[str, Any]]):
+        """A fork of the scene with ``rows`` applied (what typing or a drag shows before the
+        commit); the open scene and its history are untouched."""
+        e = self.engine
+        cam = e.document.cameras[0].kind if e.document.cameras else "ortho"
+        ops, _ = self._explorer(lambda: _explorer.plan(e.document, rows, cam))
+        fork = e.fork()
+        if ops:
+            r = fork.apply(self._with_defaults(ops), origin="tweak")
+            if not r.ok:
+                raise ToolError("; ".join(i.message for i in r.errors), list(r.errors))
+        return fork
 
     def docs_search(self, query: str, limit: int = 5) -> dict[str, Any]:
         """Search the API reference, patterns, pitfalls and examples."""

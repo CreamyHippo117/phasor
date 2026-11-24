@@ -8,6 +8,10 @@
 - anything else (``*.mp4``): the best working encoder, probed in SPEC order: PyAV NVENC
   (h264, then hevc), a system ffmpeg fed raw frames over a pipe (NVENC first), then PyAV
   libx264. A probe counts only when it really encoded frames (``render.doctor``).
+
+``speed="fast"`` (the ``draft`` preset, Milestone 21) trades size and quality for time: the
+fastest encoder preset, no B-frames, a keyframe every second (so a player seeks at once),
+and quick PNG compression. ``speed="quality"`` (every other preset) is unchanged.
 """
 
 from __future__ import annotations
@@ -46,8 +50,35 @@ def best_encoder() -> str | None:
     return pick_encoder(check_pyav(), check_ffmpeg())
 
 
+SPEEDS = ("quality", "fast")
+FAST_CRF = "26"  # libx264 at ``speed="fast"``: a draft is for looking at motion, not detail
+FAST_CQ = "28"  # h264_nvenc at ``speed="fast"``
+FAST_PNG_LEVEL = 1  # zlib level of a draft PNG sequence (PIL's default is 6)
+
+
 def _rate(fps: float) -> Fraction:
     return Fraction(fps).limit_denominator(1001)
+
+
+def _gop(fps: float) -> str:
+    """A keyframe interval of about one second (at least one frame)."""
+    return str(max(1, round(fps)))
+
+
+def fast_options(codec: str, fps: float) -> dict[str, str]:
+    """Encoder options for ``speed="fast"``: the fastest preset, no B-frames, a keyframe
+    every second. Empty for a codec it does not know (its defaults are kept)."""
+    if codec == "libx264":
+        return {"preset": "ultrafast", "crf": FAST_CRF, "bf": "0", "g": _gop(fps)}
+    if codec.endswith("_nvenc"):
+        return {"preset": "p1", "rc": "vbr", "cq": FAST_CQ, "bf": "0", "g": _gop(fps)}
+    return {}
+
+
+def _speed(speed: str) -> str:
+    if speed not in SPEEDS:
+        raise ValueError(f"speed must be one of {SPEEDS}, got {speed!r}")
+    return speed
 
 
 def _check(frame: np.ndarray, width: int, height: int) -> np.ndarray:
@@ -59,25 +90,31 @@ def _check(frame: np.ndarray, width: int, height: int) -> np.ndarray:
 
 
 class PngSequence:
-    def __init__(self, path: Path, width: int, height: int) -> None:
+    def __init__(self, path: Path, width: int, height: int, speed: str = "quality") -> None:
         self.pattern = path / "frame_%05d.png" if "%" not in path.name else path
         self.pattern.parent.mkdir(parents=True, exist_ok=True)
         self.path, self.encoder = path, "png"
         self.size, self.count = (width, height), 0
+        self._save = {"compress_level": FAST_PNG_LEVEL} if _speed(speed) == "fast" else {}
 
     def write(self, frame: np.ndarray) -> None:
         from PIL import Image
 
         frame = _check(frame, *self.size)
-        Image.fromarray(frame, "RGB").save(str(self.pattern) % self.count)
+        Image.fromarray(frame, "RGB").save(str(self.pattern) % self.count, **self._save)
         self.count += 1
+
+    def written(self) -> list[Path]:
+        """The files this sequence wrote (a cancelled render removes them, not the folder)."""
+        return [Path(str(self.pattern) % k) for k in range(self.count)]
 
     def close(self) -> None:
         pass
 
 
 class PyAVWriter:
-    def __init__(self, path: Path, width: int, height: int, fps: float, codec: str) -> None:
+    def __init__(self, path: Path, width: int, height: int, fps: float, codec: str,
+                 speed: str = "quality") -> None:  # fmt: skip
         import av
 
         self.path, self.encoder, self.size = path, f"pyav:{codec}", (width, height)
@@ -85,7 +122,11 @@ class PyAVWriter:
         self._stream = self._container.add_stream(codec, rate=_rate(fps))
         self._stream.width, self._stream.height = width, height
         self._stream.pix_fmt = "yuv420p"
-        if codec == "libx264":
+        if _speed(speed) == "fast" and fast_options(codec, fps):
+            if codec.endswith("_nvenc"):
+                self._stream.bit_rate = 0
+            self._stream.options = fast_options(codec, fps)
+        elif codec == "libx264":
             self._stream.options = {"crf": "16", "preset": "medium"}
         elif codec == "h264_nvenc":
             # Constant quality, not NVENC's fixed default bitrate: on prism_primes cq 19 matched
@@ -107,17 +148,22 @@ class PyAVWriter:
 
 class FFmpegWriter:
     def __init__(
-        self, path: Path, width: int, height: int, fps: float, codec: str, pix_fmt: str
-    ) -> None:
+        self, path: Path, width: int, height: int, fps: float, codec: str, pix_fmt: str,
+        speed: str = "quality",
+    ) -> None:  # fmt: skip
         exe = shutil.which("ffmpeg")
         if exe is None:
             raise EncodeError("no ffmpeg on PATH")
         self.path, self.encoder, self.size = path, f"ffmpeg:{codec}", (width, height)
         rate = _rate(fps)
+        fast = [a for k, v in fast_options(codec, fps).items() for a in (f"-{k}", v)]
+        if fast and codec.endswith("_nvenc"):  # constant quality, as the PyAV path's bit_rate 0
+            fast += ["-b:v", "0"]  # (untested: no NVIDIA card here)
         cmd = [exe, "-y", "-hide_banner", "-loglevel", "error",
                "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{width}x{height}",
                "-r", f"{rate.numerator}/{rate.denominator}", "-i", "-",
-               "-c:v", codec, "-pix_fmt", pix_fmt, str(path)]  # fmt: skip
+               "-c:v", codec, *(fast if _speed(speed) == "fast" else []),
+               "-pix_fmt", pix_fmt, str(path)]  # fmt: skip
         self._proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE,
                                       creationflags=NO_WINDOW)  # fmt: skip
 
@@ -188,10 +234,14 @@ class BackgroundWriter:
             self.inner.close()
 
 
-def open_writer(path: str | Path, width: int, height: int, fps: float) -> Writer:
+def open_writer(path: str | Path, width: int, height: int, fps: float,
+                speed: str = "quality") -> Writer:  # fmt: skip
+    """The writer for ``path`` (see the module's doc). ``speed``: ``"quality"`` or
+    ``"fast"`` (a draft: fastest settings, no B-frames, a keyframe a second)."""
     path = Path(path)
+    _speed(speed)
     if path.suffix == "" or (path.suffix == ".png" and "%" in path.name):
-        return PngSequence(path, width, height)
+        return PngSequence(path, width, height, speed)
     if width % 2 or height % 2:
         raise EncodeError(f"video needs an even width and height, got {width}x{height}")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -204,8 +254,8 @@ def open_writer(path: str | Path, width: int, height: int, fps: float) -> Writer
     if backend == "pyav" and codec.endswith("_nvenc") and not _nvenc_takes(codec, width, height):
         codec = "libx264"  # NVENC has a minimum frame size (found 2026-11-21: 64x48 refused)
     if backend == "pyav":
-        return PyAVWriter(path, width, height, fps, codec)
-    return FFmpegWriter(path, width, height, fps, codec, "yuv420p")
+        return PyAVWriter(path, width, height, fps, codec, speed)
+    return FFmpegWriter(path, width, height, fps, codec, "yuv420p", speed)
 
 
 @functools.cache
@@ -228,13 +278,19 @@ def _nvenc_takes(codec: str, width: int, height: int) -> bool:
         return False
 
 
+def mux_temp(video: str | Path) -> Path:
+    """Where ``mux_audio`` writes before it replaces ``video``."""
+    video = Path(video)
+    return video.with_name(video.stem + ".mux" + video.suffix)
+
+
 def mux_audio(video: str | Path, samples: np.ndarray, rate: int) -> None:
     """Add a mono int16 narration track to a finished video file, in place. The video
     stream is copied, not re-encoded; the audio becomes AAC (MP4) or PCM (MOV)."""
     import av
 
     video = Path(video)
-    tmp = video.with_name(video.stem + ".mux" + video.suffix)
+    tmp = mux_temp(video)
     with av.open(str(video)) as src, av.open(str(tmp), mode="w") as dst:
         vin = src.streams.video[0]
         vout = dst.add_stream_from_template(vin)
@@ -248,6 +304,11 @@ def mux_audio(video: str | Path, samples: np.ndarray, rate: int) -> None:
         pcm = np.ascontiguousarray(samples, dtype=np.int16).reshape(1, -1)
         frame = av.AudioFrame.from_ndarray(pcm, format="s16", layout="mono")
         frame.sample_rate = rate
+        # The first sample is at 0 s: with a time the encoder's priming (1024 samples of AAC,
+        # 0.13 s at 8 kHz) is written as a skip, so players and decoders drop it (M22; it
+        # was heard that much late before)
+        frame.pts = 0
+        frame.time_base = Fraction(1, rate)
         for packet in aout.encode(frame):
             dst.mux(packet)
         for packet in aout.encode(None):

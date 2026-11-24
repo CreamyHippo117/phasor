@@ -152,6 +152,11 @@ kind = "physics"
 tier = "technique"
 teaches = "A 3D flow from formulas: a cone field, classified equilibria, a ball of initial conditions folding, an equilibrium's card (the Explorer's objects)"
 
+[examples.explorer_rows]
+kind = "physics"
+tier = "technique"
+teaches = "Explorer rows as objects: typed ODE rows, a variable with a slider, a point on the flow, a kept graph and an error row (explorer.plan, one patch)"
+
 [examples.pendulum_flow]
 kind = "physics"
 tier = "technique"
@@ -230,3 +235,8 @@ why = "a Manim script, the Milestone 20 exit demo of the importer"
 kind = "basics"
 tier = "technique"
 teaches = "A sound on cue: a Sound clip (a WAV file in the scene folder) mixed in at render when a ball lands"
+
+[examples.narrated_from_audio]
+kind = "basics"
+tier = "technique"
+teaches = "Narration from a recording (a WAV, or an mp4's sound): sentences found in the audio, and markers placed by hand snapped onto them with snap_to_narration (a preview first)"

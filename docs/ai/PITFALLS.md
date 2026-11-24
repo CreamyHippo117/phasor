@@ -113,8 +113,10 @@ The bundled font has no `²`, `π` or accented letters. Lint reports `missing_gl
 ## Rendering on a machine without CUDA
 
 It works (tier B) but every kernel runs on NumPy: a 1080p fractal frame takes about 1.5 s
-there, against milliseconds on a GPU. Preview at `--preset preview`; render finals on the
-NVIDIA machine.
+there, against milliseconds on a GPU. Check motion with a draft (`phasor preview SCENE`,
+`--preset draft`: small, 15 fps, plain look, still frames not redrawn), preview at `--preset
+preview`; render finals on the NVIDIA machine. A draft of a kernel-heavy scene (a large point
+cloud, a deep fractal) is not much faster per frame than a preview: see API.md.
 
 ## The GL context and the bridge
 

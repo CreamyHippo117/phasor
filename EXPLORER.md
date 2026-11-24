@@ -50,7 +50,7 @@ Two kinds of state:
 | # | What | Depends on | Where | Status |
 | --- | --- | --- | --- | --- |
 | 26 | Flow core, headless: parser hardening, `flow_math`, batched RK4 + `Simulation`, equilibria, 3D classification, 1D manifolds, set refinement, objects (`Variable`, `System`, `FieldArrows`, `Tracer`, `FlowSet`, `Equilibria`, `EquilibriumView`, `Manifold`), presets, docs, examples, goldens | none | cloud | DONE (independently audited, 4 blockers fixed; `MILESTONE_26.md`) |
-| 27 | Rows, variables, AI tools: `normalize_row`, row classifier, `source` params, auto `Control`, `explorer_state/edit/preset`, `find_equilibria`, `flow_probe`, `sweep_parameter`, MCP.md, llms.txt, skill | 26 interfaces | cloud | part A built (`rows.py`, merged); tools, `Variable`/`Control` wiring and `explorer_*` still to do |
+| 27 | Rows, variables, AI tools: `normalize_row`, row classifier, `source` params, auto `Control`, `explorer_state/edit/preset`, `find_equilibria`, `flow_probe`, `sweep_parameter`, MCP.md, llms.txt, skill | 26 interfaces | cloud | DONE (independently audited, 2 blockers fixed; `MILESTONE_27.md`); the panel's typed-row lock is in place, rows for graphs/curves/surfaces are saved but not drawn yet |
 | 28 | World-space batches `ctx.points3d/lines3d/arrows3d` (GL + software), flow objects moved onto them, thinning while dragging | M21 | cloud; PC timing | planned |
 | 29 | The Explorer panel in the M25 window: transport, click/drag tools, equilibrium card, R2/R3 | 27, M25 | cloud; PC feel | planned |
 | 30 | Analysis pack: Poincare section, Lyapunov, time-series strip, twin tracers, divergence map, bifurcation sweep, limit cycles | 26, 27 | cloud | planned |
@@ -104,4 +104,4 @@ delete-and-retype (`retired_ids`); parse every formula in `examples/`, `showcase
 
 ## Status
 
-Planned 2026-11-24. 26 flow core DONE (audited, merged); 27 part A (row normaliser) merged; 27 tools next, then 28 and 30 in parallel. 29 waits for Milestone 25.
+Planned 2026-11-24. 26 flow core DONE (audited, merged); 27 rows and AI tools DONE (audited, merged); 30 analysis pack built and under audit; 28 (world-space batches) next, then 29 after Milestone 25. 29 waits for Milestone 25.

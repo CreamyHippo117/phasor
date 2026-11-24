@@ -245,3 +245,20 @@ def open_regular(path: str | Path, expect: tuple | None = None, *, nofollow: boo
         f.close()
         raise
     return f
+
+
+def user_cache(name: str, env: str | None = None) -> Path:
+    """phasor's ``name`` folder in the user's cache (``%LOCALAPPDATA%``, ``~/Library/Caches``
+    or ``$XDG_CACHE_HOME``): what phasor builds once and keeps (built kernels, decoded
+    sound). The environment variable ``env``, when set, names the folder instead."""
+    import sys
+
+    if env and os.environ.get(env):
+        return Path(os.environ[env])
+    if sys.platform == "win32":
+        base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Caches"
+    else:
+        base = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
+    return base / "phasor" / name

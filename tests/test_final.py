@@ -26,7 +26,7 @@ for _m in phasor._MODULES:  # register every domain's types
     getattr(phasor, _m)
 TYPES = sorted(n for n, c in registered_types().items() if is_builtin(c))  # not test types
 # Types with nothing to draw and so no style roles (ADR 0005): a named number.
-DRAWLESS = {"value", "sound", "variable"}
+DRAWLESS = {"value", "sound", "variable", "flow_note"}
 # The fewest parameters each type needs (the rest have defaults).
 REQUIRED = {
     "domain_coloring": {"function": "1/(z**2+1)"},

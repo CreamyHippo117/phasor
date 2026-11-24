@@ -14,7 +14,8 @@
 - `undo`: Revert the last edit (each patch, verb or narration is one step).
 - `redo`: Re-apply the edit that undo reverted.
 - `animate`: Animate with a choreography verb starting at a marker (or seconds). Timing comes from the theme. Returns when it starts and ends so the next step can follow it. `orbit` swings the 3D camera `value` degrees (default 360), until marker `until` if given; `morph` too runs until `until` if given. `transform`, `transform_matching` and `become` take `targets=[from, to]`; `sweep` takes `path` and `value`; `circumscribe` takes one target and `value` "circle" or "box".
-- `narrate`: Set the narration. `[[name]]` puts a marker at the next word. Every animation anchored to a marker follows the voice. `pace` adds breathing room after busy sentences.
+- `narrate`: Set the narration. `[[name]]` puts a marker at the next word. Every animation anchored to a marker follows the voice. `pace` adds breathing room after busy sentences. `audio`: a recording in the scene's folder (a WAV, or an mp4, m4a, mp3, ogg or flac) instead of a voice; `script` is then what it says (its sentences are found in the audio), or empty (its phrases become the blocks). A recording keeps its own timing, so `pace` is not applied to it; `snap_to_narration` moves your markers onto it.
+- `snap_to_narration`: Move the markers you placed by hand onto the narration's sentence starts (or where speech resumes after a pause), keeping their order and each scene long enough for its motions. `dry_run` (the default) only previews: `moves` lists marker, from, to, why and confidence. Call again with `dry_run: false` to apply (one undo step). `anchors` pins a marker to a narration block index (`{"poles": 2}`).
 - `checkpoint`: Remember the current document under `name` (to compare or return to later).
 - `restore`: Go back to a checkpoint, as one step (undo brings you back again).
 - `diff`: What changed from version `a` to version `b` ('current', 'saved' or a checkpoint).
@@ -31,9 +32,15 @@
 - `free_space_near`: Empty label-sized places around `id` at `t`, nearest first (boxes are 0-1, top-left origin): where a label or note could go.
 - `hit_test`: Objects under an output-pixel point (origin top-left), topmost first.
 - `resolve`: Turn words like 'the pole on the left' or 'label of the loop' into object ids.
-- `render`: Render a video (preset: preview 960x540@30, final, 4k) or one PNG (`frame`).
+- `render`: Render a video or one PNG (`frame`). `preset`: `draft` (quick look: long side 640, 15 fps, no bloom, lens, fog or life, still frames repeated, not redrawn), `preview` (960x540@30), `final` or `4k`. `start`/`end`/`frame`: seconds or a marker name (a draft of one stretch: `start="intro", end="proof"`). A draft is written to `<scene>.draft.mp4` by default.
 - `docs_search`: Search the API reference, patterns, pitfalls and examples.
 - `object_types`: What a patch may add: object types (use these exact names in `add_object`) with their parameters and defaults and style keys (role group, default role), the role names each group accepts (style takes roles; color, text-size and stroke keys may instead hold an explicit value, checked by review), and the themes.
+- `explorer_state`: Call this first in the Explorer. The rows as typed (`id`, `kind`, `text`, `error`, `visible`, `version`, `locked` while the person types in one), each system (equations, LaTeX, variables, divergence, window, `dt`, flow time `tau`, and its equilibria with eigenvalues, kinds and the window and grid searched), the variables and their slider ranges, the camera and lint. `t` is the scene time (the playhead is the editor's, not the document's).
+- `explorer_edit`: Add, retype, remove, show, hide, recolour and reorder Explorer rows and set variables, as one undoable edit. Each entry: `{"text": "x' = sigma*(y - x)"}` adds a row; `{"id": "rho", "value": 24.74}` (also `min`, `max`, `step`), `{"id": ..., "text": ...}`, `{"id": ..., "remove": true}`, `"visible"`, `"color"` (a role), `"kind"` (over the guess), `"at"` (its place), a system's `window`, `dt`, `tau`, `rate`; `"version"` refuses the edit if the row changed since; `"base"` on a new row is the id its object is named from (`"lorenz"`). A call that would change a row the person is typing in is refused whole (`row_locked`). Text is read like typing (`x^2`, `2x`, Greek letters, `x'`); a row that does not read is kept with its `error`. Names no variable defines get a slider. Returns the rows changed (ids, kinds, errors) and the lint delta: read them before you answer.
+- `explorer_preset`: Load a classic system as rows (`lorenz`, `rossler`, `van_der_pol`, `pendulum`, `hopf`, `saddle_node`, `pitchfork`, ... : the list is in the error for an unknown name): its ODE rows, a slider per variable with the preset's range, the window and `dt`. `replace` (default) removes the other rows in the same edit. Returns what `explorer_edit` returns.
+- `find_equilibria`: Every equilibrium Newton finds from a `grid` of starts per side of the `window` (default: the system's), each with eigenvalues, kind, subspace dimensions, trace and determinant; `variables` ({"rho": 24}) try other values on a fork: nothing in the scene changes. Quote the window and grid: none found there is not none exist.
+- `flow_probe`: Integrate one point `x0` (or up to 16) for flow time `T` (negative: backward) on a fork: `samples` positions (at most 64; only up to `positions_until`, the smaller of `chaotic_beyond` and where `dt` and `dt/2` part, then statistics), escaped and when, bounding box, final speed, a period estimate, the largest Lyapunov exponent with its spread, and the dt check. At most 4000 steps (`clamped`).
+- `sweep_parameter`: Move one variable from `lo` to `hi` (`n` values, at most 64) on a fork: the equilibria at each (count, kinds, largest real part), and candidate bifurcations refined by bisection, each named by the local test that found it (saddle-node or pitchfork: the count changes; Hopf: a complex pair crosses; transcritical: a real eigenvalue crosses with the count unchanged), with its `precision`. A count change at the window's edge is `enters or leaves the window`; one beside non-isolated equilibria is `not named`. Global bifurcations (homoclinic, crises) are not detected; say so.
 
 ## Object types (use these names in add_object)
 
@@ -67,11 +74,12 @@
 - `flow_limit_cycle`: flash, system, x0, transient, max_time, tol, progress
 - `flow_lines`: flash, fp, fq, fr, pos, extent, seeds, steps, length, both, progress
 - `flow_manifold`: flash, system, near, which, length, progress, grid
+- `flow_note`: flash, source, row, kind, visible, error
 - `flow_particles`: flash, fp, fq, fr, pos, extent, count, speed, lifetime, tail, seed
-- `flow_probe`: flash, system, x0, trail, dot, label
+- `flow_probe`: flash, system, source, row, kind, visible, x0, trail, dot, label
 - `flow_section`: flash, system, normal, offset, direction, seeds, of, transient, plane, radius
 - `flow_set`: flash, system, shape, center, size, points, count, fill, trail, samples, h_max, rings, radius
-- `flow_system`: flash, equations, terms, constants, window, tau, rate, dt, escape, pos, scale, frame, label
+- `flow_system`: flash, source, row, kind, visible, equations, terms, constants, window, tau, rate, dt, escape, pos, scale, frame, label
 - `flow_time_series`: flash, pos, extent, system, source, x0, components, span, labels
 - `flow_twins`: flash, system, x0, eps, lyapunov, transient, trail, dot
 - `fractal`: flash, kind, c, pos, size, max_iter, density, hue, center, zoom, steady, radius, ambient
@@ -125,7 +133,7 @@
 - `tracer`: flash, path, progress, trail, r
 - `transform_grid`: flash, matrix, pos, extent, spacing, square, basis
 - `value`: flash, value
-- `variable`: flash, name, value, min, max
+- `variable`: flash, source, row, kind, visible, name, value, min, max
 - `vector_field`: flash, p, q, pos, extent, spacing, color_by_size, length_by
 - `vector_field_3d`: flash, fp, fq, fr, pos, extent, counts, spacing, color_by_size, length_by
 - `video`: flash, pos, width, height, frame, fit, fill, backdrop, start, trim, speed, loop, path

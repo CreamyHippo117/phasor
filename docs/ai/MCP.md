@@ -17,7 +17,8 @@ this file runs in order, against one scene, in `tests/test_docs.py`.
 4. `review`: lint + what is on screen at every marker + a storyboard picture.
    Fix each item in `todo` (`scene_edit`, or `lint` with `fix: true` for the certain fixes)
    and `review` again. Stop when `clean` is true or after 5 rounds; say what is left.
-5. `scene_save`, then `render` (`preview` is fast).
+5. `scene_save`, then `render` (`draft` is quickest: small, 15 fps, plain look; `preview`
+   shows the full look).
 
 A failed patch changes nothing and tells you why (`errors[].message`, often with
 `fix_hint`). `undo` reverts the last edit; `checkpoint` / `restore` / `diff` let you try
@@ -32,6 +33,7 @@ a variant and compare.
 | `scene_edit` | apply a patch (below); returns `ok`, `errors`, and the lint issues it added or fixed |
 | `animate` | a choreography verb at a marker or time: `reveal`, `exit`, `trace`, `bloom_in`, `dim_others`, `undim`, `focus_pull`, `morph`, `settle`, `write`, `travel`, `flash`, `wiggle`, `circumscribe` (`value` "circle" or "box"), `transform`, `transform_matching` and `become` (`targets` [from, to]), `sweep` (`path`, `value`), and in 3D `orbit` (`value` degrees, `until` a marker) and `orbit_reveal` |
 | `narrate` | set the script and voice; markers appear in `markers` |
+| `snap_to_narration` | move the markers you placed by hand onto the narration's sentence starts (a recording: `narrate` with `audio`); `dry_run` (default true) previews each move (marker, from, to, why, confidence) with `alignment` and `unreliable`; `dry_run: false` applies it as one undo step |
 | `inspect` | what is on screen at `t`: `brief` (a line each), `standard`, `full` |
 | `lint` | visual problems; `fix: true` applies the certain fixes |
 | `review` | the whole self-review round in one call |
@@ -41,8 +43,10 @@ a variant and compare.
 | `critique`, `polish` | the art director: a taste score, aesthetic issues with fixes and the rubric; apply the fixes (3 rounds at most; `snap: true` also snaps explicit values to roles) |
 | `variants`, `choose` | alternative looks of one beat side by side (as is, calmer, bolder); pick one, it is recorded in `style/choices.jsonl` and applied |
 | `diff`, `checkpoint`, `restore`, `undo`, `redo` | compare and branch |
-| `render` | a video (`preview`, `final`, `4k`) or one PNG with `frame` |
+| `render` | a video (`draft`, `preview`, `final`, `4k`) or one PNG with `frame`; `start`/`end`/`frame` take seconds or a marker name (a draft goes to `<scene>.draft.mp4`) |
 | `docs_search` | find the API, a pattern or an example |
+| `explorer_state`, `explorer_edit`, `explorer_preset` | the Explorer: its rows, systems, equilibria and sliders in one call; add, retype, hide, recolour or remove rows and set variables (one undoable edit); load a classic system |
+| `find_equilibria`, `flow_probe`, `sweep_parameter` | the Explorer's numbers, on a fork (nothing changes): equilibria with eigenvalues, a path's behaviour (period, escape, Lyapunov exponent, the dt check), candidate bifurcations along a variable |
 
 ## Patch operations
 
@@ -183,6 +187,21 @@ to a marker with a verb. Do not animate by raw seconds in a narrated scene (lint
 {"tool": "animate", "verb": "trace", "at": "loop", "targets": ["loop"]}
 ```
 
+A recording instead of a voice: put the file (WAV, or an mp4, m4a, mp3, ogg, flac) in the
+scene's folder and call `narrate` with `audio` and the `script` it reads (its sentences are
+found in the audio; `[[markers]]` fall on their words). Markers you placed by hand before
+the recording existed snap onto it: `snap_to_narration` previews (`dry_run`, the default),
+then `dry_run: false` moves them. Lint `narration_drift` lists markers the snap would move.
+Read `unreliable` and `alignment` in the preview before applying: `ambiguous_timing` (the
+scene's timing fits the voice two ways; nothing moves: pin markers with `anchors`),
+`alignment_doubtful` (a sentence break is probably misplaced: the reader ran sentences
+together or paused as long inside them), `unreadable`, `music`, `low_snr`. Anchors that
+would reorder markers or cross a `[[marker]]` of the script are refused.
+
+```json calls
+{"tool": "snap_to_narration", "dry_run": true}
+```
+
 `animate` returns `start` and `end`: pass `offset: end - start` to start the next step when
 the first ends. A verb moves nothing for an object that has no track yet, so `reveal` an
 object you want to appear (it is hidden until then).
@@ -254,3 +273,44 @@ person: only they can trust a scene's code (in the editor).
   a placeholder box, and its parameters and overrides stay as they are. Edit its parameters
   as usual; do not remove it to make the issue go away. A `value` object is a number with
   nothing to draw: animate its `value` and read it with `{"expr": "speed.value"}`.
+
+## The Explorer (rows, sliders and numbers)
+
+The Explorer is a list of typed rows on one document: `x' = sigma*(y - x)` (an ODE row; the
+`x' y' z'` rows form one system), `rho = 28` (a variable with a slider), `(y, -x)` (a vector
+field), `(1, 0.5)` (a point that follows the flow), and graphs or curves (read, not drawn
+yet). Work like this:
+
+1. `explorer_state` first: the rows as typed (`id`, `kind`, `text`, `error`, `locked`), each
+   system with its equilibria (eigenvalues, kinds, the window and grid searched), the
+   variables and their slider ranges, lint.
+2. Answer with numbers and where they came from: `find_equilibria` (window, grid),
+   `flow_probe` (`T`, `dt`, the dt check, `chaotic_beyond`: no positions after it),
+   `sweep_parameter` (candidate bifurcations, each named by the local test that found it).
+   They run on a fork: the scene does not change. Say what was not checked (outside the
+   window; global bifurcations; a Lyapunov estimate that did not converge).
+3. Change things only with `explorer_edit` (or `explorer_preset`): each call is one undo
+   step. Read its `rows` (ids, kinds, errors) and `lint_delta` before you answer. A row the
+   person is typing in is `locked`: the edit is refused with `row_locked` and the row's
+   `version`; read `explorer_state` again and retry later.
+
+```json calls
+{"tool": "scene_new", "title": "explorer", "look": "none"}
+{"tool": "explorer_preset", "name": "pendulum"}
+{"tool": "explorer_edit", "rows": [{"id": "gamma", "value": 0.5}, {"text": "(1.5, 1.5)"}]}
+{"tool": "explorer_state"}
+{"tool": "find_equilibria", "grid": 7}
+{"tool": "flow_probe", "x0": [1.5, 1.5], "T": 5, "samples": 6}
+{"tool": "sweep_parameter", "name": "gamma", "lo": 0, "hi": 1, "n": 5}
+```
+
+Rows are read the way people write: `x^2`, `2x`, `x y`, `sin(x)` (not `sin x`), Greek
+letters (`σ` is `sigma`), `x'` or `dx/dt`. A run of letters is one name (`rho`), so a
+product needs a space or `*`. A name no row defines gets a slider (value 1, range -10..10)
+when the edit is committed. A row that does not read is kept, with its `error` in words;
+a graph, curve, surface or heat map row is kept but not drawn yet (`drawn: false` and `why`
+in the answer, lint `explorer_row`). A new row may name the id its object gets with `base`
+(`{"text": "x' = y", "base": "pendulum"}`). Sweep candidates carry a `precision` (the
+bracket, and what limits the value besides it: Newton's residual, the merge distance of
+roots, the eigenvalue tolerance); a count change at the window's edge is `enters or leaves
+the window`, not a bifurcation. `flow_probe` gives positions only up to `positions_until`.

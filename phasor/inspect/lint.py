@@ -31,6 +31,7 @@ returns one issue per problem with the times it was seen. Rules in this mileston
 | video_too_big | warning | a clip or picture sequence past a cap (size, frames, length): unseen |
 | clip_ended | warning | a clip past its end (``loop`` off) or trimmed past it: last frame holds |
 | too_many_clips | warning | more clips playing at once than decoders are kept open: slow    |
+| narration_drift | warning | a hand-placed marker near a sentence of a recording but not on it |
 
 ``missing_extra`` also warns when a type draws without its extra, plainer (``Code`` without
 pygments is drawn in one color).
@@ -390,7 +391,7 @@ def control_rules(c: Compiled) -> list[Issue]:
     return out
 
 
-DRAWLESS = ("value", "sound", "variable")  # semantic kinds of types that draw nothing
+DRAWLESS = ("value", "sound", "variable", "flow_note")  # semantic kinds of types that draw nothing
 
 
 def file_rules(c: Compiled) -> list[Issue]:
@@ -438,6 +439,23 @@ def _sound_rules(c: Compiled) -> list[Issue]:
               fix_hint="join clips into one WAV file, or remove some")
         for o in sounds[MAX_SOUNDS:]
     ]  # fmt: skip
+    from phasor.core import extras
+
+    if not extras.available("av"):  # a sound file that is not a WAV needs PyAV (M22)
+        from phasor.time.compile import file_values
+
+        for o in sounds:
+            names = [v for v in file_values(c, f"{o.id}.path")
+                     if not v.lower().endswith((".wav", ".wave"))]  # fmt: skip
+            if not names:
+                continue
+            path = names[0]
+            out.append(Issue(
+                "missing_extra", f"{o.id}: the sound {path!r} needs the 'av' package to be "
+                "decoded, which is not installed; it is not heard", severity="warning",
+                ids=(o.id,), times=(0.0,), fix_hint="install it: uv sync --extra encode (or pip "
+                "install 'phasor[encode]'), or convert the file to WAV",
+            ))  # fmt: skip
     tracks = c.doc.timeline.tracks
     for o in sounds:
         for name in ("start", "gain"):
@@ -449,6 +467,78 @@ def _sound_rules(c: Compiled) -> list[Issue]:
                     ids=(o.id,), path=path, times=(0.0,),
                     fix_hint=f"set {path} once (clear its track), or use one clip per start",
                 ))  # fmt: skip
+    return out
+
+
+def narration_rules(c: Compiled, probe: Callable[[Any, str], Any] | None = None,
+                    plan: Callable[[], Any] | None = None) -> list[Issue]:  # fmt: skip
+    """Narration read from a recording (Milestone 22; blocks with an ``audio_span``):
+
+    - ``missing_file`` / ``bad_file`` / ``missing_extra``: the recording is not in the
+      scene's folder, cannot be read, or needs PyAV to be decoded. ``probe(base_dir, name)``
+      (``domains.audio.info``, injected: this layer decodes nothing) says what the file
+      holds: a ``WavInfo``, the reason it cannot be read (a str), or None when it is not
+      there; without it only a missing file is found.
+    - ``narration_drift``: a marker placed by hand that ``snap_to_narration`` would move by
+      more than the theme's ``[lint] narration_drift`` seconds (onto the start of a sentence
+      it sits near). ``plan()`` (injected by the engine) is that operation's own plan, so the
+      rule and the snap never disagree: after a snap there is nothing to say. No ``fix``
+      (whether the scene should follow the voice is the author's call); the hint offers the
+      snap and its preview.
+    """
+    from phasor.core import files
+
+    nar = c.doc.narration
+    if nar is None or not any(b.audio_span is not None for b in nar.blocks):
+        return []
+    out: list[Issue] = []
+    for name in sorted({b.audio for b in nar.blocks if b.audio_span is not None and b.audio}):
+        why = files.problem(c.base_dir, name)
+        head = None if why else (probe(c.base_dir, name) if probe is not None else True)
+        if why or head is None:
+            out.append(Issue("missing_file", f"narration: {why or f'no file {name!r}'}",
+                             severity="warning", path="narration", times=(0.0,),
+                             fix_hint=f"put {name!r} next to the scene, or narrate again from "
+                             "a recording that is there"))  # fmt: skip
+        elif isinstance(head, str) and "'av' package" in head:
+            out.append(Issue("missing_extra", f"narration: the recording {name!r} needs the "
+                             "'av' package to be decoded, which is not installed; it is not "
+                             "heard", severity="warning", path="narration", times=(0.0,),
+                             fix_hint="install it: uv sync --extra encode (or pip install "
+                             "'phasor[encode]'), or use a WAV"))  # fmt: skip
+        elif isinstance(head, str):
+            out.append(Issue("bad_file", f"narration: the recording {name!r} cannot be read: "
+                             f"{head}", severity="warning", path="narration", times=(0.0,),
+                             fix_hint="save it again as PCM WAV (16-bit, 48 kHz), or narrate "
+                             "from another file"))  # fmt: skip
+    from phasor.time.narration import SPAN_MARGIN
+
+    late = [b for b in nar.blocks if b.audio_span is not None and
+            b.start > c.duration + SPAN_MARGIN]  # fmt: skip
+    if late:
+        out.append(Issue("sound_limit", f"narration: {len(late)} block(s) of the recording start "
+                         f"after {late[0].start:g} s, past the scene's end ({c.duration:g} s) by "
+                         f"more than {SPAN_MARGIN:g} s; they are not heard", severity="warning",
+                         path="narration", times=(round(c.duration, 6),),
+                         fix_hint="narrate again from the recording"))  # fmt: skip
+    if plan is None:
+        return out
+    th = float(c.theme.lint["narration_drift"])
+    try:
+        moves = plan()
+    except Exception:  # whatever the plan meets (a hostile document): no drift said, no crash
+        return out
+    for m in moves:
+        d = abs(m.t1 - m.t0)
+        if m.kind in ("owned", "kept") or d <= th:
+            continue
+        out.append(Issue(
+            "narration_drift", f"marker {m.marker!r} at {m.t0:g} s is {d:.2f} s from where the "
+            f"narration puts it ({m.t1:g} s: {m.why})", severity="warning",
+            path=f"markers.{m.marker}", times=(round(m.t0, 6),),
+            fix_hint="snap_to_narration(dry_run=True) shows every move and why; "
+            "snap_to_narration() makes them (one undo step)",
+        ))  # fmt: skip
     return out
 
 
@@ -718,7 +808,8 @@ def run(
                 f.add("morph_limit", (e["id"],), t, n=sem["morph_limit"])
             if sem.get("unreadable") or sem.get("skipped"):
                 f.add("bad_file", (e["id"],), t, why=sem.get("unreadable"),
-                      skipped=sem.get("skipped", 0), file=sem.get("file"))  # fmt: skip
+                      skipped=sem.get("skipped", 0), file=sem.get("file"),
+                      sound=e.get("type") == "sound")  # fmt: skip
             if sem.get("too_big"):
                 f.add("video_too_big", (e["id"],), t, why=sem["too_big"], file=sem.get("file"))
             if sem.get("ended") and e["opacity"] > FAINT:
@@ -744,6 +835,9 @@ def run(
                     f.add("flow_budget", (e["id"],), t, why="; ".join(why))
             if sem.get("too_fast"):
                 f.add("flow_too_fast", (e["id"],), t, n=sem["too_fast"])
+            if sem.get("kind") == "flow_note":  # an Explorer row that draws nothing
+                f.add("explorer_row", (e["id"],), t, error=sem.get("error"),
+                      source=sem.get("source", ""))  # fmt: skip
             if sem.get("shadowed_by"):
                 f.add("duplicate_variable", (e["id"],), t, first=sem["shadowed_by"],
                       name=sem.get("name"))  # fmt: skip
@@ -868,6 +962,9 @@ def run(
                      **dict.fromkeys(files.VIDEO_EXT, "export the clip again as H.264 mp4"),
                      **dict.fromkeys(files.PICTURE_EXT, "save the picture again as PNG")}.get(
                 ext, "save the file again as UTF-8 text")  # fmt: skip
+            if info.get("sound") and ext in {"mp4", "m4a", "m4v", "mov", "mp3", "aac", "ogg",
+                                             "oga", "opus", "flac", "webm", "mkv"}:  # fmt: skip
+                again = "export it again with a sound track (or as PCM WAV)"
             return Issue(
                 code,
                 f"{ids[0]!r}: the file {info['file']!r} {what}",
@@ -886,6 +983,16 @@ def run(
                          "warning", ids, times=ts, fix_hint="fewer points or arrows, a "
                          "shorter flow time, or a larger dt; past a hard limit the work is "
                          "cut and less is drawn than asked")  # fmt: skip
+        if code == "explorer_row":
+            text = info["source"] if len(info["source"]) <= 60 else info["source"][:57] + "..."
+            if info["error"]:
+                return Issue(code, f"row {ids[0]!r} ({text!r}) does not read: {info['error']}",
+                             "warning", ids, times=ts, fix_hint="retype the row; its text is "
+                             "kept until then")  # fmt: skip
+            return Issue(code, f"row {ids[0]!r} ({text!r}) is kept but not drawn: the Explorer "
+                         "does not draw this kind of row yet", "warning", ids, times=ts,
+                         fix_hint="nothing to fix; it is drawn once the Explorer learns this "
+                         "kind (graphs, curves, surfaces, heat maps)")  # fmt: skip
         if code == "duplicate_variable":
             return Issue(code, f"{ids[0]!r} names the variable {info['name']!r}, which "
                          f"{info['first']!r} already names; systems read {info['first']!r} "
