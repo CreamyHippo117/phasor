@@ -85,3 +85,13 @@ the Windows suite has no OpenGL, so every new type is tested with `passes=None` 
 - World-space batches (Milestone 28): flow objects still build camera-facing geometry on the
   CPU for disks and arrows (cones are camera-free).
 - Lyapunov, sections, sweeps (Milestone 30); rows, normaliser and AI tools (Milestone 27).
+
+## Test runs here (Linux, llvmpipe, 2026-11-24)
+
+On a box shared with other sessions (load about 20 on 4 cores), the suite ran in parts:
+`-m "not slow"`: 2288 passed, 133 skipped, 1 failed (`test_llms_txt_is_current`: fixed by
+regenerating `llms.txt`, then passed); `-m slow`: 27 passed, 17 skipped, with
+`test_every_example_runs_and_has_no_lint_errors[riemann_sqrt]` left out (it ran over 40
+minutes under that load and was stopped; not run on this tree). `tests/test_flow.py`: 52
+passed. ruff check, ruff format and lint-imports clean. Skips are the usual ones (no CUDA,
+no gui extra, no TeX, no espeak-ng, opt-in packaging).
