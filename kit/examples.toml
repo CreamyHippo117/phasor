@@ -230,3 +230,8 @@ teaches = "A sound on cue: a Sound clip (a WAV file in the scene folder) mixed i
 kind = "basics"
 tier = "technique"
 teaches = "Narration from a recording (a WAV, or an mp4's sound): sentences found in the audio, and markers placed by hand snapped onto them with snap_to_narration (a preview first)"
+
+[examples.notes_overlay]
+kind = "basics"
+tier = "technique"
+teaches = "MIDI notes over a narration at its markers: notes a script makes (a square wave's partials) and a .mid file, played by the built-in synthesizer, a piano roll, and export_midi"

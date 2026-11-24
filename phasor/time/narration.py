@@ -501,12 +501,15 @@ class Clip:
     """A sound clip to mix in (``media.Sound``): a file in the scene's folder (``path``), from
     ``start`` seconds, ``gain`` dB louder. ``source``: samples already opened (a type that
     makes its own sound); None reads the file at ``path`` (a WAV, or through the mix's
-    ``resolve``: another format decoded to a WAV)."""
+    ``resolve``: another format decoded to a WAV). ``marker``: a marker the clip starts at,
+    ``start`` seconds after it (``Engine.audio_track`` resolves it before mixing; the mix
+    itself reads only ``start``)."""
 
     path: str
     start: float
     gain: float = 0.0
     source: Source | None = None
+    marker: str | None = None
 
 
 Resolve = Callable[[Path], Path]  # a file in the scene's folder -> a PCM WAV of its sound
@@ -740,6 +743,8 @@ def _plan_clips(root: Path, files: Any, clips: Sequence[Clip], rate: int, g0: in
             if problems is not None:
                 problems.append(f"sound {c.path!r} left out: {e}")
             continue
+        if src.rate != rate and hasattr(src, "at_rate"):  # a synthesizer: made at the rate
+            src = src.at_rate(rate)
         same = src.rate == rate
         count = src.frames if same else int(src.frames * rate / src.rate)
         p = _budget(_Planned(src, c.path, first, count, src.rate / rate,

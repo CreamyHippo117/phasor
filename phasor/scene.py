@@ -447,6 +447,12 @@ class Scene:
         ``fps``, ``frame``, ``progress(k, n)``, ``cancel``. Needs OpenGL."""
         return render(self.engine, out, preset=preset, workers=workers, **kwargs)
 
+    def export_midi(self, path: str | Path, *, overwrite: bool = False) -> dict[str, Any]:
+        """Write the scene's ``Notes`` (as heard, at their times in the scene) to ``path`` as
+        a Standard MIDI File, one track per object (``Engine.export_midi``). Never over a
+        file the scene reads; over another existing file only with ``overwrite``."""
+        return self.engine.export_midi(path, overwrite=overwrite)
+
 
 def load(path: str | Path, **engine_kwargs: Any) -> Engine:
     """Open a scene for any client: a ``.phasor.json`` document, or a ``.py`` script that

@@ -44,6 +44,7 @@ a variant and compare.
 | `variants`, `choose` | alternative looks of one beat side by side (as is, calmer, bolder); pick one, it is recorded in `style/choices.jsonl` and applied |
 | `diff`, `checkpoint`, `restore`, `undo`, `redo` | compare and branch |
 | `render` | a video (`draft`, `preview`, `final`, `4k`) or one PNG with `frame`; `start`/`end`/`frame` take seconds or a marker name (a draft goes to `<scene>.draft.mp4`) |
+| `export_midi` | write the scene's MIDI notes (every `notes` object, as heard, at its times in the scene) to a `.mid` (format 1, a track per object); `out` defaults to `<scene>.mid`; never over a file the scene reads, nor over an existing file unless `overwrite: true` |
 | `docs_search` | find the API, a pattern or an example |
 | `explorer_state`, `explorer_edit`, `explorer_preset` | the Explorer: its rows, systems, equilibria and sliders in one call; add, retype, hide, recolour or remove rows and set variables (one undoable edit); load a classic system |
 | `find_equilibria`, `flow_probe`, `sweep_parameter` | the Explorer's numbers, on a fork (nothing changes): equilibria with eigenvalues, a path's behaviour (period, escape, Lyapunov exponent, the dt check), candidate bifurcations along a variable |
@@ -200,6 +201,21 @@ would reorder markers or cross a `[[marker]]` of the script are refused.
 
 ```json calls
 {"tool": "snap_to_narration", "dry_run": true}
+```
+
+MIDI notes are a `notes` object: from a `.mid` in the scene's folder (`path`) or listed
+(`notes`: `[pitch, start, length, velocity, channel]`, seconds), played by the built-in
+synthesizer from `start` (seconds or a marker's name) and mixed into the render's sound like
+a `sound` clip. `export_midi` writes them all to one `.mid`.
+
+```json patch
+{"op": "add_object", "object": {"id": "tune", "type": "notes",
+  "params": {"notes": [[60, 0, 0.4, 100], [64, 0.4, 0.4, 90], [67, 0.8, 0.8, 80]],
+             "instrument": "bell", "gain": -6}}}
+```
+
+```json calls
+{"tool": "export_midi", "out": "out/tune.mid"}
 ```
 
 `animate` returns `start` and `end`: pass `offset: end - start` to start the next step when

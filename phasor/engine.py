@@ -599,11 +599,126 @@ class Engine:
             for o in state.objects
             if (c := getattr(o.impl, "audio_clip", lambda s: None)(state)) is not None
         ]
+        clips = self._at_markers(clips, problems)
         n = self.document.narration
         if n is None and not clips:
             return None
         return mix_track(n, self.base_dir, self.duration, clips, problems, start, end,
                          resolve=readable_wav)  # fmt: skip
+
+    def _at_markers(self, clips: list, problems: list[str] | None) -> list:
+        """Clips that start at a marker (``Clip.marker``: ``Notes(start="beat")``) placed at
+        the marker's time; one whose marker the scene does not have is left out and said, as
+        are synthesizers past ``midi_math.MAX_SYNTH_WORK`` for the scene's notes together."""
+        import dataclasses
+
+        from phasor.domains.midi_math import MAX_SYNTH_WORK
+
+        markers = self.document.timeline.markers
+        out = []
+        work = 0  # samples the synthesizers make, all clips together
+        for c in clips:
+            if getattr(c, "marker", None) is not None:
+                if c.marker not in markers:
+                    if problems is not None:
+                        problems.append(f"{c.path!r} left out: it starts at the marker "
+                                        f"{c.marker!r}, which the scene does not have")  # fmt: skip
+                    continue
+                c = dataclasses.replace(c, start=float(markers[c.marker]) + c.start, marker=None)
+            made = getattr(c.source, "work", 0)
+            if made and work + made > MAX_SYNTH_WORK:
+                if problems is not None:
+                    problems.append(f"{c.path!r} left out: the scene's notes would make more "
+                                    f"than {MAX_SYNTH_WORK} samples")  # fmt: skip
+                continue
+            work += made
+            out.append(c)
+        return out
+
+    def export_midi(self, path: str | Path, *, overwrite: bool = False) -> dict[str, Any]:
+        """Write every ``Notes`` of the scene (Milestone 23) to ``path`` as a Standard MIDI
+        File (format 1: a conductor track at 120 beats a minute, then one track per object,
+        named by its id): every note as the synthesizer plays it (transposed, scaled,
+        filtered, repeated) at its time in the scene (a marker ``start`` resolved; an object
+        whose marker the scene lacks is left out). Notes past the scene's end are written
+        too: the file is the score (lint ``notes_limit`` says which are not heard); notes
+        starting after ``midi_math.MAX_SECONDS`` (3 h) are not (``left_out``).
+
+        Each object's notes get channels of their own (a melodic channel per object and
+        program, never channel 10; drums stay on 10), so one object's program never plays
+        another's notes; past 15 such pairs channels are shared, with a program change
+        before each note that needs one.
+
+        Never overwrites a file the scene reads (a ``Files`` parameter, a ``.mid`` a
+        ``Notes`` plays: ``ValueError``), nor an existing file unless ``overwrite``
+        (``FileExistsError``); the file is written whole to a temporary name beside it and
+        then renamed over it. Returns ``path``, ``tracks``, ``notes``, ``left_out`` and
+        ``seconds`` (the last note's end)."""
+        import os
+        import tempfile
+
+        from phasor.domains import midi_math
+
+        out = Path(path).resolve()
+        if out in self._files_read():
+            raise ValueError(f"{path}: the scene reads this file; export to another name")
+        if out.exists() and not overwrite:
+            raise FileExistsError(f"{path} exists; pass overwrite=True to replace it")
+        state = self.state_at(0.0)
+        markers = self.document.timeline.markers
+        tracks, count, last, left_out = [], 0, 0.0, 0
+        channels: dict[tuple[str, int, int], int] = {}
+        melodic = [c for c in range(16) if c != midi_math.DRUMS]
+        for o in state.objects:
+            get = getattr(o.impl, "midi_notes", None)
+            if get is None:
+                continue
+            name, notes, at = get(state)
+            if isinstance(at, str):
+                if at not in markers:
+                    continue
+                at = markers[at]
+            shifted = []
+            for n in notes:
+                if float(at) + n.start > midi_math.MAX_SECONDS:
+                    left_out += 1
+                    continue
+                ch = n.channel
+                if ch != midi_math.DRUMS:
+                    pair = (name, n.channel, n.program)
+                    ch = channels.setdefault(pair, melodic[len(channels) % len(melodic)])
+                shifted.append(n._replace(start=float(at) + n.start, channel=ch))
+            tracks.append((name, shifted))
+            count += len(shifted)
+            last = max([last, *(n.start + n.length for n in shifted)])
+        data = midi_math.write_smf(tracks, title=self.document.meta.title)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix=f".{out.name}.", suffix=".tmp", dir=out.parent)
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(data)
+            os.replace(tmp, out)  # whole or not at all (also on Windows)
+        except BaseException:
+            Path(tmp).unlink(missing_ok=True)
+            raise
+        return {"path": str(out), "tracks": len(tracks), "notes": count,
+                "left_out": left_out, "seconds": round(last, 6)}  # fmt: skip
+
+    def _files_read(self) -> set[Path]:
+        """Every file the scene's objects read (their ``Files`` parameters), resolved."""
+        from phasor.core import files
+        from phasor.time.compile import file_values
+
+        c = self._snap.compiled
+        out: set[Path] = set()
+        for o in c.objects:
+            for name in getattr(type(o.impl), "Files", ()):
+                for value in file_values(c, f"{o.id}.{name}"):
+                    try:
+                        out.add(files.resolve(self.base_dir, value))
+                    except ValueError:
+                        continue
+        return out
 
     def snap_to_narration(self, *, dry_run: bool = False,
                           anchors: dict[str, int] | None = None, allow_short: bool = False,
@@ -733,6 +848,8 @@ class Engine:
             snap.lint[step] = (*snap.orphans, *self._bake(snap).issues,
                                *lint_rules.control_rules(snap.compiled),
                                *lint_rules.file_rules(snap.compiled),
+                               *lint_rules.notes_rules(snap.compiled,
+                                                       lambda t: self._state(snap, t)),
                                *lint_rules.narration_rules(
                                    snap.compiled, audio_info,
                                    lambda: self._snap_plan(snap.compiled)[0]),

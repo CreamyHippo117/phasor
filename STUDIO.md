@@ -47,8 +47,8 @@ builds its phases 1 and 2.
 | # | What | Depends on | Status |
 | --- | --- | --- | --- |
 | 21 | Draft render: the `draft` preset, a draft path in the renderer, frame de-duplication, CLI/MCP/engine API | none | DONE (independently audited, blocker fixed; `MILESTONE_21.md`) |
-| 22 | Audio inputs and narration snap: wav and mp4 audio as narration, speech/pause detection, `snap_to_narration` | none | planned |
-| 23 | MIDI: a self-written SMF reader/writer, `Notes`, the synthesizer, mixing, export | 22 shares the mixer; do after or with it | planned |
+| 22 | Audio inputs and narration snap: wav and mp4 audio as narration, speech/pause detection, `snap_to_narration` | none | DONE (independently audited, 3 blockers + 9 should-fix fixed; `MILESTONE_22.md`) |
+| 23 | MIDI: a self-written SMF reader/writer, `Notes`, the synthesizer, mixing, export | 22 shares the mixer; do after or with it | DONE (independently audited, blocker fixed; `MILESTONE_23.md`); hearing it untested |
 | 24 | Video and picture inputs: `Video` (mp4), `Image` extended, full-frame background scenes | none | DONE (independently audited, blockers fixed; `MILESTONE_24.md`) |
 | 25 | The desktop app: APP_PLAN phases 1-2 plus the buttons and panels above | 21, 22, 23, 24 | planned |
 

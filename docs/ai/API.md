@@ -44,6 +44,7 @@ s.set("camera.height", 6)  # world units visible top to bottom
 | `Image` | `path` (a PNG/JPEG/WebP file, relative to the scene's folder; a GIF shows its first frame; `frames/shot_%04d.png` is a picture sequence played at `fps`, default 24), `pos` (centre), `width`, `height` (0: keep the picture's shape), `frame` (an outline of light), `fit`, `fill`, `backdrop`, and for a sequence `start`, `trim`, `speed`, `loop` (as `Video`; see "Footage and picture sequences") | `glow` (glow, none: bright parts shine), `frame` (emphasis, muted), `stroke` (stroke, hairline). Presets `plain`, `framed`, `luminous`. A missing file is issue `missing_file`, an unreadable one `bad_file`; transparent parts show the background; an AI may only name files inside its folder |
 | `Video` | `path` (an `.mp4`, `.mov`, `.m4v`, `.webm` or `.mkv` file in the scene's folder; needs the `encode` extra), `start` (scene seconds where it begins; before it, its first frame), `trim` ((in, out) seconds inside the clip; out 0: its end), `speed` (0-64), `loop` (off: it holds its last frame, lint `clip_ended`), `pos`, `width`, `height` (0: the clip's shape), `fit` (`stretch`, `contain`, `cover`, `none`), `fill` (fill the camera's view: a full-frame background, 2D camera), `backdrop` (labels may sit on it), `frame` | as `Image`. Nothing is heard (use `Sound`). Missing: `missing_file`; not a video: `bad_file`; past a cap: `video_too_big`; without PyAV: `missing_extra`; each draws nothing |
 | `Sound` | `path` (a sound file in the scene's folder: WAV, or an mp4's sound, m4a, mp3, ogg, flac with the `encode` extra), `start` (seconds into the scene), `gain` (dB, -60 to 24); nothing is drawn: `phasor render` mixes it in (see "Narrate") | none |
+| `Notes` | `path` (a `.mid` in the scene's folder, format 0 or 1) or `notes` (the script's `(pitch, start, length, velocity[, channel])`, seconds), `start` (seconds into the scene, or a marker's name), `gain` (dB), `transpose` (semitones), `tempo_scale` (2: twice as fast), `channels` (keep only these), `repeat`, `instrument` (`auto`: by General MIDI program; `sine`, `pluck`, `organ`, `bell`, `pad`, `lead`), `program` (of script notes), `seed` (the drum kit's noise), `show` (a piano roll `width` x `height` at `pos`); heard (the built-in synthesizer, mixed like a `Sound`), drawn only with `show` (see "MIDI notes") | `color` (emphasis, primary), `played` (emphasis, highlight), `frame` (emphasis, muted), `stroke` (stroke, bold), `glow` (glow, soft) |
 | `Image` | `path` (a PNG/JPEG/WebP file, relative to the scene's folder), `pos` (centre), `width`, `height` (0: keep the picture's shape), `frame` (an outline of light) | `glow` (glow, none: bright parts shine), `frame` (emphasis, muted), `stroke` (stroke, hairline). Presets `plain`, `framed`, `luminous`. A missing file is issue `missing_file`; transparent parts show the background; an AI may only name files inside its folder |
 | `Text` | `text` (`$...$` is typeset math), `pos`, `anchor` (`center`/`left`/`right`), `leader`, `leader_on` (set by layout) | `color` (emphasis, primary), `size` (text, label), `leader` (stroke, hairline) |
 | `Equation` | `parts` (math or text, set on one baseline), `colors` (an emphasis role per part), `pos` | `color` (emphasis, primary), `size` (text, math), `glow` (glow, none) |
@@ -368,6 +369,70 @@ track, rate = s5.engine.audio_track()
 assert rate == 48000 and len(track) == 2 * 48000  # the scene's length, no narration needed
 assert track[:24000].max() == 0 and track[24000 : 24000 + 4800].max() > 0
 assert s5.engine.inspect(0.0, id="click")["objects"][0]["semantic"]["seconds"] == 0.1
+```
+
+### MIDI notes: played over the narration, and exported
+
+A `Notes` object is a track of notes: from a `.mid` file in the scene's folder (format 0 or
+1, read by phasor's own reader; re-read when it changes) or from the script, as
+`(pitch, start, length, velocity[, channel])` with times in seconds from the notes' start, so
+any code can make them (the partials of a Fourier series: a fractional pitch plays its exact
+frequency). `phasor render` plays them with a small built-in synthesizer (deterministic, no
+dependency: a few General MIDI-like voices, ADSR envelopes, a drum kit on channel 10 = 9
+from 0, at most `midi_math.MAX_VOICES` (64) notes at once), made at the track's own sample
+rate (so an 8 or 16 kHz narration gets no aliasing), and mixes them into the video's sound
+like a `Sound` clip: from `start` (seconds, or a **marker's name**: the notes follow the
+marker when it moves, a narration snap included), cut where the scene ends, counted towards
+`MAX_SOUNDS` and `MAX_MIX_SAMPLES`. `gain` (dB) scales the voices before they are summed and
+pass a soft limiter (unchanged up to half of full scale, then bending towards it, never
+clipped), so a chord does not distort and a lower `gain` is cleaner. `transpose` (semitones;
+never drums), `tempo_scale`, `channels`, `repeat` change what is played;
+`instrument="auto"` gives each note the voice of its program (`program` for script notes;
+pipes such as flutes are the sine voice). The `pad` voice has a second oscillator 7 cents
+up, so its pitch reads about 3.5 cents sharp (a chorus, by design). Nothing is drawn unless
+`show=True`: a piano roll (with `start` in seconds, the notes sounding at `t` light up and a
+playhead runs). `s.export_midi("out.mid")` (`Engine.export_midi`, the MCP tool
+`export_midi`) writes every `Notes` of the scene to one Standard MIDI File (format 1, 120 bpm,
+a track per object) at its times in the scene: the score, also notes past the scene's end
+(notes after 3 h are `left_out`). Each object and program gets a channel of its own (drums
+stay on 10), and an `instrument` is written as a program that reads back as that voice. It
+never writes over a file the scene reads (`ValueError`), nor over any existing file unless
+`overwrite=True` (`FileExistsError`); the file appears whole or not at all. A note struck
+again on its key while held ends there in the file (MIDI cannot say which note-off ends
+which).
+
+The semantics give `count`, `span`, `pitch_range`, `channels`, `programs` (General MIDI
+names), `voices`, and for a file `format`, `tracks`, `bpm`, `names`. A missing file is
+`missing_file`; one that is not MIDI (or format 2) is `bad_file` and plays nothing; one read
+only in part (a track cut short, a lying length, past `MAX_EVENTS`, `MAX_NOTES` or
+`MAX_TEMPOS`, melodic notes with no length) is `truncated` and plays what was read (a drum
+hit with no length plays); notes starting after the scene's end, notes dropped past the
+voices or the synthesizer's work (`MAX_SYNTH_WORK`) and a `start` marker the scene lacks are
+`notes_limit`.
+Hearing it is untested by a person: the samples, timing and pitch are checked numerically.
+
+```python
+import math
+
+from phasor import Notes
+from phasor.domains import midi_math
+
+s5.marker("chord", 1.0)
+partials = [
+    (57 + 12 * math.log2(k), 0.1 * i, 0.8, round(100 / k))  # a square wave's
+    for i, k in enumerate((1, 3, 5))
+]  # first odd partials, quieter as 1/k
+s5.add(Notes(id="partials", notes=partials, start="chord", instrument="sine"))
+sem = s5.engine.inspect(0.0, id="partials")["objects"][0]["semantic"]
+assert sem["count"] == 3 and sem["pitch_range"][0] == 57.0 and sem["voices"] == ["sine"]
+track, rate = s5.engine.audio_track()
+assert track[48000 : 48000 + 4800].any()  # heard from the marker on
+out = s5.export_midi(folder / "clicks.mid")
+assert out["notes"] == 3 and out["tracks"] == 1
+song = midi_math.read_smf((folder / "clicks.mid").read_bytes())
+assert [round(n.start, 3) for n in song.notes] == [1.0, 1.1, 1.2] and song.error is None
+s5.add(Notes(id="again", path="clicks.mid", start=0.0, gain=-6.0))  # a .mid plays the same way
+assert s5.engine.inspect(0.0, id="again")["objects"][0]["semantic"]["count"] == 3
 ```
 
 ### Narration from a recording, and snapping the scene to it
@@ -700,6 +765,7 @@ Each issue has `code`, `severity`, `message`, `ids`, `times`, `fix_hint`, and `f
 | `bad_file` | warning | a file an object reads is not valid (an SVG that is not SVG), or some of its shapes are skipped (points not finite or absurdly far out); what cannot be read draws nothing |
 | `sound_limit` | warning | a sound clip the mix leaves out: past `narration.MAX_SOUNDS` (256) clips in one scene; or a clip whose `start` or `gain` is animated (the mix reads them once, at 0 s, so the animation is not heard) |
 | `narration_drift` | warning | a marker placed by hand that `snap_to_narration` would move by more than `[lint] narration_drift` seconds (0.3) onto a sentence of a recorded narration; no fix (the snap is offered); `missing_file`, `bad_file` and `missing_extra` also cover the recording |
+| `notes_limit` | warning | MIDI notes (`Notes`) not heard as written: notes starting at or after the scene's end, notes the synthesizer drops because `MAX_VOICES` (64) already sound or past `midi_math.MAX_SYNTH_WORK` (2^31 samples made, per object and for the scene's notes together), or a `start` marker the scene does not have (nothing is heard). A `.mid` that cannot be read is `bad_file`, one read only in part `truncated` |
 | `svg_too_complex` | warning | an SVG past a reading limit (size, elements once `<use>` is expanded, nesting, shapes, segments): its drawing is empty or cut short |
 | `crowded_ticks` | warning | numbers along an axis (or a chart's bar names) closer **on screen** than `[lint] tick_gap` text heights (every pair, so an axis a 3D camera sees end-on is caught); `path` names the axis (`ax.x`), the hint the smallest nice step that clears them, or to turn the camera when the axis points at it |
 | `truncated` | warning | a file a `Table` or `Code` reads is past a limit (rows, columns, lines), or a picture sequence has more than 3000 pictures; only its first part is shown (plays) |
