@@ -45,9 +45,18 @@ out vec2 v_uv;
 in vec4 in_color;
 out vec4 v_color;
 #endif
+#ifdef DEPTHPOS
+in vec3 in_zpos;  // where this vertex is depth-tested (text: see _text_depth_positions)
+#endif
 void main() {
     gl_Position = u_vp * vec4(in_pos, 1.0);
     gl_Position.xy *= u_zoom;
+#ifdef DEPTHPOS
+    if (in_zpos != in_pos) {  // same place on screen, nearer depth
+        vec4 zc = u_vp * vec4(in_zpos, 1.0);
+        gl_Position.z = zc.z / zc.w * gl_Position.w;
+    }
+#endif
     gl_Position.z -= u_bias * gl_Position.w;
 #ifdef TEXTURED
     v_uv = in_uv;
@@ -230,11 +239,40 @@ def _light_dirs(cam, light) -> list[tuple[float, float, float]]:
     return out
 
 
+TEXT_PULL_MIN = 0.1  # a text vertex is pulled at most this close to the eye (share of its distance)
+
+
+def _text_depth_positions(points, origin, cam) -> np.ndarray:
+    """Where each corner of a text quad is depth-tested. Text is a camera-facing billboard
+    centered on ``origin``; once the camera tilts, the part below the origin's height pokes
+    under it, so a surface at that height (the plane a label sits on) would hide the lower
+    half. A corner on the far side of the horizontal plane through ``origin`` is
+    depth-tested where its view ray crosses that plane instead: the same pixel, nearer. Text
+    on a surface at its own height then ties with it, and draw order decides, as it does
+    top-down. The cost: an opaque object inside that pulled slab (above the origin's height
+    but behind where the corner is now tested) no longer hides the lower part of the text.
+    The slab is about (text extent below the origin) x cot(elevation) deep, so it grows at
+    grazing views; ``TEXT_PULL_MIN`` keeps the corners off the near plane. Orthographic
+    cameras look straight down at flat text, so nothing moves there."""
+    pts = np.asarray(points, dtype=np.float64)
+    if not cam.perspective:
+        return pts
+    level, eye = float(origin[2]), np.asarray(cam.eye, dtype=np.float64)
+    side = eye[2] - level
+    far = (pts[:, 2] - level) * side < 0
+    if abs(side) < 1e-9 or not far.any():
+        return pts
+    t = np.clip((level - eye[2]) / (pts[far, 2] - eye[2]), TEXT_PULL_MIN, 1.0)
+    out = pts.copy()
+    out[far] = eye + t[:, None] * (pts[far] - eye)
+    return out
+
+
 def _define(src: str, kind: str) -> str:
     """``kind``: ``mesh`` (flat color), ``vmesh`` (a color per vertex, color pass only),
     ``text`` (coverage bitmap) or ``image`` (RGBA)."""
     head, _, rest = src.strip().partition("\n")
-    defines = {"mesh": "", "vmesh": "#define VCOLOR", "text": "#define TEXTURED",
+    defines = {"mesh": "", "vmesh": "#define VCOLOR", "text": "#define TEXTURED\n#define DEPTHPOS",
                "image": "#define TEXTURED\n#define IMAGE"}  # fmt: skip
     return f"{head}\n{defines[kind]}\n{rest}"
 
@@ -505,7 +543,10 @@ class GLRenderer:
                     ],
                     dtype="f4",
                 )
-                vao, n = self._vertex_array(prog, (("3f 2f", "in_pos", "in_uv"),), [quad])
+                zpos = _text_depth_positions(quad[:, :3], c["origin"], cam).astype("f4")
+                vao, n = self._vertex_array(
+                    prog, (("3f 2f 3f", "in_pos", "in_uv", "in_zpos"),), [np.hstack([quad, zpos])]
+                )
             elif kind == "vmesh":
                 layout = (("3f", "in_pos"), ("4f", "in_color"))
                 vao, n = self._vertex_array(prog, layout, [c["positions"], c["colors"]],

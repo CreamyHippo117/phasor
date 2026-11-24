@@ -15,7 +15,8 @@ compounding. If this file and SPEC.md disagree, stop and ask.
 - Now (owner, 2026-11-22): the beauty plan in `BEAUTY.md`, in its order (prism domain
   coloring, heat maps, point clouds, fractals, image import, graph import, 3D acoustics).
   Keep `prism_primes`' look exactly. Steps 3, 4 and 7 run on the PC from `pc_tasks/`.
-  Next animations (signal, waves, dynamics): `ANIMATIONS.md`. Changes waiting for the
+  Next animations (signal, waves, dynamics): `ANIMATIONS.md`. Spatial transitions and
+  ambience (owner, 2026-11-24): `TRANSITIONS.md` (lift prototype `examples/prism_lift.py`). Changes waiting for the
   owner's OK go in `pending/` (a patch and a before/after picture). Render speed and the
   finished Windows app come after, unless the owner says otherwise.
 - Desktop app (owner, 2026-11-22): code-first, one shared script that the person, the AI and

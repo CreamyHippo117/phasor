@@ -192,6 +192,25 @@ def _cmd_render(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_cues(args: argparse.Namespace) -> int:
+    from phasor.core.issues import DocumentError
+    from phasor.workspace.cues import cue_rows, cues_csv
+
+    try:
+        text = cues_csv(cue_rows(_open(args)))
+        if args.out:
+            with open(args.out, "w", encoding="utf-8", newline="") as f:
+                f.write(text)
+    except (DocumentError, OSError, ValueError, KeyError) as e:
+        print(f"phasor cues: {e}", file=sys.stderr)
+        return 1
+    if args.out:
+        print(f"wrote {args.out}", file=sys.stderr)
+    else:
+        sys.stdout.write(text)
+    return 0
+
+
 def _cmd_kit(args: argparse.Namespace) -> int:
     from phasor.workspace.kit import KitError, install
     from phasor.workspace.paths import scenes_folder
@@ -356,6 +375,12 @@ def build_parser() -> argparse.ArgumentParser:
                    "cores shared out, workers x threads <= cores; env PHASOR_THREADS)")  # fmt: skip
     r.add_argument("--quiet", action="store_true")
     r.set_defaults(func=_cmd_render)
+
+    cu = sub.add_parser("cues", help="a CSV cue sheet (markers and motions) for an audio editor")
+    cu.add_argument("scene", help="a .phasor.json document or a .py script that builds a Scene")
+    cu.add_argument("--allow-scripts", action="store_true", help=ALLOW_SCRIPTS_HELP)
+    cu.add_argument("-o", "--out", help="the .csv to write (default: standard output)")
+    cu.set_defaults(func=_cmd_cues)
 
     k = sub.add_parser("kit", help="set up (or update) a folder where an AI writes scenes")
     k.add_argument("folder", nargs="?",

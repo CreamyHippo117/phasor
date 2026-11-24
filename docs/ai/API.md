@@ -281,7 +281,7 @@ assert s4.engine.lint(strict=True) == []
 
 Durations, easing and stagger come from the theme's `[motion]` table. Chain with `then()`:
 `s.at("loop_draw").trace("loop").then().reveal("loop.label")`. Several ids stagger.
-`orbit_reveal` arrives with 3D (Milestone 6).
+`orbit_reveal` arrives with 3D (Milestone 6); `lift` tips a flat 3D camera into depth (see the 3D section).
 
 Dimming uses each object's `dim` factor (drawn opacity = `opacity` x `dim`), so dimming and
 revealing never fight, whatever order you write them in.
@@ -1468,6 +1468,31 @@ assert sheet["on_screen_fraction"] == 1.0 and sheet["semantic"]["sheets"] == 2
 
 - `orbit(degrees, until=None)` turns the camera (theme `[motion.orbit]` time per turn, or
   until a marker); `orbit_reveal(*ids)` reveals while swinging a little.
+- **Lift: a flat picture tipping up into 3D with no cut.** `use_camera("orbit", flat=h)`
+  gives a 3D camera that shows exactly what the 2D camera of height `h` shows (it looks down
+  from far away through a 1.5 degree field of view; its `distance` is an expression of its
+  `fov` that keeps `h` world units framed). `lift(elevation=32, fov=35, until=None)` then
+  widens the field of view, which brings the camera closer with nothing moving on the plane
+  (a dolly zoom: depth fades in), and tips the camera over to `elevation` (theme
+  `[motion.lift]`, or until a marker). Grow the picture's height alongside it (a
+  `pde.Surface`'s `height`) and the flat picture rises into its landscape. The distance
+  stays tied to `fov` afterwards: zoom by morphing `fov`. Example: `examples/prism_lift.py`.
+
+```python
+from phasor import Scene, expr
+from phasor.domains import pde
+
+lift = Scene("lift", passes=None)
+lift.use_camera("orbit", flat=7.5)  # looks like a 2D view 7.5 units tall
+lift.add(pde.Surface(id="drum", kind="wave", mode=(2, 3), height=0.01, time=expr("t / 4")))
+lift.marker("go", 1.0)
+lift.marker("landed", 6.0)
+lift.at("go").lift(until="landed")  # depth fades in, then the camera tips over to 32 degrees
+lift.at("go", 1.0).morph("drum.height", 1.6, until="landed")  # and the picture rises
+el = lift.engine
+assert el.state_at(0.0).values["camera.elevation"] == 89.0
+assert abs(el.state_at(6.0).values["camera.elevation"] - 32.0) < 1e-6
+```
 - `focus_pull(id)` in 3D aims at the object and comes close enough to fill the frame.
 - With camera goals, a camera parameter that is animated but never set is the solver's
   until its first motion: a `focus_pull` or `orbit` at a marker starts from wherever the
@@ -1614,6 +1639,7 @@ Example: `examples/strange_attractor.py`.
 | `phasor lint SCENE [--fix] [--strict] [--json] [--step S] [--allow-scripts]` | M2 | Lint; exit 1 on errors (`--strict`: on warnings too). `--fix` applies suggested fixes and saves them |
 | `phasor storyboard SCENE [-o PNG] [--t T]... [--marks] [--json] [--allow-scripts]` | M2 | Keyframe contact sheet plus what the inspector sees |
 | `phasor render SCENE [-o OUT] [--preset preview\|final\|4k] [--fps F] [--start S] [--end E] [--frame T] [--workers N] [--threads T] [--allow-scripts]` | M3 | Video (`.mp4`; `.mov` is ProRes; a folder or `%05d.png` is a PNG sequence) or one PNG with `--frame`. `--workers`: render processes (default a quarter of the CPU threads, 1 to 4); the result is the same file as one process makes. `--threads`: CPU kernel threads per process without CUDA (default: the cores shared out, workers x threads <= cores) |
+| `phasor cues SCENE [-o CUES.csv] [--allow-scripts]` | cues | A cue sheet for lining up music and sound design in an audio editor: one CSV row per marker and per motion (below); standard output without `-o` |
 | `phasor kit [FOLDER]` | kit | Set up or update a folder where an AI writes scenes (default `Documents/phasor`): `CLAUDE.md`, the AI docs, the examples sorted by kind, the `/scene` command, `TASTE.md`, and the phasor tools in `.mcp.json`. Your `TASTE.md`, `WISHLIST.md` and `scenes/` are never replaced |
 | `phasor bench [--width W] [--height H]` | M3 | ms per frame per kernel and peak VRAM; saved in `benchmarks/` |
 | `phasor bench --frames SCENE [--count N] [--preset P] [--allow-scripts]` | GPU_SPEED.md | ms per final frame per stage (state, simulation, draw, gpu draw, readback, widen, blur sum, post, srgb, encode); saved in `benchmarks/` |
@@ -1627,6 +1653,40 @@ Example: `examples/strange_attractor.py`.
 `--allow-scripts` (off by default) runs the Python modules a saved document names in
 `meta.modules` (its own object types and updaters); without it those objects are
 `missing_type` placeholder boxes. A `.py` scene is code you ran, so it needs no flag.
+
+### Cue sheet: line up music with the transitions
+
+`phasor cues SCENE -o cues.csv` writes every marker and every motion of a scene, in time
+order, as CSV with the columns `time, timecode, kind, name, start, end, duration` (seconds
+to the millisecond; `timecode` is `HH:MM:SS.mmm`). `kind` is `marker` (its name; no
+start/end) or `motion` (the verb and the ids it moves, in the order they start moving: a
+transform names its source, then its target; a raw `to()` transition is `raw`). One verb
+call is one cue: a staggered reveal of three objects, or a flash that swells and falls, is
+one row from its first start to its last end. The same from Python
+(`phasor.workspace.cues`):
+
+```python
+from phasor import Dot, Scene
+from phasor.workspace.cues import cue_rows, cues_csv
+
+cs = Scene("cue_demo", passes=None)
+cs.add(Dot(id="p", pos=(0.0, 0.0, 0.0)))
+cs.add(Dot(id="q", pos=(1.0, 0.0, 0.0)))
+cs.marker("start", 0.0)
+cs.marker("pulse", 2.0)
+cs.at("start").reveal("p", "q")
+cs.at("pulse").flash("p")
+rows = cue_rows(cs.engine)
+assert [(r["kind"], r["name"]) for r in rows] == [
+    ("marker", "start"),
+    ("motion", "reveal p q"),
+    ("marker", "pulse"),
+    ("motion", "flash p"),
+]
+text = cues_csv(rows)  # write it with encoding="utf-8", newline=""
+assert text.splitlines()[0] == "time,timecode,kind,name,start,end,duration"
+assert text.splitlines()[3] == "2.000,00:00:02.000,marker,pulse,,,"
+```
 
 ## The desktop app (`phasor-gui`)
 

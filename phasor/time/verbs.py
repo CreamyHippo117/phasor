@@ -27,6 +27,17 @@ from phasor.time.compile import Compiled, evaluate
 from phasor.time.tracks import ResolvedTrack
 
 FOCUS_MARGIN = 0.15  # focus_pull leaves this share of the frame around the object
+FLAT_FOV = 1.5  # degrees: narrow enough that a camera looking down shows a flat picture
+FLAT_ELEVATION = 89.0  # the steepest the orbit camera looks down (``OrbitCameraParams``)
+LIFT_DOLLY = 0.55  # share of a lift spent widening the field of view
+LIFT_TILT = 0.45  # share of a lift after which the camera starts to tip over
+
+
+def flat_distance(camera_id: str, frame: float) -> str:
+    """The distance that keeps ``frame`` world units framed at the target whatever the
+    field of view: widening ``fov`` then brings the camera closer without changing what is
+    framed (a dolly zoom). ``use_camera("orbit", flat=...)`` writes it; ``lift`` needs it."""
+    return f"{float(frame)!r} / (2 * tan({camera_id}.fov * pi / 360))"
 
 
 class VerbError(ValueError):
@@ -218,6 +229,9 @@ class Verbs:
         height = max(h, w / self.state.aspect) * (1 + 2 * margin)
         cam = self.c.doc.timeline.camera
         if self.c.doc.camera(cam).kind == "orbit":  # 3D: aim at it and come close enough
+            if isinstance(self.c.doc.camera(cam).params.get("distance"), ExprSpec):
+                raise VerbError(f"{cam}.distance is an expression (a flat or lifted camera): "
+                                f"move {cam}.target and morph {cam}.fov to zoom")  # fmt: skip
             radius = float(b.radius) * (1 + 2 * margin)
             fov = float(self.state.values[f"{cam}.fov"])
             dist = radius / max(1e-6, math.tan(math.radians(fov) / 2))
@@ -288,6 +302,31 @@ class Verbs:
             "verb": "orbit",
         }
         return Motion(({"op": "add_segment", "path": path, "segment": seg},), end)
+
+    def lift(self, elevation: float = 32.0, fov: float = 35.0, until: str | None = None) -> Motion:
+        """Tip a flat picture up into 3D with no cut. The camera must start flat
+        (``s.use_camera("orbit", flat=height)``): looking down with a field of view so narrow
+        that it shows the same picture as the 2D camera. First the field of view widens to
+        ``fov`` while the camera comes closer, so depth fades in with nothing moving on the
+        plane; then the camera tips over to ``elevation``. The theme's ``lift`` time, or
+        until the marker ``until``."""
+        cam = self._orbit_camera("lift")
+        dist = self.c.doc.camera(cam).params.get("distance")
+        if not (isinstance(dist, ExprSpec) and f"{cam}.fov" in dist.expr):
+            raise VerbError("lift needs a camera that starts flat: s.use_camera('orbit', "
+                            "flat=<world units framed top to bottom>)")  # fmt: skip
+        spec = self.motion["lift"]
+        total = spec["duration"] if until is None else self._until(until, "lift")
+        dolly = {"t0": _ref(self.at), "t1": _ref(shift(self.at, LIFT_DOLLY * total)),
+                 "to": float(fov), "ease": spec["ease"], "verb": "lift"}  # fmt: skip
+        tilt_end = (
+            _ref(shift(self.at, total)) if until is None else {"marker": until, "offset": 0.0}
+        )
+        tilt = {"t0": _ref(shift(self.at, LIFT_TILT * total)), "t1": tilt_end,
+                "to": float(elevation), "ease": spec["ease"], "verb": "lift"}  # fmt: skip
+        return Motion(({"op": "add_segment", "path": f"{cam}.fov", "segment": dolly},
+                       {"op": "add_segment", "path": f"{cam}.elevation", "segment": tilt}),
+                      total)  # fmt: skip
 
     def orbit_reveal(self, *ids: str) -> Motion:
         """Reveal objects one after another while the camera swings a little around them,

@@ -193,6 +193,11 @@ ease = "spring"
 duration = 14.0
 ease = "in_out"
 
+# lift: a flat picture tipping up into 3D (the dolly, then the tilt; they overlap a little)
+[motion.lift]
+duration = 4.5
+ease = "smoother"
+
 [motion.orbit_reveal]
 duration = 2.4
 ease = "smoother"
