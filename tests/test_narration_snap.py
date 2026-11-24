@@ -416,3 +416,51 @@ def test_the_muxed_sound_starts_on_time_whatever_its_rate(tmp_path, rate):
         pcm = np.concatenate([fr.to_ndarray().ravel() for fr in f.decode(f.streams.audio[0])])
     loud = np.flatnonzero(np.abs(pcm.astype(float)) > 0.3 * np.abs(pcm).max())
     assert abs(loud[0] / rate - 0.5) < 0.02, loud[0] / rate
+
+
+def test_files_outside_or_not_regular_are_refused_for_narration(tmp_path):
+    import os
+    import sys
+
+    talk(tmp_path)
+    s = scene(tmp_path)
+    (tmp_path / "dir.wav").mkdir()
+    with pytest.raises(VoiceError, match="not a regular file"):
+        s.narrate(SCRIPT, audio="dir.wav")
+    if hasattr(os, "mkfifo"):
+        os.mkfifo(tmp_path / "pipe.wav")
+        with pytest.raises(VoiceError, match="not a regular file"):
+            s.narrate(SCRIPT, audio="pipe.wav")
+    outside = tmp_path.parent / f"{tmp_path.name}_outside.wav"
+    outside.write_bytes((tmp_path / "talk.wav").read_bytes())
+    try:
+        (tmp_path / "link.wav").symlink_to(outside)
+    except (OSError, NotImplementedError):
+        if sys.platform != "win32":
+            raise
+    else:
+        with pytest.raises(VoiceError, match="outside"):
+            s.narrate(SCRIPT, audio="link.wav")
+    assert s.engine.document.narration is None
+
+
+def test_the_workspace_tools_narrate_from_a_file_and_snap(tmp_path):
+    from phasor.workspace.tools import ToolError, Workspace
+
+    ws = Workspace(tmp_path)
+    ws.scene_new("talk")
+    talk(Path(ws.engine.base_dir))
+    ws.scene_edit({"op": "set_marker", "name": "later", "t": 4.0})
+    r = ws.narrate(SCRIPT, audio="talk.wav")
+    assert r["voice"] == "file:talk.wav" and "loop_word" in r["markers"]
+    preview = ws.snap_to_narration()  # a preview by default
+    assert preview["moves"] and not preview["applied"]
+    assert ws.engine.document.timeline.markers["later"] == 4.0
+    done = ws.snap_to_narration(dry_run=False)
+    assert done["applied"] and ws.snap_to_narration()["moves"] == []
+    ws.undo()
+    assert ws.engine.document.timeline.markers["later"] == 4.0
+    with pytest.raises(ToolError):
+        ws.snap_to_narration(anchors={"nope": 0})
+    with pytest.raises(ToolError):
+        ws.narrate(SCRIPT, audio="../../elsewhere.wav")
