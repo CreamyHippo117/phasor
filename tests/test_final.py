@@ -26,6 +26,8 @@ for _m in phasor._MODULES:  # register every domain's types
 TYPES = sorted(n for n, c in registered_types().items() if is_builtin(c))  # not test types
 # Types with nothing to draw and so no style roles (ADR 0005): a named number.
 DRAWLESS = {"value"}
+# Types that draw another object's look and so have no style roles of their own.
+BORROWED = {"hinged_copy"}
 # The fewest parameters each type needs (the rest have defaults).
 REQUIRED = {
     "domain_coloring": {"function": "1/(z**2+1)"},
@@ -41,9 +43,10 @@ REQUIRED = {
     "callout": {"target": "guide"},  # rings an object
     "sound_rays": {"time": 0.5},  # in a room; 0: the sound has not left
     "wavefront3d": {"time": 0.5},
+    "hinged_copy": {"source": "guide", "hinges": [[[1, 0, 0], [0, 1, 0], 180.0]]},  # a copy
 }
 # Types that point at another object: the scene gets a curve called "guide" for them.
-PARTNERED = {"tracer", "callout"}
+PARTNERED = {"tracer", "callout", "hinged_copy"}
 # Sound in a 3D room: the scene gets a Room3D called "room" for them.
 IN_ROOM = {"sound_rays", "wavefront3d"}
 # Examples that build a Scene called ``s``: not domain_coloring (a script that renders the
@@ -102,7 +105,7 @@ def test_every_type_keeps_the_object_contract_and_has_docs():
     for name in TYPES:
         cls = registered_types()[name]
         assert all(hasattr(cls, m) for m in CONTRACT_MEMBERS), name
-        assert cls.Style or name in DRAWLESS, f"{name}: no style roles"
+        assert cls.Style or name in DRAWLESS | BORROWED, f"{name}: no style roles"
         assert cls.__name__ in api, f"{name} ({cls.__name__}) is not in docs/ai/API.md"
 
 

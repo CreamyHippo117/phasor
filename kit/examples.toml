@@ -162,6 +162,11 @@ kind = "physics"
 tier = "technique"
 teaches = "Sound in a 3D room: rays and fronts bouncing off the walls, an orbiting camera, an impulse response filling in"
 
+[examples.mirror_rooms]
+kind = "physics"
+tier = "technique"
+teaches = "The unfold verb: a ray bouncing in a room becomes a straight line through mirror rooms that swing over like pages"
+
 [examples.linear_system]
 kind = "fourier_linalg"
 tier = "technique"

@@ -177,6 +177,11 @@ class At:
         """Run a number evenly to ``value``, with a live readout beside its object."""
         return self._verb("sweep", path, value, show)
 
+    def unfold(self, room: str, ray: str, flips: int = 5, speed: float | None = None) -> At:
+        """A ray bouncing in a room as a straight line through mirror rooms: at each wall
+        the ray reaches, a mirror copy of the room swings over like a page."""
+        return self._verb("unfold", room, ray, flips, speed)
+
 
 def _caller_dir() -> Path:
     """The folder of the script that called ``Scene(...)``, or the working folder."""
