@@ -231,3 +231,28 @@ teaches = "The chroma look on algebra: a 3D lattice (TransformGrid lattice=True)
 kind = "motion"
 tier = "technique"
 teaches = "iterate: an orbit appears step by step (Newton, Julia, logistic cobweb); decompose/recompose: a Fourier sum splits into coloured harmonic rows and returns"
+
+[examples.verbs_scale]
+kind = "motion"
+tier = "technique"
+teaches = "grow, shrink, squish, flatten: scale any object about its centre, per axis (a point, an equation, a square flattened to a line, a domain coloring squeezed)"
+
+[examples.verbs_algebra]
+kind = "fourier_linalg"
+tier = "technique"
+teaches = "Algebra verbs: act (a symmetry turns and flips a polygon), apply (a matrix acts on a grid), generate (a Cayley graph grows), coset and quotient (a clock gathers into cosets), permute (tokens swap places)"
+
+[examples.verbs_equations]
+kind = "motion"
+tier = "technique"
+teaches = "Equation and emphasis verbs: substitute a value into a formula, cancel two terms, factor and expand, ignite a stroke like a fuse, pulse"
+
+[examples.verbs_camera]
+kind = "complex"
+tier = "technique"
+teaches = "Camera and light verbs: ripple marks a zero, spotlight picks a region of a field that dim_others cannot, follow keeps a moving zero in frame"
+
+[examples.verbs_space]
+kind = "three_d"
+tier = "technique"
+teaches = "Space verbs: lift a domain coloring into its landscape, slice a surface with a plane, project one arrow onto another, dissolve an object into points and assemble it back"
