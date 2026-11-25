@@ -149,7 +149,12 @@ class RunTask:
         except BaseException as e:  # the script's mistake, or RunCancelled
             self.error = e
         finally:
-            self.done.set()
+            for _ in range(3):  # a cancel landing just now must not leave ``done`` unset
+                try:
+                    self.done.set()
+                    break
+                except RunCancelled:
+                    continue
 
     def past_time(self) -> bool:
         import time
@@ -356,6 +361,8 @@ class Editor:
         """Undo the last edit; on a script, when the scene's own undo is used up, the code
         the app added last (a panel's footage, sound, notes, narration or snap) is taken back
         out and the script runs again."""
+        if self.running is not None:
+            return self._refused("the script is running: wait for it, or cancel it")
         with self.lock:
             r = self.ws.undo()
         if not r.get("undone") and self.is_script and self._script_undo and not self.running:
@@ -371,6 +378,8 @@ class Editor:
         return r
 
     def redo(self) -> dict[str, Any]:
+        if self.running is not None:
+            return self._refused("the script is running: wait for it, or cancel it")
         with self.lock:
             r = self.ws.redo()
         if not r.get("redone") and self.is_script and self._script_redo and not self.running:
@@ -403,8 +412,8 @@ class Editor:
                         r = self.run_code(self.buffer)
                         if not r["ok"]:
                             code = "file_changed" if r.get("conflict") else "script_error"
-                            return {"ok": False, "errors": [{"code": code,
-                                                             "message": r["error"]}]}  # fmt: skip
+                            return {"ok": False, "conflict": bool(r.get("conflict")),
+                                    "errors": [{"code": code, "message": r["error"]}]}  # fmt: skip
                     elif self.unwritten:
                         problem = self.block_problem or {"message": "", "line": None}
                         msg = (
@@ -905,6 +914,11 @@ class Editor:
         self.buffer = new
         self.block_edited = False
 
+    def save_needs_run(self) -> bool:
+        """Save would run the script first (its code changed since it last ran): the window
+        then runs it on the worker thread (``run(wait=False)``), which saves it."""
+        return self.is_script and self._needs_run()
+
     def _needs_run(self) -> bool:
         """The buffer's code is not the code the scene was built from, or its block is not
         the live scene's tweaks."""
@@ -1127,6 +1141,9 @@ class Editor:
         if self.buffer == _lf(text0):  # nothing unsaved here: the file's version runs
             self.ws.activity.append({"who": "file", "what": "the script changed on disk",
                                      "version": self.version, "t": self.t})  # fmt: skip
+            if background:  # seen; shown as the file's text even if it does not run
+                self.ws.script_disk = (disk, stamp)
+                self.buffer = _lf(disk)
             task = self._start_task(path, restore=None, kind="reload")
             if background:
                 return {"event": "reloading"}
@@ -1138,16 +1155,21 @@ class Editor:
         self.conflict = {"disk": disk, "stamp": stamp}
         return {"event": "conflict"}
 
-    def resolve_conflict(self, keep: str) -> dict[str, Any]:
-        """``keep="file"``: take the file's version (it runs); ``"mine"``: keep the editor's
-        text (saving it later replaces the file's)."""
+    def resolve_conflict(self, keep: str, *, background: bool = False) -> dict[str, Any]:
+        """``keep="file"``: take the file's version (it runs; ``background``: on the worker
+        thread, finished by ``poll_run``); ``"mine"``: keep the editor's text (saving it
+        later replaces the file's)."""
         if self.conflict is None:
             return {"ok": True}
         disk, stamp = self.conflict["disk"], self.conflict["stamp"]
         if keep == "file":
             self.conflict = None
-            r = self._finish_run(self._start_task(self.ws.path, restore=None, kind="reload"),
-                                 wait=True)  # fmt: skip
+            self.buffer = _lf(disk)  # the file's text, also if it does not run
+            self.ws.script_disk = (disk, stamp)  # seen (the run reads it again, first)
+            task = self._start_task(self.ws.path, restore=None, kind="reload")
+            if background:
+                return {"ok": None, "event": "reloading"}
+            r = self._finish_run(task, wait=True)
             if not r["ok"]:
                 self.buffer = _lf(disk)
                 self.ws.script_disk = (disk, stamp)
@@ -1240,7 +1262,11 @@ class Editor:
             self.buffer = before
             self.error = None
             code = "file_changed" if r.get("conflict") else "script_error"
-            return {"ok": False, "errors": [{"code": code, "message": r["error"]}]}
+            return {
+                "ok": False,
+                "conflict": bool(r.get("conflict")),
+                "errors": [{"code": code, "message": r["error"]}],
+            }
         self._script_undo.append(before)
         self._script_redo.clear()
         entry = {"what": what, "version": self.version, "t": self.t}
@@ -1708,6 +1734,8 @@ class Editor:
     def set_palette(self, name: str | None) -> dict[str, Any]:
         """Recolor the strokes with a palette (``spectrum``, the prism rainbow, ...): one
         undo step, recorded as your edit."""
+        if self.running is not None:
+            return self._refused("the script is running: wait for it, or cancel it")
         with self.lock:
             r = self.ws.scene_palette(name)
         if r["ok"]:

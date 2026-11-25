@@ -89,7 +89,10 @@ real screen, and as a packaged app.
     pure-Python loop at once and a long C call when it returns. One that never returns is let
     go: the editor keeps the last good scene and ignores its result; the thread may keep a
     core busy until the app quits. A child process was not chosen: a script's scene-local
-    types and updaters must be built in this process.
+    types and updaters must be built in this process. A panel's addition to a script, script
+    undo/redo and Save As still run the script on the GUI thread (waiting on the worker,
+    with the same timeout, so a runaway one is stopped after `PHASOR_RUN_TIMEOUT` seconds but
+    the window waits that long); Run, Run on save, reloads and "take the file's" do not.
 15. **While a script runs, edits are refused** (here and from an attached AI:
     `Workspace.busy`), since the scene it builds replaces the open one.
 16. **Template scripts**: New from a template still makes a `.phasor.json` scene (deviation 2);
@@ -98,9 +101,15 @@ real screen, and as a packaged app.
 ## Independent audit (2026-11-25) and what was fixed
 
 Every fix has a regression test (`tests/test_app_audit.py` unless named) that fails on the
-code before the fixes (checked by running the new tests against a copy of the tree at the
-merge commit 4bed8de: 26 of 27 failed or errored and the two runaway tests hung until
-killed; the S4 test was corrected so it fails there too) and passes after.
+code before the fixes and passes after. Checked by running the new tests against a copy of
+the tree at the merge commit 4bed8de (before any fix): `test_app_audit.py` 27 of 27 fail
+(the S4 test was first corrected so it exercises the old export; S7's timeout test hangs
+there until killed); in `test_app_window.py` the six conflict tests (Save, Run, a panel x
+both answers), the text-box undo test and the command-line question fail, and the two
+runaway tests (the Run button, Ctrl+S) hang until killed; in `test_app_code_first.py` the S2
+and S9 changes fail; in `test_render_jobs.py` the partial-file test fails. Two changes only
+strengthen tests and pass on the old code too: the invariant now compares overrides as well
+as the document, and the real-OpenGL cancel test asserts its outcome.
 
 | Finding | Before | Fix | After |
 | --- | --- | --- | --- |
@@ -114,7 +123,7 @@ killed; the S4 test was corrected so it fails there too) and passes after.
 | S4 web export cancel | deleted a page that was there before | `ExportJob` writes to its own partial file and renames on success | the old page stays |
 | S5 markers in a docstring; two blocks | block written inside the string; the second block kept stale values (live 0.1, fresh 0.9) | `tokenize` (strings are not markers); two blocks refused | fresh run equals live; docstring untouched |
 | S6 file modes | 0444 became 0644, 0600 became 0644; a read-only file escaped the window's slot | `write_text` keeps the mode, refuses read-only (`ToolError`), the window catches `OSError` | refused, modes kept |
-| S7 runs on the GUI thread | `while True` froze every window and the AI | `RunTask` on a worker thread, Cancel run, timeout; edits refused meanwhile | the window lives; cancel keeps the last scene (`test_app_window.py` too) |
+| S7 runs on the GUI thread | `while True` froze every window and the AI | `RunTask` on a worker thread, Cancel run, timeout (`PHASOR_RUN_TIMEOUT`); Run, Ctrl+S when the code changed (Run on save), file reloads and "take the file's" go to the thread; edits refused meanwhile (the editor's undo, redo and palette too, and the AI's writers: `scene_new`, `scene_open`, `snap_to_narration`, `lint(fix=True)`) | the window lives; Cancel keeps the last scene (`test_app_window.py`: Run and Ctrl+S). Still on the GUI thread, with the timeout: a panel's addition, script undo/redo and Save As (deviation 14) |
 | S8 undo | every tweak wiped the text box's undo; panel additions to a script were not undoable | the box is edited in place as one undo step (`CodePanel._replace_text`); the app's additions are undone one step each | `isUndoAvailable` kept; undo/redo of a sound |
 | S9 sound at a marker frozen to seconds | a snap desynced it | `Sound.start` takes a marker name; the clip is placed at the marker by the engine | follows the marker |
 | S10 two draft defaults | Editor beside the script, Workspace in `phasor_out/<title>` | `Workspace.default_render_path`: a draft beside the scene's file for both | one default |
@@ -129,6 +138,7 @@ killed; the S4 test was corrected so it fails there too) and passes after.
 | nit Looks / marker drags on a script | bare `scripted_scene` | the message says where it belongs in the code | |
 | nit `render_cancel` held the lock 5 s | | waits at most 0.5 s; the editor's cancel holds no lock | |
 | nit `phasor gui X.py --root DIR` | ran without asking | asks once (`cli._may_run`) | asked (`test_app_window.py`) |
+| follow-up: a conflict found by Save, Run or a panel | refused with "changed on disk", never asked; Run and Save kept failing | the window asks once whenever the editor holds a conflict (`_ask_pending_conflict`, from the timer and from Save); both answers work | `test_app_window.py`, 6 cases |
 | nit tests | a tautology; a GL cancel test that asserted only when cancelled; the invariant compared only the document | assert; assert the outcome; compare document and overrides | |
 
 The auditor's `fuzz.py` (moving_dot, video_input, notes_overlay; seeds 1-3; 30 random steps

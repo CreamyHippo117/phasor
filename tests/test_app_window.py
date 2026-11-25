@@ -319,3 +319,47 @@ def test_the_command_line_asks_before_running_a_script(tmp_path, monkeypatch):
     assert cli._may_run(script) is False and len(asked) == 1
     monkeypatch.setattr(desktop, "confirm_run", lambda p: asked.append(p) or True)
     assert cli._may_run(script) and cli._may_run(script) and len(asked) == 2
+
+
+@pytest.mark.parametrize("how", ["save", "run", "panel"])
+@pytest.mark.parametrize("answer", ["mine", "file"])
+def test_a_conflict_found_by_save_run_or_a_panel_is_asked(win, scene, monkeypatch,
+                                                         tmp_path_factory, how, answer):  # fmt: skip
+    """Audit follow-up: an outside edit between two polls, then Ctrl+S, Run or a panel: the
+    write is refused and the window asks which version to keep (both answers work)."""
+    asked = []
+    monkeypatch.setattr(win, "ask_conflict", lambda: asked.append(how) or answer)
+    win.code.text.setPlainText(SCRIPT.replace("hello", "mine"))  # typed, not saved
+    _later(scene, SCRIPT.replace("hello", "theirs"))
+    if how == "save":
+        win.save_scene()
+    elif how == "run":
+        win.code.run()
+    else:
+        media = tmp_path_factory.mktemp("m")
+        shutil.copy2(EXAMPLES / "assets" / "chime.wav", media / "chime.wav")
+        win.sound.add_sound(str(media / "chime.wav"))
+    win.tick()
+    win.wait_for_run()
+    assert asked == [how]
+    win.tick()
+    assert asked == [how]  # asked once
+    if answer == "file":
+        assert win.ed.engine.document.object("note").params["text"] == "theirs"
+        assert not win.code.edited
+    else:
+        win.save_scene()
+        win.wait_for_run()
+        assert "mine" in scene.read_text(encoding="utf-8")
+
+
+def test_ctrl_s_on_a_runaway_script_keeps_the_window_alive(win, scene):
+    """Audit follow-up: Run on save went through the GUI thread."""
+    win.code.QUICK = 0.1
+    win.code.text.setPlainText(SCRIPT + "while True:\n    pass\n")
+    win.save_scene()
+    assert win.ed.running is not None and not win.code.stop.isHidden()
+    win.tick()
+    win.code.stop.click()
+    assert win.ed.running is None and "cancelled" in win.code.status.text()
+    assert scene.read_text(encoding="utf-8") == SCRIPT  # nothing that did not run is kept

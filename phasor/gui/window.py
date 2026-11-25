@@ -1328,6 +1328,7 @@ class EditorWindow(QMainWindow):
         self._hover_done: tuple | None = None
         self._preview_dirty = False
         self._ticks = 0
+        self._asked: dict | None = None  # the conflict last asked about (asked once)
         right = QSplitter(Qt.Orientation.Vertical)
         right.addWidget(self.viewport)
         right.addWidget(self.timeline)
@@ -1412,12 +1413,17 @@ class EditorWindow(QMainWindow):
         """Ctrl+S. The desktop app asks where when the scene has never been saved. When the
         script changed on disk meanwhile, nothing is written until the person chooses."""
         try:
+            if self.ed.save_needs_run() and self.ed.conflict is None:
+                # Run on save, on the worker thread: a long script never freezes the window
+                # (a Run that succeeds is saved; its outcome shows when it is over)
+                self.code.run()
+                if self.ed.running is None:
+                    self._ask_pending_conflict(then_save=True)
+                return
             r = self.ed.save()
             if isinstance(r, dict) and r.get("conflict"):
-                choice = self.ask_conflict()
-                got = self.ed.resolve_conflict(choice)
-                r = self.ed.save() if choice == "mine" else got
-                self.refresh_all()
+                self._ask_pending_conflict(then_save=True)
+                return
             self._report(r)
         except (ToolError, OSError) as e:  # a read-only file, a full disk: said, not raised
             self.statusBar().showMessage(f"Not saved: {e}", 8000)
@@ -1489,13 +1495,30 @@ class EditorWindow(QMainWindow):
         box.exec()
         return "mine" if box.clickedButton() is mine else "file"
 
+    def _ask_pending_conflict(self, *, then_save: bool = False) -> None:
+        """The file changed on disk while there are unsaved edits here (found by the file
+        watch, or refused by Save, Run or a panel): ask once which version to keep."""
+        conflict = self.ed.conflict
+        if conflict is None or self._asked is conflict:
+            return
+        self._asked = conflict
+        choice = self.ask_conflict()
+        r = self.ed.resolve_conflict(choice, background=True)
+        if choice == "mine":
+            self.statusBar().showMessage("Kept your version: saving writes it over the "
+                                         "file's", 8000)  # fmt: skip
+            if then_save:
+                self.save_scene()
+        elif r.get("event") == "reloading":
+            self.code.stop.show()
+        self.refresh_all()
+
     def _poll_file(self) -> None:
         r = self.ed.poll_file(background=True)
         if r is None:
             return
         if r["event"] == "conflict":
-            choice = self.ask_conflict()
-            self._ran(self.ed.resolve_conflict(choice))
+            self._ask_pending_conflict()
             return
         if r["event"] == "reloading":
             self.code.stop.show()
@@ -1574,6 +1597,8 @@ class EditorWindow(QMainWindow):
             self.timeline.update()
         if self.ed.running is not None:
             self._poll_run()
+        elif self.ed.conflict is not None:  # refused by Save, Run or a panel: ask once
+            self._ask_pending_conflict()
         elif self._ticks % self.POLL_FILE_TICKS == 0:
             self._poll_file()
         if self.ed.job is not None:

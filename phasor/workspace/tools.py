@@ -360,6 +360,7 @@ class Workspace:
         "chalk", or "none" for plain) or a ``theme`` is given; ``life`` ("off", "subtle",
         "lively") is the living motion; ``palette`` the colors run along strokes
         (``scene_palette``)."""
+        self._writable()
 
         def go():
             name = default_look(look, theme)
@@ -405,6 +406,7 @@ class Workspace:
         script that imports ``manim`` is run through phasor's Manim stand-in and opens as a
         plain scene, with ``notes`` on what could not be carried over). The modules a
         document names run only where scripts may run; never for an attached AI."""
+        self._writable()
         return self._open(path, allow_scripts=self.allow_scripts and not self._by_ai)
 
     def scene_save(self, path: str | None = None) -> dict[str, Any]:
@@ -620,6 +622,8 @@ class Workspace:
         motions. ``dry_run`` (the default) only previews: ``moves`` lists marker, from, to,
         why and confidence. Call again with ``dry_run: false`` to apply (one undo step).
         ``anchors`` pins a marker to a narration block index (``{"poles": 2}``)."""
+        if not dry_run:
+            self._writable()
         e = self.engine
         if e.scripted and not dry_run:
             raise ToolError("this scene is built by a script: add s.snap_to_narration() there, "
@@ -703,6 +707,7 @@ class Workspace:
         e = self.engine
         applied: list[dict[str, Any]] = []
         if fix:
+            self._writable()
             applied = e.autofix(aesthetic=aesthetic)["applied"]
         issues = e.lint(step, strict=strict, aesthetic=aesthetic)
         return {
