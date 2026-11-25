@@ -34,8 +34,9 @@ rules below are a summary of it as of 2026-11-25; where they differ, `TASTE.md` 
 - **Usually not concrete before abstract.** Ask which route the person wants (step 4).
 - **Little text on screen. No hard cuts.**
 - **Never shrink an idea to fit the tool.** If the best animation is one phasor cannot make
-  yet, keep it in the plan, mark it, and add a line to `WISHLIST.md`. The person adds these
-  to phasor; a plan weakened in advance hides what is missing.
+  yet, keep it in the plan, list it under "Wanted additions", and add a line to
+  `WISHLIST.md`. The person adds these to phasor; a plan weakened in advance hides what is
+  missing.
 
 The reference is the YouTube channel 2swap; see "The reference" at the end.
 
@@ -95,8 +96,9 @@ puzzle-setter (what game leads here), misconception collector (what people wrong
 believe), archivist (earlier ideas about the concept: how it was first pictured, older
 approaches, forgotten constructions; a source of ideas, not a history lesson for the video).
 
-Craft lenses: filmmaker (the unforgettable shot), animator (how each picture moves and
-becomes the next), musician (what can be heard), phasor expert (what phasor already draws
+Craft lenses: cinematographer (the unforgettable shot; how each picture moves, holds and
+becomes the next; here it works from imagination and has not read phasor's verbs, which
+come in step 7), musician (what can be heard), phasor expert (what phasor already draws
 beautifully; reads `kit/docs/API.md` and `kit/examples/INDEX.md`), 2swap student (what
 would 2swap do with this).
 
@@ -118,7 +120,8 @@ point B, the feel, its lens and question, the house rules above, and these instr
 
 **Merge and cross.** One agent reads all of round one and writes `map.md`: the branches
 with repeats removed, each idea tagged with its lens, then a section of crossings (one
-lens's motion on another's shape). It also names the two or three most fertile lenses.
+lens's motion on another's shape). It also names the two or three most fertile lenses,
+and marks the fifteen or so strongest ideas of any kind for the weavers.
 
 **Round two.** Spawn, in parallel: the sub-lenses of the fertile lenses (third column of
 the table), plus two fresh brainstormers. Each gets `map.md` and asks: what is missing,
@@ -128,9 +131,27 @@ another dimension, run backwards? Their additions go into `map.md`.
 Aim, across both rounds, for at least 40 opening questions, 40 central pictures and 20 in
 every other branch. If the map is short of that, run another round with new lenses.
 
+**Weave.** The lenses find connections; weavers find interconnections: two ideas from
+different lenses carried by one object. (A video on differential equations drew pendulums
+to show the geometry, then let the viewer hear how a stable pendulum sounds beside an
+unstable one: the pendulum that is seen is the one that is heard.) Spawn three or four
+weavers in parallel. Each gets the marked ideas from `map.md` and one way of pairing, so
+they do not all find the same thing:
+
+- across senses: a picture with a sound, a motion with a rhythm;
+- across fields: one lens's object doing another lens's job;
+- across scales or states: the small with the whole, a still shape with a process.
+
+A weave is real when the second idea is a consequence of the first inside the same object,
+so that removing either weakens the other. Two good ideas placed side by side are a staple,
+not a weave; leave those out. "None worth it" is an allowed answer, and no video is obliged
+to use a weave. Weaves go in `weaves.md`, each with what the viewer would see and hear.
+
 **Paths.** Two or three agents each join branches of the map into whole paths from A to B,
 a short paragraph each, deliberately unlike one another (different openings, different
-central pictures, different orders). At least 20 in all, in `paths.md`.
+central pictures, different orders). They read `weaves.md` too: a weave often makes the
+best return to the central picture (the same object, now heard, or now seen from the other
+field). At least 20 in all, in `paths.md`.
 
 ### 3. Prune
 
@@ -188,9 +209,13 @@ Now make the chosen path teach as well as it can:
 - **Stay true.** A simplification may leave things out; it may not say something false.
   Note what was left out.
 
-### 7. Art director
+### 7. Cinematographer
 
-The Art director may not change what is taught, only how it looks.
+One agent owns everything the eye gets: the stage, color, motion, the camera, the verbs,
+the transitions and the text. It may not change what is taught, only how it looks, and it
+works on the Teacher's draft, so every choice lands on a hold, a silent stretch or a word
+the Teacher already placed. Where a visual choice would make an animation fail its silent
+test, the teaching wins.
 
 **Stage.** Midnight black. One animation, full frame: the mathematics reaches the edges,
 not a small figure in the middle of a slide. It keeps the stage; do not cut away and come
@@ -228,9 +253,27 @@ end on a composed frame that then holds, and bring into view only things already
 **Text.** Not much. One large plain label naming what is happening is often all a frame
 needs. An equation only when earned; it leaves when its work is done.
 
+**Verbs.** Only now, with the path chosen and drawn in imagination, read phasor's verbs
+and camera moves in `kit/docs/API.md` (the list grows; read it each time, do not work from
+memory). The order matters: ideas formed with the tool list in view shrink to fit it.
+
+- Give each motion in the plan the verb that does it best.
+- Then read the list once more for inspiration: is there a verb that would show this
+  object in a way nobody imagined? Verbs are welcome anywhere, and especially in the long
+  holds and in a pause on a great idea, where a well-placed verb keeps the picture alive
+  while the viewer thinks.
+- Every verb must either reveal something or keep the picture alive. One that does neither
+  is decoration; leave it out.
+- Mark on each animation where each verb lands (which moment of the hold, which word), so
+  Sound can meet it.
+- A motion the plan wants that no verb or animation can do stays in the plan as imagined
+  and goes under "Wanted additions": what it should do, and where the plan uses it. Do not
+  swap it for a weaker motion that exists.
+
 ### 8. Sound
 
-Mark cues on the animation list; do not compose.
+Mark cues on the animation list; do not compose. Work on the Cinematographer's draft: an
+accent belongs where a verb lands.
 
 - **Music** carries the silent stretches, so it matters as much as the voice: one ambient
   bed, sitting back under the voice and coming forward when the voice stops.
@@ -257,7 +300,10 @@ A fresh agent reads the plan as the viewer from step 1 and answers each; fix wha
 9. Does each color still mean what it meant at the start?
 10. Is anything said that is not true?
 11. Held next to the reference clips below, where does this fall short?
-12. Was any idea weakened to fit phasor? Restore it and put it on the wishlist.
+12. Was any idea weakened to fit phasor? Restore it and list it under "Wanted additions".
+13. Is any verb there only as decoration? Cut it.
+14. If the plan uses a weave, do the two ideas truly live in one object, or were they
+    stapled together?
 
 If the Editor finds the path itself weak, go back to the map; do not patch.
 
@@ -282,7 +328,8 @@ The central picture. What color encodes. The music bed.
 
 ## Animations
 ### 1. What fills the stage
-- **While it holds:** how it changes, in order (iterations, cases, parameters, big moves)
+- **While it holds:** how it changes, in order (iterations, cases, parameters, big moves),
+  with the verb for each motion and where it lands
 - **Say before:** brief; the gist, for the person to put in their own words
 - **Silent stretch:** how long, and what the viewer should work out alone
 - **Say after:** if anything
@@ -292,13 +339,15 @@ The central picture. What color encodes. The music bed.
 ## Left out
 What was simplified away.
 
-## Not possible in phasor yet
-Each animation the plan needs that phasor lacks (also added to WISHLIST.md).
+## Wanted additions
+Each animation or verb the plan wants that phasor does not have yet: what it should do,
+which animation uses it, and the closest thing that exists today.
 ```
 
-Add each "not possible yet" item to `WISHLIST.md` as its own line. Keep `map.md`; a later
-video on a nearby idea can start from it. In your reply give the path in a few sentences,
-the list of animations by title, anything not possible yet, and the file.
+Add each wanted addition to `WISHLIST.md` as its own line too. Keep `map.md` and
+`weaves.md`; a later video on a nearby idea can start from them. In your reply give the
+path in a few sentences, the list of animations by title, the wanted additions, and the
+file.
 
 ## The reference: 2swap
 

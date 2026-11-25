@@ -47,7 +47,8 @@ These come from the plan and are not yours to trade away for convenience:
    - **can do nearly** (say what differs);
    - **cannot do yet**.
 
-   The plan's own "Not possible in phasor yet" section is a start, not the whole answer.
+   The plan's own "Wanted additions" section is a start, not the whole answer; phasor may
+   have gained some of them since the plan was written.
 3. **Say what will fall short, before building.** Show the person the nearly and cannot
    lists in a few lines, with the closest thing you will build for each. Add each cannot
    to `WISHLIST.md` (what was wanted, which scene, what was done instead). Then carry on;
