@@ -1,0 +1,37 @@
+# chroma: a luminous look for algebra and complex functions (owner's references,
+# 2026-11-25): a deep indigo ground instead of black, vivid candy hues (red, yellow, cyan,
+# magenta) that run white-hot where light piles up, thick glowing strokes and nodes, a
+# lattice wearing one rainbow across space, white serif equations. Derived from prism;
+# only what differs is here.
+base = "prism"
+
+[palette]
+background = "#140e44"  # chroma: deep indigo, not black
+primary = "#f7f5ff"  # chroma: clean white equations
+secondary = "#3fe6f2"  # chroma: cyan
+highlight = "#ffe23d"  # chroma: yellow
+danger = "#ff4f9e"  # chroma: magenta
+
+[glow]
+strong = 3.0  # chroma: lit places bloom further toward white
+
+# Both wheels vivid: phase (domain coloring) keeps the full wheel, as hue means phase there;
+# spectrum is what strokes and point clouds run. Little deep blue: it vanishes on indigo.
+[colormap]
+phase = ["#ff2e3f", "#ff8a24", "#ffe82e", "#3fe86a", "#25e2f0", "#8f68ff", "#ff5ce3"]
+spectrum = ["#ff2e3f", "#ff8a24", "#ffe82e", "#3fe86a", "#25e2f0", "#8f68ff", "#ff5ce3"]
+
+[bloom]
+strength = 1.35  # chroma: lush halos
+fringe = 0.006  # chroma: a little colour split, not the prism lens
+vignette = 0.2  # chroma: the indigo reaches the corners
+
+# Strokes take their hue from where they are (cycles per world unit along `axis`), so a
+# lattice's edges and nodes that meet share a colour and the rainbow runs across the whole.
+[strokes]
+by = "space"
+hue_along = 0.16
+axis = [1.0, 0.35, 0.6]
+colormap = "spectrum"
+flow = 0.02
+only = []  # every glowing stroke, not just linear algebra as in prism

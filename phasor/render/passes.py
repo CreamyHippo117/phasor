@@ -239,13 +239,18 @@ def _define(src: str, kind: str) -> str:
     return f"{head}\n{defines[kind]}\n{rest}"
 
 
-def _stroke_hue(state, pass_) -> tuple | None:
-    """The theme's ``[strokes]`` hue for the color pass: (lut, cycles, shift at t)."""
+def _stroke_hue(state, pass_, obj=None) -> tuple | None:
+    """The theme's ``[strokes]`` hue for the color pass: (lut, cycles, shift at t), plus the
+    unit ``axis`` when the theme colors by place (``by = "space"``). None for an ``obj``
+    whose type the theme's ``only`` leaves out."""
     st = getattr(state, "strokes", None) or {}
     if pass_ != "color" or not st.get("hue_along") or not st.get("lut"):
         return None
-    return (np.asarray(st["lut"], dtype=np.float64), float(st["hue_along"]),
-            (float(st.get("flow", 0.0)) * state.t) % 1.0)  # fmt: skip
+    if st.get("only") and obj is not None and obj.impl.type not in st["only"]:
+        return None
+    hue = (np.asarray(st["lut"], dtype=np.float64), float(st["hue_along"]),
+           (float(st.get("flow", 0.0)) * state.t) % 1.0)  # fmt: skip
+    return (*hue, np.asarray(st["axis"], dtype=np.float64)) if "axis" in st else hue
 
 
 class _Collector:
@@ -429,7 +434,7 @@ class GLRenderer:
     # ------------------------------------------------------------ drawing
 
     def _commands(self, state, obj: ObjectState, pass_) -> list:
-        collector = _Collector(_stroke_hue(state, pass_))
+        collector = _Collector(_stroke_hue(state, pass_, obj))
         obj.impl.draw(collector, state, pass_)
         return collector.commands
 

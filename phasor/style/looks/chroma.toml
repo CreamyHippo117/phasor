@@ -1,0 +1,51 @@
+description = "Candy light on deep indigo (owner, 2026-11-25): domain coloring as a luminous wash of vivid phase hues running white-hot where the function does the most; strokes, lattices and graphs thick and glowing, coloured by where they are so one rainbow runs across a whole lattice; white equations. For algebra and complex functions. An option: the default stays prism."
+base = "prism"
+theme = "chroma"
+
+[defaults.line.params]
+hue_along = 0.0  # chroma: lines take the theme's hue by place, not their own along the length
+
+[defaults.line.style]
+glow = "strong"
+stroke = "bold"
+
+[defaults.equation.style]
+glow = "none"  # chroma: crisp white type, as in the references
+
+[defaults.domain_coloring.params]  # the chroma preset (cx.DomainColoring.Presets)
+dim = 0.8  # see-through: the indigo shows through the wash
+radius = 0.4  # a tighter light: less blur
+ambient = 0.1
+light = 1.5  # more glow from the lit places
+contour = 0.0
+lines = 0
+white = 0.8
+
+[defaults.domain_coloring.style]
+glow = "soft"  # strong lights the whole plane: the ground should show far from the action
+
+[defaults.transform_grid.style]
+glow = "strong"
+stroke = "bold"
+grid = "primary"
+
+[defaults.cayley_graph.style]
+glow = "strong"
+
+[defaults.subgroup_lattice.style]
+glow = "strong"
+
+[defaults.galois_diagram.style]
+glow = "strong"
+
+[defaults.homomorphism.style]
+glow = "strong"
+
+[defaults.permutation.style]
+glow = "strong"
+
+[defaults.polygon.style]
+glow = "strong"
+
+[defaults.network.style]
+glow = "strong"

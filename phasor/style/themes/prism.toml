@@ -55,6 +55,18 @@ borealis = ["#7cffc4", "#4fd1c5", "#8a7dff", "#c38bff"]  # palette: green to vio
 rose = ["#ffb3c7", "#ff7aa2", "#c38bff", "#ff9a8a"]  # palette: pinks and violets
 spectrum = "oklch 0.7 0.16"  # prism: deeper hues, so a glowing curve keeps its color
 
+# Linear algebra in the prism look (owner, 2026-11-25): grids, lattices, eigenlines and
+# vectors take their hue from where they are, so crossing lines share a colour and one
+# rainbow runs across the whole. Only these types: every other curve keeps its own colour
+# (prism_primes' lines run their hue along their length, as before).
+[strokes]
+by = "space"
+hue_along = 0.16
+axis = [1.0, 0.35, 0.6]
+colormap = "spectrum"
+flow = 0.02
+only = ["transform_grid", "eigen_lines", "arrow", "linear_system"]
+
 # Final look: the light that glow roles add blooms (`threshold` applies only when there is
 # no emission target, e.g. to a raw HDR image); `strength` is how bright the halo is; `levels` is how many
 # halvings the bloom pyramid goes down (wider glow); `exposure` scales before tone mapping;

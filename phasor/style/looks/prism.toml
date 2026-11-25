@@ -163,6 +163,23 @@ material = "glass"
 [defaults.riemann_surface.style]
 material = "glass"
 
+# linear algebra (owner, 2026-11-25): glowing grids and lattices with hue by place (the
+# theme's [strokes], for these types only), the unit square a solid bright fill
+[defaults.transform_grid.params]
+solid = true
+nodes = true
+square = 0.9
+
+[defaults.transform_grid.style]
+glow = "strong"
+grid = "primary"
+
+[defaults.eigen_lines.style]
+glow = "strong"
+
+[defaults.arrow.style]
+glow = "strong"
+
 # dynamical systems (ANIMATIONS.md D1, D2): trajectories glow, the arrow field and nullclines stay faint
 [defaults.phase_portrait.params]
 dim = 0.9

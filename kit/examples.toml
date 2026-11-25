@@ -216,3 +216,13 @@ teaches = "The logistic map's bifurcation diagram as a glowing point cloud: a sw
 kind = "physics"
 tier = "technique"
 teaches = "Wave fields on the GPU: two sources interfering, then a phased array steering its beam"
+
+[examples.chroma_domain]
+kind = "complex"
+tier = "technique"
+teaches = "The chroma look on a complex function: a luminous wash of vivid phase hues on deep indigo, white-hot at the zeros and poles, the constant drifting"
+
+[examples.chroma_algebra]
+kind = "fourier_linalg"
+tier = "technique"
+teaches = "The chroma look on algebra: a 3D lattice (TransformGrid lattice=True) turned by quaternions, every edge and node coloured by where it sits"

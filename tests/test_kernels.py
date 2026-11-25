@@ -95,6 +95,8 @@ CASES = {
                 "a": -0.2 + 0.6j, "precision": "f64"}),
         (FULL, {"function": FA, "center": (0.0, 0.0), "height": 4.0, "lines": 12,
                 "a": 0.6j, "to": FB, "blend": 0.65, "precision": "f64"}),
+        (FULL, {"function": F, "center": (0.0, 0.0), "height": 4.0, "radius": 0.6,
+                "ambient": 0.3, "contour": 0.0, "white": 0.8, "precision": "f64"}),  # chroma
     ],
     "tonemap": [
         (IMAGE_TILE, {"image": IMAGE, "exposure": 1.7}),
@@ -589,6 +591,25 @@ def test_the_constant_a_is_a_kernel_argument_not_part_of_the_source():
     assert np.allclose(got, want, atol=1e-5)
     with pytest.raises(FunctionError):
         ComplexFunction.parse("z + a")  # only where the caller allows the constant
+
+
+def test_domain_glow_white_turns_the_lit_places_white_and_leaves_the_dark_alone():
+    """``white`` mixes the hue toward white by white * lit^2: 0 changes nothing (prism keeps
+    its pixels), and at full light with white 1 the colour is grey at the shade (R = G = B),
+    while the dim wash far from zeros keeps nearly all its hue."""
+    k = get("domain_glow").reference
+    tile, kw = Tile.full(41, 41), {"center": (0.0, 0.0), "height": 4.0, "radius": 0.3,
+                                   "ambient": 0.1, "contour": 0.0}  # fmt: skip
+    plain = k(tile, F, **kw)
+    np.testing.assert_array_equal(k(tile, F, white=0.0, **kw), plain)
+    hot = k(tile, F, white=1.0, **kw)
+    lit = plain[..., 3].astype(np.float64)
+    chroma = hot[..., :3].max(-1) - hot[..., :3].min(-1)
+    was = plain[..., :3].max(-1) - plain[..., :3].min(-1)
+    # the hue's spread shrinks by exactly 1 - lit^2: white where lit, untouched in the dark
+    assert np.allclose(chroma, was * (1 - lit**2), atol=1e-5)
+    assert lit.max() > 0.9 and lit.min() < 0.05
+    np.testing.assert_array_equal(hot[..., 3], lit)  # the glow weight is unchanged
 
 
 @pytest.mark.parametrize("name", ["domain", "domain_glow"])

@@ -116,6 +116,11 @@ class DomainColoring(_Plane):
         # dark ground, glowing zeros and poles, haze (the look of the prism strokes)
         "prism": {"params": {"radius": 0.35, "ambient": 0.06, "contour": 0.0, "lines": 12},
                   "style": {"glow": "strong"}},
+        # a luminous wash: wide soft light running white-hot where it is strongest, no
+        # lines (the chroma look; its theme makes the phase wheel vivid)
+        "chroma": {"params": {"radius": 0.4, "ambient": 0.1, "contour": 0.0, "lines": 0,
+                              "white": 0.8, "light": 1.5, "dim": 0.8},
+                   "style": {"glow": "soft"}},
     }  # fmt: skip
 
     class Params(ParamsBase):
@@ -136,6 +141,7 @@ class DomainColoring(_Plane):
         blend: float = Field(0.0, ge=0, le=1)
         line_glow: float = Field(0.6, ge=0, le=4)  # prism look: how bright rays and rings are
         light: float = Field(1.0, ge=0, le=4)  # prism look: scales the light the glow role adds
+        white: float = Field(0.0, ge=0, le=1)  # prism look: the brightest light runs white-hot
 
         @field_validator("function", "to")
         @classmethod
@@ -201,6 +207,8 @@ class DomainColoring(_Plane):
         blend = {"to": _parse(p.to.strip()), "blend": float(p.blend)} if (
             p.to.strip() and p.blend > 0) else {}  # fmt: skip
         lit = {"line_glow": float(p.line_glow)} if p.line_glow != 0.6 else {}  # 0.6: default
+        if p.white > 0:
+            lit["white"] = float(p.white)
 
         def pixels(pw: int, ph: int, center: tuple[float, float], height: float) -> np.ndarray:
             from phasor.render import gpu

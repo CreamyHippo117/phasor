@@ -44,3 +44,20 @@ Steps 3, 4 and 7 run on the owner's PC, three Claude Code sessions at once: see
 - Everything is prismed except `axes` and `image` (plain on purpose, owner 2026-11-22):
   Cayley tables, clock diagrams, matrices and rooms got a `glow` role; the 3D surfaces turn
   to glass in the prism looks.
+
+## The chroma look (owner, 2026-11-25)
+
+A second look, an option beside prism, from the owner's references (luminous domain
+coloring that runs white-hot, and a 3D lattice turned by a quaternion, glowing in candy hues
+on deep indigo): `look="chroma"`, theme `chroma` (`base = "prism"`). New pieces: `white` on
+the `domain_glow` kernel and `cx.DomainColoring` (preset `chroma`), `[strokes] by = "space"`
+in any theme (hue by place, so a lattice wears one rainbow and its nodes match), and
+`linalg.TransformGrid(lattice=True)`. Examples `chroma_algebra.py` and `chroma_domain.py`,
+software goldens; GPU goldens to make on the PC. Not covered: the stained-glass hyperbolic
+tiling reference (white ground, filled tiles); it needs a tiling object phasor lacks.
+
+**Linear algebra in prism** (owner, 2026-11-25, "this is what I intended by prism"): the
+prism theme lights `transform_grid`, `eigen_lines`, `arrow` and `linear_system` by place
+(`[strokes] only`), grids glow with a node at every crossing, the unit square is a solid
+fill. An audit of every other type against this style (hue by place, glow, nodes, solid
+fills) found most still miss it; the list of fixes is the next step, waiting for the owner.
