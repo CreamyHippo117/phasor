@@ -179,21 +179,21 @@ class At:
 
     # ===== group S =====
 
-    def grow(self, *args: Any, **options: Any) -> At:
-        """grow (not built yet)."""
-        return self._verb("grow", *args, **options)
+    def grow(self, *ids: str, by: float = 1.5) -> At:
+        """Scale objects up by ``by`` about their own center, staggered."""
+        return self._verb("grow", *ids, by=by)
 
-    def shrink(self, *args: Any, **options: Any) -> At:
-        """shrink (not built yet)."""
-        return self._verb("shrink", *args, **options)
+    def shrink(self, *ids: str, by: float = 0.5) -> At:
+        """Scale objects down by ``by`` about their own center, staggered."""
+        return self._verb("shrink", *ids, by=by)
 
-    def squish(self, *args: Any, **options: Any) -> At:
-        """squish (not built yet)."""
-        return self._verb("squish", *args, **options)
+    def squish(self, *ids: str, axis: str = "y", to: float = 0.4) -> At:
+        """Squash objects along ``axis`` to ``to`` of their size (``to=1`` restores)."""
+        return self._verb("squish", *ids, axis=axis, to=to)
 
-    def flatten(self, *args: Any, **options: Any) -> At:
-        """flatten (not built yet)."""
-        return self._verb("flatten", *args, **options)
+    def flatten(self, *ids: str, axis: str = "z") -> At:
+        """Squash objects flat along ``axis``; ``squish(axis=..., to=1)`` restores them."""
+        return self._verb("flatten", *ids, axis=axis)
 
     # ===== end of group S =====
 
