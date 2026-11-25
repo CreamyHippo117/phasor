@@ -161,6 +161,13 @@ def test_iterate_end_follows_the_number_of_steps():
     a = s.at("go").iterate("o", n=10)
     b = s.at("again").iterate("o", n=20)
     assert a._end == pytest.approx(2.5) and b._end == pytest.approx(5.0)
+    e = s.engine
+    # each iterate keeps its own number of steps, and plays them all in its own time
+    assert e.state_at(0.0)["o"].params.steps == 10 and e.state_at(19.0)["o"].params.steps == 10
+    assert e.state_at(20.0)["o"].params.steps == 20
+    assert isinstance(e.state_at(20.0)["o"].params.steps, int)
+    assert sem(e, "o", 1.25)["steps_shown"] == 5  # halfway through the first: 5 of 10
+    assert sem(e, "o", 22.5)["steps_shown"] == 10  # halfway through the second: 10 of 20
 
 
 def test_an_orbit_that_ends_early_is_paced_by_its_real_steps():

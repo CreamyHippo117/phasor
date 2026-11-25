@@ -584,7 +584,7 @@ class Verbs:
             self._base(each)  # refuses an expression
         ops: list[dict[str, Any]] = []
         if n is not None:
-            ops.append({"op": "set_param", "path": steps_path, "value": n})
+            ops.append(self._instant(steps_path, n, "iterate", 0.0))  # a track: the base stays
         count = obj.impl.orbit_length(self.state, n)
         spec = self.motion["iterate"]
         d = spec["duration"] * max(count, 1) / self.ITERATE_STEPS_PER_DURATION

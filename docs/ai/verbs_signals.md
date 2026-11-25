@@ -50,8 +50,8 @@ s.marker("newton", 1.0)
 s.marker("logistic", 6.0)
 s.at("newton").iterate("newton", n=8)
 s.at("logistic").iterate("logistic")
-info = s.engine.inspect(3.0, id="newton")["objects"][0]["semantic"]
-assert info["converged"] and 0 < info["steps_shown"] < 8
+info = s.engine.inspect(2.0, id="newton")["objects"][0]["semantic"]
+assert info["steps_total"] == 8 and info["steps_shown"] == 4
 ```
 
 MCP form: `animate(verb="iterate", targets=["newton"], value={"n": 8}, at="newton")`.
