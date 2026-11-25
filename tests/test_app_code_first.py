@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import random
+import re
 import shutil
 import threading
 import time
@@ -371,9 +372,29 @@ def test_a_fresh_run_equals_the_live_scene_after_any_mix_of_edits(scene, seed):
     folder = scene.parent
     radii = [0.1, 0.15, 0.25, 0.3, 0.35]
     added = 0
-    for _ in range(14):
-        step = rng.choice(["tweak", "style", "ai", "undo", "redo", "typed", "save", "rule"])
-        if step == "tweak":
+    orphans = 0
+    # First a tweak whose object the next run removes: an orphan, kept through every step.
+    from phasor.core.pycode import insert_code
+
+    assert ed.run_code(insert_code(ed.buffer, ["s.add(Dot(id='gone', pos=(2, 2, 0)))"]))["ok"]
+    assert ed.set_param("gone", "r", "0.3")["ok"]
+    text = "".join(ln for ln in ed.buffer.splitlines(keepends=True) if "id='gone'" not in ln)
+    assert ed.run_code(text)["ok"] and "s.tweak('gone.r', 0.3)" in ed.buffer
+    assert _fresh(ed.buffer, folder) == _doc(ed.engine)
+    for _ in range(18):
+        step = rng.choice(["tweak", "style", "ai", "undo", "redo", "typed", "save", "rule",
+                           "extra", "outside"])  # fmt: skip
+        extras = sorted(i for i in ed._ids() if i.startswith("extra"))
+        if step == "extra" and extras:  # a tweak to an object a later run may remove
+            ed.set_param(rng.choice(extras), "r", str(rng.choice(radii)))
+        elif step == "outside":  # another editor changes the code outside the block
+            ed.save()
+            text = re.sub(
+                r'text="[^"]*"', f'text="v{rng.random():.3f}"', scene.read_text(encoding="utf-8")
+            )
+            _touch_later(scene, text)
+            assert ed.poll_file()["ok"]
+        elif step == "tweak":
             ed.set_param(rng.choice(["pole", "note"]), "pos", f"[{rng.random():.3f}, 0, 0]")
         elif step == "style":
             ed.set_style("pole", "color", rng.choice(["highlight", "muted", "danger"]))
@@ -392,7 +413,7 @@ def test_a_fresh_run_equals_the_live_scene_after_any_mix_of_edits(scene, seed):
         elif step == "typed":
             added += 1
             text = ed.buffer
-            if rng.random() < 0.5 and "s.add(Dot(id='extra" in text:
+            if rng.random() < 0.4 and "s.add(Dot(id='extra" in text:
                 # remove an added object: its tweaks become orphans, never lost
                 lines = [ln for ln in text.splitlines(keepends=True) if "id='extra" not in ln]
                 text = "".join(lines)
@@ -406,3 +427,30 @@ def test_a_fresh_run_equals_the_live_scene_after_any_mix_of_edits(scene, seed):
             assert _fresh(scene.read_text(encoding="utf-8"), folder) == _doc(ed.engine)
         assert not ed.block_edited
         assert _fresh(ed.buffer, folder) == _doc(ed.engine), step
+        orphans += any(i.code == "orphan_override" for i in ed.engine.lint())
+    assert orphans == 18  # the orphaned tweak was never dropped
+
+
+def test_a_crlf_script_keeps_its_line_ends(tmp_path):
+    """A script with Windows line ends (git autocrlf, Notepad): not dirty on open, a tweak and
+    a save keep CRLF outside the block, an outside CRLF edit reloads (no false conflict)."""
+    path = tmp_path / "crlf.py"
+    path.write_bytes(SCRIPT.replace("\n", "\r\n").encode("utf-8"))
+    ed = Editor(open_workspace(str(path)))
+    assert not ed.dirty and ed.buffer == SCRIPT  # the editor holds "\n" text
+    ed.set_buffer(ed.buffer)  # what the widget hands back
+    assert not ed.dirty
+    ed.set_param("pole", "r", "0.3")
+    ed.save()
+    raw = path.read_bytes().decode("utf-8")
+    assert raw.startswith(SCRIPT.replace("\n", "\r\n")) and "\n" not in raw.replace("\r\n", "")
+    assert "s.tweak('pole.r', 0.3)\r\n" in raw and not ed.dirty
+    edited = raw.replace("hello", "outside")
+    path.write_bytes(edited.encode("utf-8"))
+    st = path.stat()
+    os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 2_000_000_000))
+    r = ed.poll_file()
+    assert r["event"] == "reloaded" and r["ok"] and not ed.dirty
+    ed.set_buffer(ed.buffer.replace("outside", "typed"))
+    assert ed.run()["ok"]
+    assert b"\r\n" in path.read_bytes() and b"typed" in path.read_bytes()

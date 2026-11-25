@@ -32,8 +32,8 @@ audited.** Untested on Windows, macOS, a real GPU, a real screen, and as a packa
 | Step | Result |
 | --- | --- |
 | `ruff check .`, `ruff format --check .`, `lint-imports` | pass; 2 contracts kept |
-| New tests | `test_tweaks_block.py` 6, `test_render_jobs.py` 6 (one real GL draft), `test_app_code_first.py` 18 (the invariant, 3 seeds x 14 random steps), `test_app_window.py` 11: all pass |
-| Focused suites | `test_gui_controller` 20, `test_gui_window` 13, `test_desktop` 42, `test_m10_exit_demo` 1, `test_mcp` + `test_remote` 46, `test_pycode` + `test_engine` + `test_layers` + `test_contracts` 53, `test_draft -m "not slow"` 66, `test_docs` + `test_kit` 16: all pass. `test_final -k "not slow"`: see below |
+| New tests | `test_tweaks_block.py` 6, `test_render_jobs.py` 6 (one real GL draft), `test_app_code_first.py` 19 (the invariant: an orphaned tweak first, then 3 seeds x 18 random steps of typed runs, tweaks, AI edits, undo, redo, saves, outside edits; a CRLF script), `test_app_window.py` 11: all pass |
+| Focused suites | `test_gui_controller` 20, `test_gui_window` 13, `test_desktop` 42, `test_m10_exit_demo` 1, `test_mcp` + `test_remote` 46, `test_pycode` + `test_engine` + `test_layers` + `test_contracts` 53, `test_draft -m "not slow"` 66, `test_docs` + `test_kit` 16: all pass. `test_final -k "not slow"`: 477 passed, 8 skipped, 3 deselected (4 min 51 s). After the last fixes (CRLF, render decision moved into the Editor) the touched suites again: 56 + 48 passed |
 | Full suite | not run (instructed: the box is shared and slow) |
 | `phasor doctor` | tier B (llvmpipe, no CUDA) |
 | Exit demo | phase 1 and 2 exit tests pass here; the packaged app is **not** rebuilt here (Windows): `pc_tasks/13_desktop_app.md` |

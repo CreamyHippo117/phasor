@@ -73,6 +73,10 @@ def parse_notes(text: str) -> list[tuple[float, float, float, float]]:
     return out
 
 
+def _lf(text: str) -> str:
+    return text.replace("\r\n", "\n")
+
+
 def _outside_block(text: str) -> str:
     """A script without its tweaks block: the code a Run builds the scene from (blank lines
     and trailing spaces left out, so the blank line written before a new block is not a
@@ -179,7 +183,8 @@ class Editor:
         # it. ``error`` is the last Run's mistake ({"line", "message"}); ``conflict`` the
         # file's new text when it changed outside while the buffer had unsaved edits.
         self.generation = 0  # counts the scenes a Run or a reload put in place
-        self.buffer = ""
+        self.buffer = ""  # always "\n" line ends (as the editor widget gives text)
+        self._nl = "\n"  # the script file's own line end, kept when it is written
         self._block = ""  # the tweaks block as last written into the buffer
         self.block_edited = False  # the person typed in the block: Run to use it
         self.error: dict[str, Any] | None = None
@@ -258,7 +263,7 @@ class Editor:
                         return {"ok": False, "errors": [{"code": "script_error",
                                                          "message": r["error"]}]}  # fmt: skip
                 else:
-                    self.ws._write_script(self.buffer)
+                    self.ws._write_script(self._native(self.buffer))
                 self.ws._save_tweaks()  # the overrides file of an old scene goes away
                 self.conflict = None
                 self.saved_version = self.version
@@ -279,7 +284,7 @@ class Editor:
         is dirty when the text in the editor is not the file's."""
         if self.is_script:
             disk = self.ws.script_disk
-            return disk is None or self.buffer != disk[0] or self.conflict is not None
+            return disk is None or self.buffer != _lf(disk[0]) or self.conflict is not None
         return self.version != self.saved_version
 
     def save_as(self, path: str | Path) -> dict[str, Any]:
@@ -303,7 +308,7 @@ class Editor:
         from phasor.workspace.tools import write_text
 
         with self.lock:
-            text = self.buffer
+            text = self._native(self.buffer)
             if p.parent != Path(self.engine.base_dir).resolve():
                 self.engine._bring_files(p.parent)  # pictures and sounds go with it
             p.parent.mkdir(parents=True, exist_ok=True)
@@ -665,7 +670,9 @@ class Editor:
         self._ran = ""
         if self.is_script:
             assert self.ws.script_disk is not None
-            self.buffer = self._ran = self.ws.script_disk[0]
+            disk = self.ws.script_disk[0]
+            self._nl = "\r\n" if "\r\n" in disk else "\n"
+            self.buffer = self._ran = _lf(disk)
             found = find_tweaks(self.buffer)
             self._block = self.buffer[found[0] : found[1]] if found else ""
             self._sync_block()
@@ -677,7 +684,12 @@ class Editor:
 
     def set_buffer(self, text: str) -> None:
         """The person typed: the editor's text (not run, not saved, until Run or Save)."""
-        self.buffer = text
+        self.buffer = _lf(text)
+
+    def _native(self, text: str) -> str:
+        """``text`` with the script file's own line ends (a CRLF file stays CRLF)."""
+        text = _lf(text)
+        return text.replace("\n", self._nl) if self._nl != "\n" else text
 
     def _sync_block(self) -> None:
         """Write the live scene's tweaks (``engine.overrides``) into the buffer's tweaks
@@ -738,6 +750,7 @@ class Editor:
 
         from phasor.workspace.tools import read_text, write_text
 
+        text = _lf(text)
         self.buffer = text
         try:
             ast.parse(text)
@@ -747,8 +760,9 @@ class Editor:
         path = Path(self.code()["path"])
         with self.lock:
             old = read_text(path) if path.exists() else None
-            write_text(path, text)
-            return self._run_file(path, text, restore=old if old is not None else "")
+            native = self._native(text)
+            write_text(path, native)
+            return self._run_file(path, native, restore=old if old is not None else "")
 
     def _run_file(self, path: Path, text: str, *, restore: str | None) -> dict[str, Any]:
         """Open ``path`` (holding ``text``) as the scene. ``restore``: what to write back
@@ -776,6 +790,9 @@ class Editor:
             self.selected = None
         self.t = min(self.t, max(self.engine.duration, 0.0))
         self.saved_version = self.version
+        if restore is None:  # the file's own text (a reload, Save As): its line ends
+            self._nl = "\r\n" if "\r\n" in text else "\n"
+        text = _lf(text)
         self._ran = text
         self.buffer = text
         self.error = None
@@ -785,7 +802,7 @@ class Editor:
         self.block_edited = False
         self._sync_block()  # the block in its canonical form (what the scene holds)
         if self.is_script and self.buffer != text:
-            self.ws._write_script(self.buffer)
+            self.ws._write_script(self._native(self.buffer))
             self._ran = self.buffer
         return {"ok": True, "version": self.version, "migrated": None}
 
@@ -817,12 +834,12 @@ class Editor:
         if disk == text0:  # touched, not changed
             self.ws.script_disk = (disk, stamp)
             return None
-        if self.buffer == text0:  # nothing unsaved here: the file's version runs
+        if self.buffer == _lf(text0):  # nothing unsaved here: the file's version runs
             with self.lock:
                 self.ws.script_disk = (disk, stamp)
                 r = self._run_file(path, disk, restore=None)
             if not r["ok"]:
-                self.buffer = disk  # the file's text, with its mistake shown
+                self.buffer = _lf(disk)  # the file's text, with its mistake shown
             self.ws.activity.append({"who": "file", "what": "the script changed on disk",
                                      "version": self.version, "t": self.t})  # fmt: skip
             return {"event": "reloaded", **r}
@@ -841,7 +858,7 @@ class Editor:
                 self.ws.script_disk = (disk, stamp)
                 r = self._run_file(self.ws.path, disk, restore=None)
             if not r["ok"]:
-                self.buffer = disk
+                self.buffer = _lf(disk)
             return r
         if keep != "mine":
             raise ValueError(f"keep is 'file' or 'mine', not {keep!r}")
@@ -1206,16 +1223,20 @@ class Editor:
     def start_render(self, preset: str = "draft", out: str | Path | None = None,
                      fps: float | None = None, overwrite: bool | None = None,
                      start: float | str | None = None, end: float | str | None = None,
-                     play: bool = False) -> dict[str, Any]:  # fmt: skip
+                     frame: float | None = None, play: bool = False) -> dict[str, Any]:  # fmt: skip
         """Start a render job (``Workspace.render_start``) of the scene as it is now; the
-        window shows ``poll_job``. ``play``: open the result in the system's player when it
-        is done (the Draft preview)."""
-        target = Path(out) if out else Path(self.render_plan(preset)["path"])
+        window shows ``poll_job``. ``frame``: one picture at that time (a ``.png``). ``fps``
+        equal to the preset's is the preset's (None). ``play``: open the result in the
+        system's player when it is done (the Draft preview)."""
+        plan = self.render_plan(preset)
+        target = Path(out) if out else Path(plan["path"])
         if overwrite is None and preset == "draft" and target.name.endswith(".draft.mp4"):
             overwrite = True  # a draft replaces the last draft (never the real render)
+        if frame is not None or (fps is not None and abs(fps - float(plan["fps"])) < 1e-9):
+            fps = None
         with self.lock:
             r = self.ws.render_start(preset, out=str(target), fps=fps, overwrite=overwrite,
-                                     start=start, end=end)  # fmt: skip
+                                     start=start, end=end, frame=frame)  # fmt: skip
         self.job, self._job_opens = r["job"], play
         return r
 

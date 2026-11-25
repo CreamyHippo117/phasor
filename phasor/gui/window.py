@@ -1190,16 +1190,9 @@ class RenderDialog(QDialog):
                 return
             overwrite = True
         fps = self.fps.value() if self._kind() == "video" else None
-        plan = ed.render_plan(preset)
         try:
-            if self._kind() == "picture":
-                with ed.lock:
-                    r = ed.ws.render_start(preset, out=str(out), frame=self.time.value(),
-                                           overwrite=overwrite)  # fmt: skip
-                ed.job, ed._job_opens = r["job"], False
-            else:
-                own = fps is not None and abs(fps - float(plan["fps"])) < 1e-9
-                ed.start_render(preset, out=out, overwrite=overwrite, fps=None if own else fps)
+            frame = self.time.value() if self._kind() == "picture" else None
+            ed.start_render(preset, out=out, overwrite=overwrite, fps=fps, frame=frame)
         except ToolError as e:
             self.status.setText(f"Could not start: {e}")
             return
