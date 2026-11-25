@@ -981,6 +981,69 @@ nearest earlier checkpoint plus the remaining steps, cached in memory and under
 answer never depends on how you got there. `ac_math.RoomFDTD` is one (it refuses a `dt` above
 `dx / (c sqrt(3))`: that is a validation error, not a blow-up).
 
+### A lattice that flashes as a surface sweeps it (`sweep`)
+
+`sweep.SweepLattice` is a set of points, each flashing the moment a moving surface reaches
+it. The points come from a `rule`: `mirror_box` (the image sources of a shoebox room,
+`size`/`source`/`order` up to 113; each echo is a mirror copy of the room, so they form a
+crystal), `grid` (`origin + i a + j b + k c` for `basis` (a, b, c) and `counts`: the delays
+of feedback loops) or `points` (given, with optional `values`). The surface is a sphere round
+`center` (`flat` 0), the plane through `center` with normal `normal` (`flat` 1), or the conic
+between them (focus at `center`; every blend passes through the apex `center + reach *
+normal`, so animating `flat` opens the sphere into the plane tangent to it). It has
+travelled `reach = speed * time`; a point's arrival distance is `(1 - flat)|p - c| + flat
+(p - c).n` (`sweep_math.arrival`), and points behind a plane's start are never reached.
+Flash: light `before` (0: hidden) until reached, then up over `attack` s, `swell` (size) and
+`white` (heat), decaying with time constant `decay` s to the afterglow `after`; `fade` dims
+each unit of value. Color: the `colormap` role at `hue + hue_step * v`, v the value
+(reflections, grid steps, or `values`) or, with `color_by="arrival"`, the arrival distance.
+Points are discs of radius `r` (at least `min_size` of the frame height); only those within
+`extent` of the centre (0: all), in view, and at most `max_points` (nearest the front in
+time) are drawn. Semantics: `points`, `reach`, `reached`, `flashing`, `rate` (flashes per
+second now: it grows as t^2 for a room), `next_arrival` (scene time), `deepest_reached`.
+Presets `echo`, `stairs` (a grid swept by a plane).
+
+`sweep.SweepFront` draws the lattice's surface (`lattice` names it) as a see-through glowing
+shell, bright at its rim (`rim`, a Fresnel-like power) and faint face-on (`veil`), cut to the
+lattice's extent and fading at an open edge; style `color` (emphasis, secondary), `glow`
+(glow, soft), `material` (surface, glass: its strength, and it never hides anything).
+
+| Type | Parameters | Style keys |
+| --- | --- | --- |
+| `sweep.SweepLattice` | `rule`, `size`, `source`, `order`, `basis`, `counts`, `origin`, `points`, `values`, `center`, `normal`, `flat`, `time`, `speed`, `extent`, `attack`, `decay`, `before`, `after`, `swell`, `white`, `fade`, `r`, `min_size`, `color_by`, `hue_step`, `hue`, `max_points` | `colormap` (colormap, spectrum), `glow` (glow, strong) |
+| `sweep.SweepFront` | `lattice`, `rim`, `veil`, `rings`, `sectors` | `color` (emphasis, secondary), `glow` (glow, soft), `material` (surface, glass) |
+
+```python
+from phasor import Scene, ac, expr, sweep
+
+echo = Scene("echo", passes=None)
+echo.add(ac.Room3D(id="room", size=(8, 5, 3)))
+echo.add(
+    sweep.SweepLattice(
+        id="crystal",
+        size=(8, 5, 3),
+        source=(2.2, 2, 1.4),
+        order=58,
+        center=(6, 3.4, 1.4),
+        time=expr("t - 1"),
+        speed=12,
+        extent=60,
+    )
+)
+echo.add(sweep.SweepFront(id="front", lattice="crystal"))
+echo.marker("open", 5.0)
+echo.at("open").to("crystal.flat", 1.0, duration=3.0)  # the sphere flattens into a plane
+early = echo.engine.inspect(3.0, id="crystal")["objects"][0]["semantic"]
+late = echo.engine.inspect(5.0, id="crystal")["objects"][0]["semantic"]
+assert early["reach"] == 24.0 and late["rate"] > early["rate"]  # echoes crowd together
+front = echo.engine.inspect(9.0, id="front")["objects"][0]["semantic"]
+assert front["shape"] == "plane"
+```
+
+About 270,000 images at order 58 take 0.05 s to make (once, cached); drawing is the cost:
+on Mesa llvmpipe a 1080p frame of 60,000 points (the default `max_points`) takes about
+1.6 s, all 267,000 about 3-4 s (untested on a GPU). Example: `examples/echo_crystal.py`.
+
 ## Domains, wave 2: pde, algebra, calc
 
 `from phasor import pde, algebra, calc`.

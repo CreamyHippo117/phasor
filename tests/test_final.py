@@ -46,6 +46,8 @@ REQUIRED = {
 PARTNERED = {"tracer", "callout"}
 # Sound in a 3D room: the scene gets a Room3D called "room" for them.
 IN_ROOM = {"sound_rays", "wavefront3d"}
+# The surface of a sweep: the scene gets a SweepLattice called "lattice", swept 2 units out.
+SWEPT = {"sweep_front"}
 # Examples that build a Scene called ``s``: not domain_coloring (a script that renders the
 # kernel directly) or manim_reverb (a Manim script, run through the importer in its own test).
 EXAMPLES = sorted(p.stem for p in (ROOT / "examples").glob("*.py")
@@ -65,6 +67,11 @@ def _one(name: str, camera: str, passes="auto"):
     if name in IN_ROOM:
         r = s.engine.apply({"op": "add_object", "object": {"id": "room", "type": "room3d",
                                                            "params": {}}}, origin="script")  # fmt: skip
+        assert r.ok, [i.message for i in r.errors]
+    if name in SWEPT:
+        r = s.engine.apply({"op": "add_object", "object": {"id": "lattice", "type": "sweep_lattice",
+                                                           "params": {"time": 2.0}}},
+                           origin="script")  # fmt: skip
         assert r.ok, [i.message for i in r.errors]
     r = s.engine.apply({"op": "add_object", "object": {
         "id": "thing", "type": name, "params": REQUIRED.get(name, {})}}, origin="script")  # fmt: skip
