@@ -368,6 +368,7 @@ def _scene_of(kind: str, cam: str) -> Scene:
     return s
 
 
+@pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
 @pytest.mark.parametrize("cam_name", sorted(CAMERAS))
 @pytest.mark.parametrize(
     ("units", "anchor"),
