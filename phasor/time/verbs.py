@@ -873,25 +873,165 @@ class Verbs:
     # ===== end of group A =====
 
     # ===== group E =====
-    # (replace each stub below with the real verb; see docs/ai/verbs_*.md)
+    # Equations and emphasis: see docs/ai/verbs_equations.md
 
-    def substitute(self, *ids: str, **options: Any) -> Motion:
-        raise VerbError("substitute is not built yet")
+    def _part_index(self, eq, key: str, verb: str) -> int:
+        keys = list(eq.params.keys[: len(eq.params.parts)])
+        if not key or key not in keys:
+            raise VerbError(f"{verb} addresses a part by its key; {eq.id!r} has keys "
+                            f"{[k for k in keys if k]} (give the Equation `keys=`)")  # fmt: skip
+        return keys.index(key)
 
-    def cancel(self, *ids: str, **options: Any) -> Motion:
-        raise VerbError("cancel is not built yet")
+    def _center_of(self, object_id: str, verb: str) -> list[float]:
+        obj = self._of_type(object_id, verb, "equation", "counter", "text")
+        feats = obj.impl.features(self.state)
+        c = feats.get("center")
+        c = obj.impl.world_bounds(self.state).center if c is None else c
+        return [float(v) for v in c]
 
-    def factor(self, *ids: str, **options: Any) -> Motion:
-        raise VerbError("factor is not built yet")
+    def substitute(self, eq_id: str, key: str, value: Any, source: str | None = None) -> Motion:
+        """Replace the part ``key`` of an equation by ``value`` (mathtext such as ``"$3$"``, or
+        a number): the old text leaves where it stands and the new flies in from the object
+        ``source`` (an equation, counter or text), or fades in where it is when there is none."""
+        from phasor.core import text as text_metrics
 
-    def expand(self, *ids: str, **options: Any) -> Motion:
-        raise VerbError("expand is not built yet")
+        eq = self._of_type(eq_id, "substitute", "equation")
+        j = self._part_index(eq, key, "substitute")
+        if eq.params.swap_key:
+            raise VerbError(
+                f"{eq_id!r} already has a substitution ({eq.params.swap_key!r}); an equation "
+                "takes one: `transform` to a new equation for the next"
+            )
+        new = f"${value:g}$" if isinstance(value, int | float) and not isinstance(value, bool) \
+            else str(value)  # fmt: skip
+        try:
+            text_metrics.check_math(new)
+        except ValueError as e:
+            raise VerbError(f"substitute cannot typeset {new!r}: {e}") from None
+        old = eq.params.parts[j]
+        if new == old:
+            raise VerbError(f"part {key!r} of {eq_id!r} already reads {old!r}")
+        origin = None if source is None else self._center_of(source, "substitute")
+        parts = list(eq.params.parts)
+        parts[j] = new
+        ops: list[dict[str, Any]] = [
+            {"op": "set_param", "path": f"{eq_id}.parts", "value": parts},
+            {"op": "set_param", "path": f"{eq_id}.swap_key", "value": key},
+            {"op": "set_param", "path": f"{eq_id}.swap_old", "value": old},
+            {"op": "set_param", "path": f"{eq_id}.swap_from", "value": origin or [0.0, 0.0, 0.0]},
+            {"op": "set_param", "path": f"{eq_id}.swap_fly", "value": origin is not None},
+        ]
+        if self._starts_hidden(f"{eq_id}.swap"):
+            ops.append({"op": "set_param", "path": f"{eq_id}.swap", "value": 0.0})
+        seg, done = self._segment(f"{eq_id}.swap", 1.0, "substitute", 0.0)
+        return Motion((*ops, seg), done)
 
-    def ignite(self, *ids: str, **options: Any) -> Motion:
-        raise VerbError("ignite is not built yet")
+    def cancel(self, eq_id: str, *keys: str) -> Motion:
+        """Strike through two (or more) terms of an equation, then fade them and close the
+        gap: the others glide together. Terms are addressed by the equation's ``keys``."""
+        eq = self._of_type(eq_id, "cancel", "equation")
+        if len(keys) < 2 or len(set(keys)) != len(keys):
+            raise VerbError("cancel needs two or more different keys of terms to cross out")
+        for key in keys:
+            self._part_index(eq, key, "cancel")
+        if eq.params.struck:
+            raise VerbError(f"{eq_id!r} already has terms crossed out; `transform` to a new "
+                            "equation for the next cancellation")  # fmt: skip
+        order = [k for k in eq.params.keys if k in keys]  # the equation's order, whatever was typed
+        spec = self.motion["cancel"]
+        d = spec["duration"]
+        ops: list[dict[str, Any]] = [{"op": "set_param", "path": f"{eq_id}.struck", "value": order}]
+        for name in ("strike", "close"):
+            if self._starts_hidden(f"{eq_id}.{name}"):
+                ops.append({"op": "set_param", "path": f"{eq_id}.{name}", "value": 0.0})
+        ops.append(self._span(f"{eq_id}.strike", 1.0, "cancel", 0.0, 0.5 * d, "smooth"))
+        ops.append(self._span(f"{eq_id}.close", 1.0, "cancel", 0.5 * d, d, spec["ease"]))
+        return Motion(tuple(ops), d)
 
-    def pulse(self, *ids: str, **options: Any) -> Motion:
-        raise VerbError("pulse is not built yet")
+    def _carry(self, source: str, target: str, verb: str) -> Motion:
+        """``transform`` with the verb's own timing and tag, and its own way round: ``factor``
+        draws terms together under a bracket, ``expand`` spreads them over the others."""
+        base = self.transform(source, target)
+        ops: list[dict[str, Any]] = []
+        done = 0.0
+        for op in base.ops:
+            if op["op"] == "add_segment":
+                seg = op["segment"]
+                if seg["t0"] != seg["t1"]:  # the glide: the verb's own length and ease
+                    op, done = self._segment(op["path"], seg["to"], verb, 0.0)
+                else:
+                    op = {**op, "segment": {**seg, "verb": verb}}
+            elif op["path"].endswith(".arc"):
+                op = {**op, "value": op["value"] * 1.4 + 0.3}
+            ops.append(op)
+        ops.append({"op": "set_param", "path": f"{target}.arc_mode", "value": verb})
+        return Motion(tuple(ops), done)
+
+    def factor(self, source: str, target: str) -> Motion:
+        """An expression becoming its factored form: matching terms (same text or same
+        ``keys``) travel under the others and are drawn together beneath a bracket."""
+        return self._carry(source, target, "factor")
+
+    def expand(self, source: str, target: str) -> Motion:
+        """An expression becoming its expanded form: matching terms travel over the others
+        and spread apart."""
+        return self._carry(source, target, "expand")
+
+    def ignite(self, *ids: str, settle: float = 0.3) -> Motion:
+        """Light a stroke like a fuse: a bright head runs along it (a line or any curve) leaving
+        it lit behind, then the whole stroke settles brighter (``settle`` of a flash). The
+        head is the child ``<id>.fuse``, made the first time and reused after."""
+        spec = self.motion["ignite"]
+        d = spec["duration"]
+        if not 0.0 <= settle <= 1.0:
+            raise VerbError(f"ignite: settle is a share of a flash, 0 to 1, not {settle!r}")
+
+        def make(object_id: str, delay: float):
+            obj = self._object(object_id)
+            path = getattr(obj.impl, "path_points", None)
+            if path is None or len(np.asarray(path(self.state))) < 2:
+                raise VerbError(f"ignite needs a stroke with a path (a line or a curve); "
+                                f"{object_id!r} is a {obj.type}")  # fmt: skip
+            fuse = f"{object_id}.fuse"
+            ops: list[dict[str, Any]] = []
+            if fuse not in self.state:
+                params = {"path": object_id, "progress": 0.0, "trail": 1.0, "lit": 1.0,
+                          "opacity": 0.0}  # fmt: skip
+                made = {"id": fuse, "type": "tracer", "params": params}
+                ops.append({"op": "add_object", "object": made})
+            run = 0.7 * d
+            flash = f"{object_id}.flash"
+            ops += [
+                self._instant(f"{fuse}.progress", 0.0, "ignite", delay),
+                self._instant(f"{fuse}.opacity", 1.0, "ignite", delay),
+                self._span(f"{fuse}.progress", 1.0, "ignite", delay, delay + run, spec["ease"]),
+                self._span(flash, 1.0, "ignite", delay + run, delay + 0.85 * d, "out"),
+                self._span(flash, settle, "ignite", delay + 0.85 * d, delay + d, "smooth"),
+                self._span(f"{fuse}.opacity", 0.0, "ignite", delay + run, delay + d, "smooth"),
+            ]
+            return ops, delay + d
+
+        return self._each(ids, "ignite", make)
+
+    def pulse(self, *ids: str, n: int = 2) -> Motion:
+        """``flash`` ``n`` times, quick and even: light and glow swell and fall back, beat
+        after beat (a beat is half the theme's ``pulse`` duration)."""
+        if isinstance(n, bool) or not isinstance(n, int) or not 1 <= n <= 12:
+            raise VerbError(f"pulse: n is a count of beats from 1 to 12, not {n!r}")
+        spec = self.motion["pulse"]
+        beat = spec["duration"] / 2
+
+        def make(object_id: str, delay: float):
+            ops = []
+            for k in range(n):
+                t0 = delay + k * beat
+                ops.append(self._span(f"{object_id}.flash", 1.0, "pulse", t0, t0 + 0.35 * beat,
+                                      spec["ease"]))  # fmt: skip
+                ops.append(self._span(f"{object_id}.flash", 0.0, "pulse", t0 + 0.35 * beat,
+                                      t0 + beat, "smooth"))  # fmt: skip
+            return ops, delay + n * beat
+
+        return self._each(ids, "pulse", make)
 
     # ===== end of group E =====
 

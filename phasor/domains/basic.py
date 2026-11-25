@@ -23,6 +23,7 @@ from phasor.core.values import Vec3
 from phasor.domains.strokes import hue_colors, polyline
 
 DISC_SEGMENTS = 64
+PULL = 0.35  # line heights ``factor`` draws terms together (``expand`` apart) by, mid-way
 
 
 def _rgba(color: tuple[float, ...], opacity: float) -> tuple[float, float, float, float]:
@@ -297,6 +298,7 @@ class Equation(ObjectBase):
         "color": ("emphasis", "primary"),
         "size": ("text", "math"),
         "glow": ("glow", "none"),
+        "stroke": ("stroke", "regular"),  # the strike-through of ``cancel`` and a factor's bracket
         # every emphasis role, resolved by the theme, for the parts' ``colors``
         **{role: ("emphasis", role) for role in EMPHASIS},
     }
@@ -322,12 +324,35 @@ class Equation(ObjectBase):
         from_id: str = ""  # the source: life's drift passes from its to this one's, no jump
         morph: float = Field(1.0, ge=0, le=1)
         arc: float = Field(0.0, ge=0)
+        # How a transform carries its parts: "" round each other by direction; "factor" under
+        # the others, drawn together beneath a bracket; "expand" over them, spread apart.
+        arc_mode: Literal["", "factor", "expand"] = ""
+        # Parts (by ``keys``) struck through (the ``cancel`` verb): ``strike`` is how much of
+        # each stroke is drawn, ``close`` how far they have faded and the others closed the gap.
+        struck: tuple[str, ...] = ()
+        strike: float = Field(0.0, ge=0, le=1)
+        close: float = Field(0.0, ge=0, le=1)
+        # One part's text replaced (the ``substitute`` verb): the part with key ``swap_key``
+        # now reads ``parts``; it read ``swap_old`` while ``swap`` < 1, and the new text flies
+        # in from the world point ``swap_from`` (``swap_fly``; else it fades in where it stands).
+        swap_key: str = ""
+        swap_old: str = ""
+        swap_from: Vec3 = (0.0, 0.0, 0.0)
+        swap_fly: bool = False  # the new text flies in from ``swap_from``, or fades in in place
+        swap: float = Field(1.0, ge=0, le=1)
 
         @field_validator("parts", "from_parts")
         @classmethod
         def _typeset(cls, v):
             for part in v:
                 text_metrics.check_math(part)
+            return v
+
+        @field_validator("swap_old")
+        @classmethod
+        def _old_typeset(cls, v):
+            if v:
+                text_metrics.check_math(v)
             return v
 
         @field_validator("colors", "from_colors")
@@ -337,6 +362,13 @@ class Equation(ObjectBase):
             if bad:
                 raise ValueError(f"colors are emphasis roles {EMPHASIS}, got {bad[0]!r}")
             return v
+
+    def _scales(self, p) -> list[float] | None:
+        """Width left to each part while ``cancel`` closes the gap (1: whole, 0: gone)."""
+        if not p.struck or p.close <= 0:
+            return None
+        return [1.0 - p.close if i < len(p.keys) and p.keys[i] in p.struck else 1.0
+                for i in range(len(p.parts))]  # fmt: skip
 
     def _layout(self, state: SceneState, parts=None, pos=None):
         """[(part, origin, line height)] left to right on a common baseline, and the box:
@@ -350,6 +382,10 @@ class Equation(ObjectBase):
         widths = [text_metrics.aspect(t) * h for t in parts]
         em = h * text_metrics.MATH_EM
         gaps = [0.0] + [THICK * em if _spaced(a, b) else 0.0 for a, b in itertools.pairwise(parts)]
+        scale = self._scales(p) if parts is p.parts else None
+        if scale is not None:
+            widths = [w * k for w, k in zip(widths, scale, strict=True)]
+            gaps = [g * k for g, k in zip(gaps, scale, strict=True)]
         total = sum(widths) + sum(gaps)
         x = -total / 2
         out = []
@@ -375,11 +411,29 @@ class Equation(ObjectBase):
     def _transforming(self, p) -> bool:
         return bool(p.from_parts) and p.morph < 1.0
 
+    def _swap_index(self, p) -> int | None:
+        """The part being substituted, while it is (None: none, or finished)."""
+        if not p.swap_key or p.swap >= 1.0 or p.swap_key not in p.keys[: len(p.parts)]:
+            return None
+        return p.keys.index(p.swap_key)
+
+    def _before_swap(self, p) -> tuple[str, ...]:
+        j = self._swap_index(p)
+        return p.parts if j is None else (*p.parts[:j], p.swap_old, *p.parts[j + 1 :])
+
+    def _gone(self, p) -> set[int]:
+        """The struck parts that are gone for good (the gap is closed)."""
+        if p.close < 1.0:
+            return set()
+        return {i for i in range(len(p.parts)) if i < len(p.keys) and p.keys[i] in p.struck}
+
     def world_bounds(self, state: SceneState) -> Bounds:
         p = self.me(state).params
         corners = self._corners(state)
         if self._transforming(p):  # mid-transform: both places
             corners += self._corners(state, p.from_parts, p.from_pos)
+        elif self._swap_index(p) is not None:  # mid-substitution: the old text too
+            corners += self._corners(state, self._before_swap(p), p.pos)
         return Bounds.of_points(corners)
 
     def features(self, state: SceneState) -> dict[str, np.ndarray]:
@@ -387,12 +441,25 @@ class Equation(ObjectBase):
 
     def semantics(self, state: SceneState) -> dict[str, Any]:
         p = self.me(state).params
+        gone = self._gone(p)
+        shown = [i for i in range(len(p.parts)) if i not in gone]  # a cancelled part is not there
+        parts = [(self._before_swap(p) if p.swap < 0.5 else p.parts)[i] for i in shown]
         return {
             "kind": "equation",
-            "text": "".join(p.parts),
-            "parts": list(p.parts),
-            "colors": [p.colors[i] if i < len(p.colors) else None for i in range(len(p.parts))],
-            "latex": join_latex(list(p.parts)),
+            "text": "".join(parts),
+            "parts": parts,
+            "colors": [p.colors[i] if i < len(p.colors) else None for i in shown],
+            "latex": join_latex(parts),
+            **(
+                {"struck": list(p.struck), "strike": round(p.strike, 6), "close": round(p.close, 6)}
+                if p.struck and p.strike > 0
+                else {}
+            ),
+            **(
+                {"substituting": p.swap_key, "replaces": p.swap_old, "swap": round(p.swap, 6)}
+                if self._swap_index(p) is not None
+                else {}
+            ),
             **(
                 {
                     "transforming_from": list(p.from_parts),
@@ -413,16 +480,26 @@ class Equation(ObjectBase):
         me = self.me(state)
         p = me.params
         glow = me.style["glow"]
-        layout, _, total, _, _ = self._layout(state)
+        layout, _, total, _, bottom = self._layout(state)
+        if self._swap_index(p) is not None and not self._transforming(p):
+            self._draw_swap(ctx, state, layout)
+            return
         if not self._transforming(p):
             x0 = layout[0][1] if layout else None  # the left edge, for writing in
+            keys = p.keys
             for i, (part, origin, h) in enumerate(layout):
                 reveal = 1.0
                 if p.write < 1.0 and total > 0:
                     w = text_metrics.aspect(part) * h
                     left = float((origin - x0) @ state.camera_for(me).right)
                     reveal = min(max((p.write * total - left) / max(w, 1e-12), 0.0), 1.0)
-                ctx.text(part, origin, h, color=_rgba(self._color(me, p.colors, i), p.opacity),
+                alpha = p.opacity
+                if p.struck and i < len(keys) and keys[i] in p.struck:
+                    alpha *= 1.0 - p.close  # a cancelled part fades as the gap closes
+                    if alpha <= 0:
+                        continue
+                    self._strike(ctx, state, origin, part, h, alpha)
+                ctx.text(part, origin, h, color=_rgba(self._color(me, p.colors, i), alpha),
                          anchor="left", glow=glow, reveal=reveal)  # fmt: skip
             return
         # Mid-transform: matched parts glide from their old place (and color) to the new;
@@ -443,7 +520,13 @@ class Equation(ObjectBase):
             center = c0 * (1 - m) + c1 * m
             if over[k]:  # carried past other parts: over them going right, under going left
                 side = 1.0 if float((c1 - c0) @ right) >= 0 else -1.0
+                side = {"factor": -1.0, "expand": 1.0}.get(p.arc_mode, side)
                 center = center + up * (side * p.arc * h * math.sin(math.pi * m))
+            if p.arc_mode:  # drawn together (factor) or spread apart (expand), round the middle
+                lean = float((c1 - np.asarray(p.pos, dtype=np.float64)) @ right)
+                lean = (lean > 1e-9) - (lean < -1e-9)
+                inward = -1.0 if p.arc_mode == "factor" else 1.0
+                center = center + right * (inward * lean * PULL * h * math.sin(math.pi * m))
             a = np.asarray(self._color(me, p.from_colors, i), dtype=np.float64)
             b = np.asarray(self._color(me, p.colors, j), dtype=np.float64)
             color = tuple(a * (1 - m) + b * m)
@@ -471,6 +554,65 @@ class Equation(ObjectBase):
                 if i not in gone:
                     ctx.text(part, origin, h, color=_rgba(self._color(me, p.from_colors, i),
                              p.opacity * (1 - 2 * m)), anchor="left", glow=glow)  # fmt: skip
+        if p.arc_mode == "factor" and layout:  # a bracket under the terms drawn together
+            h = layout[0][2]
+            y = -bottom - 0.35 * h
+            x = total / 2 + 0.1 * h
+            o = np.asarray(p.pos, dtype=np.float64)
+            tick = 0.18 * h
+            pts = np.array([o + right * sx * x + up * (y + ty)
+                            for sx, ty in ((-1, tick), (-1, 0), (1, 0), (1, tick))])  # fmt: skip
+            polyline(ctx, cam, pts, me.style["stroke"] * cam.units_per_height(pts),
+                     color=_rgba(me.style["highlight"], p.opacity * math.sin(math.pi * m)),
+                     glow=glow)  # fmt: skip
+
+    def _strike(self, ctx: DrawContext, state: SceneState, origin, part: str, h: float,
+                alpha: float) -> None:  # fmt: skip
+        """The slash through a cancelled part, drawn ``strike`` of the way (``cancel``)."""
+        me = self.me(state)
+        p = me.params
+        if p.strike <= 0 or alpha <= 0:
+            return
+        cam = state.camera_for(me)
+        right, up = np.asarray(cam.right), np.asarray(cam.up)
+        w = text_metrics.aspect(part) * h
+        a = np.asarray(origin) - right * 0.08 * h - up * 0.34 * h
+        b = np.asarray(origin) + right * (w + 0.08 * h) + up * 0.34 * h
+        pts = np.array([a, a + (b - a) * p.strike])
+        polyline(ctx, cam, pts, me.style["stroke"] * cam.units_per_height(pts),
+                 color=_rgba(me.style["highlight"], alpha), glow=me.style["glow"])  # fmt: skip
+
+    def _draw_swap(self, ctx: DrawContext, state: SceneState, layout) -> None:
+        """One part replaced (``substitute``): the old text leaves in the first half where it
+        stands, the new flies in from ``swap_from``; the other parts slide to their new places."""
+        me = self.me(state)
+        p = me.params
+        j = self._swap_index(p)
+        glow = me.style["glow"]
+        cam = state.camera_for(me)
+        right = np.asarray(cam.right)
+        before = self._layout(state, self._before_swap(p), p.pos)[0]
+        e = p.swap * p.swap * (3 - 2 * p.swap)
+        for i, (part, origin, h) in enumerate(layout):
+            o0 = np.asarray(before[i][1])
+            here = o0 * (1 - e) + np.asarray(origin) * e
+            color = self._color(me, p.colors, i)
+            if i != j:
+                ctx.text(part, here, h, color=_rgba(color, p.opacity), anchor="left", glow=glow)
+                continue
+            leave = 1.0 - min(p.swap / 0.5, 1.0)
+            if leave > 0:
+                ctx.text(p.swap_old, here, h, color=_rgba(color, p.opacity * leave),
+                         anchor="left", glow=glow)  # fmt: skip
+            arrive = min(max((p.swap - 0.25) / 0.75, 0.0), 1.0)
+            if arrive > 0:
+                w = text_metrics.aspect(part) * h
+                c1 = np.asarray(origin) + right * w / 2
+                if p.swap_fly:
+                    c0 = np.asarray(p.swap_from, dtype=np.float64)
+                    here = (c0 * (1 - e) + c1 * e) - right * w / 2
+                ctx.text(part, here, h, color=_rgba(color, p.opacity * arrive), anchor="left",
+                         glow=glow)  # fmt: skip
 
 
 def match_parts(a, b) -> list[tuple[int, int]]:
@@ -575,6 +717,7 @@ class Tracer(ObjectBase):
         progress: float = Field(0.0, ge=0, le=1)
         trail: float = Field(0.15, ge=0, le=1)
         r: float = Field(0.08, gt=0)
+        lit: float = Field(0.0, ge=0, le=1)  # how bright the trail stays behind (1: all of it)
 
     def _tip(self, state: SceneState):
         p = self.me(state).params
@@ -619,6 +762,7 @@ class Tracer(ObjectBase):
                 fade = (
                     np.linspace(0.0, 1.0, len(body)) ** 1.5
                 )  # faint at the end, bright at the head
+                fade = p.lit + (1.0 - p.lit) * fade
                 cols = np.c_[np.tile(np.asarray(color[:3]), (len(body), 1)), fade]
                 w = me.style["stroke"] * cam.units_per_height(body)
                 polyline(ctx, cam, body, w, color=color, glow=me.style["glow"], colors=cols)
