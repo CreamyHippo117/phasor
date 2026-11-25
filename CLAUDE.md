@@ -31,9 +31,9 @@ compounding. If this file and SPEC.md disagree, stop and ask.
   the owner's PC must run.
 - Render speed: `GPU_SPEED.md` (steps 1-4 done, workers included); resume at its "Next
   session"; measure with wall clock before and after each step.
-- Verbs, second set (owner, 2026-11-25): 27 new choreography verbs in six groups; phase 0 and
-  group F2a are merged, the other five groups are unfinished WIP patches in `pending/verbs_wip/`.
-  What to continue, per group, and the integration steps: `VERBS_PLAN.md`.
+- Verbs, second set (owner, 2026-11-25): 27 new choreography verbs in six groups, all built
+  and merged on PR #18; what is left (the owner's OK on `ParamsBase.stretch`, the prism audit
+  fixes, GPU goldens): `VERBS_PLAN.md`.
 - One milestone per branch. No work on milestone N+1 until N's exit demo and tests pass.
 - Before declaring a milestone done, run the `phasor-milestone-gate` skill.
 
