@@ -50,7 +50,7 @@ builds its phases 1 and 2.
 | 22 | Audio inputs and narration snap: wav and mp4 audio as narration, speech/pause detection, `snap_to_narration` | none | DONE (independently audited, 3 blockers + 9 should-fix fixed; `MILESTONE_22.md`) |
 | 23 | MIDI: a self-written SMF reader/writer, `Notes`, the synthesizer, mixing, export | 22 shares the mixer; do after or with it | DONE (independently audited, blocker fixed; `MILESTONE_23.md`); hearing it untested |
 | 24 | Video and picture inputs: `Video` (mp4), `Image` extended, full-frame background scenes | none | DONE (independently audited, blockers fixed; `MILESTONE_24.md`) |
-| 25 | The desktop app: APP_PLAN phases 1-2 plus the buttons and panels above | 21, 22, 23, 24 | built on Linux (`MILESTONE_25.md`); not independently audited; the packaged app on Windows untested (`pc_tasks/13_desktop_app.md`) |
+| 25 | The desktop app: APP_PLAN phases 1-2 plus the buttons and panels above | 21, 22, 23, 24 | built on Linux (`MILESTONE_25.md`); independently audited (3 blockers + 12 should-fix fixed); the packaged app on Windows untested (`pc_tasks/13_desktop_app.md`) |
 
 Order: 21, 22 and 24 are independent and run at once. 23 follows 22 (same mixer and audio
 track code). 25 comes last, since it puts all of them behind buttons.
