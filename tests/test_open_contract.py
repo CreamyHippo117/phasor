@@ -1594,13 +1594,13 @@ def test_reaudit_b1_running_code_never_lends_the_permission_to_the_workspace(tmp
     folder = _trust_folder(tmp_path)
     ws = open_workspace(str(folder / "plain.phasor.json"))
     seen = []
-    real = ws._open
+    real = ws._load_script  # the editor runs the person's code through it, on a worker thread
 
-    def spy(path, *, allow_scripts):
+    def spy(path, allow_scripts):
         seen.append(ws.allow_scripts)
-        return real(path, allow_scripts=allow_scripts)
+        return real(path, allow_scripts)
 
-    ws._open = spy
+    ws._load_script = spy
     r = Editor(ws).run_code("from phasor import Dot, Scene\ns = Scene('x', look='none')\n"
                             "s.add(Dot(id='d'))\n")  # fmt: skip
     assert r["ok"] and seen == [False] and ws.allow_scripts is False

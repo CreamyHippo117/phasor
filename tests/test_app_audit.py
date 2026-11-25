@@ -86,9 +86,16 @@ def test_b1_a_begin_marker_without_its_end_never_costs_the_persons_code(tmp_path
     (SCRIPT + BEGIN + END + BEGIN + END, "more than one tweaks block"),
     (SCRIPT + END + "s.tweak('pole.r', 0.3)\n" + BEGIN, "comes before"),
     (SCRIPT + END, "no begin marker"),
-    (SCRIPT + "if True:\n    " + BEGIN + "    pass\n" + END, "indented"),
+    (SCRIPT + "if True:\n    " + BEGIN + "    pass\n" + END, "no begin marker"),
+    (SCRIPT + "    " + BEGIN + END, "indented"),
+    (SCRIPT + "x = [\n" + BEGIN + "1,\n" + END + "]\n", None),  # inside a bracket: no block
+    (SCRIPT.replace("\n", "\r") + BEGIN + END, "lone CR"),
 ])  # fmt: skip
 def test_b1_markers_that_cannot_be_read_for_certain_are_refused(text, problem):
+    if problem is None:  # markers inside a statement are no markers: a new block is added
+        assert find_tweaks(text) is None
+        assert with_tweaks(text, Overrides(params={"pole.r": 0.4})).startswith(text)
+        return
     with pytest.raises(BlockError, match=problem):
         find_tweaks(text)
     with pytest.raises(BlockError):
@@ -476,3 +483,197 @@ def test_nit_structure_edits_on_a_script_say_where_they_belong(tmp_path):
     ed = Editor(open_workspace(str(p)))
     r = ed.move_marker("go", 1.5)
     assert r["ok"] is False and "s.marker" in r["errors"][0]["message"]
+
+
+# ---------------------------------------------------------------- re-audit (2026-11-25)
+
+
+def test_r2_a_long_data_line_does_not_freeze_the_editor(tmp_path):
+    """Re-audit S-2: on Python 3.12 ``tokenize`` is quadratic in line length; a 38 KB data
+    line cost 3.3 s and about 1 GB per tweak. The markers are now found with the C parser."""
+    data = "DATA = [" + ", ".join(str(i % 97) for i in range(10_000)) + "]\n"
+    p = _script(tmp_path, SCRIPT + data)
+    t0 = time.monotonic()
+    ed = Editor(open_workspace(str(p)))
+    for v in ("0.25", "0.3", "0.35"):
+        assert ed.set_param("pole", "r", v)["ok"]
+    assert ed.save()["saved"]
+    assert time.monotonic() - t0 < 5.0  # was about 10 s on 3.12 (generous for slow CI)
+    assert p.read_text(encoding="utf-8").startswith(SCRIPT + data)
+
+
+def test_r2_undo_never_throws_away_typing_that_has_not_run(tmp_path):
+    """Re-audit B-C: undo after a panel addition restored the text from before it,
+    dropping code typed since; a later Redo overwrote newer typing."""
+    p = _script(tmp_path, SCRIPT)
+    ed = Editor(open_workspace(str(p)))
+    assert ed.add_notes(typed="C4 0 0.5", at="go")["ok"]
+    ed.set_buffer(ed.buffer + "MINE = 'typed, not run yet'\n")
+    r = ed.undo()
+    assert r["ok"] is False and "has not run" in r["errors"][0]["message"]
+    assert "MINE" in ed.buffer and "Notes(" in ed.buffer and ed.dirty
+    assert ed.run()["ok"]  # once typed code ran, the addition is no longer undone by itself
+    assert ed.undo().get("undone") is not True and "MINE" in ed.buffer
+    # Redo is cleared by typing
+    q = _script(tmp_path, SCRIPT, "two.py")
+    ed = Editor(open_workspace(str(q)))
+    assert ed.add_notes(typed="C4 0 0.5")["ok"] and ed.undo()["undone"]
+    ed.set_buffer(ed.buffer + "LATER = 1\n")
+    assert not ed.redo().get("redone") and "LATER" in ed.buffer
+
+
+SWALLOW = SCRIPT + (
+    "while True:\n    try:\n        while True:\n            pass\n"
+    "    except BaseException:\n        pass\n"
+)
+
+
+def test_r2_a_script_that_swallows_cancel_is_let_go_and_the_file_restored(tmp_path, monkeypatch):
+    """Re-audit S-1: a script catching ``RunCancelled`` kept ``busy`` set forever, its code
+    stayed in the file, and the next poll raised a conflict about phasor's own write."""
+    monkeypatch.setenv("PHASOR_RUN_TIMEOUT", "1")
+    p = _script(tmp_path, SCRIPT)
+    ed = Editor(open_workspace(str(p)))
+    t0 = time.monotonic()
+    r = ed.run_code(SWALLOW)
+    assert r["ok"] is False and "did not stop" in r["error"]
+    assert time.monotonic() - t0 < 30
+    assert ed.running is None and ed.ws.busy is None
+    assert p.read_text(encoding="utf-8") == SCRIPT  # the last code that ran
+    assert ed.poll_file() is None and ed.conflict is None  # our own write: no conflict
+    assert ed.run_code(SCRIPT.replace("hello", "after"))["ok"]
+
+
+def test_r2_opening_a_runaway_script_is_stopped(tmp_path, monkeypatch):
+    """Re-audit S-1: opening a script ran it on the GUI thread with no timeout."""
+    monkeypatch.setenv("PHASOR_RUN_TIMEOUT", "1")
+    p = _script(tmp_path, SCRIPT + "while True:\n    pass\n")
+    with pytest.raises(ToolError, match="not opened"):
+        open_workspace(str(p))
+
+
+def test_r2_an_outside_write_between_run_and_read_is_not_adopted(tmp_path):
+    """Re-audit S-3: the worker ran whatever was on disk and the editor took it as its own."""
+    p = _script(tmp_path, SCRIPT)
+    ed = Editor(open_workspace(str(p)))
+    orig = ed.ws._load_script
+    other = SCRIPT + "z = 'OTHER EDITOR'\n"
+
+    def racy(path, allow):
+        path.write_text(other, encoding="utf-8")
+        return orig(path, allow)
+
+    ed.ws._load_script = racy
+    typed = SCRIPT + "MINE = 1\n"
+    r = ed.run_code(typed)
+    assert r["ok"] is False and r["conflict"] and ed.conflict is not None
+    assert ed.buffer == typed
+
+
+def test_r2_saving_a_deleted_script_asks_and_can_write_it_again(tmp_path):
+    """Re-audit S-4: Save on a deleted script did nothing and said nothing."""
+    p = _script(tmp_path, SCRIPT)
+    ed = Editor(open_workspace(str(p)))
+    p.unlink()
+    ed.set_buffer(ed.buffer + "y = 2\n")
+    r = ed.save()
+    assert r["ok"] is False and r["conflict"] and ed.conflict["deleted"]
+    assert ed.resolve_conflict("mine")["recreated"] == str(p)
+    assert p.read_text(encoding="utf-8").endswith("y = 2\n")
+
+
+def test_r2_a_render_never_writes_over_a_frame_of_a_sequence(tmp_path, monkeypatch):
+    """Re-audit S-5: the pattern was compared, not its frames."""
+    monkeypatch.setattr(jobmod, "_render", _Fake())
+    shutil.copytree(EXAMPLES / "assets" / "frames", tmp_path / "shots")
+    first = sorted((tmp_path / "shots").glob("*.png"))[1]
+    stem, number = first.stem.rsplit("_", 1)
+    digits = len(number)
+    seq = f's.add(Image(id="seq", path="shots/{stem}_%0{digits}d.png"))\n'
+    _script(tmp_path, SCRIPT.replace("Text\n", "Text, Image\n") + seq)
+    ws = Workspace(tmp_path, allow_scripts=True)
+    ws.scene_open("scene.py")
+    before = first.read_bytes()
+    with pytest.raises(ToolError, match="reads"):
+        ws.render_start("draft", out=f"shots/{first.name}", frame=0.0, overwrite=True)
+    with pytest.raises(ToolError, match="reads"):  # a frame not there yet: the pattern's too
+        ws.render_start("draft", out=f"shots/{stem}_{'9' * digits}.png", frame=0.0)
+    assert first.read_bytes() == before
+
+
+def test_r2_a_render_that_cannot_write_leaves_no_zombie_job(tmp_path):
+    """Re-audit S-6: an OSError making the partial file registered a job that never ended;
+    after two, no render started; the raw OSError dropped an AI's connection."""
+    _script(tmp_path, SCRIPT)
+    ws = Workspace(tmp_path, allow_scripts=True)
+    ws.scene_open("scene.py")
+    for k in range(3):
+        with pytest.raises(ToolError, match="cannot write there"):
+            ws.render_start("draft", out=f"{k}{'x' * 300}.mp4")
+    assert ws.render_status() == {"jobs": []}
+
+
+def test_r2_the_ai_socket_answers_every_request(tmp_path):
+    import json
+    import socket
+
+    from phasor.workspace.remote import RemoteServer
+
+    ws = Workspace(tmp_path)
+    ws.scene_new("x")
+    server = RemoteServer(ws).start()
+    try:
+        with socket.create_connection(server.address, timeout=10) as c:
+            f = c.makefile("rwb")
+            for req in (
+                {"token": server.token, "method": ["unhashable"]},
+                {"token": server.token, "method": "render_start",
+                 "params": {"out": "a" * 300 + ".mp4"}},
+            ):  # fmt: skip
+                f.write((json.dumps(req) + "\n").encode())
+                f.flush()
+                reply = json.loads(f.readline())
+                assert reply["ok"] is False and reply["error"]
+    finally:
+        server.stop()
+
+
+def test_r2_the_block_says_what_happens_and_run_keeps_what_the_person_wrote(tmp_path):
+    """Re-audit S-8: the header said "edit freely" but Run rewrote the block."""
+    from phasor.core.pycode import TWEAKS_HEADER
+
+    assert "rewrites this block" in TWEAKS_HEADER and "edit freely" not in TWEAKS_HEADER
+    block = BEGIN + "# chosen to match chapter 2\ns.tweak('pole.r', 0.1 * 3)\n" + END
+    p = _script(tmp_path, SCRIPT + block)
+    ed = Editor(open_workspace(str(p)))
+    assert not ed.dirty and ed.run()["ok"]
+    assert p.read_text(encoding="utf-8") == SCRIPT + block  # nothing rewritten by a Run
+    assert ed.save()["saved"] and p.read_text(encoding="utf-8") == SCRIPT + block
+
+
+def test_r2_nits(tmp_path, monkeypatch):
+    from phasor.workspace.tools import write_text
+
+    # a temporary name of the person's is never used
+    p = _script(tmp_path, SCRIPT)
+    mine = tmp_path / ".scene.py.phasor-tmp"
+    mine.write_text("mine", encoding="utf-8")
+    write_text(p, SCRIPT + "x = 1\n")
+    assert mine.read_text(encoding="utf-8") == "mine"
+    # a sound may start at a marker named inf
+    ws = Workspace(tmp_path)
+    ws.scene_new("s")
+    ws.scene_edit({"op": "set_marker", "name": "inf", "t": 1.0})
+    shutil.copy2(EXAMPLES / "assets" / "chime.wav", tmp_path / "chime.wav")
+    sound = {"id": "c", "type": "sound", "params": {"path": "chime.wav", "start": "inf"}}
+    ws.scene_edit({"op": "add_object", "object": sound})
+    assert ws.engine.state_at(0.0)["c"].params.start == "inf"
+    # a file made at the target while the render ran is the person's: kept
+    fake = _Fake(gate=True)
+    monkeypatch.setattr(jobmod, "_render", fake)
+    r = ws.render_start("final", out="late.mp4")
+    (tmp_path / "late.mp4").write_bytes(b"made meanwhile")
+    fake.gate.set()
+    _settle(ws)
+    assert (tmp_path / "late.mp4").read_bytes() == b"made meanwhile"
+    assert ws.render_status(r["job"])["path"].endswith("late (2).mp4")

@@ -12,6 +12,9 @@ jobs:
         os: [ubuntu-latest, windows-latest]
         python: ["3.11", "3.12"]
     runs-on: ${{ matrix.os }}
+    env:
+      # The editor's window tests run on Qt's offscreen platform (no display on runners).
+      QT_QPA_PLATFORM: offscreen
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -19,9 +22,10 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Headless OpenGL (Mesa EGL)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1-mesa-dri
-      # No CUDA on hosted runners: the gpu extra is left out and gpu tests skip.
-      - run: uv sync --extra gl --extra encode --extra mcp --extra boolean --extra svg --extra code
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1-mesa-dri libxkbcommon0 libfontconfig1 libdbus-1-3
+      # No CUDA on hosted runners: the gpu extra is left out and gpu tests skip. The gui
+      # extra (PySide6) is in: without it every window test skips (Milestone 25 re-audit).
+      - run: uv sync --extra gl --extra encode --extra mcp --extra boolean --extra svg --extra code --extra gui
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run lint-imports

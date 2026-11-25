@@ -12,6 +12,7 @@ editor and the AI share one lock, and ``changed()`` tells the window when the AI
 
 from __future__ import annotations
 
+import contextlib
 import itertools
 import json
 import threading
@@ -74,8 +75,43 @@ def parse_notes(text: str) -> list[tuple[float, float, float, float]]:
     return out
 
 
+def _block_problem(text: str) -> dict[str, Any] | None:
+    try:
+        find_tweaks(text)
+    except BlockError as e:
+        return {"line": e.line, "message": str(e)}
+    return None
+
+
 def _lf(text: str) -> str:
     return text.replace("\r\n", "\n")
+
+
+def qt_view(text: str) -> str:
+    """``text`` as Qt's text box gives it back (``toRawText`` with its paragraph separators
+    read as new lines): a paragraph separator and a lone CR become a new line. One character
+    for one, so positions in the box are positions in the buffer."""
+    return text.replace("\u2029", "\n").replace("\r", "\n")
+
+
+def _common_prefix(a: str, b: str) -> int:
+    n, k, step = min(len(a), len(b)), 0, 4096
+    while k + step <= n and a[k : k + step] == b[k : k + step]:
+        k += step
+    while k < n and a[k] == b[k]:
+        k += 1
+    return k
+
+
+def _common_suffix(a: str, b: str, limit: int) -> int:
+    """The length of the common end of ``a`` and ``b``, at most ``limit``."""
+    k, step = 0, 4096
+    la, lb = len(a), len(b)
+    while k + step <= limit and a[la - k - step : la - k] == b[lb - k - step : lb - k]:
+        k += step
+    while k < limit and a[la - k - 1] == b[lb - k - 1]:
+        k += 1
+    return k
 
 
 def _with_line_ends(text: str, disk: str) -> str:
@@ -105,6 +141,21 @@ class RunCancelled(BaseException):
 
 
 RUN_TIMEOUT = 600.0  # seconds a Run may take before it is stopped (PHASOR_RUN_TIMEOUT)
+LET_GO_AFTER = 3.0  # seconds after a cancel that the editor stops waiting for a run
+
+
+def wait_task(task: RunTask, *, canceled: Any = None, tick: Any = None) -> bool:
+    """Wait for a run: cancel it past its time or when ``canceled()`` says so, firing the
+    cancel again every 0.1 s; give up on it ``LET_GO_AFTER`` seconds after the cancel.
+    ``tick()`` runs between waits (a progress dialog's events). True when it ended."""
+    while not task.done.wait(0.1):
+        if tick is not None:
+            tick()
+        if task.past_time() or (canceled is not None and canceled()) or task.cancelled:
+            task.cancel()
+        if task.let_go():
+            return False
+    return True
 
 
 def run_timeout() -> float:
@@ -136,7 +187,9 @@ class RunTask:
         self.started = time.monotonic()
         self.timeout = run_timeout()
         self.cancelled = False
+        self.cancelled_at = 0.0
         self.timed_out = False
+        self.buffer_at_start = ""
         self._thread = threading.Thread(target=self._go, name="phasor-run", daemon=True)
 
     def start(self) -> RunTask:
@@ -156,6 +209,14 @@ class RunTask:
                 except RunCancelled:
                     continue
 
+    def let_go(self) -> bool:
+        """Cancelled this long ago and still running (stuck in C code, or swallowing every
+        cancel): the editor stops waiting for it."""
+        import time
+
+        return (self.cancelled and not self.done.is_set()
+                and time.monotonic() - self.cancelled_at > LET_GO_AFTER)  # fmt: skip
+
     def past_time(self) -> bool:
         import time
 
@@ -165,10 +226,15 @@ class RunTask:
         return late
 
     def cancel(self) -> None:
+        """Ask the run to stop; called again (``wait_task`` does, every 0.1 s) it fires again,
+        so a script that catches ``RunCancelled`` and loops on is asked once more each time."""
         import ctypes
+        import time
 
-        if self.done.is_set() or self.cancelled:
+        if self.done.is_set():
             return
+        if not self.cancelled:
+            self.cancelled_at = time.monotonic()
         self.cancelled = True
         tid = self._thread.ident
         if tid is not None:
@@ -247,7 +313,8 @@ def parse_value(text: str) -> Any:
         return text
 
 
-def open_workspace(path: str | None, root: str | None = None) -> Workspace:
+def open_workspace(path: str | None, root: str | None = None, *,
+                   wait: Any = None) -> Workspace:  # fmt: skip
     """A workspace with ``path`` open, or a new scene. Every way the desktop app opens a file
     (the Open dialog, recent scenes, examples, a path on the command line) comes here.
 
@@ -259,10 +326,38 @@ def open_workspace(path: str | None, root: str | None = None) -> Workspace:
     ws = Workspace(root or (Path(path).parent if path else Path.cwd()))
     if path:
         p = Path(path).resolve()
-        ws._open(str(p), allow_scripts=p.suffix == ".py")
+        if p.suffix == ".py" and not _is_manim(p):
+            _open_script(ws, p, wait)
+        else:
+            ws._open(str(p), allow_scripts=p.suffix == ".py")
     else:
         ws.scene_new("untitled")
     return ws
+
+
+def _is_manim(p: Path) -> bool:
+    from phasor.importers import looks_like_manim
+
+    try:
+        return bool(looks_like_manim(p))
+    except OSError:
+        return False
+
+
+def _open_script(ws: Workspace, p: Path, wait: Any) -> None:
+    """Open a script the way Run runs it: on the worker thread, with the timeout
+    (``PHASOR_RUN_TIMEOUT``) and, through ``wait(task)``, a Cancel the window shows (the
+    desktop app's progress dialog). A script that does not finish opens nothing."""
+    ws._inside(p, must_exist=True)
+    task = RunTask(ws, p, restore=None, kind="open").start()
+    ended = (wait or wait_task)(task)
+    if not ended or task.result is None:
+        if task.error is not None and not isinstance(task.error, RunCancelled):
+            raise task.error
+        why = ("it took longer than " + f"{task.timeout:g} s (PHASOR_RUN_TIMEOUT)"
+               if task.timed_out else "it was cancelled")  # fmt: skip
+        raise ToolError(f"{p.name} was not opened: {why}")
+    ws._adopt_script(p, *task.result)
 
 
 class Editor:
@@ -296,6 +391,8 @@ class Editor:
         self.block_problem: dict[str, Any] | None = None
         self.unwritten = False
         self.running: RunTask | None = None  # a Run or a reload on its worker thread
+        self.note: str | None = None  # said in Problems (typing kept while a script ran)
+        self._missing = 0  # polls in a row that found the script gone
         # Code the app added to a script (footage, sound, notes, narration, the snap): undo
         # puts the text before it back and runs it, once the scene's own undo is used up.
         self._script_undo: list[str] = []
@@ -366,6 +463,10 @@ class Editor:
         with self.lock:
             r = self.ws.undo()
         if not r.get("undone") and self.is_script and self._script_undo and not self.running:
+            if self._typed_not_run():
+                return self._refused("you typed code that has not run yet: Run it (or undo your "
+                                     "typing in the text) first; undoing the addition now would "
+                                     "throw your typing away")  # fmt: skip
             before = self._script_undo.pop()
             now = self.buffer
             got = self.run_code(before, keep_history=True)
@@ -383,6 +484,8 @@ class Editor:
         with self.lock:
             r = self.ws.redo()
         if not r.get("redone") and self.is_script and self._script_redo and not self.running:
+            if self._typed_not_run():
+                return self._refused("you typed code that has not run yet: Run it first")
             after = self._script_redo.pop()
             now = self.buffer
             got = self.run_code(after, keep_history=True)
@@ -393,6 +496,9 @@ class Editor:
             return {"redone": got["ok"], "script": True, **got}
         self._sync_block()
         return r
+
+    def _typed_not_run(self) -> bool:
+        return self.block_edited or _outside_block(self.buffer) != _outside_block(self._ran)
 
     def save(self, path: str | None = None) -> dict[str, Any]:
         """Ctrl+S. A script scene: when its code changed since it last ran, it runs first
@@ -443,6 +549,8 @@ class Editor:
         (the window asks which version to keep); nothing was written."""
         if e.disk is not None:
             self.conflict = {"disk": e.disk, "stamp": e.stamp}
+        else:  # the file was deleted: keep mine recreates it, the other choice keeps it unsaved
+            self.conflict = {"disk": None, "stamp": None, "deleted": True}
         return {
             "ok": False,
             "conflict": True,
@@ -882,7 +990,7 @@ class Editor:
             assert self.ws.script_disk is not None
             self.buffer = self._ran = _lf(self.ws.script_disk[0])
             self._block = self._block_of(self.buffer)
-            self._sync_block()
+            self.block_problem = _block_problem(self.buffer)
         else:
             try:
                 self.buffer = self.code()["text"]
@@ -890,8 +998,30 @@ class Editor:
                 self.buffer = ""
 
     def set_buffer(self, text: str) -> None:
-        """The person typed: the editor's text (not run, not saved, until Run or Save)."""
-        self.buffer = _lf(text)
+        """The person typed: the editor's text (not run, not saved, until Run or Save). A
+        typed change ends what Redo could bring back of the app's additions."""
+        text = _lf(text)
+        if text != self.buffer:
+            self._script_redo.clear()
+        self.buffer = text
+
+    def view(self) -> str:
+        """The buffer as the text box shows it (``qt_view``)."""
+        return qt_view(self.buffer)
+
+    def set_view_text(self, view: str) -> None:
+        """The text box changed (the person typed): apply only what changed to the buffer.
+        The box shows some characters differently (``qt_view``: a no-break space as a space,
+        a line or paragraph separator and a lone CR as a new line); taking its whole text
+        would rewrite them in strings the person never touched. Outside the edited part the
+        buffer keeps its own characters, byte for byte."""
+        old = self.buffer
+        shown = qt_view(old)
+        if view == shown:
+            return
+        a = _common_prefix(shown, view)
+        b = _common_suffix(shown, view, min(len(shown), len(view)) - a)
+        self.set_buffer(old[:a] + view[a : len(view) - b] + old[len(old) - b :])
 
     def _native(self, text: str) -> str:
         """``text`` (with "\\n" line ends, as the editor holds it) with the file's own line
@@ -949,17 +1079,13 @@ class Editor:
         return self.is_script and self._needs_run()
 
     def _needs_run(self) -> bool:
-        """The buffer's code is not the code the scene was built from, or its block is not
-        the live scene's tweaks."""
+        """The buffer's code is not the code the scene was built from, or the person edited
+        its tweaks block by hand (a block phasor wrote for a tweak needs no run)."""
         if _outside_block(self.buffer) != _outside_block(self._ran):
             return True
         if self.block_problem is not None:  # the block cannot be read: compare it as text
             return self.buffer != self._ran and not self.unwritten
-        try:
-            canon = with_tweaks(self.buffer, self.engine.overrides, self.ws.script_var)
-        except BlockError:
-            return self.buffer != self._ran
-        return canon != self.buffer
+        return self._block_of(self.buffer) != self._block
 
     def code(self) -> dict[str, Any]:
         """The scene as Python: the script in the editor (``buffer``), or one generated from
@@ -1036,6 +1162,7 @@ class Editor:
         write back if it fails ("" removes the file; None leaves it, as for an outside edit
         whose owner is the other editor), and only while the file still holds ``written``."""
         task = RunTask(self.ws, path, restore=restore, written=written, kind=kind)
+        task.buffer_at_start = self.buffer  # typing meanwhile is never thrown away
         self.running = task
         self.ws.busy = "the script is running in the editor"
         return task.start()
@@ -1047,8 +1174,10 @@ class Editor:
         task = self.running
         if task is None:
             return None
-        if task.past_time():
-            task.cancel()
+        if task.past_time() or task.cancelled:
+            task.cancel()  # again: a script may have swallowed the last one
+        if task.let_go():
+            return self._let_go(task)
         if not task.done.is_set():
             return None
         return self._finish_run(task, wait=False)
@@ -1059,25 +1188,53 @@ class Editor:
         if task is None:
             return None
         task.cancel()
-        task.done.wait(2.0)
-        if not task.done.is_set():  # stuck in C code: let it go; nothing of it is used
+        if not wait_task(task):
+            return self._let_go(task)
+        return self._finish_run(task, wait=False)
+
+    def _let_go(self, task: RunTask) -> dict[str, Any]:
+        """A run that would not stop (stuck in C code, or catching every cancel): the
+        editor stops waiting. Nothing of it is used, the file gets back the last code that
+        ran (if it still holds what Run wrote), the scene and an attached AI are free again,
+        and the file is taken as seen (phasor's own write is never a conflict). The thread
+        may finish in the background; its result is ignored."""
+        from phasor.workspace.tools import file_stamp, read_text
+
+        if self.running is task:
             self.running = None
             self.ws.busy = None
-            self.error = {"line": None, "message": "the run was cancelled (it is still "
-                          "finishing in the background; nothing of it is used)"}  # fmt: skip
-            return {"ok": False, "error": self.error["message"], "line": None}
-        return self._finish_run(task, wait=False)
+        self._restore(task)
+        path = task.path
+        if self.is_script and path == self.ws.path:
+            with contextlib.suppress(OSError):
+                self.ws.script_disk = (read_text(path), file_stamp(path))
+        msg = ("the run did not stop (it is caught in a loop that ignores Cancel, or in "
+               "native code): phasor stopped waiting for it and kept the last scene that ran; "
+               "it may keep a processor busy until phasor quits")  # fmt: skip
+        self.error = {"line": None, "message": msg}
+        return {"ok": False, "error": msg, "line": None, "event": task.kind}
+
+    def _restore(self, task: RunTask) -> None:
+        """Put the file back as it was before a Run that failed, unless someone else
+        changed it meanwhile."""
+        from phasor.workspace.tools import read_text, write_text
+
+        if task.restore is None:
+            return
+        path = task.path
+        try:
+            if task.written is None or read_text(path) == task.written:
+                if task.restore == "":
+                    path.unlink(missing_ok=True)
+                else:
+                    write_text(path, task.restore)
+        except (OSError, ToolError):
+            pass
 
     def _finish_run(self, task: RunTask, *, wait: bool) -> dict[str, Any]:
         """Put a finished run in place (under the lock), or report its mistake."""
-        from phasor.workspace.tools import ScriptChanged, read_text, write_text
-
-        if wait:
-            while not task.done.wait(0.05):
-                if task.past_time():
-                    task.cancel()
-                    task.done.wait(2.0)
-                    break
+        if wait and not wait_task(task):
+            return self._let_go(task)
         if self.running is task:
             self.running = None
             self.ws.busy = None
@@ -1085,15 +1242,7 @@ class Editor:
         if task.error is not None or task.result is None:
             e = task.error or RunCancelled("the run did not finish")
             line = _error_line(e, path)
-            if task.restore is not None:
-                try:  # put the file back, unless someone else changed it meanwhile
-                    if task.written is None or read_text(path) == task.written:
-                        if task.restore == "":
-                            path.unlink(missing_ok=True)
-                        else:
-                            write_text(path, task.restore)
-                except (OSError, ToolError):
-                    pass
+            self._restore(task)
             where = f"line {line}: " if line else ""
             if isinstance(e, RunCancelled):
                 msg = str(e) or (f"the run was stopped: it took longer than {task.timeout:g} s "
@@ -1105,6 +1254,21 @@ class Editor:
             self.error = {"line": line, "message": msg}
             return {"ok": False, "error": f"{where}{msg}", "line": line, "event": task.kind}
         run, ran_text, stamp = task.result
+        if task.written is not None and ran_text != task.written:
+            # Another editor wrote the file between our write and the run's read: that is
+            # not the code the person ran. Nothing is adopted; the person chooses.
+            from phasor.workspace.tools import file_stamp
+
+            try:
+                now = file_stamp(path)
+            except OSError:
+                now = stamp
+            self.conflict = {"disk": ran_text, "stamp": now}
+            msg = (f"{path.name} changed on disk while it was being run (another editor): "
+                   "nothing was used; choose which version to keep")  # fmt: skip
+            self.error = {"line": None, "message": msg}
+            return {"ok": False, "error": msg, "line": None, "conflict": True,
+                    "event": task.kind}  # fmt: skip
         with self.lock:
             out = self.ws._adopt_script(path, run, ran_text, stamp)
             self.generation += 1
@@ -1116,21 +1280,24 @@ class Editor:
             self.saved_version = self.version
             text = _lf(ran_text)
             self._ran = text
-            self.buffer = text
+            self.note = None
+            if self.buffer != getattr(task, "buffer_at_start", self.buffer):
+                # The person typed while it ran: their text stays (unsaved, not run yet).
+                self.note = ("you typed while the script ran: your text is kept; Run it to "
+                             "use it")  # fmt: skip
+            else:
+                self.buffer = text
             self.error = None
             self.conflict = None
-            self._block = self._block_of(text)
+            # The block as it ran: not rewritten here (a comment or an expression the person
+            # wrote in it stays until the next tweak rewrites the block, as its header says).
+            self._block = self._block_of(self.buffer)
             self.block_edited = False
+            self.unwritten = False
+            self.block_problem = _block_problem(self.buffer)
             if task.kind not in ("undo", "add"):  # typed code: the app's additions are history
                 self._script_undo.clear()
                 self._script_redo.clear()
-            self._sync_block()  # the block in its canonical form (what the scene holds)
-            if self.is_script and self.buffer != text and self.block_problem is None:
-                try:
-                    self.ws._write_script(self._native(self.buffer))
-                    self._ran = self.buffer
-                except ScriptChanged as e:  # changed while it ran: ask, write nothing
-                    self._changed_on_disk(e)
         return {
             "ok": True,
             "version": self.version,
@@ -1156,8 +1323,15 @@ class Editor:
         text0, stamp0 = self.ws.script_disk
         try:
             stamp = file_stamp(path)
+        except FileNotFoundError:  # gone (twice in a row: not an editor replacing it)
+            self._missing += 1
+            if self._missing < 2:
+                return None
+            self.conflict = {"disk": None, "stamp": None, "deleted": True}
+            return {"event": "conflict"}
         except OSError:
-            return None  # gone or being replaced: looked at again on the next tick
+            return None  # being replaced: looked at again on the next tick
+        self._missing = 0
         if stamp == stamp0:
             return None
         try:
@@ -1191,6 +1365,22 @@ class Editor:
         if self.conflict is None:
             return {"ok": True}
         disk, stamp = self.conflict["disk"], self.conflict["stamp"]
+        if self.conflict.get("deleted"):
+            if keep not in ("mine", "file"):
+                raise ValueError(f"keep is 'file' or 'mine', not {keep!r}")
+            self.conflict = None
+            if keep == "file":  # nothing to take: the text stays here, unsaved
+                return {"ok": True, "kept": "unsaved", "deleted": True}
+            from phasor.workspace.tools import file_stamp, write_text
+
+            path = self.ws.path
+            try:
+                write_text(path, self._native(self.buffer))
+            except ToolError as e:
+                return self._refused(str(e))
+            text = self._native(self.buffer)
+            self.ws.script_disk = (text, file_stamp(path))
+            return {"ok": True, "kept": "mine", "recreated": str(path)}
         if keep == "file":
             self.conflict = None
             self.buffer = _lf(disk)  # the file's text, also if it does not run
@@ -1258,6 +1448,9 @@ class Editor:
             out.append({"severity": "warning", "code": "file_changed", "ids": [], "times": [],
                         "message": "the script changed on disk while you had unsaved edits",
                         "line": None})  # fmt: skip
+        if self.note is not None:
+            out.append({"severity": "info", "code": "kept_typing", "ids": [], "times": [],
+                        "message": self.note, "line": None})  # fmt: skip
         if self.block_problem is not None:
             out.append({"severity": "error", "code": "tweaks_block", "ids": [], "times": [],
                         "message": f"{self.block_problem['message']}: phasor writes nothing "

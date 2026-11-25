@@ -698,7 +698,7 @@ fixed order (parameters by path, then styles, then layout rules as added). Code 
 markers is never touched; the block goes before a trailing `if __name__ == "__main__":`.
 
 ```
-# --- phasor tweaks: written by the editor and the AI; edit freely, keep the markers ---
+# --- phasor tweaks: phasor rewrites this block when you or an AI tweak the scene; put your own code above it ---
 s.tweak('pole.r', 0.3)
 s.tweak_style('pole', 'color', 'highlight')
 s.tweak_rule('label(pole) near pole')
@@ -709,9 +709,12 @@ s.tweak_rule('label(pole) near pole')
 lay the tweak over what the script built (the engine's overrides, not its base). Unlike
 `s.set`, a tweak whose object the script no longer makes is kept and the script still runs:
 lint `orphan_override` says so. The markers count only as real comment lines at the start
-of a line (`tokenize`: text in a string or docstring is not a marker). When they cannot be
-read for certain (a begin without an end, two blocks, an end before its begin, an indented
-marker, code that does not tokenize yet) phasor writes nothing into the script
+between the script's statements (found with Python's own parser: text in a string, a
+docstring, a bracket or a statement's body is not a marker). The block is rewritten when a
+tweak changes it (a comment or an expression written in it is replaced then, as its header
+says); a Run or a Save leaves it as it is. When the markers cannot be read for certain (a
+begin without an end, two blocks, an end before its begin, an indented marker, code that
+does not parse yet, lone-CR line ends) phasor writes nothing into the script
 (`BlockError`, with the line; the editor shows it in Problems, `scene_save` refuses) until
 the person fixes them; the tweaks stay in the scene meanwhile. phasor never writes over a
 change another editor made: a save or run first checks that the file is still the text it

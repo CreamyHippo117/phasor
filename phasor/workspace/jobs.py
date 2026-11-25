@@ -62,10 +62,13 @@ def _free_name(target: Path, k: int) -> Path:
     return target.with_name(f"{target.name.split('.')[0]} ({k}){''.join(target.suffixes)}")
 
 
-def _move_into_place(partial: Path, target: Path) -> Path:
+def _move_into_place(partial: Path, target: Path, *, keep: bool = False) -> Path:
     """``os.replace`` the finished file onto ``target``; when that is refused (Windows: the
-    file is open in a player), onto the next free ``name (2).ext``. Returns where it went."""
+    file is open in a player), or ``keep`` (a file there must stay), onto the next free
+    ``name (2).ext``. Returns where it went."""
     try:
+        if keep:
+            raise PermissionError("kept")
         os.replace(partial, target)
         return target
     except PermissionError:
@@ -83,11 +86,15 @@ def _move_into_place(partial: Path, target: Path) -> Path:
 
 class RenderJob:
     def __init__(self, engine: Any, target: Path, *, preset: str, start: Any = None,
-                 end: Any = None, fps: float | None = None, frame: Any = None) -> None:  # fmt: skip
+                 end: Any = None, fps: float | None = None, frame: Any = None,
+                 overwrite: bool = False) -> None:  # fmt: skip
         self.id = ""  # given by ``Jobs.start``: render_1, render_2, ... in each workspace
         self.engine, self.target, self.preset = engine, Path(target), preset
         self.kwargs = {"preset": preset, "start": start, "end": end, "fps": fps, "frame": frame}
         self.partial: Path | None = None  # made when it starts (``partial_path``)
+        # Whether it may replace a file at the target: checked again at the end, since a
+        # file the person made there meanwhile is theirs (it then goes to the next free name).
+        self.overwrite = overwrite
         self.moved_to: Path | None = None  # set when the target could not be replaced
         self.state = "running"  # running, done, failed, cancelled
         self.frame, self.frames = 0, 0
@@ -100,7 +107,8 @@ class RenderJob:
 
     def start(self, job_id: str) -> RenderJob:
         self.id = job_id
-        self.partial = partial_path(self.target)
+        if self.partial is None:
+            self.partial = partial_path(self.target)
         self._thread = threading.Thread(target=self._run, name=f"phasor-{job_id}", daemon=True)
         self._thread.start()
         return self
@@ -116,7 +124,10 @@ class RenderJob:
                         **{k: v for k, v in self.kwargs.items() if v is not None})  # fmt: skip
             if self._cancel.is_set():  # cancelled as it finished: the person said stop
                 raise RenderCancelled("render cancelled")
-            where = _move_into_place(self.partial, self.target)
+            if self.target.exists() and not self.overwrite:  # made meanwhile: theirs
+                where = _move_into_place(self.partial, self.target, keep=True)
+            else:
+                where = _move_into_place(self.partial, self.target)
             if where != self.target:
                 self.moved_to = where
             self.result = {**r, "path": str(where)}
@@ -189,6 +200,7 @@ class Jobs:
         done = [k for k, j in self._jobs.items() if not j.running]
         for k in done[: max(0, len(done) - KEEP_FINISHED + 1)]:
             del self._jobs[k]
+        job.partial = partial_path(job.target)  # first: an OSError registers nothing
         job_id = f"render_{next(self._next)}"
         self._jobs[job_id] = job
         return job.start(job_id)

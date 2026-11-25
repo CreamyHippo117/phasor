@@ -364,3 +364,61 @@ def test_ctrl_s_on_a_runaway_script_keeps_the_window_alive(win, scene):
     win.code.stop.click()
     assert win.ed.running is None and "cancelled" in win.code.status.text()
     assert scene.read_text(encoding="utf-8") == SCRIPT  # nothing that did not run is kept
+
+
+SPECIAL = {
+    "nbsp": "\u00a0", "line separator": "\u2028", "paragraph separator": "\u2029",
+    "next line": "\u0085", "form feed": "\x0c", "vertical tab": "\x0b",
+    "file separator": "\x1c", "group separator": "\x1d", "record separator": "\x1e",
+    "bom": "\ufeff", "zero-width joiner": "\u200d", "narrow nbsp": "\u202f",
+    "astral": "\U0001f600", "escaped surrogate": "\\ud800",
+}  # fmt: skip
+
+
+@pytest.mark.parametrize("name", list(SPECIAL))
+def test_every_character_survives_the_text_box(tmp_path, name):
+    """Re-audit B-A: the box gave a no-break space back as a space and a line separator as
+    a new line, so opening made the script dirty and Save rewrote the person's string."""
+    ch = SPECIAL[name]
+    if name == "escaped surrogate":  # an escape that is not a valid string: in a comment
+        text = SCRIPT + f"# a{ch}b\n"
+    else:
+        text = SCRIPT.replace('text="hello"', f'text="a{ch}b"')
+    p = tmp_path / "chars.py"
+    p.write_bytes(text.encode("utf-8"))
+    _app, w, _server = open_editor(str(p), serve_ai=False, show=False)
+    w.timer.stop()
+    try:
+        assert not w.ed.dirty and w.ed.buffer == text
+        w.code.refresh()
+        w.tick()
+        assert not w.ed.dirty  # showing it changed nothing
+        cur = w.code.text.textCursor()
+        cur.movePosition(cur.MoveOperation.End)
+        w.code.text.setTextCursor(cur)
+        w.code.text.insertPlainText("x = 1\n")  # the person types elsewhere
+        assert w.ed.buffer == text + "x = 1\n"
+        w.save_scene()
+        w.wait_for_run()
+        assert p.read_bytes() == (text + "x = 1\n").encode("utf-8")
+    finally:
+        w.close()
+
+
+def test_typing_during_a_run_is_never_thrown_away(win, scene):
+    """Re-audit B-B: what was typed while a script ran was replaced by the text that ran."""
+    from PySide6.QtGui import QTextCursor
+
+    win.code.QUICK = 0.1
+    win.code.text.setPlainText(SCRIPT + "import time\ntime.sleep(1.5)\n")
+    win.code.run()
+    assert win.ed.running is not None and win.code.text.isReadOnly()  # read-only meanwhile
+    c = win.code.text.textCursor()
+    c.movePosition(QTextCursor.MoveOperation.End)
+    win.code.text.setTextCursor(c)
+    win.code.text.insertPlainText("TYPED = 42\n")  # (a program can still put text in)
+    win.wait_for_run()
+    win.tick()
+    assert not win.code.text.isReadOnly()
+    assert "TYPED = 42" in win.code.text.toPlainText() and "TYPED" in win.ed.buffer
+    assert win.ed.dirty and any(i["code"] == "kept_typing" for i in win.ed.problems())
