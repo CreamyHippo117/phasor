@@ -14,8 +14,10 @@ opens the sphere out into the plane tangent to it there. Arrival is linear in ``
 Rules that make lattices: ``mirror_box`` (the image sources of a shoebox room, from
 ``ac_math.image_sources``: each echo of a clap is a mirror copy of the room) and ``grid``
 (integer steps along three vectors: the delays of feedback loops). ``envelope`` is the
-flash of a point as the front passes it, ``rate`` how many points the front reaches per
-second, ``front_mesh`` the surface itself as triangles.
+flash of a point as the front passes it (shared by every lattice of lights: ``nd.StarLattice``
+feeds it its own arrival times, and ``strokes.flash_points`` draws the result), ``rate``
+how many points the front reaches per second, ``front_mesh`` the surface itself as
+triangles.
 """
 
 from __future__ import annotations
@@ -65,8 +67,9 @@ def grid(basis, counts, origin) -> tuple[np.ndarray, np.ndarray]:
     return np.asarray(origin, dtype=np.float64) + idx @ a, steps.astype(np.float64)
 
 
-def _smoothstep(x: np.ndarray) -> np.ndarray:
-    x = np.clip(x, 0.0, 1.0)
+def smoothstep(x) -> np.ndarray:
+    """3x^2 - 2x^3 of x clipped to [0, 1]: a ramp with flat ends."""
+    x = np.clip(np.asarray(x, dtype=np.float64), 0.0, 1.0)
     return x * x * (3.0 - 2.0 * x)
 
 
@@ -76,7 +79,7 @@ def envelope(age, *, attack: float, decay: float, before: float, after: float):
     then falls as exp(-age / decay) to the afterglow ``after``. ``flash`` is the part above
     the afterglow, 0-1, which the drawing turns into size and white heat."""
     age = np.asarray(age, dtype=np.float64)
-    rise = np.ones_like(age) if attack <= 0 else _smoothstep(age / attack)
+    rise = np.ones_like(age) if attack <= 0 else smoothstep(age / attack)
     rise = np.where(age >= 0, rise, 0.0)
     e = np.exp(-np.maximum(age, 0.0) / decay)
     flash = rise * e
@@ -136,7 +139,7 @@ def front_mesh(center, normal, flat: float, reach: float, extent: float,
     grad = (1.0 - flat) * u + flat * n
     grad /= np.maximum(np.linalg.norm(grad, axis=2, keepdims=True), 1e-12)
     closed = top >= np.pi - 1e-12
-    edge = np.ones(rings + 1) if closed else _smoothstep((1.0 - share) / EDGE_FADE)
+    edge = np.ones(rings + 1) if closed else smoothstep((1.0 - share) / EDGE_FADE)
     edge = np.repeat(edge, sectors)
     k = np.arange(rings)[:, None] * sectors
     j = np.arange(sectors)[None]

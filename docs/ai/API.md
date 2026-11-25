@@ -866,8 +866,10 @@ give determinant, eigenvalues, singular values and rank. `linalg_math` has `svd`
 
 **`ac`** (acoustics): `Room(size=(8, 5, 3), material="curtain")` (glass walls: they never hide
 the source or listener), `Source`, `Listener`, `Wavefront(center=, radius=expr("343 * t"))` (a
-negative radius draws nothing, so `343 * (t - 0.5)` starts at 0.5 s), `ImageSources(order=)`,
-`ImpulseResponse(layer="overlay", pos=, extent=)` (arrival spikes; `reveal` and `show_rt60`
+negative radius draws nothing, so `343 * (t - 0.5)` starts at 0.5 s), `ImageSources(order=)`
+(the ghost sources, order up to 113 (`ac_math.MAX_ORDER`, about 2 million), the fewest
+reflections first up to `max_points`, drawn as steady lights by `strokes.flash_points`; to
+make them flash as a sphere of time sweeps them use `sweep.SweepLattice`), `ImpulseResponse(layer="overlay", pos=, extent=)` (arrival spikes; `reveal` and `show_rt60`
 animate; semantics give `rt60`, `rt60_theory_eyring` and `rt60_reliable`), `PressureSlice(time=)`
 (a slice of the real wave-equation field). Materials and absorption: `ac_math.MATERIALS`.
 
@@ -1044,6 +1046,30 @@ assert front["shape"] == "plane"
 About 270,000 images at order 58 take 0.05 s to make (once, cached); drawing is the cost:
 on Mesa llvmpipe a 1080p frame of 60,000 points (the default `max_points`) takes about
 1.6 s, all 267,000 about 3-4 s (untested on a GPU). Example: `examples/echo_crystal.py`.
+
+**Glowing points that flash on arrival are one thing.** The flash is `sweep_math.envelope(age,
+attack=, decay=, before=, after=)` (light and the flash above the afterglow) and the drawing is
+`strokes.flash_points(ctx, cam, centers, radius, colors=, flash=, glow=, swell=, white=)` (far
+to near; a flashing point swells, runs white-hot and wears a soft halo with the whole glow
+role, the points keep `strokes.REST_GLOW` of it; without `flash`, steady lights with the whole
+role). `SweepLattice` feeds them arrival distances from its 3D surface, `nd.StarLattice` its
+own N-D arrival times (`ndlattice_math.flash` is the envelope with nothing before), and
+`ac.ImageSources` draws steady lights; a new lattice of lights should do the same rather than
+draw its own discs. `examples/echo_room_to_loops.py` hands the room's plane over to three
+loops' grid (the grid's corner on the plane's path, its arms sized so its arrival times match
+the plane's speed) and then grows the star to sixteen arms.
+
+```python
+import numpy as np
+
+from phasor.domains import ndlattice_math as nlm
+from phasor.domains import sweep_math as sm
+
+age = np.linspace(-0.2, 2.0, 50)
+light, flash = sm.envelope(age, attack=0.05, decay=0.6, before=0.0, after=0.35)
+assert np.array_equal(nlm.flash(age, rise=0.05, decay=0.6, afterglow=0.35)[0], light)
+assert light[0] == 0.0 and 0.35 < light[-1] < 0.4 and flash.max() > 0.85  # then the afterglow
+```
 
 ## Domains, wave 2: pde, algebra, calc
 
@@ -1312,7 +1338,8 @@ in a cone round (1, 1, 1); `cap`; `sphere`), `spacing` (arm length; times d_i / 
 `by_delay`), `max_time`, `max_order` (laps in all), `max_points` (at most 200 000: past it
 whole arrival times are dropped and the semantics say `complete_until` and `truncated`),
 `time` (animatable: an echo flashes when `time` reaches its arrival, then glows at
-`afterglow`; `rise`, `decay`; default: all lit), `arms` (animatable 0-K: arm i shows by
+`afterglow`; `rise`, `decay`, `swell`, `white`: the flash `SweepLattice` has, drawn the same
+way; default: all lit), `arms` (animatable 0-K: arm i shows by
 clip(arms - i, 0, 1) and its echoes slide out of the others), `lap_gain` (light kept per lap),
 `color_by` (`arrival`/`order`/`arm`/`value` with `arm_values`), `hue`, `hue_span`,
 `point_size` (share of the frame height), `arm_opacity` (the faint arms), `crowd` (echoes at
@@ -1320,7 +1347,8 @@ full light; more share it, so a packed star glows in colour). Style: `colormap` 
 spectrum), `glow` (glow, soft; the prism look: strong), `stroke` (stroke, hairline). Semantics:
 `points`, `shown`, `heard` (arrived by `time`), `arms_shown`, `complete_until`. The maths is
 `ndlattice_math`: `enumerate_lattice` (every n under the hyperplane, sorted by arrival),
-`star_directions`, `arm_vectors`, `project`, `arm_weights`, `flash`, and `lattice_points`,
+`star_directions`, `arm_vectors`, `project`, `arm_weights`, `flash` (`sweep_math.envelope`),
+and `lattice_points`,
 which returns `points` (M, 3), `arrival` (M,) and `values` (M,). K = 16 by time 6 is about
 10 000 echoes, by time 8 about 90 000. Example: `examples/echo_lattice.py`.
 

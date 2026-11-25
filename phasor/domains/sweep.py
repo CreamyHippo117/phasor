@@ -31,15 +31,13 @@ from pydantic import Field, field_validator, model_validator
 from phasor.core.objects import Bounds, DrawContext, ObjectBase, ParamsBase, Pass, register
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
+from phasor.domains import ac_math
 from phasor.domains import sweep_math as sm
-from phasor.domains.strokes import disc_batch, lut_colors
+from phasor.domains.strokes import flash_points, lut_colors
 
-MAX_ORDER = 113  # mirror_box: about 2 million images (ac_math.MAX_IMAGES)
+MAX_ORDER = ac_math.MAX_ORDER  # mirror_box: about 2 million images (ac_math.MAX_IMAGES)
 MAX_GRID = 2_000_000  # grid: points at most
 LIGHT_FLOOR = 1.0 / 512  # points dimmer than this are not drawn
-HALO = 3.0  # a flashing point's halo, in point radii
-HALO_LIGHT = 0.35  # the halo's light at the peak of the flash
-REST_GLOW = 0.3  # share of the glow role points keep when not flashing (halos get it all)
 
 
 @functools.lru_cache(maxsize=16)
@@ -268,21 +266,11 @@ class SweepLattice(ObjectBase):
         cam = state.camera_for(me)
         where = vis["arrival"] if p.color_by == "arrival" else vis["value"]
         colors = lut_colors(me.style["colormap"], p.hue + p.hue_step * where)
-        f = vis["flash"]
-        hot = (p.white * f)[:, None]
-        colors[:, :3] = colors[:, :3] * (1 - hot) + hot  # the flash runs white-hot
         colors[:, 3] = np.minimum(vis["light"], 1.0)
         size = np.maximum(p.r, p.min_size * np.asarray(cam.units_per_height(vis["pos"])))
-        radius = size * (1.0 + p.swell * f)
-        glow = float(me.style["glow"])
-        disc_batch(ctx, cam, vis["pos"], radius, colors=colors, glow=1.0 + REST_GLOW * (glow - 1.0),
-                   opacity=p.opacity, segments=8)  # fmt: skip
-        lit = f > 0.02
-        if lit.any():  # a soft halo round each flashing point, all its light to the bloom
-            halo = colors[lit].copy()
-            halo[:, 3] = HALO_LIGHT * f[lit]
-            disc_batch(ctx, cam, vis["pos"][lit], HALO * radius[lit], colors=halo, glow=glow,
-                       opacity=p.opacity, segments=10, soft=True)  # fmt: skip
+        flash_points(ctx, cam, vis["pos"], size, colors=colors, flash=vis["flash"],
+                     glow=float(me.style["glow"]), opacity=p.opacity, swell=p.swell,
+                     white=p.white)  # fmt: skip
 
 
 @register

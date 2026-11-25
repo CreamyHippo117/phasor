@@ -36,6 +36,7 @@ MATERIALS = {  # broadband absorption coefficients (energy absorbed per reflecti
     "anechoic": 0.99,
 }
 MAX_IMAGES = 2_000_000
+MAX_ORDER = 113  # the highest order within MAX_IMAGES (image_count(113) is 1,949,703)
 
 
 def doppler_wavefronts(

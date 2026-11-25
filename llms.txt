@@ -65,7 +65,7 @@
 - `hinged_copy`: flash, source, hinges, turn
 - `homomorphism`: flash, n, m, a, pos, r, gap, progress
 - `image`: flash, path, pos, width, height, frame
-- `image_sources`: flash, size, source, order, material, absorption, r
+- `image_sources`: flash, size, source, order, material, absorption, r, max_points
 - `impulse_response`: flash, size, source, listener, order, material, absorption, pos, extent, duration, reveal, show_rt60
 - `interference`: flash, frequency, speed, time, mode, blend, amplitudes, onsets, pos, size, gain, markers, hue_cycles, hue, isolines, fade, ambient, contrast, sources, phases
 - `limit`: flash, function, a, epsilon, xmin, xmax, pos, bands
@@ -98,7 +98,7 @@
 - `source`: flash, pos, r
 - `spectrogram`: flash, smooth, isolines, hue_cycles, hue, fade, ambient, contrast, f0, f1, signal, wav, duration, fs, nwin, hop, window, fmax, playhead, pos, size
 - `spectrum`: flash, frequencies, amplitudes, window, samples, fs, pos, extent, bins
-- `star_lattice`: flash, loops, delays, directions, fan, spacing, by_delay, origin, max_time, max_order, max_points, arms, time, rise, decay, afterglow, lap_gain, color_by, arm_values, hue, hue_span, point_size, arm_opacity, crowd
+- `star_lattice`: flash, loops, delays, directions, fan, spacing, by_delay, origin, max_time, max_order, max_points, arms, time, rise, decay, afterglow, swell, white, lap_gain, color_by, arm_values, hue, hue_span, point_size, arm_opacity, crowd
 - `strange_attractor`: flash, system, sigma, rho, beta, seed, t_end, progress, pos, size
 - `subgroup_lattice`: flash, group, pos, width, height
 - `sweep_front`: flash, lattice, rim, veil, rings, sectors
