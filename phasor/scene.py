@@ -177,6 +177,138 @@ class At:
         """Run a number evenly to ``value``, with a live readout beside its object."""
         return self._verb("sweep", path, value, show)
 
+    # ===== group S =====
+
+    def grow(self, *args: Any, **options: Any) -> At:
+        """grow (not built yet)."""
+        return self._verb("grow", *args, **options)
+
+    def shrink(self, *args: Any, **options: Any) -> At:
+        """shrink (not built yet)."""
+        return self._verb("shrink", *args, **options)
+
+    def squish(self, *args: Any, **options: Any) -> At:
+        """squish (not built yet)."""
+        return self._verb("squish", *args, **options)
+
+    def flatten(self, *args: Any, **options: Any) -> At:
+        """flatten (not built yet)."""
+        return self._verb("flatten", *args, **options)
+
+    # ===== end of group S =====
+
+    # ===== group A =====
+
+    def act(self, *args: Any, **options: Any) -> At:
+        """act (not built yet)."""
+        return self._verb("act", *args, **options)
+
+    def apply(self, *args: Any, **options: Any) -> At:
+        """apply (not built yet)."""
+        return self._verb("apply", *args, **options)
+
+    def generate(self, *args: Any, **options: Any) -> At:
+        """generate (not built yet)."""
+        return self._verb("generate", *args, **options)
+
+    def coset(self, *args: Any, **options: Any) -> At:
+        """coset (not built yet)."""
+        return self._verb("coset", *args, **options)
+
+    def quotient(self, *args: Any, **options: Any) -> At:
+        """quotient (not built yet)."""
+        return self._verb("quotient", *args, **options)
+
+    def permute(self, *args: Any, **options: Any) -> At:
+        """permute (not built yet)."""
+        return self._verb("permute", *args, **options)
+
+    # ===== end of group A =====
+
+    # ===== group E =====
+
+    def substitute(self, *args: Any, **options: Any) -> At:
+        """substitute (not built yet)."""
+        return self._verb("substitute", *args, **options)
+
+    def cancel(self, *args: Any, **options: Any) -> At:
+        """cancel (not built yet)."""
+        return self._verb("cancel", *args, **options)
+
+    def factor(self, *args: Any, **options: Any) -> At:
+        """factor (not built yet)."""
+        return self._verb("factor", *args, **options)
+
+    def expand(self, *args: Any, **options: Any) -> At:
+        """expand (not built yet)."""
+        return self._verb("expand", *args, **options)
+
+    def ignite(self, *args: Any, **options: Any) -> At:
+        """ignite (not built yet)."""
+        return self._verb("ignite", *args, **options)
+
+    def pulse(self, *args: Any, **options: Any) -> At:
+        """pulse (not built yet)."""
+        return self._verb("pulse", *args, **options)
+
+    # ===== end of group E =====
+
+    # ===== group F1 =====
+
+    def follow(self, *args: Any, **options: Any) -> At:
+        """follow (not built yet)."""
+        return self._verb("follow", *args, **options)
+
+    def ripple(self, *args: Any, **options: Any) -> At:
+        """ripple (not built yet)."""
+        return self._verb("ripple", *args, **options)
+
+    def spotlight(self, *args: Any, **options: Any) -> At:
+        """spotlight (not built yet)."""
+        return self._verb("spotlight", *args, **options)
+
+    # ===== end of group F1 =====
+
+    # ===== group F2a =====
+
+    def iterate(self, *args: Any, **options: Any) -> At:
+        """iterate (not built yet)."""
+        return self._verb("iterate", *args, **options)
+
+    def decompose(self, *args: Any, **options: Any) -> At:
+        """decompose (not built yet)."""
+        return self._verb("decompose", *args, **options)
+
+    def recompose(self, *args: Any, **options: Any) -> At:
+        """recompose (not built yet)."""
+        return self._verb("recompose", *args, **options)
+
+    # ===== end of group F2a =====
+
+    # ===== group F2b =====
+
+    def lift(self, *args: Any, **options: Any) -> At:
+        """lift (not built yet)."""
+        return self._verb("lift", *args, **options)
+
+    def slice(self, *args: Any, **options: Any) -> At:
+        """slice (not built yet)."""
+        return self._verb("slice", *args, **options)
+
+    def project(self, *args: Any, **options: Any) -> At:
+        """project (not built yet)."""
+        return self._verb("project", *args, **options)
+
+    def dissolve(self, *args: Any, **options: Any) -> At:
+        """dissolve (not built yet)."""
+        return self._verb("dissolve", *args, **options)
+
+    def assemble(self, *args: Any, **options: Any) -> At:
+        """assemble (not built yet)."""
+        return self._verb("assemble", *args, **options)
+
+    # ===== end of group F2b =====
+
 
 def _caller_dir() -> Path:
     """The folder of the script that called ``Scene(...)``, or the working folder."""

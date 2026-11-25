@@ -488,6 +488,117 @@ class Verbs:
             ops.append(self._instant(f"{readout}.opacity", 1.0, "sweep", 0.0))
         return Motion((*ops, seg), done)
 
+    # ===== group S =====
+    # (replace each stub below with the real verb; see docs/ai/verbs_*.md)
+
+    def grow(self, *ids: str, **options: Any) -> Motion:
+        raise VerbError("grow is not built yet")
+
+    def shrink(self, *ids: str, **options: Any) -> Motion:
+        raise VerbError("shrink is not built yet")
+
+    def squish(self, *ids: str, **options: Any) -> Motion:
+        raise VerbError("squish is not built yet")
+
+    def flatten(self, *ids: str, **options: Any) -> Motion:
+        raise VerbError("flatten is not built yet")
+
+    # ===== end of group S =====
+
+    # ===== group A =====
+    # (replace each stub below with the real verb; see docs/ai/verbs_*.md)
+
+    def act(self, *ids: str, **options: Any) -> Motion:
+        raise VerbError("act is not built yet")
+
+    def apply(self, *ids: str, **options: Any) -> Motion:
+        raise VerbError("apply is not built yet")
+
+    def generate(self, *ids: str, **options: Any) -> Motion:
+        raise VerbError("generate is not built yet")
+
+    def coset(self, *ids: str, **options: Any) -> Motion:
+        raise VerbError("coset is not built yet")
+
+    def quotient(self, *ids: str, **options: Any) -> Motion:
+        raise VerbError("quotient is not built yet")
+
+    def permute(self, *ids: str, **options: Any) -> Motion:
+        raise VerbError("permute is not built yet")
+
+    # ===== end of group A =====
+
+    # ===== group E =====
+    # (replace each stub below with the real verb; see docs/ai/verbs_*.md)
+
+    def substitute(self, *ids: str, **options: Any) -> Motion:
+        raise VerbError("substitute is not built yet")
+
+    def cancel(self, *ids: str, **options: Any) -> Motion:
+        raise VerbError("cancel is not built yet")
+
+    def factor(self, *ids: str, **options: Any) -> Motion:
+        raise VerbError("factor is not built yet")
+
+    def expand(self, *ids: str, **options: Any) -> Motion:
+        raise VerbError("expand is not built yet")
+
+    def ignite(self, *ids: str, **options: Any) -> Motion:
+        raise VerbError("ignite is not built yet")
+
+    def pulse(self, *ids: str, **options: Any) -> Motion:
+        raise VerbError("pulse is not built yet")
+
+    # ===== end of group E =====
+
+    # ===== group F1 =====
+    # (replace each stub below with the real verb; see docs/ai/verbs_*.md)
+
+    def follow(self, *ids: str, **options: Any) -> Motion:
+        raise VerbError("follow is not built yet")
+
+    def ripple(self, *ids: str, **options: Any) -> Motion:
+        raise VerbError("ripple is not built yet")
+
+    def spotlight(self, *ids: str, **options: Any) -> Motion:
+        raise VerbError("spotlight is not built yet")
+
+    # ===== end of group F1 =====
+
+    # ===== group F2a =====
+    # (replace each stub below with the real verb; see docs/ai/verbs_*.md)
+
+    def iterate(self, *ids: str, **options: Any) -> Motion:
+        raise VerbError("iterate is not built yet")
+
+    def decompose(self, *ids: str, **options: Any) -> Motion:
+        raise VerbError("decompose is not built yet")
+
+    def recompose(self, *ids: str, **options: Any) -> Motion:
+        raise VerbError("recompose is not built yet")
+
+    # ===== end of group F2a =====
+
+    # ===== group F2b =====
+    # (replace each stub below with the real verb; see docs/ai/verbs_*.md)
+
+    def lift(self, *ids: str, **options: Any) -> Motion:
+        raise VerbError("lift is not built yet")
+
+    def slice(self, *ids: str, **options: Any) -> Motion:
+        raise VerbError("slice is not built yet")
+
+    def project(self, *ids: str, **options: Any) -> Motion:
+        raise VerbError("project is not built yet")
+
+    def dissolve(self, *ids: str, **options: Any) -> Motion:
+        raise VerbError("dissolve is not built yet")
+
+    def assemble(self, *ids: str, **options: Any) -> Motion:
+        raise VerbError("assemble is not built yet")
+
+    # ===== end of group F2b =====
+
 
 def _resample(points: np.ndarray, n: int) -> np.ndarray:
     pts = np.asarray(points, dtype=np.float64)
