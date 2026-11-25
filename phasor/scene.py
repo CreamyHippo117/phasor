@@ -255,17 +255,19 @@ class At:
 
     # ===== group F1 =====
 
-    def follow(self, *args: Any, **options: Any) -> At:
-        """follow (not built yet)."""
-        return self._verb("follow", *args, **options)
+    def follow(self, object_id: str, feature: str = "center", index: int = 0,
+               until: str | None = None) -> At:  # fmt: skip
+        """Keep the camera on a moving feature of an object (point ``index`` of it) for the
+        theme's follow time, or until the marker ``until``."""
+        return self._verb("follow", object_id, feature, index, until)
 
-    def ripple(self, *args: Any, **options: Any) -> At:
-        """ripple (not built yet)."""
-        return self._verb("ripple", *args, **options)
+    def ripple(self, object_id: str, at: Any = "center", index: int = 0, rings: int = 3) -> At:
+        """Rings of light spreading from a feature of an object (or a point ``at``), fading."""
+        return self._verb("ripple", object_id, at, index, rings)
 
-    def spotlight(self, *args: Any, **options: Any) -> At:
-        """spotlight (not built yet)."""
-        return self._verb("spotlight", *args, **options)
+    def spotlight(self, *ids: str, until: str | None = None, pad: float = 0.25) -> At:
+        """A pool of light on ``ids``, the rest dimmed (fields too); no ids turns it off."""
+        return self._verb("spotlight", *ids, until=until, pad=pad)
 
     # ===== end of group F1 =====
 

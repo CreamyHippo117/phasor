@@ -21,6 +21,7 @@ LEADER_PARAMS = ("leader", "leader_on")
 # What the camera solver may choose, when the document leaves it unset. The field of view
 # is kept as given: with distance free, a zoom adds nothing but ambiguity.
 CAMERA_FREE = ("azimuth", "elevation", "distance", "target")
+FOLLOW_TYPE = "follow"  # the follow verb's probe (domains/lighting.py), named by its type
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,8 @@ class Plan:
     # Animated but never set (a focus_pull or orbit at a marker): the solver owns them until
     # their first motion starts, and that motion starts from where the solver had them.
     camera_handoff: tuple[str, ...] = ()
+    # ``follow`` probes (the follow verb): the bake moves the camera onto their feature.
+    follows: tuple[str, ...] = ()
 
     @property
     def moving(self) -> frozenset[str]:
@@ -54,7 +57,7 @@ class Plan:
 
     @property
     def empty(self) -> bool:
-        return not self.moving and not self.goals
+        return not self.moving and not self.goals and not self.follows
 
     def relations(self, kinds=None):
         for r in self.rules:
@@ -148,6 +151,9 @@ def compile_plan(compiled: Compiled) -> Plan:
             free = tuple(p for p in CAMERA_FREE if p not in cam.params and p not in tracked)
             handoff = tuple(p for p in CAMERA_FREE if p not in cam.params and p in tracked
                             and _starts_late(compiled, f"{cam.id}.{p}"))  # fmt: skip
+    follows = tuple(o.id for o in compiled.objects if o.type == FOLLOW_TYPE)
+    if follows:
+        issues += _follow_conflicts(compiled, follows, goals)
     if issues:
         raise DocumentError(issues)
     leaders = frozenset(
@@ -155,8 +161,39 @@ def compile_plan(compiled: Compiled) -> Plan:
         if all(p in objects[i].params_model.model_fields for p in LEADER_PARAMS)
     )  # fmt: skip
     return Plan(
-        tuple(rules), frozenset(solved), tuple(placed), leaders, tuple(goals), free, handoff
+        tuple(rules),
+        frozenset(solved),
+        tuple(placed),
+        leaders,
+        tuple(goals),
+        free,
+        handoff,
+        follows,
     )
+
+
+def follow_param(compiled: Compiled) -> str:
+    """The camera parameter a ``follow`` moves: the 2D center or the 3D target."""
+    cam = compiled.doc.camera(compiled.doc.timeline.camera)
+    return "target" if cam.kind == "orbit" else "center"
+
+
+def _follow_conflicts(compiled: Compiled, follows: tuple[str, ...], goals) -> list[Issue]:
+    """A follow moves a camera parameter the document leaves to it: not set, not animated,
+    and not chosen by camera goals."""
+    cam = compiled.doc.camera(compiled.doc.timeline.camera)
+    name = follow_param(compiled)
+    path = f"{cam.id}.{name}"
+    why = ("it is set" if name in cam.params else
+           "it is animated" if path in compiled.doc.timeline.tracks else
+           "camera goals choose it" if goals else "")  # fmt: skip
+    if not why:
+        return []
+    return [Issue(
+        "follow_conflict", f"{', '.join(follows)} moves {path}, but {why}",
+        ids=follows, path=path,
+        fix_hint=f"leave {path} to the follow (unset, no focus_pull), or drop the follow",
+    )]  # fmt: skip
 
 
 def _starts_late(compiled: Compiled, path: str) -> bool:

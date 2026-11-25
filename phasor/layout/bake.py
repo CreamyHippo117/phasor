@@ -223,6 +223,11 @@ def bake(c: Compiled, plan: Plan, oracle: OcclusionOracle | None = None) -> Bake
 
         sol = camera_solver.solve(c, plan, times, lambda st, i: hidden_share(st, i, oracle))
         solved_camera, cam_issues = sol.values, sol.issues
+    if plan.follows:  # the follow verb: the camera rides a feature (before labels are placed)
+        from phasor.layout import camera as camera_solver
+
+        solved_camera = {**solved_camera, **camera_solver.follow_keys(c, plan, times,
+                                                                      solved_camera)}  # fmt: skip
     camera_keys = {k: {p: v[k] for p, v in solved_camera.items()} for k in range(len(times))}
     placed_ids = frozenset(plan.placed)
     pos = {i: f"{i}.{MOVE_PARAM}" for i in plan.moving}
