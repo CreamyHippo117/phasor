@@ -34,10 +34,13 @@ VEIL_STEPS = 8  # rings across the spotlight's soft edge
 
 def feature_point(state: SceneState, target: str, feature: str, index: int) -> np.ndarray | None:
     """The world point ``index`` of ``target``'s feature ``feature``, or None when there is
-    no such object, feature or point at this time."""
+    no such object, feature or point at this time. ``"center"`` is the middle of the
+    object's bounds when the type does not name one."""
     if target not in state:
         return None
     feats = state[target].impl.features(state)
+    if feature == "center" and feature not in feats:  # every object has a middle
+        return np.asarray(state[target].impl.world_bounds(state).center, dtype=np.float64)
     if feature not in feats:
         return None
     pts = np.asarray(feats[feature], dtype=np.float64)
@@ -145,7 +148,7 @@ class Spotlight(ObjectBase):
 
     type: ClassVar[str] = "spotlight"
     Life: ClassVar = frozenset()
-    Style: ClassVar = {}
+    Style: ClassVar = {"glow": ("glow", "none")}  # a veil: it takes light away
 
     class Params(ParamsBase):
         center: Vec3 = (0.0, 0.0, 0.0)  # in world units, wherever the spotlight is drawn
@@ -212,7 +215,7 @@ class Spotlight(ObjectBase):
             c, d = a + s, b + s
             quads += [np.stack([a, b, d], 1), np.stack([a, d, c], 1)]
         ctx.triangles(pos, np.concatenate(quads), color=(0.0, 0.0, 0.0, p.strength * p.opacity),
-                      colors=colors)  # fmt: skip
+                      colors=colors, glow=me.style["glow"])  # fmt: skip
 
 
 @register

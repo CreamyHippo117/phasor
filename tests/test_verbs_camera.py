@@ -207,6 +207,31 @@ def test_a_later_spotlight_glides_from_the_last_one():
     assert xs[0] < xs[1] < xs[2] < xs[3]  # a glide, not a jump
 
 
+# ---------------------------------------------------------------- the AI
+
+
+def test_the_ai_tool_takes_the_camera_verbs(tmp_path):
+    from phasor.workspace import Workspace
+
+    ws = Workspace(tmp_path)
+    ws.scene_new("ai")
+    ws.scene_edit([
+        {"op": "add_object", "object": {"id": "dc", "type": "domain_coloring",
+                                        "params": {"function": "(z - a)*(z + 1)", "a": [1, 0]}}},
+        {"op": "add_object", "object": {"id": "d", "type": "dot"}},
+        {"op": "set_marker", "name": "go", "t": 1.0},
+        {"op": "set_marker", "name": "rest", "t": 4.0},
+        {"op": "set_marker", "name": "off", "t": 6.0},
+    ])  # fmt: skip
+    r = ws.animate("follow", "go", targets=["dc"],
+                   value={"feature": "zeros", "index": 1, "until": "rest"})  # fmt: skip
+    assert r["end"] == pytest.approx(4.0)
+    assert ws.animate("ripple", "go", targets=["dc"], value={"at": "zeros", "index": 1})["end"] > 1
+    assert ws.animate("spotlight", "go", targets=["d"])["end"] > 1.0
+    assert ws.animate("spotlight", "off", targets=[])["end"] > 6.0
+    assert ws.engine.state_at(8.0)["spotlight"].params.opacity == 0.0
+
+
 # ---------------------------------------------------------------- the example
 
 

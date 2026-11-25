@@ -614,7 +614,10 @@ def follow_keys(
 def _followed_point(state: SceneState, p, previous: np.ndarray | None) -> np.ndarray | None:
     if p.target not in state:
         return None
-    feats = state[p.target].impl.features(state)
+    obj = state[p.target]
+    feats = obj.impl.features(state)
+    if p.feature == "center" and "center" not in feats:  # every object has a middle
+        feats = {"center": obj.impl.world_bounds(state).center}
     pts = np.asarray(feats.get(p.feature, ()), dtype=np.float64)
     if pts.size == 0:
         return previous

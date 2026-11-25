@@ -558,7 +558,8 @@ class Verbs:
         for ``at`` = (x, y[, z]), a point."""
         obj = self._object(object_id)
         if isinstance(at, str):
-            feats = obj.impl.features(self.state)
+            feats = dict(obj.impl.features(self.state))
+            feats.setdefault("center", obj.impl.world_bounds(self.state).center)  # always
             if at not in feats:
                 raise VerbError(f"{verb}: {object_id!r} ({obj.type}) has no feature {at!r}; its "
                                 f"features are {sorted(feats)}")  # fmt: skip

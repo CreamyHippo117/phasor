@@ -45,7 +45,10 @@ assert min(abs(x - center[0]) + abs(y - center[1]) for x, y in zeros) < 0.05  # 
 Rings of light spread from a spot and fade: `at` is a feature name (point `index` of it) or a
 point `(x, y)` / `(x, y, z)`. The rings are the child `<id>.ripple` (type `ripple`, made the
 first time; later ripples on the same object reuse it and must name the same spot). The spot
-is found again at every frame, so the rings ride a zero that moves.
+is found again at every frame, so the rings ride a zero that moves. `index` is the place in
+the object's list at each frame (unlike `follow`, which tracks the nearest point), so ripple
+a moving zero while its list keeps its order. `"center"` works on every object (the middle
+of its bounds when the type names no center).
 
 ```python
 from phasor import Dot, Scene, cx
@@ -90,7 +93,7 @@ assert s.engine.state_at(5.0)["spotlight"].params.opacity == 0.0
 ## MCP
 
 The `animate` tool takes the target ids in `targets` and the keyword options as a dict in
-`value`:
+`value` (the tool's own `until` argument is not passed to these three: put it in `value`):
 
 - `animate(verb="follow", at="drift", targets=["plane"], value={"feature": "zeros", "index": 1, "until": "rest"})`
 - `animate(verb="ripple", at="here", targets=["plane"], value={"at": "zeros", "index": 1})`
