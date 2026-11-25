@@ -44,6 +44,7 @@ _MODULES = {  # domain modules: ``from phasor import cx``
     "conv": "phasor.domains.convolution",
     "filt": "phasor.domains.filters",
     "sweep": "phasor.domains.sweep",
+    "nd": "phasor.domains.ndlattice",
 }
 
 __all__ = ["__version__", *_LAZY, *_MODULES]

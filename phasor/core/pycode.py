@@ -33,6 +33,7 @@ _ALIAS = {
     "phasor.domains.convolution": "conv",
     "phasor.domains.filters": "filt",
     "phasor.domains.sweep": "sweep",
+    "phasor.domains.ndlattice": "nd",
     "phasor.domains.waves": "ac",  # wave fields are named through ``ac``
 }
 

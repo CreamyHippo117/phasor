@@ -15,6 +15,7 @@ from phasor.domains import (
     geometry,
     linalg,
     media,
+    ndlattice,
     network,
     pde,
     sweep,
@@ -23,4 +24,4 @@ from phasor.domains import (
 
 __all__ = ["acoustics", "algebra", "basic", "calc", "cloud", "convolution", "cx", "dynamics",
            "filters", "fourier",
-           "geometry", "linalg", "media", "network", "pde", "sweep", "unfold"]  # fmt: skip
+           "geometry", "linalg", "media", "ndlattice", "network", "pde", "sweep", "unfold"]  # fmt: skip
