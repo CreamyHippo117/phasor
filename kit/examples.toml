@@ -162,6 +162,11 @@ kind = "physics"
 tier = "technique"
 teaches = "Sound in a 3D room: rays and fronts bouncing off the walls, an orbiting camera, an impulse response filling in"
 
+[examples.echo_lattice]
+kind = "physics"
+tier = "technique"
+teaches = "Echoes of K feedback loops as the lattice N^K seen in 3D: a grid that flashes as arrival time sweeps it, then a star gaining arms until the frame fills"
+
 [examples.linear_system]
 kind = "fourier_linalg"
 tier = "technique"

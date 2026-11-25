@@ -127,6 +127,10 @@ glow = "soft"
 glow = "strong"
 colormap = "spectrum"
 
+[defaults.star_lattice.style]   # echoes of a feedback-delay network flash out of the dark
+glow = "strong"
+colormap = "spectrum"
+
 [defaults.wavefront3d.style]
 glow = "strong"
 colormap = "spectrum"

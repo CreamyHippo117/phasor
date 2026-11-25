@@ -1187,6 +1187,48 @@ assert abs(rays["distance"] - 6.86) < 1e-6 and rays["reflections_so_far"] > 1
 assert room.engine.inspect(0.0, id="room")["objects"][0]["semantic"]["volume"] == 120.0
 ```
 
+**Echoes of K feedback loops as a lattice in 3D** (`nd.StarLattice`, ANIMATIONS.md animation
+10). `from phasor import nd`. An echo of a feedback-delay network with K loops is the point n
+of N^K that counts its laps round each loop; it arrives at sum n_i d_i. Each loop gets an arm
+v_i in 3D and the echo sits at `origin` + sum n_i v_i: three loops are the cubic grid, sixteen
+a star that packs with points (the count by time t grows like t^K). Parameters: `loops` (K,
+1-32; 0: one per delay, or 3), `delays` (default 1 to 1.5, no two in a simple ratio),
+`directions` (one 3-vector per loop) or `fan` (`grid`: x, y, z first then arms between them
+in a cone round (1, 1, 1); `cap`; `sphere`), `spacing` (arm length; times d_i / mean when
+`by_delay`), `max_time`, `max_order` (laps in all), `max_points` (at most 200 000: past it
+whole arrival times are dropped and the semantics say `complete_until` and `truncated`),
+`time` (animatable: an echo flashes when `time` reaches its arrival, then glows at
+`afterglow`; `rise`, `decay`; default: all lit), `arms` (animatable 0-K: arm i shows by
+clip(arms - i, 0, 1) and its echoes slide out of the others), `lap_gain` (light kept per lap),
+`color_by` (`arrival`/`order`/`arm`/`value` with `arm_values`), `hue`, `hue_span`,
+`point_size` (share of the frame height), `arm_opacity` (the faint arms), `crowd` (echoes at
+full light; more share it, so a packed star glows in colour). Style: `colormap` (colormap,
+spectrum), `glow` (glow, soft; the prism look: strong), `stroke` (stroke, hairline). Semantics:
+`points`, `shown`, `heard` (arrived by `time`), `arms_shown`, `complete_until`. The maths is
+`ndlattice_math`: `enumerate_lattice` (every n under the hyperplane, sorted by arrival),
+`star_directions`, `arm_vectors`, `project`, `arm_weights`, `flash`, and `lattice_points`,
+which returns `points` (M, 3), `arrival` (M,) and `values` (M,). K = 16 by time 6 is about
+10 000 echoes, by time 8 about 90 000. Example: `examples/echo_lattice.py`.
+
+```python
+import math
+
+from phasor import Scene, nd
+from phasor.domains import ndlattice_math as nlm
+
+grid = nlm.enumerate_lattice((1.0, 1.0, 1.0), 4.0)  # unit delays: n1 + n2 + n3 <= 4
+assert len(grid["arrival"]) == math.comb(4 + 3, 3)
+
+star = Scene("echoes", look="prism", passes=None)
+star.use_camera("orbit", target=(0.9, 0.8, 0.9), distance=9)
+star.add(nd.StarLattice(id="echoes", loops=16, max_time=6.0, spacing=0.55, arms=3.0, time=-0.2))
+star.at(0.5).to("echoes.time", 6.0, duration=4.0, ease="linear")  # the grid flashes on
+star.at(5.0).to("echoes.arms", 16.0, duration=6.0)  # thirteen more loops: the frame fills
+early = star.engine.inspect(4.8, id="echoes")["objects"][0]["semantic"]
+late = star.engine.inspect(11.0, id="echoes")["objects"][0]["semantic"]
+assert early["arms_shown"] == 3 and late["heard"] > 100 * early["heard"]
+```
+
 ## Graphs and networks (`nw`)
 
 `nw.Network` draws a graph: nodes joined by edges, thousands of them in one draw call. Give
