@@ -40,10 +40,10 @@ s.set("camera.height", 6)  # world units visible top to bottom
 | `cloud.PointCloud` | `source` (`roots`/`attractor`/`buddhabrot`/`points`), `degree` and `coefficients` (roots), `kind` (`clifford`/`dejong`/`lorenz`) and `constants` (attractor), `max_iter` (buddhabrot), `points` and `values` (given directly), `count` (at most), `seed`, `pos` (centre and origin of the points), `size` (the rectangle it is seen in), `scale`, `point_size` (splat radius, px), `exposure`, `hue`, `color_by` (`source`/`phase`), `twist` (roots: turns of the last coefficient, animatable), `twinkle` (0-1, life), `white` (0-1, white-hot dense parts) | `colormap` (colormap, spectrum), `glow` (glow, none) |
 
 | `Value` | `value` (a named number to animate; nothing is drawn: see "Your own types") | none |
-| `Sound` | `path` (a WAV file in the scene's folder), `start` (seconds into the scene), `gain` (dB, -60 to 24); nothing is drawn: `phasor render` mixes it in (see "Narrate") | none |
+| `Sound` | `path` (a WAV file in the scene's folder), `start` (seconds into the scene, or a marker's name: it follows the marker), `gain` (dB, -60 to 24); nothing is drawn: `phasor render` mixes it in (see "Narrate") | none |
 | `Image` | `path` (a PNG/JPEG/WebP file, relative to the scene's folder; a GIF shows its first frame; `frames/shot_%04d.png` is a picture sequence played at `fps`, default 24), `pos` (centre), `width`, `height` (0: keep the picture's shape), `frame` (an outline of light), `fit`, `fill`, `backdrop`, and for a sequence `start`, `trim`, `speed`, `loop` (as `Video`; see "Footage and picture sequences") | `glow` (glow, none: bright parts shine), `frame` (emphasis, muted), `stroke` (stroke, hairline). Presets `plain`, `framed`, `luminous`. A missing file is issue `missing_file`, an unreadable one `bad_file`; transparent parts show the background; an AI may only name files inside its folder |
 | `Video` | `path` (an `.mp4`, `.mov`, `.m4v`, `.webm` or `.mkv` file in the scene's folder; needs the `encode` extra), `start` (scene seconds where it begins; before it, its first frame), `trim` ((in, out) seconds inside the clip; out 0: its end), `speed` (0-64), `loop` (off: it holds its last frame, lint `clip_ended`), `pos`, `width`, `height` (0: the clip's shape), `fit` (`stretch`, `contain`, `cover`, `none`), `fill` (fill the camera's view: a full-frame background, 2D camera), `backdrop` (labels may sit on it), `frame` | as `Image`. Nothing is heard (use `Sound`). Missing: `missing_file`; not a video: `bad_file`; past a cap: `video_too_big`; without PyAV: `missing_extra`; each draws nothing |
-| `Sound` | `path` (a sound file in the scene's folder: WAV, or an mp4's sound, m4a, mp3, ogg, flac with the `encode` extra), `start` (seconds into the scene), `gain` (dB, -60 to 24); nothing is drawn: `phasor render` mixes it in (see "Narrate") | none |
+| `Sound` | `path` (a sound file in the scene's folder: WAV, or an mp4's sound, m4a, mp3, ogg, flac with the `encode` extra), `start` (seconds into the scene, or a marker's name: it follows the marker when a snap or a drag moves it), `gain` (dB, -60 to 24); nothing is drawn: `phasor render` mixes it in (see "Narrate") | none |
 | `Notes` | `path` (a `.mid` in the scene's folder, format 0 or 1) or `notes` (the script's `(pitch, start, length, velocity[, channel])`, seconds), `start` (seconds into the scene, or a marker's name), `gain` (dB), `transpose` (semitones), `tempo_scale` (2: twice as fast), `channels` (keep only these), `repeat`, `instrument` (`auto`: by General MIDI program; `sine`, `pluck`, `organ`, `bell`, `pad`, `lead`), `program` (of script notes), `seed` (the drum kit's noise), `show` (a piano roll `width` x `height` at `pos`); heard (the built-in synthesizer, mixed like a `Sound`), drawn only with `show` (see "MIDI notes") | `color` (emphasis, primary), `played` (emphasis, highlight), `frame` (emphasis, muted), `stroke` (stroke, bold), `glow` (glow, soft) |
 | `Image` | `path` (a PNG/JPEG/WebP file, relative to the scene's folder), `pos` (centre), `width`, `height` (0: keep the picture's shape), `frame` (an outline of light) | `glow` (glow, none: bright parts shine), `frame` (emphasis, muted), `stroke` (stroke, hairline). Presets `plain`, `framed`, `luminous`. A missing file is issue `missing_file`; transparent parts show the background; an AI may only name files inside its folder |
 | `Text` | `text` (`$...$` is typeset math), `pos`, `anchor` (`center`/`left`/`right`), `leader`, `leader_on` (set by layout) | `color` (emphasis, primary), `size` (text, label), `leader` (stroke, hairline) |
@@ -708,7 +708,14 @@ s.tweak_rule('label(pole) near pole')
 `s.tweak(path, value)`, `s.tweak_style(id, key, value)` and `s.tweak_rule(rule, priority=)`
 lay the tweak over what the script built (the engine's overrides, not its base). Unlike
 `s.set`, a tweak whose object the script no longer makes is kept and the script still runs:
-lint `orphan_override` says so. Running the script fresh gives the document the live editor
+lint `orphan_override` says so. The markers count only as real comment lines at the start
+of a line (`tokenize`: text in a string or docstring is not a marker). When they cannot be
+read for certain (a begin without an end, two blocks, an end before its begin, an indented
+marker, code that does not tokenize yet) phasor writes nothing into the script
+(`BlockError`, with the line; the editor shows it in Problems, `scene_save` refuses) until
+the person fixes them; the tweaks stay in the scene meanwhile. phasor never writes over a
+change another editor made: a save or run first checks that the file is still the text it
+last ran or wrote. Running the script fresh gives the document the live editor
 holds. A scene saved before ADR 0004 (`name.overrides.json` beside the script) has that file
 folded into the block the first time the script is opened in the app or by `phasor mcp`,
 then removed; `phasor.load` still reads such a file. A `.phasor.json` scene keeps its
@@ -2602,10 +2609,16 @@ a complex function), open a file, recent scenes, and the examples (double-click 
 to `Documents/phasor/examples` and opens the copy). Each scene gets its own window, the
 **code-first window** (Milestone 25, `APP_PLAN.md`):
 
-- **Left: the script.** Always editable. **Run** (Ctrl+Enter) builds the scene from it;
-  **Save** (Ctrl+S) runs changed code first ("Run on save") and writes it. A mistake is
-  marked at its line (also in Problems) and the preview keeps the last scene that ran; the
-  file keeps the code that ran. Clicking a line selects the object it makes. A
+- **Left: the script.** Always editable. **Run** (Ctrl+Enter) builds the scene from it on
+  a worker thread, so a long or runaway script never freezes the window: **Cancel run**
+  stops it (a pure-Python loop at once; a long call into C when it returns), and a run past
+  `PHASOR_RUN_TIMEOUT` seconds (600) is stopped; edits wait while it runs. **Save** (Ctrl+S)
+  runs changed code first ("Run on save") and writes it; when the file changed on disk since
+  it last ran or was saved, nothing is written and the app asks which version to keep. A
+  mistake is marked at its line (also in Problems) and the preview keeps the last scene that
+  ran; the file keeps the code that ran. Undo takes back tweaks, then the code a panel added
+  (footage, a sound, notes, narration, the snap: one step each, the script runs again); the
+  text box keeps its own undo for typing. Clicking a line selects the object it makes. A
   `.phasor.json` scene shows code generated from it (Run makes that code the scene,
   `name.scene.py`); Explorer documents stay documents.
 - **Right: what it renders.** The preview (click selects an object and shows its line; drag
@@ -2623,8 +2636,10 @@ to `Documents/phasor/examples` and opens the copy). Each scene gets its own wind
 - **Toolbar:** Run, **Draft preview** (the `draft` preset to `<scene>.draft.mp4` on a
   thread, progress in the status bar, Cancel, played in the system's player when done),
   **Render...** (video or picture; quality draft, preview, final or 4K with the size and
-  frames a second it gives; where to; a file that exists is replaced only when you say so
-  and only when the new one is done; Cancel leaves nothing behind), Play, Undo, Redo, Save.
+  frames a second it gives; anywhere you choose; a file that exists is replaced only when
+  you say so and only when the new one is done; never a file the scene reads; its Cancel
+  stops its own render and leaves nothing behind), Play, Undo, Redo, Save. A draft open in
+  a player that cannot be replaced (Windows) goes to `<scene> (2).draft.mp4`, and says so.
 - **One script, several editors (ADR 0004).** A tweak in the inspector or the preview, or an
   attached AI's, is written into the script's tweaks block at once (you see it in the code);
   on a script scene, adding footage, sound, notes, narration or the snap adds a line of code
@@ -2670,6 +2685,9 @@ assert script.read_text(encoding="utf-8") == ed.buffer
 bad = ed.run_code(ed.buffer + "s.add(Dot(id='x', r=-1))\n")
 assert not bad["ok"] and bad["line"] == 8  # the last good scene stays
 assert ed.render_plan("draft")["path"].endswith("app.draft.mp4")
+r = ed.run_code(ed.buffer + "while True:\n    pass\n", wait=False)  # a runaway script
+assert r["ok"] is None and ed.cancel_run()["ok"] is False  # stopped; the last scene stays
+assert ed.engine.document.object("pole") is not None
 assert parse_notes("C4 0 0.5, E4 0.5 0.5")[1][0] == 64.0
 ```
 

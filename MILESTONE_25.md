@@ -9,8 +9,11 @@ and panels of `STUDIO.md` (Draft preview, Render with a quality, narration and s
 and MIDI, footage) calling the shared `Workspace`; the packaged app rebuilt** (the last on
 the owner's PC: `pc_tasks/13_desktop_app.md`).
 
-Status: **built on Linux (llvmpipe OpenGL 4.5, no CUDA), Qt offscreen; not independently
-audited.** Untested on Windows, macOS, a real GPU, a real screen, and as a packaged app.
+Status: **built on Linux (llvmpipe OpenGL 4.5, no CUDA), Qt offscreen; audited
+independently (2026-11-25): 3 blockers (plus a lost-update race) and 12 should-fix fixed,
+with 9 of the nits; each with a regression test that fails on the code before the fixes
+and passes after (see "Independent audit").** Untested on Windows, macOS, a real GPU, a
+real screen, and as a packaged app.
 
 ## Built
 
@@ -50,15 +53,21 @@ audited.** Untested on Windows, macOS, a real GPU, a real screen, and as a packa
    repo; this keeps today's behaviour until they are.
 3. **A `.phasor.json` scene is not offered a conversion when opened** (APP_PLAN question 4):
    documents open as before (Explorer documents must stay documents).
-4. **Run writes the file** (it did before; an error restores the file), so "unsaved" in a script
-   means typed and not run, or a tweak not saved yet. The editor's own text undo is Qt's; the
-   tweak undo is the engine's (one history per run, as before), not one undo over the text.
+4. **Run writes the file** (it did before; an error restores the file, unless another
+   editor changed it meanwhile), so "unsaved" in a script means typed and not run, or a tweak
+   not saved yet. There is no single undo over the text: the text box keeps its own undo for
+   typing (a tweak written into the block is one step of it), the scene's undo takes back
+   tweaks, and then the app's own additions to a script (a panel's footage, sound, notes,
+   narration or snap: one step each, the script runs again). A typed Run clears that last
+   history (undoing past it would throw away the typed code).
 5. **A hand-edited tweaks block is not rewritten** until Run (`block_edited`, shown in
    Problems); a tweak made meanwhile is in the scene but not in the text until then.
 6. **Blank lines and trailing spaces are not "code changes"** for Run on save (the blank
    line written before a new block must not force a rerun).
-7. **Sound clips "at a marker" take the marker's time now** (`Sound.start` is seconds only);
-   `Notes` at a marker follow it (its `start` takes a marker name).
+7. **`Sound.start` takes a marker's name** (audit S9; as `Notes.start` did in Milestone 23):
+   a sound at a marker follows it. Documents with seconds load as before; a numeric string
+   ("1.5") stays seconds. A sound at a marker the scene lacks is left out of the render and
+   said in its problems (no lint rule for it yet: deferred).
 8. **Render size is the preset's**; only frames a second can be changed in the dialog.
 9. **No recording from a microphone**: the `gui` extra (PySide6-Essentials) has no
    QtMultimedia and no new dependency is allowed; the Record button is shown disabled with the
@@ -69,6 +78,79 @@ audited.** Untested on Windows, macOS, a real GPU, a real screen, and as a packa
 12. **"Selecting an object shows its line"** uses the line of the `s.add` that made it (or its
     parent), else the first line naming its id in a string; objects made inside helper
     functions point at the line in the script that called into phasor.
+13. **Trust is per script file, not per content** (audit nit): a script the person let run
+    once runs without asking again, also after another program (git pull, an AI) changed it.
+    The question says so. `phasor gui X.py --root DIR` now asks too; a `name.scene.py` that
+    Run made from a document, and a script saved with Save As, are trusted.
+14. **A runaway script stuck inside C code cannot be stopped in-process** (audit S7): Run and
+    reloads go on a worker thread; Cancel run (and the timeout, `PHASOR_RUN_TIMEOUT`, 600 s)
+    raise `RunCancelled` in that thread (`PyThreadState_SetAsyncExc`), which stops a
+    pure-Python loop at once and a long C call when it returns. One that never returns is let
+    go: the editor keeps the last good scene and ignores its result; the thread may keep a
+    core busy until the app quits. A child process was not chosen: a script's scene-local
+    types and updaters must be built in this process.
+15. **While a script runs, edits are refused** (here and from an attached AI:
+    `Workspace.busy`), since the scene it builds replaces the open one.
+16. **Template scripts**: New from a template still makes a `.phasor.json` scene (deviation 2);
+    it needs the owner's answer to APP_PLAN's "Ways in".
+
+## Independent audit (2026-11-25) and what was fixed
+
+Every fix has a regression test (`tests/test_app_audit.py` unless named) that fails on the
+code before the fixes (checked by running the new tests against a copy of the tree at the
+merge commit 4bed8de: 26 of 27 failed or errored and the two runaway tests hung until
+killed; the S4 test was corrected so it fails there too) and passes after.
+
+| Finding | Before | Fix | After |
+| --- | --- | --- | --- |
+| B1 begin marker without its end | every save replaced the span from the orphan begin to a new end: the person's code after it was deleted (Editor and MCP) | `find_tweaks` reads real comment markers at column 0 with `tokenize` and raises `BlockError` (with the line) for a begin without an end, an end without a begin, an end first, two blocks, an indented marker, or code that does not tokenize; nothing is written, the tweaks stay in the scene (`block_problem`, `unwritten`, Problems), `scene_save` refuses | the file byte for byte unchanged; refused with the line |
+| B2 outside edit during a Run | `script_disk` recorded after the run: a change written while the script ran looked seen; the next Save erased it | the text and stamp are read **before** the script runs (`Workspace._load_script`) | the change is noticed (reloaded or a conflict) and kept |
+| B3a Save without re-checking the disk | an edit made between two polls was overwritten | `_check_disk` before every write (`_write_script`, Run, Save): a difference is `ScriptChanged`, the editor turns it into a conflict and asks | nothing written; the person chooses |
+| B3b an AI's `scene_save` absorbed an outside edit | it read whatever was on disk, wrote block + outside code and marked it seen | `_save_tweaks` writes only over the text it last ran or wrote, else refuses (`ToolError`) | the outside edit stays; the editor sees it |
+| S1 Render dialog confined to the folder | a path in ~/Videos was refused | `Workspace._render_job` (not a tool) for the person; `render_start` keeps the AI in its folder | renders anywhere for the person |
+| S2 one `job` for the whole editor | the dialog's Cancel cancelled the draft; the final kept rendering | each caller keeps its own job id (`start_render` returns it; `job_status`, `cancel_render`); `ed.job` is only the Draft preview's | each Cancel stops its own render |
+| S3 partial name `a.partial.mp4` | a person's file of that name was truncated then deleted | a hidden partial with a random part, created with `O_EXCL`, removed only if ours | the file untouched |
+| S4 web export cancel | deleted a page that was there before | `ExportJob` writes to its own partial file and renames on success | the old page stays |
+| S5 markers in a docstring; two blocks | block written inside the string; the second block kept stale values (live 0.1, fresh 0.9) | `tokenize` (strings are not markers); two blocks refused | fresh run equals live; docstring untouched |
+| S6 file modes | 0444 became 0644, 0600 became 0644; a read-only file escaped the window's slot | `write_text` keeps the mode, refuses read-only (`ToolError`), the window catches `OSError` | refused, modes kept |
+| S7 runs on the GUI thread | `while True` froze every window and the AI | `RunTask` on a worker thread, Cancel run, timeout; edits refused meanwhile | the window lives; cancel keeps the last scene (`test_app_window.py` too) |
+| S8 undo | every tweak wiped the text box's undo; panel additions to a script were not undoable | the box is edited in place as one undo step (`CodePanel._replace_text`); the app's additions are undone one step each | `isUndoAvailable` kept; undo/redo of a sound |
+| S9 sound at a marker frozen to seconds | a snap desynced it | `Sound.start` takes a marker name; the clip is placed at the marker by the engine | follows the marker |
+| S10 two draft defaults | Editor beside the script, Workspace in `phasor_out/<title>` | `Workspace.default_render_path`: a draft beside the scene's file for both | one default |
+| S11 render over an input | `render_start(out="assets/clip.mp4", overwrite=true)` replaced the footage | `_not_an_input`: every `Files` value, the narration's recording, the script | refused (`render` too) |
+| S12 Windows: draft open in a player | `os.replace` would fail the job | `_move_into_place`: the next free `<scene> (2).draft.mp4`, said in `note` | done, and said (checked on the PC: `pc_tasks/13`) |
+| nit mixed line ends | one CRLF made the whole file CRLF | `_with_line_ends`: each existing line keeps its own end (`difflib`) | kept |
+| nit `{s}`/`{id}` in a file name | mangled by the code template | code built by a function, no template | kept |
+| nit rule order; dirty on open (p8) | an orphan rule moved to the end; a hand-formatted block was rewritten at once | `Scene._tweaks` in call order; a block that already says what the scene holds is left as written | order kept, not dirty |
+| nit copied file left in `media/` | stayed after a failed add | removed when the add fails (ours only) | gone |
+| nit `_same_file` read both files whole | | `filecmp` (sizes, then chunks) | |
+| nit Run on a document over an existing `name.scene.py` | overwritten | refused with a message | kept |
+| nit Looks / marker drags on a script | bare `scripted_scene` | the message says where it belongs in the code | |
+| nit `render_cancel` held the lock 5 s | | waits at most 0.5 s; the editor's cancel holds no lock | |
+| nit `phasor gui X.py --root DIR` | ran without asking | asks once (`cli._may_run`) | asked (`test_app_window.py`) |
+| nit tests | a tautology; a GL cancel test that asserted only when cancelled; the invariant compared only the document | assert; assert the outcome; compare document and overrides | |
+
+The auditor's `fuzz.py` (moving_dot, video_input, notes_overlay; seeds 1-3; 30 random steps
+of tweaks, styles, AI edits, undo, redo, saves, rules, looks, marker moves, zooms, removed
+objects, outside edits, typed runs): no failures, document and overrides both compared.
+
+Re-verified: SPEC's "re-running the script never destroys tweaks" holds after B1 (the
+tweaks stay in the scene and the file is never rewritten while the block is unreadable).
+
+## CLAUDE.md edits needed (for the lead; this branch does not touch CLAUDE.md)
+
+- Contract 2, replace "`name.phasor.json` (sorted keys) + `name.overrides.json` (id + param
+  path, plus added constraints; ADR 0002). Re-running a script never loses overrides; a
+  dangling override is lint `orphan_override`." with: "`name.phasor.json` (sorted keys);
+  tweaks (id + param path, plus added constraints; ADR 0002) live in the script's managed
+  tweaks block for a script scene (ADR 0004) and in `name.overrides.json` for a scene with no
+  script. Re-running a script never loses tweaks; a dangling one is lint `orphan_override`."
+- "Desktop app" line: replace "ADR 0004 (tweaks inside the script, touches contract 2)
+  accepted by the owner; phase 1 not started." with "ADR 0004 (tweaks inside the script,
+  touches contract 2) accepted by the owner; phases 1 and 2 built in Milestone 25
+  (`MILESTONE_25.md`, audited); phases 3 and 4 not started."
+- Studio line: "25 the desktop app ... comes last" -> "25 the desktop app is built and
+  audited (`MILESTONE_25.md`); the packaged app awaits `pc_tasks/13_desktop_app.md`."
 
 ## Deferred
 
@@ -76,6 +158,10 @@ audited.** Untested on Windows, macOS, a real GPU, a real screen, and as a packa
   rewrite for the code-first workflow) and phase 4 (the AI tab with the Claude API).
 - Conversion of `.phasor.json` scenes and Manim imports to scripts on open (owner's call).
 - Rewriting literals in place instead of the block (ADR 0004 alternative).
+- Audit nits not done: a tweak naming an unknown parameter of an existing object still
+  fails the script at the block's line instead of becoming lint `orphan_override` (this
+  predates Milestone 25: an overrides file did the same); trust per content (deviation 13);
+  a lint rule for a sound at a marker the scene lacks.
 
 ## Untested
 

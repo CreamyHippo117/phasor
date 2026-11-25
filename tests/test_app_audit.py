@@ -401,10 +401,19 @@ def test_s4_a_cancelled_export_keeps_the_file_that_was_there(tmp_path, monkeypat
     out.write_text("the page I had", encoding="utf-8")
     job = ExportJob(s.engine, "web", out, scene_dir=tmp_path)
     slow = "import sys, time; open(sys.argv[1], 'w').write('half'); time.sleep(60)"
-    monkeypatch.setattr(job, "command", lambda scene, o=None: [sys.executable, "-c", slow, str(o)])
+
+    def command(scene, o=None):  # ``phasor web`` writing where it is told
+        return [sys.executable, "-c", slow, str(o if o is not None else out)]
+
+    monkeypatch.setattr(job, "command", command)
     job.start()
     end = time.monotonic() + 30
-    while not list(tmp_path.glob(".page.*.partial.html")) and time.monotonic() < end:
+
+    def written() -> bool:  # the process has written something somewhere
+        partial = [q for q in tmp_path.glob(".page.*.partial.html") if q.stat().st_size]
+        return bool(partial) or out.read_text(encoding="utf-8") != "the page I had"
+
+    while not written() and time.monotonic() < end:
         time.sleep(0.05)
     job.cancel()
     assert out.read_text(encoding="utf-8") == "the page I had"

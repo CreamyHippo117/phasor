@@ -100,6 +100,24 @@ s.marker("end", 4.0)
 15. **Without OpenGL** (TESTING.md B1; only if you can: an RDP session or a VM): the preview
     says "No preview here ... the other panels still work"; the inspector and the script work.
 
+16. **A draft open in the player** (audit S12). Play `try.draft.mp4` in the Windows player
+    and leave it open; press Draft preview again. Expected: the render finishes as
+    `try (2).draft.mp4` and the status bar says the old one could not be replaced.
+17. **A runaway script** (audit S7). Add `while True: pass` at the end, Ctrl+Enter.
+    Expected: the window stays usable, "Cancel run" appears; press it: "cancelled", the
+    preview keeps the last scene. Remove the line.
+18. **A broken tweaks block** (audit B1). Make a tweak and save; in Notepad delete the line
+    `# --- end phasor tweaks ---` and save; make another tweak in the app and press Ctrl+S.
+    Expected: "not saved: the tweaks block has a begin marker but no end marker (line N)" in
+    Problems; the file is unchanged (check in Notepad). Put the line back: saving works.
+19. **Save after an outside edit** (audit B3). Make a tweak (do not save), change the file in
+    Notepad, then press Ctrl+S at once. Expected: the conflict question, never a silent
+    overwrite.
+20. **A read-only script** (audit S6). In Explorer: Properties > Read-only. Make a tweak,
+    Ctrl+S. Expected: "Not saved: ... is read-only"; the app keeps working.
+21. **Render outside the folder** (audit S1). Render... > Choose... a file in `Videos`.
+    Expected: it renders there.
+
 ## D. Results (fill in)
 
 | # | Check | Expected | Measured / seen | Pass? |
@@ -121,6 +139,12 @@ s.marker("end", 4.0)
 | 13 | narration and snap | snap line added; sentences in sync (heard) | | |
 | 14 | AI attached | tweak in the block; job progress and cancel | | |
 | 15 | without OpenGL | message; the rest works | | |
+| 16 | draft open in a player | `try (2).draft.mp4`, said in the status bar | | |
+| 17 | runaway script | window usable; Cancel run keeps the last scene | | |
+| 18 | broken tweaks block | not saved, line named; file unchanged | | |
+| 19 | save after an outside edit | asks; nothing overwritten | | |
+| 20 | read-only script | "read-only", app keeps working | | |
+| 21 | render outside the folder | rendered in Videos | | |
 
 Also note: the Windows version, whether the app was started from the Start menu, and anything
 that looked wrong or slow (with a screenshot if you can).
