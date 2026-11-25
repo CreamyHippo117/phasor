@@ -60,7 +60,7 @@ def test_the_kit_installs_what_an_ai_needs(installed):
     d = installed
     for f in ("CLAUDE.md", "TASTE.md", "WISHLIST.md", ".mcp.json", ".phasor-kit.json",
               "kit/examples/INDEX.md", "kit/docs/API.md", "kit/docs/PATTERNS.md",
-              "kit/docs/PITFALLS.md", ".claude/skills/scene/SKILL.md",
+              "kit/docs/PITFALLS.md", ".claude/skills/scene-builder/SKILL.md",
               ".claude/skills/scene-plan/SKILL.md",
               ".claude/skills/phasor/SKILL.md"):  # fmt: skip
         assert (d / f).is_file(), f
@@ -85,6 +85,9 @@ def test_reinstalling_keeps_what_is_yours(tmp_path):
     (tmp_path / "TASTE.md").write_text("- slower, always\n", encoding="utf-8")
     (tmp_path / "scenes" / "mine.py").write_text("# my scene\n", encoding="utf-8")
     (tmp_path / "kit" / "stale.md").write_text("old\n", encoding="utf-8")
+    old_skill = tmp_path / ".claude" / "skills" / "scene"  # renamed scene-builder
+    old_skill.mkdir()
+    (old_skill / "SKILL.md").write_text("old\n", encoding="utf-8")
     mcp = json.loads((tmp_path / ".mcp.json").read_text(encoding="utf-8"))
     mcp["mcpServers"]["other"] = {"command": "x"}
     (tmp_path / ".mcp.json").write_text(json.dumps(mcp), encoding="utf-8")
@@ -93,6 +96,7 @@ def test_reinstalling_keeps_what_is_yours(tmp_path):
     assert (tmp_path / "TASTE.md").read_text(encoding="utf-8") == "- slower, always\n"
     assert (tmp_path / "scenes" / "mine.py").exists()
     assert not (tmp_path / "kit" / "stale.md").exists()  # the kit's own folder is replaced
+    assert not old_skill.exists()
     servers = json.loads((tmp_path / ".mcp.json").read_text(encoding="utf-8"))["mcpServers"]
     assert set(servers) == {"phasor", "other"}
 
@@ -110,7 +114,7 @@ def _commands_in(text: str) -> list[list[str]]:
     return out
 
 
-@pytest.mark.parametrize("source", ["kit/CLAUDE.md", "kit/skills/scene/SKILL.md",
+@pytest.mark.parametrize("source", ["kit/CLAUDE.md", "kit/skills/scene-builder/SKILL.md",
                                     "kit/skills/scene-plan/SKILL.md",
                                     "skills/phasor/SKILL.md"])  # fmt: skip
 def test_every_command_the_kit_names_exists_with_its_options(source):

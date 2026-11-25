@@ -1,6 +1,6 @@
 ---
 name: scene-plan
-description: Plan a beautiful teaching video before any code is written - brainstorm very widely with many subagents, prune to one path, and hand back a plan (the question, the central picture, an animation list with what to say and where to stay silent). Use whenever the person gives a topic or idea to teach or express ("a video about Lorenz attractors", "something on group theory", "how would you show X beautifully", "plan a scene/video on ...", "/scene-plan ..."), or asks how to make an idea beautiful, intuitive or well taught, even if they do not say "plan". Run it before /scene for anything bigger than a single small scene.
+description: Plan a beautiful teaching video before any code is written - brainstorm very widely with many subagents, prune to one path, and hand back a plan (the question, the central picture, an animation list with what to say and where to stay silent). Use whenever the person gives a topic or idea to teach or express ("a video about Lorenz attractors", "something on group theory", "how would you show X beautifully", "plan a scene/video on ...", "/scene-plan ..."), or asks how to make an idea beautiful, intuitive or well taught, even if they do not say "plan". Run it before /scene-builder, which codes the plan.
 argument-hint: "<the idea or topic, in a sentence or a paragraph>"
 ---
 
@@ -10,7 +10,7 @@ The idea: $ARGUMENTS
 
 This skill is about taste. It writes no scene code. It answers two questions, in this
 order: how is this idea best taught, and how is that made beautiful? The result is a plan
-the person approves; `/scene` builds from it afterwards.
+the person approves; `/scene-builder` codes it afterwards.
 
 `TASTE.md` is the person's taste and outranks everything here. Read it first. The house
 rules below are a summary of it as of 2026-11-25; where they differ, `TASTE.md` is right.
@@ -264,7 +264,7 @@ If the Editor finds the path itself weak, go back to the map; do not patch.
 ### 10. Hand back
 
 Write `plans/NAME.md` in this shape, then show it to the person and stop. Do not start
-`/scene` until they approve.
+`/scene-builder` until they approve.
 
 ```markdown
 # NAME: the title
