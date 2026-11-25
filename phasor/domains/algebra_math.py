@@ -328,3 +328,85 @@ def sign(p) -> int:
 
 def perm_order(p) -> int:
     return math.lcm(1, *(len(c) for c in cycles(p)))
+
+
+# ---------------------------------------------------------------- growing, clustering
+
+
+def growth_order(g: Group, gens, by=None) -> list[tuple[int, int, int]]:
+    """The edges (x, s, x*s) of a Cayley graph in the order it grows outward from the identity,
+    generator by generator: the generators of ``by`` (default: ``gens``; any left out come
+    last) join one at a time, and each stage spreads breadth first from every node reached so
+    far, taking all the generators joined so far. Every edge appears exactly once."""
+    gens = list(gens)
+    stages = [s for s in (by if by is not None else gens) if s in gens]
+    stages += [s for s in gens if s not in stages]
+    seen, found = [0], {0}
+    done: set[tuple[int, int]] = set()
+    out: list[tuple[int, int, int]] = []
+    for k in range(len(stages)):
+        active = stages[: k + 1]
+        queue = list(seen)
+        while queue:
+            x = queue.pop(0)
+            for s in active:
+                if (x, s) in done:
+                    continue
+                done.add((x, s))
+                y = g.mul(x, s)
+                out.append((x, s, y))
+                if y not in found:
+                    found.add(y)
+                    seen.append(y)
+                    queue.append(y)
+    return out
+
+
+def growth_progress(order: list[tuple[int, int, int]], reach: float) -> list[float]:
+    """How much of each edge is drawn when ``reach`` (0 to 1) of the growth is done: edges
+    fill one after another."""
+    u = float(reach) * len(order)
+    return [min(1.0, max(0.0, u - i)) for i in range(len(order))]
+
+
+def node_progress(order: list[tuple[int, int, int]], prog: list[float], n: int) -> list[float]:
+    """How far each node has appeared: the identity at once, the others as the edge that
+    first reaches them is drawn."""
+    out = [0.0] * n
+    out[0] = 1.0
+    seen = {0}
+    for (_, _, y), p in zip(order, prog, strict=True):
+        if y not in seen:
+            seen.add(y)
+            out[y] = p
+    return out
+
+
+def cluster_layout(cosets, n: int, r: float):
+    """Where each element goes when its coset gathers: the cosets' centres on a ring and each
+    coset's elements on a small ring round its centre. Returns (offsets (n, 2) from the
+    middle of the diagram, centres (m, 2)). The first coset (the subgroup) is at the top."""
+    m = len(cosets)
+    ring = 0.0 if m == 1 else 0.62 * r
+    local = 0.5 * r if m == 1 else min(0.3 * r, 0.8 * ring * math.sin(math.pi / m))
+    centres = np.zeros((m, 2))
+    offsets = np.zeros((n, 2))
+    for j, c in enumerate(cosets):
+        a = math.pi / 2 - 2 * math.pi * j / m
+        centres[j] = (math.cos(a) * ring, math.sin(a) * ring)
+        members = sorted(c)
+        for i, x in enumerate(members):
+            if len(members) == 1:
+                offsets[x] = centres[j]
+                continue
+            b = math.pi / 2 - 2 * math.pi * i / len(members)
+            offsets[x] = centres[j] + local * np.array([math.cos(b), math.sin(b)])
+    return offsets, centres
+
+
+def coset_name(labels, coset, subgroup, sep: str = "") -> str:
+    """``H`` for the subgroup itself, else its shortest-named member followed by ``H``."""
+    if 0 in coset:
+        return "H"
+    rep = min(coset, key=lambda x: (len(labels[x]), x))
+    return f"{labels[rep]}{sep}H"

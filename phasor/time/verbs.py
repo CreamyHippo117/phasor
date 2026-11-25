@@ -506,25 +506,322 @@ class Verbs:
     # ===== end of group S =====
 
     # ===== group A =====
-    # (replace each stub below with the real verb; see docs/ai/verbs_*.md)
 
-    def act(self, *ids: str, **options: Any) -> Motion:
-        raise VerbError("act is not built yet")
+    # -- shared: tracks that must stay in time order, and steps that compose
 
-    def apply(self, *ids: str, **options: Any) -> Motion:
-        raise VerbError("apply is not built yet")
+    def _track(self, path: str) -> list[Any]:
+        return list(self.c.doc.timeline.tracks.get(path, ()))
 
-    def generate(self, *ids: str, **options: Any) -> Motion:
-        raise VerbError("generate is not built yet")
+    def _initial(self, path: str) -> Any:
+        """The value of ``path`` before any of its segments."""
+        node = self.c.nodes.get(path)
+        if isinstance(node, ResolvedTrack):
+            return node.initial
+        if type(node).__name__ == "Const":
+            return node.value
+        raise VerbError(f"{path} is an expression; animate what it reads instead")
 
-    def coset(self, *ids: str, **options: Any) -> Motion:
-        raise VerbError("coset is not built yet")
+    @staticmethod
+    def _as_ref(v: Any) -> TimeRef:
+        return MarkerRef(**v) if isinstance(v, dict) else float(v)
 
-    def quotient(self, *ids: str, **options: Any) -> Motion:
-        raise VerbError("quotient is not built yet")
+    @staticmethod
+    def _plain(v: Any) -> Any:
+        if isinstance(v, np.ndarray):
+            return v.tolist()
+        if isinstance(v, (tuple, list)):
+            return [Verbs._plain(x) for x in v]
+        return float(v) if isinstance(v, (float, np.floating)) else v
 
-    def permute(self, *ids: str, **options: Any) -> Motion:
-        raise VerbError("permute is not built yet")
+    def _in_order(self, ops: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+        """``ops`` with every new segment placed in time order on its track: one that comes
+        before a segment already written is merged in, so the document does not depend on
+        the order the script wrote its verbs in."""
+        out = [o for o in ops if o["op"] != "add_segment"]
+        by_path: dict[str, list[dict[str, Any]]] = {}
+        for o in ops:
+            if o["op"] == "add_segment":
+                by_path.setdefault(o["path"], []).append(o["segment"])
+        res = self.c.time_map.resolve
+        for path, new in by_path.items():
+            old = self._track(path)
+            if not old or res(self._as_ref(new[0]["t0"])) >= res(old[-1].t1) - 1e-9:
+                out += [{"op": "add_segment", "path": path, "segment": s} for s in new]
+                continue
+            both = [s.model_dump(mode="json") for s in old] + new
+            both.sort(key=lambda s: (res(self._as_ref(s["t0"])), res(self._as_ref(s["t1"]))))
+            out.append({"op": "clear_track", "path": path})
+            out += [{"op": "add_segment", "path": path, "segment": s} for s in both]
+        return out
+
+    def _compose(self, verb, paths, element, advance, decode, key, check=None):
+        """Add one step (``element``) that acts on what is there at the anchor, so steps pile
+        up: each new value is the step applied to the one before. Steps written for the same
+        anchor (or out of time order) are put in a fixed order (by ``key``), those that
+        would overlap are pushed back to follow each other, and every target is worked out
+        again, so the document is the same whatever order the script wrote them in.
+        ``advance(state, element)`` is the next state, ``decode(before, after)`` the element
+        that led from one state to the next. Returns (ops, seconds after the anchor)."""
+        spec = self.motion[verb]
+        res = self.c.time_map.resolve
+        tracks = {p: self._track(p) for p in paths}
+        head, tail = {}, {}
+        for p, segs in tracks.items():
+            head[p] = [s for s in segs if res(s.t0) < self.t - 1e-9]
+            tail[p] = [s for s in segs if res(s.t0) >= self.t - 1e-9]
+            if any(s.verb != verb for s in tail[p]):
+                raise VerbError(f"{verb} cannot be written before other motion of {p}; "
+                                "write it after that motion")  # fmt: skip
+        count = len(tail[paths[0]])
+        if any(len(tail[p]) != count for p in paths):
+            raise VerbError(f"the {verb} steps of {paths[0].partition('.')[0]!r} were edited "
+                            "by hand; remove them and write the verbs again")  # fmt: skip
+        start = tuple(head[p][-1].to if head[p] else self._initial(p) for p in paths)
+        if check is not None:
+            check(start)
+        state, entries = start, []
+        for i in range(count):
+            segs = [tail[p][i] for p in paths]
+            after = tuple(s.to for s in segs)
+            t0 = res(segs[0].t0)
+            entries.append({"elem": decode(state, after), "t0ref": segs[0].t0, "t0": t0,
+                            "dur": res(segs[0].t1) - t0, "ease": segs[0].ease,
+                            "new": False})  # fmt: skip
+            state = after
+        entries.append({"elem": element, "t0ref": self.at, "t0": self.t, "ease": spec["ease"],
+                        "dur": spec["duration"], "new": True})  # fmt: skip
+        entries.sort(key=lambda e: (e["t0"], key(e["elem"])))
+        cursor, cursor_ref = -math.inf, None
+        for p in paths:
+            if head[p] and res(head[p][-1].t1) > cursor:
+                cursor, cursor_ref = res(head[p][-1].t1), head[p][-1].t1
+        ops: list[dict[str, Any]] = []
+        for p in paths:
+            if tracks[p]:
+                ops.append({"op": "clear_track", "path": p})
+            ops += [{"op": "add_segment", "path": p, "segment": s.model_dump(mode="json")}
+                    for s in head[p]]  # fmt: skip
+        state, end = start, 0.0
+        for e in entries:
+            if e["t0"] < cursor - 1e-9 and cursor_ref is not None:
+                e["t0ref"] = cursor_ref  # pushed back to follow the step before it
+            t1ref = shift(e["t0ref"], e["dur"])
+            cursor, cursor_ref = res(t1ref), t1ref
+            state = advance(state, e["elem"])
+            for p, value in zip(paths, state, strict=True):
+                seg = {"t0": _ref(e["t0ref"]), "t1": _ref(t1ref), "to": self._plain(value),
+                       "ease": e["ease"], "verb": verb}  # fmt: skip
+                ops.append({"op": "add_segment", "path": p, "segment": seg})
+            if e["new"]:
+                end = cursor - self.t
+        return ops, end
+
+    # -- act: a group element turns or flips a polygon
+
+    def act(self, polygon_id: str, element: Any) -> Motion:
+        """A symmetry acts on a polygon: it turns and flips on its ``rotation`` and ``flip``
+        (the vertex numbers travel with it), on top of what it already did. ``element`` is a
+        dihedral element, by label (``"r"``, ``"s"``, ``"sr2"``) or number."""
+        obj = self._of_type(polygon_id, "act", "polygon")
+        try:
+            e = obj.impl.element_index(self.state, element)
+        except ValueError as err:
+            raise VerbError(str(err)) from None
+        n = obj.params.n
+        step = 360.0 / n
+        paths = (f"{polygon_id}.rotation", f"{polygon_id}.flip")
+
+        def advance(state, elem):
+            theta, flip = float(state[0]), float(state[1])
+            turn = (elem % n) * step
+            turn -= 360.0 if turn > 180.0 + 1e-9 else 0.0  # the short way round
+            sign = -1.0 if flip == 1.0 else 1.0  # on the mirrored side a turn reads clockwise
+            return theta + sign * turn, (1.0 - flip if elem >= n else flip)
+
+        def decode(before, after):
+            sign = -1.0 if float(before[1]) == 1.0 else 1.0
+            k = round(sign * (float(after[0]) - float(before[0])) / step) % n
+            return k + (n if round(float(after[1])) != round(float(before[1])) else 0)
+
+        def check(state):
+            theta, flip = float(state[0]), float(state[1])
+            if abs(theta / step - round(theta / step)) > 1e-6 or flip not in (0.0, 1.0):
+                raise VerbError(f"act needs {polygon_id!r} on a symmetry (a rotation that is a "
+                                f"multiple of {step:g} degrees, flip 0 or 1), not rotation "
+                                f"{theta:g} and flip {flip:g}")  # fmt: skip
+
+        ops, end = self._compose("act", paths, e, advance, decode, key=lambda x: x, check=check)
+        return Motion(tuple(ops), end)
+
+    # -- apply: a matrix composes onto a transform grid's current matrix
+
+    def apply(self, grid_id: str, matrix: Any) -> Motion:
+        """A matrix acts on what the grid already shows: the grid's matrix becomes
+        ``matrix @ current``, moving linearly (2x2 or 3x3, as the grid is). Applies pile up
+        in time order; applies at one marker go in a fixed order, so the document does not
+        depend on how the script wrote them."""
+        obj = self._of_type(grid_id, "apply", "transform_grid")
+        if obj.params.flow:
+            raise VerbError(f"{grid_id!r} shows a flow, which ignores its matrix; "
+                            "clear 'flow' first")  # fmt: skip
+        path = f"{grid_id}.matrix"
+        try:
+            m = np.asarray(matrix, dtype=float)
+        except (TypeError, ValueError):
+            raise VerbError(f"apply needs a matrix of numbers, not {matrix!r}") from None
+        d = len(obj.params.matrix)
+        if m.shape != (d, d):
+            raise VerbError(f"{grid_id!r} is {d}x{d}; apply needs a {d}x{d} matrix, "
+                            f"not shape {m.shape}")  # fmt: skip
+        if not np.isfinite(m).all():
+            raise VerbError("apply needs a finite matrix")
+
+        def advance(state, elem):
+            return (np.asarray(elem) @ np.asarray(state[0], dtype=float),)
+
+        def decode(before, after):
+            prev = np.asarray(before[0], dtype=float)
+            if abs(np.linalg.det(prev)) < 1e-9:
+                raise VerbError("apply cannot put a step before one that follows a singular "
+                                "matrix; write the applies in time order")  # fmt: skip
+            return np.asarray(after[0], dtype=float) @ np.linalg.inv(prev)
+
+        def key(x):
+            return tuple(float(v) for v in np.round(np.asarray(x).ravel(), 9))
+
+        ops, end = self._compose("apply", (path,), m, advance, decode, key=key)
+        return Motion(tuple(ops), end)
+
+    # -- generate: a Cayley graph grows outward from the identity
+
+    def generate(self, graph_id: str, by: Any = None) -> Motion:
+        """A Cayley graph grows from the identity, breadth first, one generator after
+        another: ``by`` names the generators in the order they join (``"r s"``; default
+        the graph's own). Its ``reach`` goes 0 to 1."""
+        obj = self._of_type(graph_id, "generate", "cayley_graph")
+        order = " ".join(by) if isinstance(by, (list, tuple)) else (by or "")
+        gens = obj.params.generators.split()
+        unknown = [x for x in order.split() if x not in gens]
+        if unknown:
+            raise VerbError(f"{unknown[0]!r} is not a generator of {graph_id!r}; "
+                            f"its generators are {gens}")  # fmt: skip
+        ops: list[dict[str, Any]] = []
+        have = self._base(f"{graph_id}.order") or ""
+        if order and have and have != order:
+            raise VerbError(f"{graph_id!r} already grows in the order {have!r}")
+        if order and have != order:
+            ops.append({"op": "set_param", "path": f"{graph_id}.order", "value": order})
+        path = f"{graph_id}.reach"
+        if self._starts_hidden(path):
+            ops.append({"op": "set_param", "path": path, "value": 0.0})
+        seg, done = self._segment(path, 1.0, "generate", 0.0)
+        return Motion(tuple(self._in_order([*ops, seg])), done)
+
+    # -- coset and quotient
+
+    def _cosets(self, verb: str, object_id: str, subgroup: Any, normal: bool = False):
+        obj = self._of_type(object_id, verb, "clock_diagram", "cayley_graph")
+        try:
+            info = obj.impl.coset_info(self.state, subgroup)
+        except ValueError as err:
+            raise VerbError(str(err)) from None
+        if normal and not info["normal"]:
+            raise VerbError(f"{info['subgroup']} is not a normal subgroup of "
+                            f"{info['group']}; its cosets do not make a quotient")  # fmt: skip
+        ops: list[dict[str, Any]] = []
+        if not info["same"]:
+            if any(self._track(f"{object_id}.{x}") for x in ("gather", "collapse")):
+                raise VerbError(f"{object_id!r} already gathers by a different subgroup; "
+                                "one diagram shows one subgroup")  # fmt: skip
+            for name, value in info["set"].items():
+                ops.append({"op": "set_param", "path": f"{object_id}.{name}", "value": value})
+        return info, ops
+
+    def coset(self, object_id: str, subgroup: Any = None) -> Motion:
+        """The elements of a clock or Cayley graph gather by coset of ``subgroup``: each
+        coset glides into its own cluster (colored as its coset, the subgroup in the
+        accent color). ``subgroup`` is what generates it (a step for a clock, labels such
+        as ``"r2"`` for a graph); leave it out to use the diagram's own."""
+        _, ops = self._cosets("coset", object_id, subgroup)
+        path = f"{object_id}.gather"
+        if self._starts_hidden(path):
+            ops.append({"op": "set_param", "path": path, "value": 0.0})
+        seg, done = self._segment(path, 1.0, "coset", 0.0)
+        return Motion(tuple(self._in_order([*ops, seg])), done)
+
+    def quotient(self, object_id: str, subgroup: Any = None) -> Motion:
+        """Each coset collapses to a single node: the picture of G/H. The subgroup must be
+        normal (else its cosets do not multiply). Works with or without ``coset`` before it:
+        the elements glide to their coset's place either way."""
+        _, ops = self._cosets("quotient", object_id, subgroup, normal=True)
+        path = f"{object_id}.collapse"
+        if self._starts_hidden(path):
+            ops.append({"op": "set_param", "path": path, "value": 0.0})
+        seg, done = self._segment(path, 1.0, "quotient", 0.0)
+        return Motion(tuple(self._in_order([*ops, seg])), done)
+
+    # -- permute: tokens swap places along arcs
+
+    def permute(self, perm_id: str, sigma: Any) -> Motion:
+        """The tokens of a ``Permutation`` swap places along arcs, from where they are now to
+        the arrangement ``sigma``: token ``i`` ends in slot ``sigma[i]`` (from 0), or write
+        cycles with the numbers on the tokens, ``"(1 2 3)(4 5)"``. Tokens keep the color of
+        the cycle they move in."""
+        obj = self._of_type(perm_id, "permute", "permutation")
+        try:
+            target = obj.impl.parse_arrangement(self.state, sigma)
+        except ValueError as err:
+            raise VerbError(str(err)) from None
+        n = len(target)
+        res = self.c.time_map.resolve
+        paths = [f"{perm_id}.{x}" for x in ("arrangement", "perm", "progress")]
+        tracks = {p: self._track(p) for p in paths}
+        for p, segs in tracks.items():
+            if any(s.verb != "permute" for s in segs):
+                raise VerbError(f"permute cannot share {p} with other motion")
+        base = self._initial(paths[0])
+        ops: list[dict[str, Any]] = []
+        if not base:
+            base = tuple(range(n))
+            ops.append({"op": "set_param", "path": paths[0], "value": list(base)})
+        arr, mov, prog = (tracks[p] for p in paths)
+        if not (len(arr) == len(mov) and len(prog) == 2 * len(arr)):
+            raise VerbError(f"the permutes of {perm_id!r} were edited by hand; remove "
+                            "them and write the verbs again")  # fmt: skip
+        spec = self.motion["permute"]
+        entries = []  # one per permute: where every token ends up, and when it moves
+        for i in range(len(arr)):
+            move = prog[2 * i + 1]
+            ends = tuple(int(mov[i].to[int(a)]) for a in arr[i].to)  # token -> its slot
+            entries.append({"t0ref": move.t0, "t1ref": move.t1, "ease": move.ease,
+                            "target": ends, "new": False})  # fmt: skip
+        entries.append({"t0ref": self.at, "t1ref": shift(self.at, spec["duration"]),
+                        "ease": spec["ease"], "target": target, "new": True})  # fmt: skip
+        for e in entries:
+            e["t0"] = res(e["t0ref"])
+        entries.sort(key=lambda e: e["t0"])
+        for k in range(len(entries) - 1):
+            a, b = entries[k], entries[k + 1]
+            if abs(a["t0"] - b["t0"]) < 1e-9:
+                raise VerbError(f"{perm_id!r} already permutes at this moment; put the "
+                                "second one at a later marker (or use .then())")  # fmt: skip
+        ops += [{"op": "clear_track", "path": p} for p in paths if tracks[p]]
+        here, end = tuple(int(x) for x in base), 0.0
+        for e in entries:
+            token_at = [0] * n
+            for token, slot in enumerate(here):
+                token_at[slot] = token
+            move = [e["target"][token_at[slot]] for slot in range(n)]  # slot -> slot it goes to
+            t0, t1 = _ref(e["t0ref"]), _ref(e["t1ref"])
+            for path, value in ((paths[0], list(here)), (paths[1], move), (paths[2], 0.0)):
+                seg = {"t0": t0, "t1": t0, "to": value, "ease": "linear", "verb": "permute"}
+                ops.append({"op": "add_segment", "path": path, "segment": seg})
+            seg = {"t0": t0, "t1": t1, "to": 1.0, "ease": e["ease"], "verb": "permute"}
+            ops.append({"op": "add_segment", "path": paths[2], "segment": seg})
+            here = tuple(int(x) for x in e["target"])
+            if e["new"]:
+                end = res(e["t1ref"]) - self.t
+        return Motion(tuple(ops), end)
 
     # ===== end of group A =====
 

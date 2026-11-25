@@ -199,29 +199,29 @@ class At:
 
     # ===== group A =====
 
-    def act(self, *args: Any, **options: Any) -> At:
-        """act (not built yet)."""
-        return self._verb("act", *args, **options)
+    def act(self, polygon_id: str, element: Any) -> At:
+        """A group element turns/flips a Polygon (``"r"``, ``"s"``, ``"sr2"`` or a number)."""
+        return self._verb("act", polygon_id, element)
 
-    def apply(self, *args: Any, **options: Any) -> At:
-        """apply (not built yet)."""
-        return self._verb("apply", *args, **options)
+    def apply(self, grid_id: str, matrix: Any) -> At:
+        """Compose ``matrix`` onto a TransformGrid's current matrix (new = matrix @ current)."""
+        return self._verb("apply", grid_id, matrix)
 
-    def generate(self, *args: Any, **options: Any) -> At:
-        """generate (not built yet)."""
-        return self._verb("generate", *args, **options)
+    def generate(self, graph_id: str, by: Any = None) -> At:
+        """A CayleyGraph grows from the identity, breadth first, generator by generator."""
+        return self._verb("generate", graph_id, by=by)
 
-    def coset(self, *args: Any, **options: Any) -> At:
-        """coset (not built yet)."""
-        return self._verb("coset", *args, **options)
+    def coset(self, object_id: str, subgroup: Any = None) -> At:
+        """The elements of a clock or Cayley graph gather into their cosets."""
+        return self._verb("coset", object_id, subgroup=subgroup)
 
-    def quotient(self, *args: Any, **options: Any) -> At:
-        """quotient (not built yet)."""
-        return self._verb("quotient", *args, **options)
+    def quotient(self, object_id: str, subgroup: Any = None) -> At:
+        """Each coset collapses to one node: the picture of G/H (normal subgroups)."""
+        return self._verb("quotient", object_id, subgroup=subgroup)
 
-    def permute(self, *args: Any, **options: Any) -> At:
-        """permute (not built yet)."""
-        return self._verb("permute", *args, **options)
+    def permute(self, permutation_id: str, sigma: Any) -> At:
+        """Tokens of a Permutation swap places along arcs to the arrangement ``sigma``."""
+        return self._verb("permute", permutation_id, sigma)
 
     # ===== end of group A =====
 
