@@ -214,8 +214,11 @@ def test_a_theme_can_start_from_another_and_strokes_are_off_by_default():
     vivid, prism = load_theme("prism_vivid"), load_theme("prism")
     assert vivid.bloom == prism.bloom and vivid.values == prism.values  # inherited
     assert vivid.strokes["hue_along"] == 0.8 and len(vivid.strokes["lut"]) > 2
-    for name in ("midnight_glow", "prism", "paper", "aurora"):
+    for name in ("midnight_glow", "paper", "aurora"):
         assert load_theme(name).strokes["hue_along"] == 0.0  # an option, never the default
+    # prism lights only linear algebra by place (owner, 2026-11-25); vivid takes every stroke
+    assert prism.strokes["only"] and "axis" in prism.strokes
+    assert vivid.strokes["only"] == () and "axis" not in vivid.strokes
 
 
 def _stroke_colors(look: str, glow: str):
@@ -225,7 +228,7 @@ def _stroke_colors(look: str, glow: str):
     s = Scene("g", look=look, passes=None)
     s.add(calc.Graph(id="g", function="sin(x)", xmin=-3, xmax=3, style={"glow": glow}))
     st = s.engine.state_at(0.0)
-    c = _Collector(_stroke_hue(st, "color"))
+    c = _Collector(_stroke_hue(st, "color", st["g"]))
     st["g"].impl.draw(c, st, "color")
     return [cmd.get("colors") for kind, cmd in c.commands if kind == "mesh"]
 

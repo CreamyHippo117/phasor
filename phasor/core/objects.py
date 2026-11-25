@@ -16,15 +16,16 @@ from the ``SceneState`` it is handed. The same instance doubles as the Python bu
 
 from __future__ import annotations
 
+import contextvars
 import functools
 import inspect
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, ClassVar, Literal, Protocol, runtime_checkable
+from typing import Annotated, Any, ClassVar, Literal, Protocol, runtime_checkable
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from phasor.core.files import relative_path
 from phasor.core.ids import is_valid_name
@@ -37,6 +38,12 @@ PASSES: tuple[str, ...] = ("color", "id", "solo")
 REQUIRED_MEMBERS = ("Params", "draw")  # ``build`` may stand in for ``draw`` (a composite)
 DERIVED_MEMBERS = ("world_bounds", "features", "semantics")
 CONTRACT_MEMBERS = ("Params", *DERIVED_MEMBERS, "draw")  # what every registered type has
+STRETCH_FLOOR = 1e-3  # the least a stretch factor can be: a flattened axis stays invertible
+IDENTITY = (1.0, 1.0, 1.0)
+
+
+def _floor_stretch(v: tuple[float, float, float]) -> tuple[float, float, float]:
+    return tuple(max(float(x), STRETCH_FLOOR) for x in v)  # type: ignore[return-value]
 
 
 class ParamsBase(BaseModel):
@@ -50,6 +57,11 @@ class ParamsBase(BaseModel):
     z_index: int = 0  # draw order among coplanar objects; higher draws on top
     # A brief brightening (the ``flash`` verb): the renderer adds light and glow by this much.
     flash: float = Field(0.0, ge=0, le=1)
+    # Per-axis (x, y, z) scale of everything the object draws, about its pivot
+    # (``stretch_pivot``), owned by the grow/shrink/squish/flatten verbs. Applied centrally:
+    # the renderer's collector, and the bounds and features ``register`` wraps. Each factor
+    # is at least ``STRETCH_FLOOR`` (an easing that overshoots cannot make it 0 or negative).
+    stretch: Annotated[Vec3, AfterValidator(_floor_stretch)] = IDENTITY
 
 
 @dataclass(frozen=True)
@@ -75,6 +87,104 @@ class Bounds:
     def of_points(cls, points, pad: float = 0.0) -> Bounds:
         p = np.atleast_2d(np.asarray(points, dtype=np.float64))
         return cls(tuple(float(v) for v in p.min(0) - pad), tuple(float(v) for v in p.max(0) + pad))
+
+
+# ---------------------------------------------------------------- stretch (grow, squish, ...)
+#
+# ``ParamsBase.stretch`` scales what an object draws, per axis, about its pivot. Types never
+# see it: the renderer's collector transforms what ``draw`` emits (render/passes.py), and
+# ``register`` wraps every type's ``world_bounds`` and ``features`` (its own or derived) so
+# the inspector, the layout bake and the picture agree. While a wrapped member or the
+# collector computes an object's unstretched geometry, that object id is "raw": its own
+# members called from inside (a ``world_bounds`` that reads ``self.features``, a
+# ``super()`` call, a ``draw`` that asks for its own bounds) answer unstretched, so nothing
+# is stretched twice. Other objects keep their stretch.
+
+_RAW: contextvars.ContextVar[frozenset[str]] = contextvars.ContextVar(
+    "phasor_stretch_raw", default=frozenset()
+)
+
+
+class raw_geometry:
+    """``with raw_geometry(object_id):`` its members answer unstretched inside."""
+
+    def __init__(self, object_id: str) -> None:
+        self.object_id = object_id
+
+    def __enter__(self) -> None:
+        self._token = _RAW.set(_RAW.get() | {self.object_id})
+
+    def __exit__(self, *exc: object) -> None:
+        _RAW.reset(self._token)
+
+
+def stretch_of(obj: ObjectState) -> np.ndarray | None:
+    """The object's stretch as an array, or None when it is the identity (or the object is
+    being measured raw)."""
+    s = getattr(obj.params, "stretch", IDENTITY)
+    if s == IDENTITY or obj.id in _RAW.get():
+        return None
+    return np.asarray(s, dtype=np.float64)
+
+
+def stretch_pivot(impl: Any, state: SceneState, raw: Bounds | None = None) -> np.ndarray:
+    """What a stretch scales about: the center of the object's unstretched bounds at that
+    time (not its ``pos``, which for an equation is the baseline, not the middle), so it
+    grows about its own center."""
+    if raw is None:
+        with raw_geometry(impl.id):
+            raw = impl.world_bounds(state)
+    return raw.center
+
+
+def stretch_points(points: Any, s: np.ndarray, pivot: np.ndarray) -> np.ndarray:
+    """``points`` (..., 3) scaled by ``s`` per axis about ``pivot``."""
+    return pivot + (np.asarray(points, dtype=np.float64) - pivot) * s
+
+
+def _stretched_bounds(fn: Callable) -> Callable:
+    @functools.wraps(fn)
+    def world_bounds(self, state: SceneState) -> Bounds:
+        try:
+            s = stretch_of(state[self.id])
+        except KeyError:
+            s = None
+        if s is None:
+            return fn(self, state)
+        with raw_geometry(self.id):
+            b = fn(self, state)
+            pivot = stretch_pivot(self, state, b)
+        # A positive diagonal scale keeps a box axis-aligned: the new box is exact.
+        return Bounds.of_points(stretch_points(b.corners(), s, pivot))
+
+    world_bounds.stretch_wrapped = True  # type: ignore[attr-defined]
+    return world_bounds
+
+
+def _stretched_features(fn: Callable) -> Callable:
+    @functools.wraps(fn)
+    def features(self, state: SceneState) -> dict[str, np.ndarray]:
+        try:
+            s = stretch_of(state[self.id])
+        except KeyError:
+            s = None
+        if s is None:
+            return fn(self, state)
+        with raw_geometry(self.id):
+            out = fn(self, state)
+            pivot = stretch_pivot(self, state)
+        moved = {}
+        for name, value in out.items():  # points move with the picture; anything else stays
+            arr = np.asarray(value)
+            point_like = arr.dtype.kind in "fiu" and arr.ndim >= 1 and arr.shape[-1] == 3
+            moved[name] = stretch_points(arr, s, pivot) if point_like else value
+        return moved
+
+    features.stretch_wrapped = True  # type: ignore[attr-defined]
+    return features
+
+
+STRETCHED = {"world_bounds": _stretched_bounds, "features": _stretched_features}
 
 
 class DrawContext(Protocol):
@@ -312,6 +422,10 @@ def register(cls: type) -> type:
     for m in DERIVED_MEMBERS:
         if not hasattr(cls, m):
             setattr(cls, m, (record.COMPOSITE if composite else record.DERIVED)[m])
+    if not composite:  # every type's bounds and features follow its stretch
+        for m, wrap in STRETCHED.items():
+            if not getattr(getattr(cls, m), "stretch_wrapped", False):
+                setattr(cls, m, wrap(getattr(cls, m)))
     cls._phasor_source = source
     _REGISTRY[name] = cls
     return cls

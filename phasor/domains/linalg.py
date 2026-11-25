@@ -24,7 +24,7 @@ from phasor.core.objects import Bounds, DrawContext, ObjectBase, ParamsBase, Pas
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
 from phasor.domains import linalg_math as lm
-from phasor.domains.strokes import arrow, polyline, with_alpha
+from phasor.domains.strokes import arrow, disc, polyline, polylines, with_alpha
 
 Matrix3 = tuple[tuple[float, ...], ...]
 
@@ -64,6 +64,15 @@ class TransformGrid(ObjectBase):
         # of ``matrix`` (animate ``flow_time`` for the grid being carried along, exactly).
         flow: Matrix3 = ()  # empty: off
         flow_time: float = Field(0.0, ge=0, le=50)
+        # 3x3 only: the whole lattice, not just the plane z = 0: lines along x, y and z
+        # through every point ``extent`` steps either side of the origin, a node at each
+        # crossing (the chroma look's glowing cage)
+        lattice: bool = False
+        # the unit square (or the cube's faces) filled with solid colour at ``square``
+        # opacity, not a faint tint (the prism look; it does not glow, so it keeps its hue)
+        solid: bool = False
+        # a glowing dot at every crossing of the grid (the prism look; the lattice has them)
+        nodes: bool = False
 
         @field_validator("matrix", "flow")
         @classmethod
@@ -129,15 +138,15 @@ class TransformGrid(ObjectBase):
         w = me.style["stroke"] * float(cam.units_per_height())
         grid_c = with_alpha(me.style["grid"], p.opacity * 0.8)
         axis_c = with_alpha(me.style["color"], p.opacity)
-        span = n * sp
-        for i in range(-n, n + 1):  # lines of constant x and of constant y (z = 0 in 3D)
+        if d == 3 and p.lattice:
+            self._draw_lattice(ctx, cam, state, w, axis_c, grid_c, me.style["glow"])
+        rows = () if d == 3 and p.lattice else range(-n, n + 1)  # the lattice has its own
+        for i in rows:  # lines of constant x and of constant y (z = 0 in 3D)
             for axis in range(2):
-                a, b = np.zeros(d), np.zeros(d)
-                a[axis], b[axis] = i * sp, i * sp
-                a[1 - axis], b[1 - axis] = -span, span
-                if d == 3:
-                    pass
-                pts = self._map(state, [a, b])
+                # one point per crossing, so a hue by place runs along the line exactly
+                pts = np.zeros((2 * n + 1, d))
+                pts[:, axis], pts[:, 1 - axis] = i * sp, np.arange(-n, n + 1) * sp
+                pts = self._map(state, pts)
                 polyline(
                     ctx,
                     cam,
@@ -146,13 +155,20 @@ class TransformGrid(ObjectBase):
                     color=axis_c if i == 0 else grid_c,
                     glow=me.style["glow"],
                 )
+        if p.nodes and rows:
+            ticks = np.arange(-n, n + 1) * sp
+            cross = np.array(list(itertools.product(ticks, ticks)))
+            if d == 3:
+                cross = np.c_[cross, np.zeros(len(cross))]
+            for c in self._map(state, cross):
+                disc(ctx, cam, c, w * 1.8, color=grid_c, glow=me.style["glow"])
         if p.square > 0:
             if d == 2:
                 quad = self._map(state, [[0, 0], [1, 0], [1, 1], [0, 1]])
                 ctx.triangles(
                     quad,
                     np.array([[0, 1, 2], [0, 2, 3]]),
-                    color=with_alpha(me.style["i"], p.opacity * p.square * 0.5),
+                    color=with_alpha(me.style["i"], p.opacity * p.square * (1 if p.solid else 0.5)),
                 )
                 polyline(
                     ctx,
@@ -164,6 +180,12 @@ class TransformGrid(ObjectBase):
             else:
                 cube = np.array(list(itertools.product((0, 1), repeat=3)), dtype=float)
                 img = self._map(state, cube)
+                if p.solid:  # the six faces, solid
+                    faces = [[0, 1, 3, 2], [4, 5, 7, 6], [0, 1, 5, 4], [2, 3, 7, 6],
+                             [0, 2, 6, 4], [1, 3, 7, 5]]  # fmt: skip
+                    tris = np.array([[f[0], f[1], f[2]] for f in faces]
+                                    + [[f[0], f[2], f[3]] for f in faces])  # fmt: skip
+                    ctx.triangles(img, tris, color=with_alpha(me.style["i"], p.opacity * p.square))
                 for a, b in itertools.combinations(range(8), 2):
                     if np.abs(cube[a] - cube[b]).sum() == 1:
                         polyline(
@@ -178,6 +200,25 @@ class TransformGrid(ObjectBase):
             for k, role in enumerate(("i", "j", "color")[:d]):
                 tip = self._map(state, np.eye(d)[k])[0]
                 arrow(ctx, cam, o, tip, w * 3, with_alpha(me.style[role], p.opacity * p.basis))
+
+    def _draw_lattice(self, ctx, cam, state, w, axis_c, grid_c, glow) -> None:
+        """Every lattice line along x, y and z, one point per crossing (so a hue by place
+        runs along it), the three through the origin heavier; a node at each crossing."""
+        p = self.me(state).params
+        n, sp = p.extent, p.spacing
+        ticks = np.arange(-n, n + 1) * sp
+        lines, heavy = [], []
+        for axis in range(3):
+            a, b = [k for k in range(3) if k != axis]
+            for u, v in itertools.product(ticks, ticks):
+                pts = np.zeros((len(ticks), 3))
+                pts[:, axis], pts[:, a], pts[:, b] = ticks, u, v
+                (heavy if u == 0 and v == 0 else lines).append(self._map(state, pts))
+        polylines(ctx, cam, np.array(lines), w, color=grid_c, glow=glow)
+        polylines(ctx, cam, np.array(heavy), w * 2.2, color=axis_c, glow=glow)
+        nodes = self._map(state, np.array(list(itertools.product(ticks, repeat=3))))
+        for c in nodes:
+            disc(ctx, cam, c, w * 1.8, color=grid_c, glow=glow)
 
 
 # ---------------------------------------------------------------- Arrow

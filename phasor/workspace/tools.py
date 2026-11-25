@@ -48,6 +48,33 @@ VERBS = (
     "circumscribe",
     "wiggle",
     "sweep",
+    "grow",
+    "shrink",
+    "squish",
+    "flatten",
+    "act",
+    "apply",
+    "generate",
+    "coset",
+    "quotient",
+    "permute",
+    "substitute",
+    "cancel",
+    "factor",
+    "expand",
+    "ignite",
+    "pulse",
+    "follow",
+    "ripple",
+    "spotlight",
+    "iterate",
+    "decompose",
+    "recompose",
+    "lift",
+    "slice",
+    "project",
+    "dissolve",
+    "assemble",
 )
 MAX_CHECKPOINTS = 32
 
@@ -358,11 +385,13 @@ class Workspace:
             args = (path, float(value))
         else:
             args = tuple(targets)
+        # the newer verbs take their options (``axis``, ``by``, ...) as a dict in ``value``
+        options = value if isinstance(value, dict) else {}
         step = Scene.of(e).at(at, offset)
 
         def go():
             try:
-                getattr(step, verb)(*args)
+                getattr(step, verb)(*args, **options)
             except _verbs.VerbError as err:
                 raise ToolError(str(err)) from err
 

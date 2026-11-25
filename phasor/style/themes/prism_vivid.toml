@@ -9,3 +9,5 @@ base = "prism"
 hue_along = 0.8   # spectrum cycles along each glowing stroke
 colormap = "spectrum"
 flow = 0.04       # the colors drift along the stroke this many cycles a second
+by = "length"     # not prism's by-place lattice hue
+only = []         # every glowing stroke

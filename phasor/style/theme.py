@@ -238,15 +238,33 @@ def _merge(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
 
 def _strokes(theme: str, data: dict[str, Any], colormaps: dict[str, Any]) -> dict[str, Any]:
     """``[strokes]`` (optional): ``hue_along`` > 0 runs a colormap along every glowing stroke
-    that does not color itself (cycles per stroke), turning ``flow`` cycles a second."""
+    that does not color itself (cycles per stroke), turning ``flow`` cycles a second.
+    ``by = "space"`` colors by place instead of by length: the hue runs ``hue_along`` cycles
+    per world unit along ``axis``, so strokes that meet share their color there and a whole
+    lattice wears one rainbow across it (the ``chroma`` look). ``only`` (a list of object
+    types; empty: all) limits the hue to those types, so a theme can light a lattice by place
+    without touching curves that color themselves another way."""
     along = float(data.get("hue_along", 0.0))
     cmap = str(data.get("colormap", "spectrum"))
+    by = str(data.get("by", "length"))
     if cmap not in colormaps:
         raise ThemeError(f"theme {theme!r}: [strokes] colormap {cmap!r} is not a colormap role")
     if along < 0:
         raise ThemeError(f"theme {theme!r}: [strokes] hue_along must be >= 0")
-    return {"hue_along": along, "flow": float(data.get("flow", 0.0)),
-            "lut": tuple(tuple(c) for c in colormaps[cmap])}  # fmt: skip
+    if by not in ("length", "space"):
+        raise ThemeError(f"theme {theme!r}: [strokes] by must be 'length' or 'space'")
+    only = data.get("only", [])
+    if not isinstance(only, list) or not all(isinstance(t, str) for t in only):
+        raise ThemeError(f"theme {theme!r}: [strokes] only must be a list of object types")
+    out = {"hue_along": along, "flow": float(data.get("flow", 0.0)),
+           "lut": tuple(tuple(c) for c in colormaps[cmap]), "only": tuple(only)}  # fmt: skip
+    if by == "space":
+        axis = [float(v) for v in data.get("axis", (1.0, 0.0, 0.0))]
+        norm = sum(v * v for v in axis) ** 0.5
+        if len(axis) != 3 or norm == 0:
+            raise ThemeError(f"theme {theme!r}: [strokes] axis must be three numbers, not all 0")
+        out["axis"] = tuple(v / norm for v in axis)
+    return out
 
 
 VERBS = (
@@ -268,6 +286,33 @@ VERBS = (
     "circumscribe",
     "wiggle",
     "sweep",
+    "grow",
+    "shrink",
+    "squish",
+    "flatten",
+    "act",
+    "apply",
+    "generate",
+    "coset",
+    "quotient",
+    "permute",
+    "substitute",
+    "cancel",
+    "factor",
+    "expand",
+    "ignite",
+    "pulse",
+    "follow",
+    "ripple",
+    "spotlight",
+    "iterate",
+    "decompose",
+    "recompose",
+    "lift",
+    "slice",
+    "project",
+    "dissolve",
+    "assemble",
 )
 
 

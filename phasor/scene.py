@@ -177,6 +177,143 @@ class At:
         """Run a number evenly to ``value``, with a live readout beside its object."""
         return self._verb("sweep", path, value, show)
 
+    # ===== group S =====
+
+    def grow(self, *ids: str, by: float = 1.5) -> At:
+        """Scale objects up by ``by`` about their own center, staggered."""
+        return self._verb("grow", *ids, by=by)
+
+    def shrink(self, *ids: str, by: float = 0.5) -> At:
+        """Scale objects down by ``by`` about their own center, staggered."""
+        return self._verb("shrink", *ids, by=by)
+
+    def squish(self, *ids: str, axis: str = "y", to: float = 0.4) -> At:
+        """Squash objects along ``axis`` to ``to`` of their size (``to=1`` restores)."""
+        return self._verb("squish", *ids, axis=axis, to=to)
+
+    def flatten(self, *ids: str, axis: str = "z") -> At:
+        """Squash objects flat along ``axis``; ``squish(axis=..., to=1)`` restores them."""
+        return self._verb("flatten", *ids, axis=axis)
+
+    # ===== end of group S =====
+
+    # ===== group A =====
+
+    def act(self, polygon_id: str, element: Any) -> At:
+        """A group element turns/flips a Polygon (``"r"``, ``"s"``, ``"sr2"`` or a number)."""
+        return self._verb("act", polygon_id, element)
+
+    def apply(self, grid_id: str, matrix: Any) -> At:
+        """Compose ``matrix`` onto a TransformGrid's current matrix (new = matrix @ current)."""
+        return self._verb("apply", grid_id, matrix)
+
+    def generate(self, graph_id: str, by: Any = None) -> At:
+        """A CayleyGraph grows from the identity, breadth first, generator by generator."""
+        return self._verb("generate", graph_id, by=by)
+
+    def coset(self, object_id: str, subgroup: Any = None) -> At:
+        """The elements of a clock or Cayley graph gather into their cosets."""
+        return self._verb("coset", object_id, subgroup=subgroup)
+
+    def quotient(self, object_id: str, subgroup: Any = None) -> At:
+        """Each coset collapses to one node: the picture of G/H (normal subgroups)."""
+        return self._verb("quotient", object_id, subgroup=subgroup)
+
+    def permute(self, permutation_id: str, sigma: Any) -> At:
+        """Tokens of a Permutation swap places along arcs to the arrangement ``sigma``."""
+        return self._verb("permute", permutation_id, sigma)
+
+    # ===== end of group A =====
+
+    # ===== group E =====
+
+    def substitute(self, eq_id: str, key: str, value: Any, source: str | None = None) -> At:
+        """Replace the part ``key`` of an equation by ``value``, flying in from ``source``."""
+        return self._verb("substitute", eq_id, key, value, source=source)
+
+    def cancel(self, eq_id: str, *keys: str) -> At:
+        """Strike through terms (by key) of an equation, fade them and close the gap."""
+        return self._verb("cancel", eq_id, *keys)
+
+    def factor(self, source: str, target: str) -> At:
+        """An equation becoming its factored form: terms drawn together under a bracket."""
+        return self._verb("factor", source, target)
+
+    def expand(self, source: str, target: str) -> At:
+        """An equation becoming its expanded form: terms spread over the others."""
+        return self._verb("expand", source, target)
+
+    def ignite(self, *ids: str, settle: float = 0.3) -> At:
+        """Light a stroke like a fuse: a bright head runs along it, then it settles brighter."""
+        return self._verb("ignite", *ids, settle=settle)
+
+    def pulse(self, *ids: str, n: int = 2) -> At:
+        """Flash ``n`` times, quick and even."""
+        return self._verb("pulse", *ids, n=n)
+
+    # ===== end of group E =====
+
+    # ===== group F1 =====
+
+    def follow(self, object_id: str, feature: str = "center", index: int = 0,
+               until: str | None = None) -> At:  # fmt: skip
+        """Keep the camera on a moving feature of an object (point ``index`` of it) for the
+        theme's follow time, or until the marker ``until``."""
+        return self._verb("follow", object_id, feature, index, until)
+
+    def ripple(self, object_id: str, at: Any = "center", index: int = 0, rings: int = 3) -> At:
+        """Rings of light spreading from a feature of an object (or a point ``at``), fading."""
+        return self._verb("ripple", object_id, at, index, rings)
+
+    def spotlight(self, *ids: str, until: str | None = None, pad: float = 0.25) -> At:
+        """A pool of light on ``ids``, the rest dimmed (fields too); no ids turns it off."""
+        return self._verb("spotlight", *ids, until=until, pad=pad)
+
+    # ===== end of group F1 =====
+
+    # ===== group F2a =====
+
+    def iterate(self, orbit_id: str, n: int | None = None) -> At:
+        """Show an orbit step by step (``n`` steps, one tenth of the theme's time each)."""
+        return self._verb("iterate", orbit_id, n)
+
+    def decompose(self, *ids: str) -> At:
+        """Split a Fourier sum into its harmonics, one row each."""
+        return self._verb("decompose", *ids)
+
+    def recompose(self, *ids: str) -> At:
+        """Bring the harmonics back into the sum."""
+        return self._verb("recompose", *ids)
+
+    # ===== end of group F2a =====
+
+    # ===== group F2b =====
+
+    def lift(self, plane_id: str, height: float = 0.6) -> At:
+        """Raise a domain coloring into the landscape of its function (``<id>.surface``)."""
+        return self._verb("lift", plane_id, height)
+
+    def slice(self, surface_id: str, axis: str = "x", at: float | None = None,
+              start: float | None = None) -> At:  # fmt: skip
+        """Sweep a cutting plane through a surface, drawing the curve where they meet."""
+        return self._verb("slice", surface_id, axis, at, start)
+
+    def project(self, v_id: str, onto: str, label: str | None = None) -> At:
+        """Project an arrow (or point) onto an arrow or line: a dashed drop, then the shadow."""
+        return self._verb("project", v_id, onto, label)
+
+    def dissolve(self, *ids: str, count: int = 900, spread: float | None = None,
+                 seed: int = 0) -> At:  # fmt: skip
+        """Shatter objects into drifting points of light (``<id>.dust``)."""
+        return self._verb("dissolve", *ids, count=count, spread=spread, seed=seed)
+
+    def assemble(self, *ids: str, count: int = 900, spread: float | None = None,
+                 seed: int = 0) -> At:  # fmt: skip
+        """Points of light fly together into the object, which fades in as they arrive."""
+        return self._verb("assemble", *ids, count=count, spread=spread, seed=seed)
+
+    # ===== end of group F2b =====
+
 
 def _caller_dir() -> Path:
     """The folder of the script that called ``Scene(...)``, or the working folder."""

@@ -32,7 +32,7 @@ s.set("camera.height", 6)  # world units visible top to bottom
 | --- | --- | --- |
 | `Dot` | `pos`, `r` (world radius, default 0.1) | `color` (emphasis, primary), `glow` (glow, none) |
 | `Line` | `points` (2 or more), `progress`, `hue_along` (colormap cycles along the length; 0: one color), `hue` (shifts them) | `color` (emphasis, primary), `stroke` (stroke, regular), `glow` (glow, none), `colormap` (colormap, spectrum) |
-| `cx.DomainColoring` | `function` (e.g. `"1/(z**2 + 1)"`; it may use the constant `a`), `a` ((re, im), the value of `a`: animate it with `.to("id.a", (re, im))` and the zeros and poles move, nothing recompiles), `pos` (center), `size` (w, h), `contour` (0-1), `softness` (0-1, edge feathering), `hue` (turns the wheel); the prism look: `radius` (> 0 turns it on: zeros and poles glow this far), `ambient` (0-1, light elsewhere), `lines` (glowing rays of phase per turn, plus a ring each time \|f\| doubles) | `colormap` (colormap, phase), `glow` (glow, none; used by the prism look) |
+| `cx.DomainColoring` | `function` (e.g. `"1/(z**2 + 1)"`; it may use the constant `a`), `a` ((re, im), the value of `a`: animate it with `.to("id.a", (re, im))` and the zeros and poles move, nothing recompiles), `pos` (center), `size` (w, h), `contour` (0-1), `softness` (0-1, edge feathering), `hue` (turns the wheel); the prism look: `radius` (> 0 turns it on: zeros and poles glow this far), `ambient` (0-1, light elsewhere), `lines` (glowing rays of phase per turn, plus a ring each time \|f\| doubles), `white` (0-1, the brightest light runs white-hot; preset `chroma`) | `colormap` (colormap, phase), `glow` (glow, none; used by the prism look) |
 | `cx.Fractal` | `kind` (`mandelbrot`/`julia`), `c` (Julia constant), `pos`, `size`, `max_iter`, `density`, `hue`, `center` (exact text `"re im"`), `zoom` (powers of ten, to 280), `steady` (hold the outer color in a dive); the prism look: `radius` (> 0 turns it on: the edge of the set glows this far, in world units of the rectangle), `ambient` (0-1, light far from the edge); the cloud mode `kind="buddhabrot"`: `count`, `seed`, `exposure`, `point_size`, `white` (as `cloud.PointCloud`; `max_iter` at most 5000) | `colormap` (colormap, sequential), `glow` (glow, none; used by the prism look and the cloud mode) |
 | `cx.RiemannSurface` | `kind` (`sqrt`/`cbrt`/`log`), `pos` (branch point), `radius`, `height` (`re`/`im`), `scale`, `rings`, `segments` | `colormap` (colormap, phase), `material` (surface, solid) |
 | `cloud.PointCloud` | `source` (`roots`/`attractor`/`buddhabrot`/`points`), `degree` and `coefficients` (roots), `kind` (`clifford`/`dejong`/`lorenz`) and `constants` (attractor), `max_iter` (buddhabrot), `points` and `values` (given directly), `count` (at most), `seed`, `pos` (centre and origin of the points), `size` (the rectangle it is seen in), `scale`, `point_size` (splat radius, px), `exposure`, `hue`, `color_by` (`source`/`phase`), `twist` (roots: turns of the last coefficient, animatable), `twinkle` (0-1, life), `white` (0-1, white-hot dense parts) | `colormap` (colormap, spectrum), `glow` (glow, none) |
@@ -569,7 +569,7 @@ assert field.shape == (90, 160) and (field == -1).any()  # -1 marks points in th
 | Kernel | Parameters | Returns |
 | --- | --- | --- |
 | `domain` | `function`, `center`, `height`, `contour=0.35`, `lut=None`, `precision="f32"`, `a=0j` (the constant `a` in the function) | RGBA: hue = phase, bands = each doubling of the modulus, poles white |
-| `domain_glow` | `function`, `center`, `height`, `lut=None`, `radius=0.3`, `ambient=0.08`, `contour=0.15`, `precision="f32"`, `lines=0`, `line_glow=0.6`, `a=0j` | RGBA: hue = phase, lit near zeros and poles (Newton distance \|f/f'\|), rays and rings about a pixel wide; alpha = glow weight |
+| `domain_glow` | `function`, `center`, `height`, `lut=None`, `radius=0.3`, `ambient=0.08`, `contour=0.15`, `precision="f32"`, `lines=0`, `line_glow=0.6`, `a=0j`, `white=0.0` | RGBA: hue = phase, lit near zeros and poles (Newton distance \|f/f'\|), rays and rings about a pixel wide, toward white by white x lit^2; alpha = glow weight |
 | `escape` | `center`, `height`, `max_iter=256`, `julia=None`, `precision=None` | smooth escape count; Mandelbrot, or the Julia set of `julia=(re, im)` |
 | `fractal_glow` | `field` (from `escape` or `deep`), `lut`, `density=0.35`, `offset=0.0`, `inside=(0,0,0)`, `radius=2.0` (pixels), `ambient=0.08` | RGBA: the palette ramp by sqrt(count), lit along the edge of the set (distance from the count's gradient, 1 / (ln 2 \|grad\|)); inside = `inside`, alpha 0; alpha = glow weight |
 | `tonemap` | `image`, `exposure=1.0` | ACES filmic curve, linear in and out (whole image) |
@@ -751,6 +751,73 @@ A look file may start from another with `base = "prism"` and change only what it
 During a `transform`, an equation's drift passes from the source's to the target's, so
 nothing jumps.
 
+**The chroma look** (`look="chroma"`, an option for algebra and complex functions; the
+default stays `prism`): a deep indigo ground, vivid candy hues (red, yellow, cyan, magenta)
+and white equations. Domain coloring is a luminous wash (`cx.DomainColoring` preset `chroma`:
+a wide soft light, no lines, `white` 0.8 so the places where the function does the most run
+white-hot). Glowing strokes take their hue from *where they are*, not from their length:
+the theme's `[strokes] by = "space"` runs `hue_along` cycles per world unit along `axis`, so
+edges and nodes that meet share a colour and one rainbow runs across a whole lattice
+(`linalg.TransformGrid(lattice=True)`, Cayley graphs, subgroup lattices, networks). Any theme
+may set `by = "space"`, and `only = [types]` limits it to those object types: the `prism`
+theme lights linear algebra (`transform_grid`, `eigen_lines`, `arrow`, `linear_system`) by
+place and leaves every other curve its own hue. `examples/chroma_algebra.py` is the
+reference scene.
+
+```python
+from phasor import Scene, cx, linalg
+
+c = Scene("candy", look="chroma", passes=None)
+c.add(cx.DomainColoring(id="plane", function="(z**3 - 1)/z", size=(8, 4.5)))
+cage = ((1, 0.3, 0), (0, 1, 0.4), (0.2, 0, 1))
+c.add(linalg.TransformGrid(id="cage", matrix=cage, lattice=True, square=0, basis=0))
+p = c.engine.state_at(0.0)
+assert p["plane"].params.white > 0 and p.strokes["axis"]  # white-hot wash, hue by place
+assert c.engine.document.meta.theme == "chroma"
+```
+
+**The second set of verbs.** 27 more choreography verbs, each timed by the theme's
+`[motion.<verb>]`, tagged with its name, and anchored to a marker like the first set. Each
+group has its own page with a runnable example; through MCP they are
+`animate(verb=..., targets=[...], value={options})`.
+
+| Page | Verbs |
+|---|---|
+| `docs/ai/verbs_scale.md` | `grow`, `shrink`, `squish`, `flatten`: scale any object about its centre, per axis |
+| `docs/ai/verbs_algebra.md` | `act`, `apply`, `generate`, `coset`, `quotient`, `permute` |
+| `docs/ai/verbs_equations.md` | `substitute`, `cancel`, `factor`, `expand`, `ignite`, `pulse` |
+| `docs/ai/verbs_camera.md` | `follow`, `ripple`, `spotlight` |
+| `docs/ai/verbs_signals.md` | `iterate`, `decompose`, `recompose` |
+| `docs/ai/verbs_space.md` | `lift`, `slice`, `project`, `dissolve`, `assemble` |
+
+Every object has a `stretch` parameter, `(1, 1, 1)` by default: a per-axis scale of what it
+draws, about the centre of its bounds. The scale verbs own it (`grow`, `shrink`, `squish`
+and `flatten` write it); bounds, features and the inspector follow the picture. New object
+types the verbs make as children, usually not added by hand:
+
+- `light.Ripple(target, ...)`: rings of light spreading from a spot (the `ripple` verb).
+- `light.Spotlight(center, radius, soft, strength)`: a pool of light with the rest of the
+  frame, fields included, dimmed (the `spotlight` verb).
+- `light.Follow(target, feature, index, on)`: what the camera follows (the `follow` verb);
+  it draws nothing.
+- `space.Landscape(function, to, blend, a, pos, size, n, height, cap, hue, lines)`: the
+  landscape of a function of z, `height` 0 flat (the `lift` verb).
+- `space.CutPlane(surface, axis, at, pad)`: a plane through a surface and the curve where
+  they meet (the `slice` verb).
+- `space.Dashed(start, end, progress, dashes, duty, square, back)`: a dashed line (the
+  `project` verb).
+
+```python
+from phasor import Dot, Scene
+
+s = Scene("scale_api", passes=None)
+s.add(Dot(id="d", pos=(0, 0)))
+s.marker("go", 1.0)
+s.at("go").grow("d", by=2.0)
+assert s.engine.state_at(0.0)["d"].params.stretch == (1.0, 1.0, 1.0)
+assert s.engine.state_at(4.0)["d"].params.stretch == (2.0, 2.0, 2.0)
+```
+
 **Palettes within the prism looks.** The lens and glow stay; the colors are a choice:
 `Scene(..., look="prism_everywhere", palette="moonlight")`. `spectrum` is the prism rainbow
 (the default), `moonlight` is white with a cool and warm shimmer, then `gold`, `glacier`,
@@ -857,7 +924,11 @@ s.at("scan").sweep("wind.freq", 8.0, show=False)
 See `examples/fourier_winding.py` for a two-tone sweep.
 
 **`linalg`**: `TransformGrid(matrix=((a, b), (c, d)))` (2x2: the grid, the unit square whose
-area is the determinant, the images of the basis vectors; 3x3: the unit cube), `EigenLines`,
+area is the determinant, the images of the basis vectors; 3x3: the unit cube, and with
+`lattice=True` the whole cage: lines along x, y and z through every lattice point, a node at
+each crossing; `nodes=True` dots every crossing of the flat grid; `solid=True` fills the unit
+square or cube with solid colour, not a faint tint; the `prism` look sets both and lights
+grids, eigenlines and vectors with hue by place), `EigenLines`,
 `Arrow(start=, end=)`, `Matrix(matrix=expr("grid.matrix"))` (entries stay linked). Semantics
 give determinant, eigenvalues, singular values and rank. `linalg_math` has `svd` (its
 `stages` are rotate, stretch, rotate: morph through them), `null_space`, `gram_schmidt`,
@@ -1583,6 +1654,26 @@ Example: `examples/convolution.py`. The prism looks make both signals and the ou
 product lit where they overlap. Numerics (a sum on a fine grid, checked against box * box = a
 triangle, decay * decay = t e^-at and Gaussian widths adding) are in
 `phasor/domains/convolution_math.py`.
+- `dyn.Orbit(kind="map", function="z**2 + a", a=(0, 0), start=(0, 0), steps=12, progress=1,
+  pos=(0, 0, 0), scale=1)` is a map applied again and again: the points of the orbit joined by
+  glowing segments, the colour running along the steps. `kind="newton"` iterates Newton's
+  method on the polynomial `function`; `kind="cobweb"` iterates a real map and draws its
+  graph, the diagonal and the staircase (`window`, the interval of x). The formula is read by
+  the whitelist parser, never run as Python. An orbit stops early when it converges (`tol`) or
+  leaves `|z| <= bail`. Animate `progress` or use the `iterate` verb
+  (`docs/ai/verbs_signals.md`); the inspector reports `steps_total`, `steps_shown`,
+  `converged`, `escaped` and the points. `fourier.PartialSum(spread=0..1)` separates the first
+  eight harmonics into rows (the `decompose` and `recompose` verbs).
+
+```python
+from phasor import Scene, dyn
+
+s = Scene("orbit_api", passes=None)
+s.add(dyn.Orbit(id="newton", kind="newton", function="z**3 - 1", start=(0.4, 0.9), steps=8))
+sem = s.engine.inspect(0.0, id="newton")["objects"][0]["semantic"]
+assert sem["steps_total"] > 0 and sem["steps_shown"] == sem["steps_total"]
+```
+
 - `dyn.StrangeAttractor(system="lorenz", sigma=10, rho=28, beta=8/3, seed=0, t_end=36,
   progress=1, pos=(0, 0, 0), size=6)` traces a single three-dimensional trajectory. Use
   `system="rossler"` or `"thomas"` for their classic parameter sets. The three named

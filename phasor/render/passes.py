@@ -21,6 +21,7 @@ from typing import Any
 import numpy as np
 
 from phasor.core import text as text_metrics
+from phasor.core.objects import raw_geometry, stretch_of, stretch_pivot, stretch_points
 from phasor.core.state import ObjectState, SceneState
 from phasor.core.timing import stage
 from phasor.layout.geometry import occludes
@@ -239,30 +240,77 @@ def _define(src: str, kind: str) -> str:
     return f"{head}\n{defines[kind]}\n{rest}"
 
 
-def _stroke_hue(state, pass_) -> tuple | None:
-    """The theme's ``[strokes]`` hue for the color pass: (lut, cycles, shift at t)."""
+def _stroke_hue(state, pass_, obj=None) -> tuple | None:
+    """The theme's ``[strokes]`` hue for the color pass: (lut, cycles, shift at t), plus the
+    unit ``axis`` when the theme colors by place (``by = "space"``). None for an ``obj``
+    whose type the theme's ``only`` leaves out."""
     st = getattr(state, "strokes", None) or {}
     if pass_ != "color" or not st.get("hue_along") or not st.get("lut"):
         return None
-    return (np.asarray(st["lut"], dtype=np.float64), float(st["hue_along"]),
-            (float(st.get("flow", 0.0)) * state.t) % 1.0)  # fmt: skip
+    if st.get("only") and obj is not None and obj.impl.type not in st["only"]:
+        return None
+    hue = (np.asarray(st["lut"], dtype=np.float64), float(st["hue_along"]),
+           (float(st.get("flow", 0.0)) * state.t) % 1.0)  # fmt: skip
+    return (*hue, np.asarray(st["axis"], dtype=np.float64)) if "axis" in st else hue
+
+
+STRETCH_BUDGET = 16  # a stretched field computes at most this many times its pixels
+
+
+def _stretched_pixels(pixels, kr: float, ku: float):
+    """A field's ``pixels`` for its quad stretched by ``kr`` along ``right`` and ``ku`` along
+    ``up``. A share of the quad is the same place before and after, so the view is turned
+    back into the unstretched quad's units; when the two stretches differ, the callback's
+    square pixels are computed at the unstretched aspect and resampled (nearest) to fit.
+    The view's width is taken as ``height * pw / ph``, as every field takes it, so a field
+    squeezed to a pixel or two across is only roughly right (it is a sliver by then)."""
+
+    def stretched(pw: int, ph: int, center: tuple[float, float], height: float) -> np.ndarray:
+        ratio = ku / kr  # unstretched columns per stretched column, for the same rows
+        qw, qh = pw * max(ratio, 1.0), ph / min(ratio, 1.0)
+        over = max(np.sqrt(qw * qh / (STRETCH_BUDGET * pw * ph)), 1.0)  # keeps the aspect
+        qw, qh = max(1, round(qw / over)), max(1, round(qh / over))
+        img = np.asarray(pixels(qw, qh, (center[0] / kr, center[1] / ku), height / ku))
+        if (qw, qh) == (pw, ph):
+            return img
+        rows = np.minimum(((np.arange(ph) + 0.5) * qh / ph).astype(int), qh - 1)
+        cols = np.minimum(((np.arange(pw) + 0.5) * qw / pw).astype(int), qw - 1)
+        return img[rows][:, cols]
+
+    return stretched
 
 
 class _Collector:
-    """Records an object's draw calls; the renderer replays them for the current pass."""
+    """Records an object's draw calls; the renderer replays them for the current pass.
+    With ``stretch`` (scale per axis, pivot) it records the stretched geometry
+    (``ParamsBase.stretch``): positions and quads scaled about the pivot, normals by the
+    inverse, and text with the scale to apply to its quad when drawn."""
 
-    def __init__(self, stroke_hue: tuple | None = None) -> None:
+    def __init__(self, stroke_hue: tuple | None = None, stretch: tuple | None = None) -> None:
         self.commands: list[tuple[str, dict[str, Any]]] = []
         # (lut, cycles per stroke, shift): the theme's hue along glowing strokes, or None.
         self.stroke_hue = stroke_hue
+        self.stretch = stretch
+
+    def _moved(self, points):
+        return points if self.stretch is None else stretch_points(points, *self.stretch)
 
     def triangles(self, positions, indices=None, *, color, glow=1.0, colors=None) -> None:
+        positions = self._moved(positions)
         self.commands.append(
             ("mesh", {"positions": positions, "indices": indices, "color": color, "glow": glow,
                       "colors": colors})
         )  # fmt: skip
 
     def field(self, corner, right, up, *, pixels, opacity=1.0, glow=1.0) -> None:
+        if self.stretch is not None:
+            s = self.stretch[0]
+            r, u = np.asarray(right, dtype=np.float64), np.asarray(up, dtype=np.float64)
+            kr = float(np.linalg.norm(r * s) / max(np.linalg.norm(r), 1e-300))
+            ku = float(np.linalg.norm(u * s) / max(np.linalg.norm(u), 1e-300))
+            if (kr, ku) != (1.0, 1.0):
+                pixels = _stretched_pixels(pixels, kr, ku)
+            corner, right, up = self._moved(corner), r * s, u * s
         self.commands.append(
             ("field", {"corner": np.asarray(corner, dtype=np.float64), "right": np.asarray(right),
                        "up": np.asarray(up), "pixels": pixels, "opacity": opacity,
@@ -272,6 +320,13 @@ class _Collector:
     def surface(self, positions, indices, *, normals, colors, uv=None, material="solid",
                 opacity=1.0, glow=1.0) -> None:  # fmt: skip
         n = len(positions)
+        if self.stretch is not None:
+            positions = self._moved(positions)
+            nm = np.asarray(normals, dtype=np.float64)
+            turned = nm / self.stretch[0]  # normals take the inverse transpose of the scale
+            size = np.linalg.norm(turned, axis=-1, keepdims=True)
+            normals = turned * (np.linalg.norm(nm, axis=-1, keepdims=True)
+                                / np.where(size > 0, size, 1.0))  # fmt: skip
         self.commands.append(
             ("surface", {"positions": np.asarray(positions, dtype=np.float64),
                          "indices": np.asarray(indices), "normals": np.asarray(normals),
@@ -284,10 +339,11 @@ class _Collector:
              reveal=1.0) -> None:  # fmt: skip
         if reveal <= 0:
             return
-        self.commands.append(
-            ("text", {"text": text, "origin": origin, "height": height, "color": color,
-                      "anchor": anchor, "glow": glow, "reveal": min(float(reveal), 1.0)})
-        )  # fmt: skip
+        c = {"text": text, "origin": origin, "height": height, "color": color,
+             "anchor": anchor, "glow": glow, "reveal": min(float(reveal), 1.0)}  # fmt: skip
+        if self.stretch is not None:  # its quad is stretched when drawn
+            c["stretch"] = self.stretch
+        self.commands.append(("text", c))
 
 
 class PendingRead:
@@ -429,8 +485,15 @@ class GLRenderer:
     # ------------------------------------------------------------ drawing
 
     def _commands(self, state, obj: ObjectState, pass_) -> list:
-        collector = _Collector(_stroke_hue(state, pass_))
-        obj.impl.draw(collector, state, pass_)
+        s = stretch_of(obj)
+        if s is None:
+            collector = _Collector(_stroke_hue(state, pass_, obj))
+            obj.impl.draw(collector, state, pass_)
+            return collector.commands
+        stretch = (s, stretch_pivot(obj.impl, state))
+        collector = _Collector(_stroke_hue(state, pass_, obj), stretch)
+        with raw_geometry(obj.id):  # its own bounds read inside draw are not stretched twice
+            obj.impl.draw(collector, state, pass_)
         return collector.commands
 
     def _draw_object(self, state, obj: ObjectState, pass_, size, order: int, zoom: float,
@@ -486,7 +549,13 @@ class GLRenderer:
                 corner, wv, hv = text_metrics.quad(
                     c["text"], c["origin"], c["height"], c["anchor"], cam.right, cam.up
                 )
-                px = round(c["height"] / cam.units_per_height(c["origin"]) * size[1])
+                height, at = c["height"], c["origin"]
+                if "stretch" in c:  # the quad itself is stretched: squished text is squished
+                    s, pivot = c["stretch"]
+                    k = float(np.linalg.norm(hv * s) / max(np.linalg.norm(hv), 1e-300))
+                    corner, wv, hv = stretch_points(corner, s, pivot), wv * s, hv * s
+                    height, at = height * k, stretch_points(at, s, pivot)
+                px = round(height / cam.units_per_height(at) * size[1])
                 tex = self._text_texture(c["text"], int(np.clip(px, 2, MAX_TEXT_PX)))
                 tex.use(0)
                 prog["u_tex"].value = 0

@@ -196,7 +196,8 @@ def domain(
 # ratio), with no root finding, so it works for any formula. Weight w = 1 / (1 + (d / r)^2):
 # 1 at a zero or pole, a long soft tail (the haze) away from them. Colour is the phase from the
 # table, as in the classic picture, at ambient + (1 - ambient) w, with soft sinusoidal modulus
-# bands; alpha carries w, the glow weight the renderer turns into light and bloom.
+# bands; alpha carries w, the glow weight the renderer turns into light and bloom. ``white``
+# blends the hue toward white where the light is strongest (by white * lit^2).
 
 
 def glow_source_for(function: ComplexFunction, to: ComplexFunction | None = None) -> str:
@@ -210,7 +211,7 @@ extern "C" __global__ void phasor_domain_glow("""
         + _blend_param(to)
         + """,
     const float* lut, int lut_n, float radius, float ambient, float contour,
-    int lines, float line_glow, float* out)
+    int lines, float line_glow, float white, float* out)
 {"""
         + VIEW_BODY
         + """
@@ -254,8 +255,11 @@ extern "C" __global__ void phasor_domain_glow("""
     if (k0 >= lut_n) k0 = lut_n - 1;
     real u = f - (real)k0;
     int k1 = (k0 + 1) % lut_n;
-    for (int c = 0; c < 3; c++)
-        o[c] = (float)(shade * ((real)lut[3 * k0 + c] * (R(1) - u) + (real)lut[3 * k1 + c] * u));
+    real wh = (real)white * lit * lit;  // where lit, the hue gives way to white light
+    for (int c = 0; c < 3; c++) {
+        real col = (real)lut[3 * k0 + c] * (R(1) - u) + (real)lut[3 * k1 + c] * u;
+        o[c] = (float)(shade * (col * (R(1) - wh) + wh));
+    }
     o[3] = (float)lit;
 }
 """
@@ -277,6 +281,7 @@ def domain_glow_reference(
     a: complex = 0j,
     to: ComplexFunction | None = None,
     blend: float = 0.0,
+    white: float = 0.0,
 ) -> np.ndarray:
     lut = phase_lut() if lut is None else np.asarray(lut, dtype=np.float32)
     x, y = plane(tile, center, height)
@@ -312,7 +317,9 @@ def domain_glow_reference(
     fl = h * len(lut)
     k0 = np.minimum(fl.astype(np.int64), len(lut) - 1)
     u = (fl - k0)[..., None]
-    rgb = shade[..., None] * (lut[k0] * (1 - u) + lut[(k0 + 1) % len(lut)] * u)
+    wh = (white * lit * lit)[..., None]
+    col = lut[k0] * (1 - u) + lut[(k0 + 1) % len(lut)] * u
+    rgb = shade[..., None] * (col * (1 - wh) + wh)
     out = np.ones((tile.h, tile.w, 4), dtype=np.float32)
     out[..., :3] = np.where(pole[..., None], 1.0, rgb)
     out[..., 3] = np.where(pole, 1.0, lit)
@@ -322,7 +329,7 @@ def domain_glow_reference(
 @kernel(
     "domain_glow",
     "(tile, function, center, height, lut=None, radius=0.3, ambient=0.08, contour=0.15, "
-    "precision='f32', lines=0, line_glow=0.6, a=0j, to=None, blend=0.0) "
+    "precision='f32', lines=0, line_glow=0.6, a=0j, to=None, blend=0.0, white=0.0) "
     "-> float32[h, w, 4] linear RGB, alpha = glow",
     reference=domain_glow_reference,
 )
@@ -342,12 +349,15 @@ def domain_glow(
     a: complex = 0j,
     to: ComplexFunction | None = None,
     blend: float = 0.0,
+    white: float = 0.0,
 ):
     """The prism look of ``function``: phase as hue, lit near its zeros and poles (within
     about ``radius`` world units), ``ambient`` light elsewhere, soft modulus bands of depth
     ``contour``; ``lines`` rays of constant phase per turn plus a ring each time |f|
-    doubles, about a pixel wide, lit by ``line_glow``; alpha is the glow weight. With ``to``,
-    the picture is of (1 - ``blend``) function + ``blend`` to."""
+    doubles, about a pixel wide, lit by ``line_glow``; alpha is the glow weight. ``white``
+    (0-1) turns the hue toward white light by ``white * lit^2``, so the brightest places run
+    white-hot (the chroma look); 0 leaves the picture as it was. With ``to``, the picture is
+    of (1 - ``blend``) function + ``blend`` to."""
     if radius <= 0:
         raise ValueError("radius must be positive")
     table = np.ascontiguousarray(phase_lut() if lut is None else lut, dtype=np.float32)
@@ -356,6 +366,7 @@ def domain_glow(
     args = (*view_args(tile, center, height), np.float64(complex(a).real),
             np.float64(complex(a).imag), *_blend_arg(to, blend), gpu.cp.asarray(table),
             np.int32(len(table)), np.float32(radius), np.float32(ambient),
-            np.float32(contour), np.int32(lines), np.float32(line_glow), out)  # fmt: skip
+            np.float32(contour), np.int32(lines), np.float32(line_glow), np.float32(white),
+            out)  # fmt: skip
     gpu.launch(compiled, tile.n, args)
     return out

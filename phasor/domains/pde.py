@@ -438,6 +438,10 @@ class Surface(_Plate):
         Z = p.pos[2] + u / p.scale * p.height
         return np.stack([X, Y, Z], axis=-1), u
 
+    def grid_points(self, state: SceneState) -> np.ndarray:
+        """The surface as a (nx, ny, 3) grid of world points (what ``slice`` cuts)."""
+        return self._mesh(state)[0]
+
     def world_bounds(self, state: SceneState) -> Bounds:
         pts, _ = self._mesh(state)
         return Bounds.of_points(pts.reshape(-1, 3))

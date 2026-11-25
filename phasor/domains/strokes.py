@@ -88,8 +88,12 @@ def polylines(ctx: DrawContext, cam: Camera, pts, width, *, color, glow: float =
             note(p)
     theme_hue = getattr(ctx, "stroke_hue", None)
     if colors is None and theme_hue is not None and glow > 1.0:
-        lut, cycles, shift = theme_hue
-        colors = np.stack([hue_colors(p, lut, cycles, shift) for p in pts])
+        lut, cycles, shift, *axis = theme_hue
+        if axis:  # by place: cycles per world unit along the axis
+            colors = lut_colors(lut, (pts.reshape(-1, 3) @ axis[0]) * cycles + shift)
+            colors = colors.reshape(count, n, 4)
+        else:
+            colors = np.stack([hue_colors(p, lut, cycles, shift) for p in pts])
     width = np.asarray(width, dtype=np.float64)
     if width.ndim:
         width = np.broadcast_to(width, (count, n))
@@ -130,7 +134,14 @@ def segments(ctx: DrawContext, cam: Camera, pairs, width, *, color, glow: float 
 
 
 def disc(ctx: DrawContext, cam: Camera, center, radius: float, *, color, glow: float = 1.0) -> None:
-    """A filled disc facing the camera."""
+    """A filled disc facing the camera. A glowing one takes the theme's hue by place when the
+    theme colors strokes by place, so a lattice's nodes match the edges meeting at them."""
+    theme_hue = getattr(ctx, "stroke_hue", None)
+    if theme_hue is not None and len(theme_hue) == 4 and glow > 1.0:
+        lut, cycles, shift, axis = theme_hue
+        rgb = lut_colors(lut, [float(np.asarray(center, dtype=np.float64) @ axis) * cycles
+                               + shift])[0, :3]  # fmt: skip
+        color = (*rgb, color[3] if len(color) > 3 else 1.0)
     a = np.linspace(0, 2 * np.pi, DISC_SEGMENTS, endpoint=False)
     c = np.asarray(center, dtype=np.float64)
     rim = c + radius * (np.outer(np.cos(a), cam.right) + np.outer(np.sin(a), cam.up))
@@ -164,6 +175,11 @@ def arrow(ctx: DrawContext, cam: Camera, a, b, width, color, glow: float = 1.0,
     base = b - unit * head
     polyline(ctx, cam, [a, base], width, color=color, glow=glow)
     tri = np.array([b, base + side * head * 0.45, base - side * head * 0.45])
+    theme_hue = getattr(ctx, "stroke_hue", None)
+    if theme_hue is not None and len(theme_hue) == 4 and glow > 1.0:  # hue by place: the tip's
+        lut, cycles, shift, axis = theme_hue
+        rgb = lut_colors(lut, [float(np.asarray(b, dtype=np.float64) @ axis) * cycles + shift])
+        color = (*rgb[0, :3], color[3] if len(color) > 3 else 1.0)
     ctx.triangles(tri, np.array([[0, 1, 2]]), color=color, glow=glow)
 
 

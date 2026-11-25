@@ -18,7 +18,7 @@ import sympy as sp
 from phasor.core.rng import rng
 from phasor.core.simulation import State
 from phasor.domains.linalg_math import expm
-from phasor.render.gpu.codegen import FunctionError, parse_expression
+from phasor.render.gpu.codegen import ComplexFunction, FunctionError, Z, parse_expression
 
 __all__ = [
     "KINDS",
@@ -29,6 +29,8 @@ __all__ = [
     "fixed_points",
     "linear_paths",
     "nullcline_segments",
+    "orbit",
+    "orbit_map",
     "trajectories",
 ]  # fmt: skip
 
@@ -372,3 +374,40 @@ class AttractorSimulation:
         if not np.isfinite(point).all():
             point = np.full(3, np.nan)
         return {"point": point}
+
+
+# ---------------------------------------------------------------- orbits of a map
+
+
+def orbit_map(function: str, kind: str):
+    """The step ``z -> F(z, a)`` of an orbit as a NumPy function ``(z, a) -> z'``. ``kind``:
+    ``map`` and ``cobweb`` iterate ``function`` itself (``z**2 + a``, ``a*z*(1-z)``);
+    ``newton`` reads it as a polynomial p and iterates Newton's method ``z - p / p'``.
+    The formula is read with the whitelist parser (names ``z``, ``a``, ``pi``, ``e``, ``i``),
+    never evaluated as Python."""
+    f = ComplexFunction.parse(function, constant=True)
+    if kind != "newton":
+        return f.numpy()
+    derivative = sp.diff(f.expr, Z)
+    if derivative == 0:
+        raise FunctionError(f"{function!r} is constant: Newton's method needs a polynomial in z")
+    return ComplexFunction(function, Z - f.expr / derivative).numpy()
+
+
+def orbit(step, z0: complex, a: complex, steps: int, bail: float, tol: float):
+    """The orbit z0, z1, ... of ``step`` as (points, converged_at, escaped): at most ``steps``
+    steps; it ends early when a step moves less than ``tol`` (``converged_at`` is that
+    index) or when a point leaves ``|z| <= bail`` or stops being a number (``escaped``; that
+    point is not kept). ``points`` is a complex array of at least the start."""
+    pts = [complex(z0)]
+    converged_at, escaped = None, False
+    for k in range(steps):
+        nxt = complex(step(np.asarray(pts[-1], dtype=np.complex128), a))
+        if not np.isfinite(nxt) or abs(nxt) > bail:
+            escaped = True
+            break
+        pts.append(nxt)
+        if abs(nxt - pts[-2]) < tol:
+            converged_at = k + 1
+            break
+    return np.asarray(pts, dtype=np.complex128), converged_at, escaped

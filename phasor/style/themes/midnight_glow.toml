@@ -230,3 +230,113 @@ ease = "smooth"
 [motion.sweep]
 duration = 2.5
 ease = "in_out"
+
+# The verbs added after the first motion set (the second set; see time/verbs.py).
+
+[motion.grow]
+duration = 0.8
+ease = "smoother"
+
+[motion.shrink]
+duration = 0.8
+ease = "smoother"
+
+[motion.squish]
+duration = 0.9
+ease = "smoother"
+
+[motion.flatten]
+duration = 1.0
+ease = "smoother"
+
+[motion.act]
+duration = 1.2
+ease = "smoother"
+
+[motion.apply]
+duration = 1.4
+ease = "smoother"
+
+[motion.generate]
+duration = 2.0
+ease = "in_out"
+
+[motion.coset]
+duration = 1.6
+ease = "smoother"
+
+[motion.quotient]
+duration = 1.8
+ease = "smoother"
+
+[motion.permute]
+duration = 1.2
+ease = "smoother"
+
+[motion.substitute]
+duration = 1.2
+ease = "smoother"
+
+[motion.cancel]
+duration = 0.9
+ease = "smooth"
+
+[motion.factor]
+duration = 1.3
+ease = "smoother"
+
+[motion.expand]
+duration = 1.3
+ease = "smoother"
+
+[motion.ignite]
+duration = 1.2
+ease = "in_out"
+
+[motion.pulse]
+duration = 0.8
+ease = "smooth"
+
+[motion.follow]
+duration = 2.0
+ease = "smoother"
+
+[motion.ripple]
+duration = 1.2
+ease = "out"
+
+[motion.spotlight]
+duration = 1.0
+ease = "smooth"
+
+[motion.iterate]
+duration = 2.5
+ease = "in_out"
+
+[motion.decompose]
+duration = 2.0
+ease = "smoother"
+
+[motion.recompose]
+duration = 2.0
+ease = "smoother"
+
+[motion.lift]
+duration = 2.0
+ease = "smoother"
+
+[motion.slice]
+duration = 1.6
+ease = "smoother"
+
+[motion.project]
+duration = 1.4
+ease = "smoother"
+
+[motion.dissolve]
+duration = 1.5
+ease = "in"
+
+[motion.assemble]
+duration = 1.5
+ease = "out"

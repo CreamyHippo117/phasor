@@ -124,6 +124,17 @@ def _flicker(oid: str, seed: int, groups: int) -> tuple[np.ndarray, np.ndarray]:
     return gen.uniform(0.5, 1.5, groups) / TWINKLE_PERIOD, gen.uniform(0.0, 1.0, groups)
 
 
+@functools.lru_cache(maxsize=CACHE)
+def _drift(oid: str, seed: int, n: int) -> np.ndarray:
+    """(n, 2): each point's own direction of drift for ``scatter``, a unit vector at a random
+    angle times a random reach in [0.35, 1], from ``rng(id, seed)``."""
+    gen = rng(f"{oid}/scatter", seed)
+    angle, reach = gen.uniform(0.0, 2 * np.pi, n), gen.uniform(0.35, 1.0, n)
+    out = np.c_[np.cos(angle), np.sin(angle)] * reach[:, None]
+    out.flags.writeable = False
+    return out
+
+
 @register
 class PointCloud(ObjectBase):
     """Many points of light, splatted additively: where they crowd, light builds up and
@@ -155,7 +166,12 @@ class PointCloud(ObjectBase):
     camera zoom stays sharp. ``focus`` (animatable, 0-1) zooms the window geometrically to
     ``r_focus`` x ``x_focus`` (r and x by different factors, unlike the camera); ``sweep``
     (0-1) draws the diagram from the left up to that share of the window. The preset
-    ``prism_bifurcation`` lights it in the prism look."""
+    ``prism_bifurcation`` lights it in the prism look.
+
+    ``scatter`` (animatable, world units, default 0) moves every point along its own random
+    direction (``rng(id, seed)``) by up to that distance; at 0 the cloud is untouched. The
+    ``dissolve`` and ``assemble`` verbs animate it. Keep ``size`` large enough to hold the
+    scattered points: those outside the rectangle are not drawn."""
 
     type: ClassVar[str] = "point_cloud"
     Life: ClassVar = frozenset({"hue", "glow", "twinkle"})
@@ -206,6 +222,7 @@ class PointCloud(ObjectBase):
         n_iter: int = Field(600, ge=1, le=20_000)  # steps each orbit runs
         n_keep: int = Field(200, ge=1, le=5000)  # of which the last ones are drawn
         sweep: float = Field(1.0, ge=0, le=1)  # share of the window drawn, from the left
+        scatter: float = Field(0.0, ge=0)  # world units each point drifts along its own direction
 
         @field_validator("map")
         @classmethod
@@ -259,7 +276,10 @@ class PointCloud(ObjectBase):
             corner = np.asarray(p.pos[:2]) - np.array([w / 2, h / 2])
             return d.points + corner, d.values
         pts, v = source_points(self.id, p.seed, p.source, _key(p))
-        return pts * p.scale + np.asarray(p.pos[:2]), v
+        out = pts * p.scale + np.asarray(p.pos[:2])
+        if p.scatter > 0:
+            out = out + p.scatter * _drift(self.id, p.seed, len(out))
+        return out, v
 
     def _rect(self, p) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         w, h = p.size
@@ -280,6 +300,8 @@ class PointCloud(ObjectBase):
         inside = _inside(pts, corner, r, u)
         out: dict[str, Any] = {"kind": "point_cloud", "backdrop": True, "source": p.source,
                                "points": len(pts), "in_rectangle": int(inside.sum())}  # fmt: skip
+        if p.scatter > 0:
+            out["scatter"] = round(p.scatter, 6)
         if p.source == "roots":
             out.update(degree=p.degree, coefficients=list(p.coefficients), twist=p.twist)
         elif p.source == "attractor":
@@ -319,8 +341,8 @@ class PointCloud(ObjectBase):
                 return out
             # on the card when CUDA is here (colouring by phase stays on the host: its
             # arctan2 is not the same bits on both)
-            dev = None if p.color_by == "phase" else card_points(self.id, p.seed, p.source,
-                                                                 _key(p))  # fmt: skip
+            dev = None if p.color_by == "phase" or p.scatter > 0 else card_points(
+                self.id, p.seed, p.source, _key(p))  # fmt: skip
             if dev is None:
                 pts, v = self.cloud(state)
             else:  # as ``cloud`` does on the host
