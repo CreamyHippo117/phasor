@@ -58,16 +58,21 @@ starting the next and without rereading the earlier ones until the merge.
 Ask in one message, each with your suggested answer; skip what the idea already answers:
 
 1. **Viewer**: who is this for, and what do they already know?
-2. **Point B**: what should the viewer understand or feel at the end that they did not at
-   the start?
-3. **Length and feel**: roughly how long; calm, eerie, playful or grand?
+2. **Length and feel**: roughly how long; calm, eerie, playful or grand?
 
 If the person does not answer, use your suggestions and say so in the plan.
 
+Do not ask where the video should end, and do not decide it yourself. Point B, what the
+viewer understands or feels at the end, is the most important thing the brainstorm finds:
+fixed now, it would steer every lens toward one conclusion before any of them had looked.
+If the person's idea already names a destination, pass it to the brainstormers as one
+possible ending among those they are to find, not as the target.
+
 ### 2. Map
 
-From point A (the opening question) to point B there are thousands of paths: different
-questions, pictures, stories, animations and orders. See a great many before choosing.
+From a point A (an opening question) to a point B (what the viewer is left with) there are
+thousands of paths: different questions, destinations, pictures, stories, animations and
+orders. Neither end is given. See a great many before choosing.
 
 **Cast about ten brainstormers** from the three families below: the idea's home fields,
 the craft lenses, and at least three mathematical lenses that seem to have nothing to do
@@ -104,12 +109,14 @@ would 2swap do with this).
 
 **Round one.** Spawn the whole cast in one turn so they run in parallel and cannot see each
 other. A brainstormer knows only its brief, so each brief carries: the idea, the viewer,
-point B, the feel, its lens and question, the house rules above, and these instructions:
+the feel, its lens and question, the house rules above, and these instructions:
 
-- Fill a mind map with these branches: opening questions, central pictures, ways of seeing
-  the insight, cases to test it on, connections to other mathematics and to the physical
-  world, things that can be heard, transitions, endings.
-- Quantity, no judging. At least 8 opening questions, 8 central pictures and 4 in every
+- Fill a mind map with these branches: opening questions, destinations (what could the
+  viewer understand or feel at the end that they did not at the start), central pictures,
+  ways of seeing each insight, cases to test it on, connections to other mathematics and
+  to the physical world, things that can be heard, transitions, endings.
+- Quantity, no judging. At least 8 opening questions, 8 central pictures, 5 destinations
+  (the obvious takeaway first, then the ones past it) and 4 in every
   other branch. Write the obvious ones down, then keep going past them.
 - For every picture say how it fills the frame, how it moves, and what could change in it
   to keep it worth watching for a minute or more (which parameter turns, which cases run
@@ -147,9 +154,10 @@ so that removing either weakens the other. Two good ideas placed side by side ar
 not a weave; leave those out. "None worth it" is an allowed answer, and no video is obliged
 to use a weave. Weaves go in `weaves.md`, each with what the viewer would see and hear.
 
-**Paths.** Two or three agents each join branches of the map into whole paths from A to B,
-a short paragraph each, deliberately unlike one another (different openings, different
-central pictures, different orders). They read `weaves.md` too: a weave often makes the
+**Paths.** Two or three agents each join branches of the map into whole paths, a short
+paragraph each, deliberately unlike one another (different openings, different
+destinations, different central pictures, different orders). Each path names its own
+point A and point B in its first line; the twenty should not all end in the same place. They read `weaves.md` too: a weave often makes the
 best return to the central picture (the same object, now heard, or now seen from the other
 field). At least 20 in all, in `paths.md`.
 
@@ -173,9 +181,10 @@ Brainstormers never judge; use fresh agents. Four tests:
 
 ### 4. Ask the person which route
 
-Show the five in two or three lines each, with your recommendation and why. Ask which
-route they want, or which parts to mix. This is the consult on how to teach it: it comes
-now, not earlier, so the choices are real ones for this idea. If they say "you choose",
+Show the five in two or three lines each, starting each with its point A and point B, with
+your recommendation and why. Ask which route they want, or which parts to mix. This is
+where the person chooses where the video ends and how it teaches: it comes now, not
+earlier, so the choices are real ones found for this idea. If they say "you choose",
 choose.
 
 ### 5. Choose and attack
@@ -288,7 +297,7 @@ accent belongs where a verb lands.
 A fresh agent reads the plan as the viewer from step 1 and answers each; fix what fails:
 
 1. Do the first ten seconds make me want the answer?
-2. Do I reach point B, and feel it?
+2. Do I reach this path's point B, and feel it? Is it a destination worth a whole video?
 3. With the voice off, how much would I still understand? If little, the animations are
    illustrating the words instead of teaching.
 4. Is the voice explaining something the animation already shows? Cut the words.
