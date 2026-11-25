@@ -162,6 +162,21 @@ kind = "physics"
 tier = "technique"
 teaches = "Sound in a 3D room: rays and fronts bouncing off the walls, an orbiting camera, an impulse response filling in"
 
+[examples.echo_crystal]
+kind = "physics"
+tier = "technique"
+teaches = "A lattice flashing as a surface sweeps it: the image sources of a room lit by the sphere of time since a clap, then the sphere opening into a plane"
+
+[examples.mirror_rooms]
+kind = "physics"
+tier = "technique"
+teaches = "The unfold verb: a ray bouncing in a room becomes a straight line through mirror rooms that swing over like pages"
+
+[examples.echo_lattice]
+kind = "physics"
+tier = "technique"
+teaches = "Echoes of K feedback loops as the lattice N^K seen in 3D: a grid that flashes as arrival time sweeps it, then a star gaining arms until the frame fills"
+
 [examples.linear_system]
 kind = "fourier_linalg"
 tier = "technique"

@@ -278,6 +278,7 @@ assert s4.engine.lint(strict=True) == []
 | `circumscribe(id, shape="circle")` | draw a ring (or `"box"`) around an object, then fade it: the child `<id>.ring` |
 | `wiggle(*ids)` | a small side-to-side shake (objects with `pos`) |
 | `sweep(path, value, show=True)` | run a number evenly to `value`, with a live readout `<id>.readout` beside it |
+| `unfold(room, ray, flips=5, speed=None)` | a ray bouncing in a room as a straight line through mirror rooms: at each wall the ray reaches, a copy of the room swings over like a page (`<room>.mirror_e1`, ...); see "Echoes are mirror rooms" |
 
 Durations, easing and stagger come from the theme's `[motion]` table. Chain with `then()`:
 `s.at("loop_draw").trace("loop").then().reveal("loop.label")`. Several ids stagger.
@@ -981,6 +982,69 @@ nearest earlier checkpoint plus the remaining steps, cached in memory and under
 answer never depends on how you got there. `ac_math.RoomFDTD` is one (it refuses a `dt` above
 `dx / (c sqrt(3))`: that is a validation error, not a blow-up).
 
+### A lattice that flashes as a surface sweeps it (`sweep`)
+
+`sweep.SweepLattice` is a set of points, each flashing the moment a moving surface reaches
+it. The points come from a `rule`: `mirror_box` (the image sources of a shoebox room,
+`size`/`source`/`order` up to 113; each echo is a mirror copy of the room, so they form a
+crystal), `grid` (`origin + i a + j b + k c` for `basis` (a, b, c) and `counts`: the delays
+of feedback loops) or `points` (given, with optional `values`). The surface is a sphere round
+`center` (`flat` 0), the plane through `center` with normal `normal` (`flat` 1), or the conic
+between them (focus at `center`; every blend passes through the apex `center + reach *
+normal`, so animating `flat` opens the sphere into the plane tangent to it). It has
+travelled `reach = speed * time`; a point's arrival distance is `(1 - flat)|p - c| + flat
+(p - c).n` (`sweep_math.arrival`), and points behind a plane's start are never reached.
+Flash: light `before` (0: hidden) until reached, then up over `attack` s, `swell` (size) and
+`white` (heat), decaying with time constant `decay` s to the afterglow `after`; `fade` dims
+each unit of value. Color: the `colormap` role at `hue + hue_step * v`, v the value
+(reflections, grid steps, or `values`) or, with `color_by="arrival"`, the arrival distance.
+Points are discs of radius `r` (at least `min_size` of the frame height); only those within
+`extent` of the centre (0: all), in view, and at most `max_points` (nearest the front in
+time) are drawn. Semantics: `points`, `reach`, `reached`, `flashing`, `rate` (flashes per
+second now: it grows as t^2 for a room), `next_arrival` (scene time), `deepest_reached`.
+Presets `echo`, `stairs` (a grid swept by a plane).
+
+`sweep.SweepFront` draws the lattice's surface (`lattice` names it) as a see-through glowing
+shell, bright at its rim (`rim`, a Fresnel-like power) and faint face-on (`veil`), cut to the
+lattice's extent and fading at an open edge; style `color` (emphasis, secondary), `glow`
+(glow, soft), `material` (surface, glass: its strength, and it never hides anything).
+
+| Type | Parameters | Style keys |
+| --- | --- | --- |
+| `sweep.SweepLattice` | `rule`, `size`, `source`, `order`, `basis`, `counts`, `origin`, `points`, `values`, `center`, `normal`, `flat`, `time`, `speed`, `extent`, `attack`, `decay`, `before`, `after`, `swell`, `white`, `fade`, `r`, `min_size`, `color_by`, `hue_step`, `hue`, `max_points` | `colormap` (colormap, spectrum), `glow` (glow, strong) |
+| `sweep.SweepFront` | `lattice`, `rim`, `veil`, `rings`, `sectors` | `color` (emphasis, secondary), `glow` (glow, soft), `material` (surface, glass) |
+
+```python
+from phasor import Scene, ac, expr, sweep
+
+echo = Scene("echo", passes=None)
+echo.add(ac.Room3D(id="room", size=(8, 5, 3)))
+echo.add(
+    sweep.SweepLattice(
+        id="crystal",
+        size=(8, 5, 3),
+        source=(2.2, 2, 1.4),
+        order=58,
+        center=(6, 3.4, 1.4),
+        time=expr("t - 1"),
+        speed=12,
+        extent=60,
+    )
+)
+echo.add(sweep.SweepFront(id="front", lattice="crystal"))
+echo.marker("open", 5.0)
+echo.at("open").to("crystal.flat", 1.0, duration=3.0)  # the sphere flattens into a plane
+early = echo.engine.inspect(3.0, id="crystal")["objects"][0]["semantic"]
+late = echo.engine.inspect(5.0, id="crystal")["objects"][0]["semantic"]
+assert early["reach"] == 24.0 and late["rate"] > early["rate"]  # echoes crowd together
+front = echo.engine.inspect(9.0, id="front")["objects"][0]["semantic"]
+assert front["shape"] == "plane"
+```
+
+About 270,000 images at order 58 take 0.05 s to make (once, cached); drawing is the cost:
+on Mesa llvmpipe a 1080p frame of 60,000 points (the default `max_points`) takes about
+1.6 s, all 267,000 about 3-4 s (untested on a GPU). Example: `examples/echo_crystal.py`.
+
 ## Domains, wave 2: pde, algebra, calc
 
 `from phasor import pde, algebra, calc`.
@@ -1185,6 +1249,98 @@ room.add(ac.Wavefront3D(id="front", **clap))
 rays = room.engine.inspect(3.0, id="rays")["objects"][0]["semantic"]
 assert abs(rays["distance"] - 6.86) < 1e-6 and rays["reflections_so_far"] > 1
 assert room.engine.inspect(0.0, id="room")["objects"][0]["semantic"]["volume"] == 120.0
+```
+
+**Echoes are mirror rooms: the `unfold` verb** (`examples/mirror_rooms.py`). A ray that
+reflects off a wall carries on straight into the mirror copy of the room behind that wall.
+`s.at("m").unfold("room", ray="ray", flips=5)` shows it: the ray (a `Line`: its first point
+is where it starts, its second the way it goes) is drawn at a steady speed, and as it reaches
+each wall a mirror copy of the room swings over that wall like a page turning, landing just
+as the ray arrives, so the ray goes straight on into it. After `flips` walls the zig-zag is
+one straight line through a row of mirror rooms.
+
+- `room`: any box: `ac.Room`, a box `ac.Room3D` (not a mesh), or any object whose bounds are
+  the room (flat: 2D). In 2D the ray's points share one z.
+- The copies are the room's children `<room>.mirror_<where>`, named by where they sit:
+  `mirror_e2_n1` is two rooms east (+x) and one north (+y); `w`, `s`, `u`, `d` for -x, -y,
+  +z, -z. Each is hidden until its flip and dims and fades with the room. Unfolding the same
+  room twice into the same place is an error.
+- Timing: each flip takes the theme's `[motion.unfold]` time and lands as the ray arrives;
+  the ray moves at `speed` world units a second (default: one wall per flip on average).
+  The ray's `points` become the straight line to the far wall of the last copy (so they must
+  not be animated before), and its `progress` runs 0 to 1 at that speed.
+- The turn is a half turn about a hinge on the wall, never a reflection: about the wall's
+  edge for a flat room (exactly the mirror image), about the level line through the wall's
+  middle for a box (it tumbles over the top and lands exactly on its mirror box; the floor
+  and ceiling turn about x). Hinges always lift the copy up (+z) half way.
+- `HingedCopy(source=, hinges=[(point, axis, degrees), ...], turn=1)` is the copy: another
+  object drawn carried through a chain of hinge turns, the last one `turn` of the way (0-1).
+  It draws whatever the source draws (strokes still face the camera mid-turn) times its own
+  opacity. Semantics: `of`, `hinges`, `turn`, `angle`, `landed`, `hinge`, `center` (and
+  `backdrop` when its source is one), or `source_missing`. Use it directly for other
+  hinged pictures: a kaleidoscope, the net of a cube folding up (quarter turns).
+- The maths is `phasor.core.unfold_math`: `box_unfold(lo, hi, start, direction, flips)`
+  (each crossing's `distance`, `point`, the real `wall` and `wall_point` it reflects off,
+  `cell_to`, `hinge`), `chain_matrix`, `fold` (back into the real room), `zigzag` (the real
+  path), `image_point` (an image source), `cell_name`.
+
+```python
+from phasor import Line, Scene, ac
+from phasor.core import unfold_math
+
+echo = Scene("mirror rooms", passes=None)
+echo.add(ac.Room(id="room", size=(4, 2.5, 2)))
+echo.add(Line(id="ray", points=[(0.8, 0.6, 1.0), (1.8, 1.05, 1.0)]))
+echo.marker("flip", 1.0)
+echo.at("flip").unfold("room", ray="ray", flips=3)
+copies = [o.id for o in echo.engine.document.objects if o.type == "hinged_copy"]
+assert copies == ["room.mirror_e1", "room.mirror_e1_n1", "room.mirror_e2_n1"]
+done = echo.engine.inspect(20.0, id="room.mirror_e2_n1")["objects"][0]["semantic"]
+assert done["landed"] and done["center"] == [10.0, 3.75, 1.0]
+u = unfold_math.box_unfold((0, 0, 0), (4, 2.5, 2), (0.8, 0.6, 1.0), (1, 0.45, 0), 3)
+assert [c.wall for c in u.crossings] == ["east", "north", "west"]
+```
+
+**Echoes of K feedback loops as a lattice in 3D** (`nd.StarLattice`, ANIMATIONS.md animation
+10). `from phasor import nd`. An echo of a feedback-delay network with K loops is the point n
+of N^K that counts its laps round each loop; it arrives at sum n_i d_i. Each loop gets an arm
+v_i in 3D and the echo sits at `origin` + sum n_i v_i: three loops are the cubic grid, sixteen
+a star that packs with points (the count by time t grows like t^K). Parameters: `loops` (K,
+1-32; 0: one per delay, or 3), `delays` (default 1 to 1.5, no two in a simple ratio),
+`directions` (one 3-vector per loop) or `fan` (`grid`: x, y, z first then arms between them
+in a cone round (1, 1, 1); `cap`; `sphere`), `spacing` (arm length; times d_i / mean when
+`by_delay`), `max_time`, `max_order` (laps in all), `max_points` (at most 200 000: past it
+whole arrival times are dropped and the semantics say `complete_until` and `truncated`),
+`time` (animatable: an echo flashes when `time` reaches its arrival, then glows at
+`afterglow`; `rise`, `decay`; default: all lit), `arms` (animatable 0-K: arm i shows by
+clip(arms - i, 0, 1) and its echoes slide out of the others), `lap_gain` (light kept per lap),
+`color_by` (`arrival`/`order`/`arm`/`value` with `arm_values`), `hue`, `hue_span`,
+`point_size` (share of the frame height), `arm_opacity` (the faint arms), `crowd` (echoes at
+full light; more share it, so a packed star glows in colour). Style: `colormap` (colormap,
+spectrum), `glow` (glow, soft; the prism look: strong), `stroke` (stroke, hairline). Semantics:
+`points`, `shown`, `heard` (arrived by `time`), `arms_shown`, `complete_until`. The maths is
+`ndlattice_math`: `enumerate_lattice` (every n under the hyperplane, sorted by arrival),
+`star_directions`, `arm_vectors`, `project`, `arm_weights`, `flash`, and `lattice_points`,
+which returns `points` (M, 3), `arrival` (M,) and `values` (M,). K = 16 by time 6 is about
+10 000 echoes, by time 8 about 90 000. Example: `examples/echo_lattice.py`.
+
+```python
+import math
+
+from phasor import Scene, nd
+from phasor.domains import ndlattice_math as nlm
+
+grid = nlm.enumerate_lattice((1.0, 1.0, 1.0), 4.0)  # unit delays: n1 + n2 + n3 <= 4
+assert len(grid["arrival"]) == math.comb(4 + 3, 3)
+
+star = Scene("echoes", look="prism", passes=None)
+star.use_camera("orbit", target=(0.9, 0.8, 0.9), distance=9)
+star.add(nd.StarLattice(id="echoes", loops=16, max_time=6.0, spacing=0.55, arms=3.0, time=-0.2))
+star.at(0.5).to("echoes.time", 6.0, duration=4.0, ease="linear")  # the grid flashes on
+star.at(5.0).to("echoes.arms", 16.0, duration=6.0)  # thirteen more loops: the frame fills
+early = star.engine.inspect(4.8, id="echoes")["objects"][0]["semantic"]
+late = star.engine.inspect(11.0, id="echoes")["objects"][0]["semantic"]
+assert early["arms_shown"] == 3 and late["heard"] > 100 * early["heard"]
 ```
 
 ## Graphs and networks (`nw`)

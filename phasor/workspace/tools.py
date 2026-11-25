@@ -48,6 +48,7 @@ VERBS = (
     "circumscribe",
     "wiggle",
     "sweep",
+    "unfold",
 )
 MAX_CHECKPOINTS = 32
 
@@ -324,7 +325,7 @@ class Workspace:
         if given; ``morph`` too runs until ``until`` if given. ``transform`` and
         ``become`` take ``targets=[from, to]``; ``sweep`` takes
         ``path`` and ``value``; ``circumscribe`` takes one target and ``value`` "circle" or
-        "box"."""
+        "box"; ``unfold`` takes ``targets=[room, ray]`` and ``value`` flips (default 5)."""
         if verb not in VERBS:
             raise ToolError(f"unknown verb {verb!r}; verbs are {list(VERBS)}")
         e = self.engine
@@ -356,6 +357,10 @@ class Workspace:
             if path is None or value is None:
                 raise ToolError("sweep needs path and value, e.g. path='wave.terms', value=40")
             args = (path, float(value))
+        elif verb == "unfold":
+            if len(targets) != 2:
+                raise ToolError("unfold needs two target ids: [room, ray]")
+            args = (targets[0], targets[1], 5 if value is None else int(value))
         else:
             args = tuple(targets)
         step = Scene.of(e).at(at, offset)

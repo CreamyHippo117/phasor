@@ -241,13 +241,15 @@ def segment_batch(ctx: DrawContext, cam: Camera, a, b, width, *, colors, glow: f
 
 
 def disc_batch(ctx: DrawContext, cam: Camera, centers, radius, *, colors, glow: float = 1.0,
-               opacity: float = 1.0) -> None:  # fmt: skip
+               opacity: float = 1.0, segments: int = 12, soft: bool = False) -> None:  # fmt: skip
     """Many discs facing the camera in one draw call: ``centers`` (N, 3), ``radius`` world
-    units (one, or one per disc), ``colors`` one RGBA or (N, 4)."""
+    units (one, or one per disc), ``colors`` one RGBA or (N, 4), ``segments`` round each.
+    ``soft``: each disc's light falls linearly from its centre to nothing at its rim (a glow
+    splat rather than a flat dot)."""
     c = np.asarray(centers, dtype=np.float64).reshape(-1, 3)
     if len(c) == 0:
         return
-    seg = 12
+    seg = int(segments)
     ang = np.linspace(0, 2 * np.pi, seg, endpoint=False)
     r = np.broadcast_to(np.asarray(radius, dtype=np.float64), (len(c),))[:, None, None]
     ring = (np.cos(ang)[:, None] * cam.right + np.sin(ang)[:, None] * cam.up)[None] * r
@@ -258,6 +260,9 @@ def disc_batch(ctx: DrawContext, cam: Camera, centers, radius, *, colors, glow: 
     tris = (base[:, None, :] + tris[None]).reshape(-1, 3)
     cols = np.asarray(colors, dtype=np.float64)
     cols = np.broadcast_to(cols if cols.ndim == 2 else cols[None], (len(c), 4))
-    per_vertex = np.repeat(cols[:, None, :], seg + 1, axis=1).reshape(-1, 4)
+    per_vertex = np.repeat(cols[:, None, :], seg + 1, axis=1)
+    if soft:
+        per_vertex[:, 1:, 3] = 0.0
+    per_vertex = per_vertex.reshape(-1, 4)
     ctx.triangles(pos.reshape(-1, 3), tris, color=(1.0, 1.0, 1.0, opacity), glow=glow,
                   colors=np.ascontiguousarray(per_vertex))  # fmt: skip

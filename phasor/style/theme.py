@@ -268,6 +268,7 @@ VERBS = (
     "circumscribe",
     "wiggle",
     "sweep",
+    "unfold",
 )
 
 

@@ -230,3 +230,8 @@ ease = "smooth"
 [motion.sweep]
 duration = 2.5
 ease = "in_out"
+
+# unfold: one mirror room swinging over a wall like a page (the ray keeps a steady speed).
+[motion.unfold]
+duration = 1.1
+ease = "smoother"

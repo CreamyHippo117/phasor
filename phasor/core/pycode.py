@@ -17,7 +17,7 @@ from phasor.core.objects import is_builtin, registered_types
 from phasor.core.schema import Document, ExprSpec, MarkerRef
 
 # class module -> how the generated script reaches it
-_TOP = {"phasor.domains.basic", "phasor.domains.media"}  # from phasor import Dot, Image, ...
+_TOP = {"phasor.domains.basic", "phasor.domains.media", "phasor.domains.unfold"}  # Dot, Image, ...
 _ALIAS = {
     "phasor.domains.cx": "cx",
     "phasor.domains.acoustics": "ac",
@@ -32,6 +32,8 @@ _ALIAS = {
     "phasor.domains.dynamics": "dyn",
     "phasor.domains.convolution": "conv",
     "phasor.domains.filters": "filt",
+    "phasor.domains.sweep": "sweep",
+    "phasor.domains.ndlattice": "nd",
     "phasor.domains.waves": "ac",  # wave fields are named through ``ac``
 }
 

@@ -13,7 +13,7 @@
 - `scene_palette`: Pick the colors run along strokes: `spectrum` (the prism rainbow), `moonlight` (white with a cool and warm shimmer), `gold`, `glacier`, `borealis`, `rose`, or None for the theme's own. In the prism looks it recolors every glowing curve and the lines the look runs a hue along; fringes, vignette and glow stay. One undo step.
 - `undo`: Revert the last edit (each patch, verb or narration is one step).
 - `redo`: Re-apply the edit that undo reverted.
-- `animate`: Animate with a choreography verb starting at a marker (or seconds). Timing comes from the theme. Returns when it starts and ends so the next step can follow it. `orbit` swings the 3D camera `value` degrees (default 360), until marker `until` if given; `morph` too runs until `until` if given. `transform` and `become` take `targets=[from, to]`; `sweep` takes `path` and `value`; `circumscribe` takes one target and `value` "circle" or "box".
+- `animate`: Animate with a choreography verb starting at a marker (or seconds). Timing comes from the theme. Returns when it starts and ends so the next step can follow it. `orbit` swings the 3D camera `value` degrees (default 360), until marker `until` if given; `morph` too runs until `until` if given. `transform` and `become` take `targets=[from, to]`; `sweep` takes `path` and `value`; `circumscribe` takes one target and `value` "circle" or "box"; `unfold` takes `targets=[room, ray]` and `value` flips (default 5).
 - `narrate`: Set the narration. `[[name]]` puts a marker at the next word. Every animation anchored to a marker follows the voice. `pace` adds breathing room after busy sentences.
 - `checkpoint`: Remember the current document under `name` (to compare or return to later).
 - `restore`: Go back to a checkpoint, as one step (undo brings you back again).
@@ -62,6 +62,7 @@
 - `frequency_response`: flash, kind, order, cutoff, cutoff2, fs, radius, zeros, poles, gain, pos, extent, plot, scale, floor_db, reveal
 - `galois_diagram`: flash, primes, pos, width, height, gap
 - `graph`: flash, function, xmin, xmax, pos
+- `hinged_copy`: flash, source, hinges, turn
 - `homomorphism`: flash, n, m, a, pos, r, gap, progress
 - `image`: flash, path, pos, width, height, frame
 - `image_sources`: flash, size, source, order, material, absorption, r
@@ -97,8 +98,11 @@
 - `source`: flash, pos, r
 - `spectrogram`: flash, smooth, isolines, hue_cycles, hue, fade, ambient, contrast, f0, f1, signal, wav, duration, fs, nwin, hop, window, fmax, playhead, pos, size
 - `spectrum`: flash, frequencies, amplitudes, window, samples, fs, pos, extent, bins
+- `star_lattice`: flash, loops, delays, directions, fan, spacing, by_delay, origin, max_time, max_order, max_points, arms, time, rise, decay, afterglow, lap_gain, color_by, arm_values, hue, hue_span, point_size, arm_opacity, crowd
 - `strange_attractor`: flash, system, sigma, rho, beta, seed, t_end, progress, pos, size
 - `subgroup_lattice`: flash, group, pos, width, height
+- `sweep_front`: flash, lattice, rim, veil, rings, sectors
+- `sweep_lattice`: flash, rule, size, source, order, basis, counts, origin, points, values, center, normal, flat, time, speed, extent, attack, decay, before, after, swell, white, fade, r, min_size, color_by, hue_step, hue, max_points
 - `taylor`: flash, function, center, order, xmin, xmax, ymax, pos
 - `text`: flash, text, pos, anchor, leader, leader_on, write
 - `tracer`: flash, path, progress, trail, r
