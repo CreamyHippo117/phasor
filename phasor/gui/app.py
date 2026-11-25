@@ -260,11 +260,17 @@ class ExportJob:
             msg = [ln for ln in lines if not _FRAME.fullmatch(ln)]
             self.message = msg[-1] if msg else ("done" if self.ok else f"exit code {code}")
             if self.ok:
-                try:
-                    os.replace(self._partial, self.out)
+                from phasor.workspace.jobs import _move_into_place
+
+                try:  # Windows: the old file open in a player -> the next free name, said
+                    where = _move_into_place(self._partial, self.out)
                     self._partial = None
-                except OSError as e:  # Windows: the old file is open in another program
-                    self.ok, self.message = False, f"{self.out.name} could not be replaced: {e}"
+                    if where != self.out:
+                        self.message = (f"{self.out.name} could not be replaced (open in "
+                                        f"another program?): saved as {where.name}")  # fmt: skip
+                        self.out = where
+                except OSError as e:
+                    self.ok, self.message = False, f"{self.out.name} could not be written: {e}"
             self._cleanup()
         return self.status()
 

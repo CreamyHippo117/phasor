@@ -12,6 +12,7 @@ result and diffing it with the document gives no differences except narration
 
 from __future__ import annotations
 
+import functools
 from typing import Any
 
 from phasor.core.objects import is_builtin, registered_types
@@ -184,9 +185,10 @@ def document_to_python(doc: Document) -> str:
 # A script scene keeps the editor's and the AI's tweaks (``Overrides``) in a managed block at
 # its end, as ordinary code: one line per tweak, in a canonical order, so rewriting the block
 # never reorders anything and the code outside the markers stays byte for byte as it was.
-TWEAKS_BEGIN = "# --- phasor tweaks"  # the first line starts with this
+TWEAKS_BEGIN = "# --- phasor tweaks:"  # the first line starts with this
 TWEAKS_HEADER = (
-    "# --- phasor tweaks: written by the editor and the AI; edit freely, keep the markers ---"
+    "# --- phasor tweaks: phasor rewrites this block when you or an AI tweak the scene; "
+    "put your own code above it ---"
 )
 TWEAKS_END = "# --- end phasor tweaks ---"
 TWEAK_CALLS = ("tweak", "tweak_style", "tweak_rule")
@@ -231,53 +233,79 @@ class BlockError(ValueError):
         self.line = line
 
 
-def _marker_lines(text: str) -> tuple[list[int], list[int]]:
-    """The 1-based lines of the begin and end markers that are real comments at column 0
-    (``tokenize``: a marker inside a string or docstring is not one). Raises ``BlockError``
-    when the code cannot be tokenized (an open string or bracket) and a marker could be in
-    it, or a marker comment is indented."""
-    import io as _io
-    import tokenize
+MAX_SCAN = 64 * 1024 * 1024  # characters: a script longer than this is not scanned (refused)
 
+
+@functools.lru_cache(maxsize=16)
+def _scan(text: str) -> tuple[tuple[int, ...], tuple[int, ...], str | None, int | None]:
+    """The 1-based lines of the begin and end markers in ``text`` that are real markers, and
+    a reason (with its line) when the markers cannot be read for certain.
+
+    A marker is a comment line at column 0 that lies between the module's top-level
+    statements (``ast``: not inside a string or docstring, a bracket, an f-string or a
+    compound statement's body). Only lines holding the marker text are looked at, and the
+    parse is the C parser's (``tokenize`` is quadratic in line length on Python 3.12: a
+    pasted data line would freeze the window), cached per text."""
+    import ast
+    import bisect
+
+    if len(text) > MAX_SCAN:
+        return (), (), "the script is too long to look for its tweaks block", None
+    candidates = TWEAKS_BEGIN in text or TWEAKS_END in text
+    if "\r" in text.replace("\r\n", ""):
+        return (
+            (),
+            (),
+            (
+                "the script ends lines with a lone CR (old Mac line ends): save it with "
+                "LF or CRLF line ends so its tweaks block can be found for certain"
+            ),
+            None,
+        )
     try:
-        toks = list(tokenize.generate_tokens(_io.StringIO(text).readline))
-    except (tokenize.TokenError, SyntaxError) as e:
-        line = e.args[1][0] if len(e.args) > 1 and isinstance(e.args[1], tuple) else None
-        raise BlockError("the script cannot be read yet (an open string or bracket), so its "
-                         "tweaks block cannot be found for certain", line) from None  # fmt: skip
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError) as e:
+        return (), (), ("the script cannot be read yet (" + (getattr(e, "msg", None) or str(e))
+                        + "), so its tweaks block cannot be found for certain"), getattr(
+                            e, "lineno", None)  # fmt: skip
+    if not candidates:
+        return (), (), None, None
+    starts, ends_ = [], []
+    for node in tree.body:
+        first = min([node.lineno, *(d.lineno for d in getattr(node, "decorator_list", []))])
+        starts.append(first)
+        ends_.append(node.end_lineno or node.lineno)
     begins: list[int] = []
     ends: list[int] = []
-    for t in toks:
-        if t.type != tokenize.COMMENT:
+    for k, line in enumerate(text.split("\n"), 1):
+        if "# --- " not in line:
             continue
-        bare = t.string.rstrip()
-        marker = bare.startswith(TWEAKS_BEGIN) or bare == TWEAKS_END
-        if marker and t.start[1] != 0:
-            raise BlockError("a tweaks marker is indented: markers start at the beginning "
-                             "of their line", t.start[0])  # fmt: skip
-        if bare.startswith(TWEAKS_BEGIN):
-            begins.append(t.start[0])
-        elif bare == TWEAKS_END:
-            ends.append(t.start[0])
-    return begins, ends
+        bare = line.strip()
+        begin, end = bare.startswith(TWEAKS_BEGIN), bare == TWEAKS_END
+        if not (begin or end):
+            continue
+        i = bisect.bisect_right(starts, k) - 1
+        if i >= 0 and starts[i] <= k <= ends_[i]:
+            continue  # inside a statement: a string, a bracket, a body
+        if line[:1] in (" ", "\t"):
+            return (), (), ("a tweaks marker is indented: markers start at the beginning of "
+                            "their line"), k  # fmt: skip
+        (begins if begin else ends).append(k)
+    return tuple(begins), tuple(ends), None, None
 
 
 def find_tweaks(text: str, *, strict: bool = True) -> tuple[int, int] | None:
     """Where the block is in ``text``: (offset of its begin line, offset just past its end
-    line and that line's newline), or None when the script has none. Only real comment
-    lines at column 0 count (not text in a string). A begin without an end, an end without
-    a begin, an end before its begin, or two blocks: ``BlockError`` (nothing is guessed;
-    phasor writes nothing until the person fixes the markers). ``strict=False`` (reading
-    only, never writing) says None instead of raising."""
-    if TWEAKS_BEGIN not in text and TWEAKS_END not in text:
-        try:  # no marker anywhere: writing a block is still only safe in readable code
-            if strict:
-                _marker_lines(text)
-        except BlockError:
-            raise
-        return None
+    line and that line's newline), or None when the script has none. Only real marker
+    comments at column 0 between statements count (``_scan``). A begin without an end, an
+    end without a begin, an end before its begin, two blocks, an indented marker, code that
+    cannot be read yet, or lone-CR line ends: ``BlockError`` (nothing is guessed; phasor
+    writes nothing until the person fixes it). ``strict=False`` (reading only, never
+    writing) says None instead of raising."""
+    begins, ends, problem, where = _scan(text)
     try:
-        begins, ends = _marker_lines(text)
+        if problem is not None:
+            raise BlockError(problem, where)
         if not begins and not ends:
             return None
         if len(begins) > 1 or len(ends) > 1:
@@ -302,6 +330,7 @@ def find_tweaks(text: str, *, strict: bool = True) -> tuple[int, int] | None:
     return starts[begins[0] - 1], starts[ends[0]]
 
 
+@functools.lru_cache(maxsize=8)
 def _guard_line(text: str) -> int | None:
     """The 0-based line of a trailing ``if __name__ == "__main__":`` block, or None: new code
     goes before it, so ``python scene.py`` sees it too."""
@@ -309,7 +338,7 @@ def _guard_line(text: str) -> int | None:
 
     try:
         body = ast.parse(text).body
-    except SyntaxError:
+    except (SyntaxError, ValueError):
         return None
     if not body:
         return None

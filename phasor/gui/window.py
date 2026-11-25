@@ -66,7 +66,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from phasor.gui.controller import Editor
+from phasor.gui.controller import Editor, qt_view
 from phasor.style import explicit
 from phasor.style.theme import ROLE_GROUPS
 from phasor.workspace import ToolError
@@ -654,6 +654,7 @@ class CodePanel(QWidget):
         self.stop.clicked.connect(self.cancel)
         self.stop.hide()
         self._typed = False  # a document's generated code was typed in
+        self._unshowable = False  # the script holds a character the box cannot hold
         self._loading = False
         self._note = ""  # the result of the last Run, kept across refreshes
         self._line: int | None = None  # the line shown for the selection
@@ -674,10 +675,15 @@ class CodePanel(QWidget):
         """Edits in the box that are not saved (a script) or not run (generated code)."""
         return self.ed.dirty if self.ed.is_script else self._typed
 
+    def _raw(self) -> str:
+        """The box's text as it holds it (``toRawText``: a no-break space and a line
+        separator stay as they are), paragraph separators read as new lines."""
+        return self.text.document().toRawText().replace("\u2029", "\n")
+
     def _changed(self) -> None:
         if self._loading:
             return
-        self.ed.set_buffer(self.text.toPlainText())
+        self.ed.set_view_text(self._raw())
         if not self.ed.is_script:
             self._typed = True
 
@@ -701,8 +707,14 @@ class CodePanel(QWidget):
             want = self.ed.code()["text"]
             self.ed.set_buffer(want)
             self._typed = False
-        if self.text.toPlainText() != want:
-            self._replace_text(want)
+        if self._raw() != qt_view(want):
+            self._replace_text(qt_view(want))
+        self._unshowable = len(self._raw()) != len(qt_view(want))
+        if self._unshowable:  # a character the box cannot hold: never written from the box
+            self.text.setReadOnly(True)
+            self.status.setText("this script holds a character the editor cannot show: edit "
+                                "it in another editor (phasor reloads it)")  # fmt: skip
+            return
         code = self.ed.code()
         self.title.setText(Path(code["path"]).name + ("" if code["is_script"] else " (generated)"))
         self._marks()
@@ -719,7 +731,7 @@ class CodePanel(QWidget):
         """Put ``want`` in the box by editing only the part that differs, as one step of
         the box's own undo (Ctrl+Z in the text): the person's typing history stays, and the
         cursor and scroll stay where they were."""
-        old = self.text.toPlainText()
+        old = self._raw()
         a = 0
         while a < min(len(old), len(want)) and old[a] == want[a]:
             a += 1
@@ -771,13 +783,13 @@ class CodePanel(QWidget):
     def run(self) -> None:
         """Run: on a worker thread, so a long or runaway script never freezes the window
         (Cancel run stops it); a quick one is shown at once."""
-        r = self.ed.run_code(self.text.toPlainText(), wait=False)
+        r = self.ed.run_code(self.ed.buffer, wait=False)
         if r["ok"] is None:
             task = self.ed.running
             if task is not None and task.done.wait(self.QUICK):
                 r = self.ed.poll_run() or r
         if r["ok"] is None:
-            self.stop.show()
+            self.sync_state()
             self.status.setText("running... (Cancel run stops it; the preview shows the last "
                                 "scene that ran)")  # fmt: skip
             return
@@ -788,9 +800,17 @@ class CodePanel(QWidget):
         if r is not None:
             self.finish(r)
 
+    def sync_state(self) -> None:
+        """Read-only while a script runs (what is typed meanwhile could not be part of what
+        runs), with Cancel run shown."""
+        running = self.ed.running is not None
+        self.text.setReadOnly(running or self._unshowable)
+        self.stop.setVisible(running)
+
     def finish(self, r: dict) -> None:
         """A run is over (here, or noticed by the window's timer)."""
         self.stop.hide()
+        self.sync_state()
         if r["ok"]:
             self._note = "ran: the scene was rebuilt from this code"
             self._typed = False
@@ -1487,6 +1507,14 @@ class EditorWindow(QMainWindow):
     def ask_conflict(self) -> str:
         """The script changed on disk while there are unsaved edits here: which to keep."""
         box = QMessageBox(self)
+        if (self.ed.conflict or {}).get("deleted"):
+            box.setWindowTitle("The script was deleted")
+            box.setText("The script's file was deleted (or moved) outside the app. Write your "
+                        "text there again, or keep it here unsaved?")  # fmt: skip
+            mine = box.addButton("Write it again", QMessageBox.ButtonRole.AcceptRole)
+            box.addButton("Keep it unsaved", QMessageBox.ButtonRole.RejectRole)
+            box.exec()
+            return "mine" if box.clickedButton() is mine else "file"
         box.setWindowTitle("The script changed on disk")
         box.setText("The script was changed outside the app (another editor, or an AI) while "
                     "you have unsaved edits here. Which version do you keep?")  # fmt: skip
@@ -1510,7 +1538,7 @@ class EditorWindow(QMainWindow):
             if then_save:
                 self.save_scene()
         elif r.get("event") == "reloading":
-            self.code.stop.show()
+            self.code.sync_state()
         self.refresh_all()
 
     def _poll_file(self) -> None:
@@ -1521,7 +1549,7 @@ class EditorWindow(QMainWindow):
             self._ask_pending_conflict()
             return
         if r["event"] == "reloading":
-            self.code.stop.show()
+            self.code.sync_state()
             self.statusBar().showMessage("The script changed on disk: running it...", 4000)
             return
         self._reloaded(r)
@@ -1595,6 +1623,7 @@ class EditorWindow(QMainWindow):
             self.playing = self.ed.play_step(TICK_MS / 1000)
             self.viewport.refresh()
             self.timeline.update()
+        self.code.sync_state()
         if self.ed.running is not None:
             self._poll_run()
         elif self.ed.conflict is not None:  # refused by Save, Run or a panel: ask once
@@ -1675,10 +1704,31 @@ QStatusBar { color: #8a93a8; }
 
 def make_workspace(path: str | None, root: str | None = None):
     """A workspace with ``path`` open, or a new scene (``controller.open_workspace``: a .py
-    the person opens runs; a .phasor.json opens without running the modules it names)."""
+    the person opens runs, on the worker thread, with a progress dialog and Cancel after half
+    a second, and the run timeout; a .phasor.json opens without running the modules it
+    names)."""
     from phasor.gui.controller import open_workspace
 
-    return open_workspace(path, root)
+    return open_workspace(path, root, wait=wait_with_dialog)
+
+
+def wait_with_dialog(task) -> bool:
+    """Wait for a script that is opening, the window alive: "Running scene.py..." with a
+    Cancel button once it takes more than half a second."""
+    from PySide6.QtWidgets import QApplication, QProgressDialog
+
+    from phasor.gui.controller import wait_task
+
+    if QApplication.instance() is None:  # no window yet (a script, a test): just wait
+        return wait_task(task)
+    dlg = QProgressDialog(f"Running {task.path.name}...", "Cancel", 0, 0)
+    dlg.setWindowTitle("Opening a script")
+    dlg.setMinimumDuration(500)
+    try:
+        return wait_task(task, canceled=dlg.wasCanceled, tick=QApplication.processEvents)
+    finally:
+        dlg.close()
+        dlg.deleteLater()
 
 
 def start_ai_server(ws, lock):

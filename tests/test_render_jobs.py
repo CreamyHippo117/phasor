@@ -158,7 +158,9 @@ def test_a_real_draft_job_renders_and_a_cancelled_one_leaves_nothing(ws):
     ws.scene_edit({"op": "set_marker", "name": "late", "t": 30.0})  # long enough to cancel
     st = ws.render_start("preview", out="long.mp4")
     ws.render_cancel(st["job"])
-    _wait(lambda: ws.render_status(st["job"])["state"] != "running", timeout=120)
-    assert ws.render_status(st["job"])["state"] == "cancelled"
+    _wait(
+        lambda: ws.render_status(st["job"])["state"] not in ("running", "cancelling"), timeout=120
+    )
+    assert ws.render_status(st["job"])["state"] == "cancelled", ws.render_status(st["job"])
     assert not (ws.root / "long.mp4").exists()
     assert not list(ws.root.glob(".*.partial.*"))

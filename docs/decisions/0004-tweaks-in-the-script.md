@@ -20,7 +20,7 @@ The overrides of a script scene move into a **managed block at the end of the sc
 written by phasor and readable as ordinary code:
 
 ```python
-# --- phasor tweaks: written by the editor and the AI; edit freely, keep the markers ---
+# --- phasor tweaks: phasor rewrites this block when you or an AI tweak the scene; put your own code above it ---
 s.tweak("pole.label", "pos", (1.2, 0.4, 0.0))
 s.tweak_style("loop", "color", "highlight")
 s.tweak_rule("label(pole) near pole")

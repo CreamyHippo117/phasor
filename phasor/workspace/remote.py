@@ -82,7 +82,7 @@ class RemoteServer:
         ):
             return {"ok": False, "error": "wrong token", "issues": []}
         method, params = req.get("method"), req.get("params") or {}
-        if method not in allowed or not isinstance(params, dict):
+        if not isinstance(method, str) or method not in allowed or not isinstance(params, dict):
             return {"ok": False, "error": f"no tool {method!r}", "issues": []}
         # The caller is an AI: it never makes new code run (``Workspace._no_new_code``), and
         # opens documents without their code, whatever the person allowed in the editor.
@@ -94,6 +94,9 @@ class RemoteServer:
                 return {"ok": False, "error": str(e), "issues": e.issues}
             except TypeError as e:
                 return {"ok": False, "error": f"{method}: {e}", "issues": []}
+            except Exception as e:  # never drop the connection without a reply
+                return {"ok": False, "error": f"{method} failed: {type(e).__name__}: {e}",
+                        "issues": []}  # fmt: skip
             self.calls += 1
             after = self._version()
             if after != before:  # it changed the scene: the editor shows who did what
