@@ -127,7 +127,7 @@ def test_derived_bounds_features_and_semantics():
     assert impl.semantics(state) == {
         "type": "m15_square",
         "params": {"pos": [1.0, 2.0, 0.0], "side": 2.0, "opacity": 1.0, "dim": 1.0,
-                   "z_index": 0, "flash": 0.0},
+                   "z_index": 0, "flash": 0.0, "stretch": [1.0, 1.0, 1.0]},
     }  # fmt: skip
 
 
@@ -202,7 +202,8 @@ def test_a_recording_is_made_again_when_an_object_it_read_changes():
 
 def test_two_members_are_enough_and_the_rest_are_filled_in():
     assert all(hasattr(Square, m) for m in CONTRACT_MEMBERS)
-    assert Square.world_bounds is record.derived_world_bounds
+    # derived, then wrapped once so the bounds follow ``stretch`` (the scale verbs)
+    assert Square.world_bounds.__wrapped__ is record.derived_world_bounds
 
 
 def test_registration_needs_params_and_draw():

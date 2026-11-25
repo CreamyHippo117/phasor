@@ -21,6 +21,7 @@ from typing import Any
 
 import numpy as np
 
+from phasor.core.objects import STRETCH_FLOOR
 from phasor.core.schema import ExprSpec, MarkerRef, TimeRef
 from phasor.core.state import SceneState
 from phasor.time.compile import Compiled, evaluate
@@ -489,19 +490,65 @@ class Verbs:
         return Motion((*ops, seg), done)
 
     # ===== group S =====
-    # (replace each stub below with the real verb; see docs/ai/verbs_*.md)
+    # Scale verbs. They animate ``<id>.stretch`` (ParamsBase: a per-axis scale of what the
+    # object draws, about its ``pos`` or else its center), owned by these verbs like ``dim``
+    # is by dim_others, so they work on any object and never fight a type's own size.
 
-    def grow(self, *ids: str, **options: Any) -> Motion:
-        raise VerbError("grow is not built yet")
+    def _stretch(self, ids: Sequence[str], verb: str, target) -> Motion:
+        """Animate each object's stretch to ``target(current)`` (staggered), where
+        ``current`` is its stretch at the anchor."""
 
-    def shrink(self, *ids: str, **options: Any) -> Motion:
-        raise VerbError("shrink is not built yet")
+        def make(object_id: str, delay: float):
+            obj = self._object(object_id)
+            if callable(getattr(obj.impl, "build", None)):
+                parts = [o.id for o in self.state.objects if o.parent == object_id]
+                raise VerbError(f"{verb} scales an object that draws itself; {object_id!r} is "
+                                f"a composite of {parts}, which its build makes")  # fmt: skip
+            path = f"{object_id}.stretch"
+            self._base(path)  # refuses an expression
+            now = tuple(float(v) for v in obj.params.stretch)
+            to = [max(float(v), STRETCH_FLOOR) for v in target(now)]
+            seg, done = self._segment(path, to, verb, delay)
+            return [seg], done
 
-    def squish(self, *ids: str, **options: Any) -> Motion:
-        raise VerbError("squish is not built yet")
+        return self._each(ids, verb, make)
 
-    def flatten(self, *ids: str, **options: Any) -> Motion:
-        raise VerbError("flatten is not built yet")
+    @staticmethod
+    def _factor(verb: str, by: float) -> float:
+        if isinstance(by, bool) or not isinstance(by, int | float) or not by > 0:
+            raise VerbError(f"{verb} scales by a positive number, got by={by!r}")
+        return float(by)
+
+    @staticmethod
+    def _axis(verb: str, axis: str) -> int:
+        if axis not in ("x", "y", "z"):
+            raise VerbError(f"{verb} works along axis 'x', 'y' or 'z', not {axis!r}")
+        return "xyz".index(axis)
+
+    def grow(self, *ids: str, by: float = 1.5) -> Motion:
+        """Scale objects up by ``by`` about their own center (their ``pos``, else the middle
+        of what they draw), staggered. It multiplies what is there, so a squish is kept."""
+        k = self._factor("grow", by)
+        return self._stretch(ids, "grow", lambda now: [v * k for v in now])
+
+    def shrink(self, *ids: str, by: float = 0.5) -> Motion:
+        """Scale objects down by ``by`` (0.5: to half) about their own center, staggered."""
+        k = self._factor("shrink", by)
+        return self._stretch(ids, "shrink", lambda now: [v * k for v in now])
+
+    def squish(self, *ids: str, axis: str = "y", to: float = 0.4) -> Motion:
+        """Squash objects along one axis to ``to`` of their size (``to=1``: back to normal),
+        keeping the other axes; staggered."""
+        i = self._axis("squish", axis)
+        if isinstance(to, bool) or not isinstance(to, int | float) or not to >= 0:
+            raise VerbError(f"squish takes to= a size share of 0 or more, got to={to!r}")
+        return self._stretch(ids, "squish", lambda now: (*now[:i], float(to), *now[i + 1 :]))
+
+    def flatten(self, *ids: str, axis: str = "z") -> Motion:
+        """Squash objects flat along ``axis`` (onto a plane through their center; in a 2D
+        scene use 'x' or 'y'). ``squish(..., axis=..., to=1)`` brings them back."""
+        i = self._axis("flatten", axis)
+        return self._stretch(ids, "flatten", lambda now: (*now[:i], STRETCH_FLOOR, *now[i + 1 :]))
 
     # ===== end of group S =====
 
