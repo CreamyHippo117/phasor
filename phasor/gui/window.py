@@ -1719,6 +1719,8 @@ def wait_with_dialog(task) -> bool:
 
     from phasor.gui.controller import wait_task
 
+    if QApplication.instance() is None:  # no window yet (a script, a test): just wait
+        return wait_task(task)
     dlg = QProgressDialog(f"Running {task.path.name}...", "Cancel", 0, 0)
     dlg.setWindowTitle("Opening a script")
     dlg.setMinimumDuration(500)
