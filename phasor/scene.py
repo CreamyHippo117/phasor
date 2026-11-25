@@ -227,29 +227,29 @@ class At:
 
     # ===== group E =====
 
-    def substitute(self, *args: Any, **options: Any) -> At:
-        """substitute (not built yet)."""
-        return self._verb("substitute", *args, **options)
+    def substitute(self, eq_id: str, key: str, value: Any, source: str | None = None) -> At:
+        """Replace the part ``key`` of an equation by ``value``, flying in from ``source``."""
+        return self._verb("substitute", eq_id, key, value, source=source)
 
-    def cancel(self, *args: Any, **options: Any) -> At:
-        """cancel (not built yet)."""
-        return self._verb("cancel", *args, **options)
+    def cancel(self, eq_id: str, *keys: str) -> At:
+        """Strike through terms (by key) of an equation, fade them and close the gap."""
+        return self._verb("cancel", eq_id, *keys)
 
-    def factor(self, *args: Any, **options: Any) -> At:
-        """factor (not built yet)."""
-        return self._verb("factor", *args, **options)
+    def factor(self, source: str, target: str) -> At:
+        """An equation becoming its factored form: terms drawn together under a bracket."""
+        return self._verb("factor", source, target)
 
-    def expand(self, *args: Any, **options: Any) -> At:
-        """expand (not built yet)."""
-        return self._verb("expand", *args, **options)
+    def expand(self, source: str, target: str) -> At:
+        """An equation becoming its expanded form: terms spread over the others."""
+        return self._verb("expand", source, target)
 
-    def ignite(self, *args: Any, **options: Any) -> At:
-        """ignite (not built yet)."""
-        return self._verb("ignite", *args, **options)
+    def ignite(self, *ids: str, settle: float = 0.3) -> At:
+        """Light a stroke like a fuse: a bright head runs along it, then it settles brighter."""
+        return self._verb("ignite", *ids, settle=settle)
 
-    def pulse(self, *args: Any, **options: Any) -> At:
-        """pulse (not built yet)."""
-        return self._verb("pulse", *args, **options)
+    def pulse(self, *ids: str, n: int = 2) -> At:
+        """Flash ``n`` times, quick and even."""
+        return self._verb("pulse", *ids, n=n)
 
     # ===== end of group E =====
 
