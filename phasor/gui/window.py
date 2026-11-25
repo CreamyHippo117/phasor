@@ -1562,8 +1562,8 @@ class ExportFlowDialog(QDialog):
 
     def start(self) -> dict[str, Any]:
         out = Path(self.out.text())
-        replace = out.exists() and self.confirm_replace(out)
-        if out.exists() and not replace:
+        replace = self.xp.needs_replace(out) and self.confirm_replace(out)
+        if self.xp.needs_replace(out) and not replace:
             return {"ok": False, "errors": [{"code": "exists", "message": "not replaced"}]}
         r = self.xp.export(out, self.tau0.text(), self.tau1.text(), self.seconds.text(),
                            self.preset.currentData(), overwrite=replace or None)  # fmt: skip
@@ -1622,6 +1622,7 @@ class ExplorerPanel(QWidget):
         scroll.setWidget(holder)
         self.rows: dict[str, RowWidget] = {}
         self._shape: tuple = ()
+        self._typing_key: str | None = None  # the row typed in at the last rebuild
         # the transport: session state, never in the document or its history
         self.back, self.play = QPushButton("<<"), QPushButton("play")
         self.fwd, self.reverse = QPushButton(">>"), QPushButton("reverse")
@@ -1820,24 +1821,48 @@ class ExplorerPanel(QWidget):
             self.ai_notes.addItem(n)
 
     def _rebuild(self, rows: list[dict[str, Any]]) -> None:
+        """Rebuild the list. The row being typed in keeps its line edit (its cursor,
+        selection and undo) when it is still the same kind of row (a commit changed its
+        text or id); a row that changed kind (a new row became a variable) gets a new
+        widget with the cursor where it was."""
         focus = self.xp.focus
+        prev = self.rows.get(focus) if focus is not None else None
+        if prev is None and focus is not None:
+            prev = self.rows.get(self._typing_key) if self._typing_key else None
+        keep, cursor, selection = None, None, None
+        if prev is not None:
+            cursor = prev.text.cursorPosition()
+            if prev.text.hasSelectedText():
+                selection = (prev.text.selectionStart(), len(prev.text.selectedText()))
+            now = next((e for e in rows if e["id"] == focus), None)
+            if (now is not None and now["kind"] == prev.row["kind"]
+                    and bool(now.get("is_object")) == bool(prev.row.get("is_object"))):  # fmt: skip
+                keep = prev
         while self.list.count():
             item = self.list.takeAt(0)
             w = item.widget()
-            if w is not None:
+            if w is not None and w is not keep:
                 w.blockSignals(True)
                 w.text.blockSignals(True)
                 w.deleteLater()
         self.rows = {}
         for e in rows:
-            w = RowWidget(self, e)
+            if keep is not None and e["id"] == focus:
+                w = keep
+                w.key, w.row = focus, e
+            else:
+                w = RowWidget(self, e)
             self.rows[e["id"]] = w
             self.list.addWidget(w)
         self.list.addStretch(1)
+        self._typing_key = focus
         if focus in self.rows:
             t = self.rows[focus].text
             t.setFocus()
-            t.setCursorPosition(len(t.text()))
+            if t is not (keep.text if keep is not None else None):
+                t.setCursorPosition(len(t.text()) if cursor is None else min(cursor, len(t.text())))
+            if selection is not None and t is not (keep.text if keep else None):
+                t.setSelection(*selection)
 
 
 class EditorWindow(QMainWindow):
@@ -1978,7 +2003,7 @@ class EditorWindow(QMainWindow):
     def convert_to_script(self) -> None:
         if self.xp.read_only or not self.confirm_convert():
             return
-        self.ed.set_buffer(self.xp.before_convert())
+        self.xp.prepare_convert()
         self.code.refresh(force=True)
         self.code.run()  # on the worker thread, as Run: the window stays alive
 
@@ -2248,6 +2273,14 @@ class EditorWindow(QMainWindow):
             self._poll_file()
         if self.ed.job is not None:
             self._poll_job()
+        if self.xp.export_job is not None:  # the Explorer's export: its own job
+            st = self.xp.export_status()
+            if st is not None:
+                msg = {"done": f"Exported {st.get('path', '')}",
+                       "failed": f"Export failed: {st.get('error', '')}",
+                       "cancelled": "Export cancelled: nothing was left behind."}.get(
+                    st["state"], f"Exporting... {round(100 * st.get('progress', 0))}%")  # fmt: skip
+                self.statusBar().showMessage(msg, 8000)
         if self.render_dialog is not None and self.render_dialog.job is not None:
             self.render_dialog.poll()
         if self.ed.changed():  # an edit here, by an attached AI, or the file reloaded
@@ -2300,8 +2333,8 @@ class EditorWindow(QMainWindow):
 
     def closeEvent(self, ev) -> None:
         self.timer.stop()
-        for key in list(self.xp.drafts):
-            self.xp.leave(key)
+        self.xp.settle()  # a typed row and a wheel zoom at rest are committed, not dropped
+        self.xp.cancel_export()
         self.xp.close()
         if self.ed.job is not None:
             self.ed.cancel_job()

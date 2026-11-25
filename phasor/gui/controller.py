@@ -912,6 +912,31 @@ class Editor:
 
     # ------------------------------------------------------------ the camera
 
+    # The Explorer's way in (Milestone 29): the same plumbing the editor's own edits use.
+
+    def edit(self, patch: Any, what: str) -> dict[str, Any]:
+        """One undoable edit named ``what`` (the history, "who changed what"), under the
+        shared lock; refused while a script runs."""
+        return self._edit(patch, what)
+
+    def camera_params(self) -> tuple[Any, dict[str, Any]]:
+        """The camera the timeline uses and its parameters (the document's, with the
+        defaults it leaves unset)."""
+        return self._camera()
+
+    def set_camera(self, updates: dict[str, Any], what: str) -> dict[str, Any]:
+        """Set camera parameters as one edit (refused when a track animates one)."""
+        return self._set_camera(updates, what)
+
+    def render_engine(self, source: Engine, target: str | Path, preset: str, *,
+                      start: Any = None, end: Any = None,
+                      overwrite: bool | None = None) -> dict[str, Any]:  # fmt: skip
+        """A render job of a private fork ``source`` (the Explorer's export: a flow-time
+        range, never written into the document) to ``target`` anywhere the person chose."""
+        with self.lock:
+            return self.ws._render_job(Path(target), preset, start=start, end=end,
+                                       overwrite=overwrite, source=source)  # fmt: skip
+
     def _camera(self) -> tuple[Any, dict[str, Any]]:
         from phasor.time.compile import CAMERA_PARAMS
 

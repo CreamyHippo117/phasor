@@ -42,6 +42,13 @@ def tool_names() -> tuple[str, ...]:
     )
 
 
+# Tools that check a row the person is typing in themselves (Milestone 29 audit B2); after
+# any other tool the remote server checks those rows and takes the tool's steps back if it
+# changed one.
+CHECKED_FOR_LOCKS = frozenset({"scene_edit", "undo", "redo", "restore", "scene_new",
+                               "scene_open", "explorer_edit", "explorer_preset"})  # fmt: skip
+
+
 def _describe(method: str, params: dict[str, Any]) -> str:
     """What an AI's call did, for "who changed what" and the undo names ("AI: rho = 24.74"):
     an Explorer edit by its rows, a preset by its name, anything else by the tool's name."""
@@ -100,6 +107,9 @@ class RemoteServer:
         # opens documents without their code, whatever the person allowed in the editor.
         with self.lock, self.workspace._as_ai():
             before = self._version()
+            ws = self.workspace
+            guard = ws._drafts and method not in CHECKED_FOR_LOCKS
+            locks = ws._locked_versions() if guard else None
             try:
                 result = getattr(self.workspace, method)(**params)
             except ToolError as e:
@@ -109,6 +119,10 @@ class RemoteServer:
             except Exception as e:  # never drop the connection without a reply
                 return {"ok": False, "error": f"{method} failed: {type(e).__name__}: {e}",
                         "issues": []}  # fmt: skip
+            if locks is not None:  # a row the person types in: taken back if it changed
+                refused = ws._undo_if_locked_changed(locks, before)
+                if refused:
+                    return {"ok": False, "error": refused[0]["message"], "issues": refused}
             self.calls += 1
             after = self._version()
             if after != before:  # it changed the scene: the editor shows who did what

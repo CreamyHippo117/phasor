@@ -102,7 +102,8 @@ def object_kind(spec: ObjectSpec) -> str:
         return "point"
     if spec.type == "flow_system":
         lines = _system_lines(spec)
-        one = len(lines) == 1 and read(lines[0]).kind == "vector_field"
+        over = _p(spec, "kind", "") or None  # a field row's kind over the guess reads back
+        one = len(lines) == 1 and read(lines[0], over).kind == "vector_field"
         return "vector_field" if one else "ode"
     if _p(spec, "error", ""):  # a note that holds an error stays one until it reads
         return "error"
@@ -128,8 +129,9 @@ def rows_of(doc: Document, controls: bool = True) -> list[dict[str, Any]]:
                 "kind_override": _p(spec, "kind", "") or None}  # fmt: skip
         if spec.type == "flow_system":
             kind = object_kind(spec)
-            for k, line in enumerate(_system_lines(spec)):
-                r = read(line)
+            lines = _system_lines(spec)
+            for k, line in enumerate(lines):
+                r = read(line, base["kind_override"] if len(lines) == 1 else None)
                 key = spec.id if kind == "vector_field" else f"{spec.id}:{r.name or k}"
                 out.append(((base["row"], k), {**base, "id": key, "kind": kind, "source": line,
                             "text": r.text, "latex": r.latex, "error": None,
@@ -546,7 +548,9 @@ def _build(doc: Document, specs: dict[str, ObjectSpec], want: list[_Want], remov
         vis = [w.visible for w in u.rows if w.visible is not None]
         origin = specs.get(u.origin) if u.origin else None
         u.params["row"] = k
-        u.params["kind"] = (w0.kind or "") if u.type == "flow_note" else ""
+        # a kind chosen over the guess is kept on a one-row object, so it reads back (the
+        # lines of an ODE system are always read as ODE lines)
+        u.params["kind"] = (w0.kind or "") if len(u.rows) == 1 and u.kind != "ode" else ""
         u.params["visible"] = vis[-1] if vis else bool(_p(origin, "visible", True)) \
             if origin is not None else True  # fmt: skip
         probe = {**u.params, "system": "s"} if u.kind == "point" else u.params

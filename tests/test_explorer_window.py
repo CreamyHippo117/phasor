@@ -334,3 +334,29 @@ def test_export_renders_the_fork_to_a_video(tmp_path, clock):
     finally:
         w.ed.ws._jobs.cancel_all()
         w.close()
+
+
+def test_a_commit_keeps_the_cursor_and_the_line_edit(win, clock):
+    """Audit S3: the debounce commit must not move the cursor or replace the line edit (its
+    own undo goes with it)."""
+    mu = next(e["id"] for e in X.rows_of(win.ed.engine.document) if e["kind"] == "variable")
+    box = win.explorer.rows[mu].text
+    box.setFocus()
+    box.setCursorPosition(5)  # after "mu = "
+    box.insert("2")  # "mu = 21"
+    assert box.cursorPosition() == 6
+    clock.t += 1.5
+    win.tick()
+    assert win.xp.history_names()[-1] == "mu = 21"  # committed
+    now = win.explorer.rows[win.xp.focus].text
+    assert now is box and box.cursorPosition() == 6
+    assert box.isUndoAvailable()
+
+
+def test_closing_the_window_commits_a_wheel_zoom_at_rest(tmp_path, clock):
+    """Audit nit: closing settles (a typed row and a pending wheel zoom are committed)."""
+    w = _open(_doc(tmp_path), clock)
+    d0 = len(w.ed.engine._undo)
+    w.xp.wheel(1.5)
+    w.close()
+    assert len(w.ed.engine._undo) == d0 + 1

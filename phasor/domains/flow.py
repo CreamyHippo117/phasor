@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import functools
 import math
+import threading
 import weakref
 from collections import OrderedDict
 from typing import Any, ClassVar, Literal
@@ -540,22 +541,46 @@ class FieldArrows(_Child):
 # ---------------------------------------------------------------- Probe
 
 _PATHS: OrderedDict[tuple, fm.Path] = OrderedDict()
+# The memos below are shared by threads (the editor's view, a render job, the Explorer's
+# analysis): read and stored under this lock, computed outside it (two threads may both
+# compute one value: the same answer), so an eviction never meets a lookup (audit S5).
+_LOCK = threading.RLock()
+
+
+def _memo(table: OrderedDict, key: tuple, make, cap: int):
+    with _LOCK:
+        if key in table:
+            table.move_to_end(key)
+            return table[key]
+    value = make()
+    with _LOCK:
+        table.setdefault(key, value)
+        table.move_to_end(key)
+        while len(table) > cap:
+            table.popitem(last=False)
+        return table[key]
 
 
 def _path(r: Resolved, x0: tuple[float, ...], n: int, direction: float) -> fm.Path:
     """The stored path of one seed to step ``n``: the longest one computed is kept and
     extended (the same steps, so the answer does not depend on what was asked before)."""
     key = (r.key, tuple(map(float, x0)), direction, *r.run_key())
-    have = _PATHS.get(key)
+    with _LOCK:
+        have = _PATHS.get(key)
     if have is None or have.points.shape[1] - 1 < n:
         more = n - (0 if have is None else have.points.shape[1] - 1)
         have = fm.integrate(r.sys.fn, r.vals, np.asarray([x0], dtype=np.float64), more,
                             direction * r.dt, escape=r.escape, max_step=r.max_step,
                             start=have)  # fmt: skip
-        _PATHS[key] = have
-        while len(_PATHS) > 64:
-            _PATHS.popitem(last=False)
-    _PATHS.move_to_end(key)
+        with _LOCK:  # the longest path computed is kept (another thread's may be longer)
+            old = _PATHS.get(key)
+            if old is None or old.points.shape[1] < have.points.shape[1]:
+                _PATHS[key] = have
+            while len(_PATHS) > 64:
+                _PATHS.popitem(last=False)
+    with _LOCK:
+        if key in _PATHS:
+            _PATHS.move_to_end(key)
     return fm.Path(have.points[:, : n + 1], np.where(have.at <= n, have.code, 0),
                    np.where(have.at <= n, have.at, -1))  # fmt: skip
 
@@ -673,16 +698,15 @@ def _trail(runner, sim: fm.FlowSim, n: int, back: int) -> np.ndarray:
     """A set's last ``back`` positions at step ``n``, kept per runner (a runner is one set's
     parameters exactly), so a frame drawn again (an orbit: only the camera moves) does not
     step the set again. Read-only: it is shared."""
-    memo = _TRAILS.setdefault(runner, OrderedDict())
-    key = (n, back)
-    if key not in memo:
+    with _LOCK:
+        memo = _TRAILS.setdefault(runner, OrderedDict())
+
+    def make():
         lines = sim.trail_from(runner.state_at((n - back) * sim.dt), back)
         lines.flags.writeable = False
-        memo[key] = lines
-        while len(memo) > 4:
-            memo.popitem(last=False)
-    memo.move_to_end(key)
-    return memo[key]
+        return lines
+
+    return _memo(memo, (n, back), make, 4)
 
 
 def _finite_runs(pts: np.ndarray) -> list[np.ndarray]:
@@ -883,7 +907,8 @@ _EQ: OrderedDict[tuple, list[dict]] = OrderedDict()
 
 def _equilibria(r: Resolved, grid: int) -> tuple[list[dict], dict]:
     key = (r.key, tuple(r.lo), tuple(r.hi), grid)
-    if key not in _EQ:
+
+    def make():
         found = fm.equilibria(r.sys, r.vals, r.lo, r.hi, grid)
         pts = []
         for at in found["points"]:
@@ -891,11 +916,9 @@ def _equilibria(r: Resolved, grid: int) -> tuple[list[dict], dict]:
             c["at"] = at
             pts.append(c)
         meta = {k: found[k] for k in ("window", "grid", "starts", "found", "non_isolated")}
-        _EQ[key] = (pts, meta)
-        while len(_EQ) > 64:
-            _EQ.popitem(last=False)
-    _EQ.move_to_end(key)
-    return _EQ[key]
+        return (pts, meta)
+
+    return _memo(_EQ, key, make, 64)
 
 
 def _eq_role(c: dict) -> str:
@@ -1128,14 +1151,11 @@ class Manifold(_Child):
         steps = round(p.length / r.dt)
         # every argument of ``manifolds`` below is in the key
         key = (r.key, tuple(map(float, c["at"])), p.which, steps, 1e-3 * r.diag, *r.run_key())
-        if key not in _MAN:
-            _MAN[key] = fm.manifolds(r.sys, r.vals, c["at"], which=p.which, dt=r.dt,
-                                     steps=min(steps, fm.MAX_PROBE_STEPS), escape=r.escape,
-                                     eps=1e-3 * r.diag,
-                                     max_step=r.max_step)  # fmt: skip
-            while len(_MAN) > 64:
-                _MAN.popitem(last=False)
-        return r, c, _MAN[key]
+        found = _memo(_MAN, key, lambda: fm.manifolds(
+            r.sys, r.vals, c["at"], which=p.which, dt=r.dt,
+            steps=min(steps, fm.MAX_PROBE_STEPS), escape=r.escape, eps=1e-3 * r.diag,
+            max_step=r.max_step), 64)  # fmt: skip
+        return r, c, found
 
     def semantics(self, state: SceneState) -> dict[str, Any]:
         r, c, br = self._branches(state)

@@ -31,6 +31,7 @@ its message, as ``explorer_edit`` keeps it).
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import math
 import re
@@ -61,6 +62,7 @@ HOLD = 1.0  # scene seconds between two marks taken at the same flow time
 TICK = 1 / 30  # one step of the transport, in seconds of play
 SPEEDS = (1e-3, 1e3)  # the transport's speed range (times normal)
 NEW = "+"  # the empty row at the bottom of the list
+MAX_MARKS = 200  # marks in one recording
 MAX_TEXT = 4000
 EXPORT_SECONDS = (0.1, 3600.0)
 
@@ -96,6 +98,35 @@ def classify(text: str, kind: str | None = None) -> dict[str, Any]:
 
 def clean(answer: dict[str, Any] | None) -> bool:
     return answer is not None and answer["error"] is None and answer["kind"] != "error"
+
+
+def _warm(fork, ops: list[dict[str, Any]], oid: str, t: float) -> None:
+    """Apply ``ops`` to a private fork and compute what the new object shows (its semantics:
+    the slow part, kept in the module-level memos), off the GUI thread."""
+    if not fork.apply(ops).ok:
+        return
+    st = fork.state_at(t)
+    st[oid].impl.semantics(st)
+
+
+def equilibrium_names(points: list[dict[str, Any]], tol: float = 1e-6) -> list[str]:
+    """Names for equilibria that do not change as a slider moves (positions in a list do):
+    ``O`` for the origin; otherwise ``C`` and the sign of the first coordinate that is not
+    zero (``C+``, ``C-``: Lorenz's two), with a number when several share one (``C+1``,
+    ``C+2``, in order of their coordinates)."""
+    base = []
+    for p in points:
+        at = [float(a) for a in p["at"]]
+        first = next((a for a in at if abs(a) > tol), None)
+        base.append("O" if first is None else ("C+" if first > 0 else "C-"))
+    out = list(base)
+    for name in set(base):
+        same = sorted((k for k, b in enumerate(base) if b == name),
+                      key=lambda k: tuple(points[k]["at"]))  # fmt: skip
+        if len(same) > 1:
+            for j, k in enumerate(same, 1):
+                out[k] = f"{name}{j}"
+    return out
 
 
 class Immediate:
@@ -168,6 +199,15 @@ def _example_text() -> str:
     return "\n".join(out)
 
 
+# Types left out of the insert palette, and why: with their defaults alone they draw
+# nothing (lint ``orphan``) or fall on each other; they are placed from code or by the AI.
+PALETTE_HIDDEN = {
+    **{t: "draws nothing without its content (a file, text, notes or a source)" for t in
+       ("code", "notes", "path", "sound_rays", "svg", "table", "value", "wavefront3d")},
+    "bar_chart": "its default bars overlap the Explorer's field; place it from code",
+}  # fmt: skip
+
+
 @functools.lru_cache(maxsize=1)
 def palette() -> tuple[dict[str, Any], ...]:
     """The insert palette, generated from the object registry: every type shipped in phasor
@@ -189,10 +229,13 @@ def palette() -> tuple[dict[str, Any], ...]:
             cls.Params()
         except Exception:  # defaults that do not validate alone: not placeable by a click
             continue
+        if name in PALETTE_HIDDEN:
+            continue
         doc = (cls.__doc__ or "").strip().split("\n")[0]
         out.append({"type": name, "label": cname, "about": doc,
                     "pos": "pos" in cls.Params.model_fields,
-                    "flow": "system" in cls.Params.model_fields})  # fmt: skip
+                    "flow": "system" in cls.Params.model_fields,
+                    "near": "near" in cls.Params.model_fields})  # fmt: skip
     return tuple(out)
 
 
@@ -222,11 +265,15 @@ def marks_ops(doc, camera_id: str, marks: list[dict[str, Any]]) -> tuple[list[di
         ops.append({"op": "set_marker", "name": name, "t": round(t, 6)})
     tracks = doc.timeline.tracks
 
+    controls = {c.path for c in doc.controls}
+
     def animate(path: str, values: list[Any]) -> None:
         if all(_same(v, values[0]) for v in values):
             return
         if path in tracks:
             ops.append({"op": "clear_track", "path": path})
+        if path in controls:  # a track drives it now: a slider cannot (lint orphan_control)
+            ops.append({"op": "remove_control", "path": path})
         ops.append({"op": "set_param", "path": path, "value": values[0]})
         for j in range(1, len(values)):
             ops.append({"op": "add_segment", "path": path, "segment": {
@@ -301,6 +348,8 @@ class Explorer:
         self._frame: tuple[tuple, np.ndarray] | None = None
         self._shown_quality = "full"
         self._analysis: dict[str, dict[str, Any]] = {}
+        self._placing: list[dict[str, Any]] = []  # flow objects computed before placing
+        self.export_job: str | None = None
         self._times: list[tuple[float, float, str]] = []  # (done, seconds, quality) per frame
         self._latency: list[float] = []
         self._input_at: float | None = None  # wall clock of the input not drawn yet
@@ -353,7 +402,7 @@ class Explorer:
     def _edit(self, ops: list[dict[str, Any]], what: str) -> dict[str, Any]:
         """One patch (``Editor._edit``: the lock, the history and "who changed what")."""
         try:
-            r = self.ed._edit(ops, what)
+            r = self.ed.edit(ops, what)
         except ToolError as e:
             r = _refused(str(e))
         if r.get("ok"):
@@ -382,7 +431,8 @@ class Explorer:
         out = []
         for e in X.rows_of(doc):
             e = dict(e)
-            e["locked"] = e["id"] in self.ws._drafts
+            with self.ed.lock:  # Editor.open_document clears it under the lock
+                e["locked"] = e["id"] in self.ws._drafts
             e["badge"] = {"kind": e["kind"], "override": e.get("kind_override"),
                           "choices": KINDS}  # fmt: skip
             d = self.drafts.get(e["id"])
@@ -437,6 +487,9 @@ class Explorer:
         if self.read_only:
             return _refused(CONVERTED)
         text = text if isinstance(text, str) else str(text)
+        lines = [ln for ln in text.splitlines() if ln.strip()]
+        if len(lines) > 1:
+            return self.paste(key, lines)
         if len(text) > MAX_TEXT:
             text = text[:MAX_TEXT]
             self.message = f"a row is at most {MAX_TEXT} characters; the rest was left out"
@@ -445,9 +498,11 @@ class Explorer:
                 try:
                     self.ws._explorer_typing(key, text)
                 except ToolError as e:  # the row is gone (undone, or removed by the AI)
-                    self.drafts.pop(key, None)
-                    self.message = f"That row is gone: {e}"
-                    return _refused(str(e))
+                    self.ws._explorer_leave(key)
+                    gone = self.drafts.pop(key, None) or Draft(key, text, kind, 0.0, 0)
+                    gone.text = text
+                    self._orphan(gone)
+                    return _refused(str(e), moved_to=NEW)
         self._gen += 1
         d = self.drafts.get(key)
         if d is None:
@@ -459,6 +514,55 @@ class Explorer:
         self.last_input = self.clock()
         self._pending.append((d.gen, self.pool.submit(classify, text, d.kind)))
         return {"ok": True, "key": key, "gen": d.gen}
+
+    def paste(self, key: str, lines: list[str]) -> dict[str, Any]:
+        """Several lines pasted into a row: one row each, committed at once as one patch
+        (the first replaces the row pasted into; the others follow it)."""
+        lines = [ln[:MAX_TEXT] for ln in lines][: X.MAX_EDITS]
+        row = self._row(key) if key != NEW else None
+        if key != NEW and row is None:
+            key = NEW
+        if key == NEW:
+            edits: list[dict[str, Any]] = [{"text": ln} for ln in lines]
+        else:
+            place = sum(1 for e in X.rows_of(self._doc()) if e["row"] <= row["row"])
+            edits = [{"id": key, "text": lines[0]}]
+            edits += [{"text": ln, "at": place + i} for i, ln in enumerate(lines[1:])]
+        self.drafts.pop(key, None)
+        with self.ed.lock:
+            self.ws._explorer_leave(key)
+        self.focus = None
+        return self._rows_edit(edits, f"pasted {len(lines)} rows")
+
+    def _orphan(self, d: Draft) -> None:
+        """The row under a draft is gone (the person's undo, the AI's undo or edit): its
+        lock is let go and the text typed is kept, never dropped: it moves to the new row
+        at the bottom (or, when that holds text already, is added as a row of its own)."""
+        with self.ed.lock:
+            self.ws._explorer_leave(d.key)
+        self.drafts.pop(d.key, None)
+        if self.focus == d.key:
+            self.focus = None
+        if not d.text.strip():
+            return
+        self.message = ("the row you were typing in was removed (undo, or the AI); what you "
+                        "typed is kept in a new row")  # fmt: skip
+        if NEW in self.drafts and self.drafts[NEW].text.strip():
+            self._rows_edit([{"text": d.text}], f"added {' '.join(d.text.split())[:60]}")
+            return
+        self.drafts.pop(NEW, None)
+        self.type_row(NEW, d.text, d.kind)
+
+    def _forget_stale(self) -> None:
+        """Drafts whose row is gone become new rows; locks nobody types in are let go."""
+        keys = {e["id"] for e in X.rows_of(self._doc())}
+        for d in list(self.drafts.values()):
+            if d.key != NEW and d.key not in keys and not d.committed:
+                self._orphan(d)
+        with self.ed.lock:
+            for k in list(self.ws._drafts):
+                if k not in self.drafts:
+                    self.ws._explorer_leave(k)
 
     def _draft_of_gen(self, gen: int) -> Draft | None:
         return next((d for d in self.drafts.values() if d.gen == gen), None)
@@ -499,13 +603,13 @@ class Explorer:
         else:
             if self.ed.running is not None:
                 return _refused("the script is running")
+            edit = {"id": d.key, "text": d.text}
+            if d.kind:
+                edit["kind"] = d.kind  # with the text: one patch, one undo step
             with self.ed.lock:
+                self.ws._explorer_leave(d.key)  # the person's own commit: unlocked first
                 try:
-                    r = self.ws._explorer_commit(d.key, d.text)
-                    if d.kind and r.get("ok"):
-                        r2 = self.ws.explorer_edit([{"id": self._rekey(d, r) or d.key,
-                                                     "kind": d.kind}])  # fmt: skip
-                        r = {**r, **{k: r2[k] for k in ("ok", "version", "errors")}}
+                    r = self.ws.explorer_edit([edit])
                 except ToolError as e:
                     r = _refused(str(e))
             self._log(r, what)
@@ -514,6 +618,8 @@ class Explorer:
             self.drafts.pop(d.key, None)
             if self.focus == d.key:
                 self.focus = None
+            if d.key != NEW and self._row(d.key) is None:
+                self._orphan(d)  # the row went (undo, the AI): what was typed is kept
             return r
         new = self._rekey(d, r)
         if new and new != d.key:
@@ -550,7 +656,7 @@ class Explorer:
             # an emptied row is not a deletion (delete is its own button): nothing to commit
             changed = bool(d.text.strip()) and (
                 row is None or d.text != row["source"]
-                or (d.kind or None) != row.get("kind_override"))  # fmt: skip
+                or (d.kind is not None and d.kind != row.get("kind_override")))  # fmt: skip
             if changed:
                 r = self._commit_draft(d)
         self.drafts.pop(key, None)
@@ -572,6 +678,7 @@ class Explorer:
         before Ctrl+S or closing is saved, never lost."""
         for key in list(self.drafts):
             self.leave(key)
+        self._forget_stale()
         if self._wheel_at is not None:
             self._wheel_at = None
             self._commit_camera("zoom")
@@ -585,6 +692,7 @@ class Explorer:
         is due. True when the panel or the picture should be drawn again."""
         changed = False
         now = self.clock()
+        self._forget_stale()
         waiting = []
         for gen, fut in self._pending:
             if not fut.done():
@@ -612,6 +720,12 @@ class Explorer:
         if self._anim is not None:
             self._fly(now)
             changed = True
+        elif self.card is not None and self.card.get("_seen") != (
+            self._view_key(),
+            round(self.playhead, 6),
+        ):
+            self.refresh_card()
+            changed = True
         if (self._wheel_at is not None and now - self._wheel_at >= WHEEL_IDLE
                 and not self.mouse_down):  # fmt: skip
             self._wheel_at = None
@@ -619,6 +733,10 @@ class Explorer:
             changed = True
         if self._shown_quality == "interactive" and not self._interacting():
             changed = True  # the full-quality picture is due
+        for job in list(self._placing):
+            if job["future"].done():
+                self._finish_place(job)
+                changed = True
         for name, job in self._analysis.items():
             if job.get("future") is not None and job["future"].done() and job["state"] == "running":
                 self._finish_analysis(name, job)
@@ -801,6 +919,10 @@ class Explorer:
         ops: list[dict[str, Any]] = []
         if path in self._doc().timeline.tracks:
             ops.append({"op": "clear_track", "path": path})
+        if any(c.path == path for c in self._doc().controls):
+            # a track drives the value now: its slider goes in the same patch (a Control on
+            # an animated parameter is lint orphan_control, and a script refuses it)
+            ops.append({"op": "remove_control", "path": path})
         ops += [{"op": "set_param", "path": path, "value": lo},
                 {"op": "add_segment", "path": path, "segment": {
                     "t0": 0.0, "t1": PLAY_SECONDS, "to": hi, "ease": "linear"}},
@@ -817,8 +939,13 @@ class Explorer:
         v = self._variable(vid)
         if v is None or not v["animated"]:
             return _refused(f"{vid} has no track")
-        return self._edit([{"op": "clear_track", "path": f"{v['object']}.value"}],
-                          f"{v['name']} track cleared")  # fmt: skip
+        path = f"{v['object']}.value"
+        ops: list[dict[str, Any]] = [{"op": "clear_track", "path": path}]
+        if not any(c.path == path for c in self._doc().controls):  # its slider comes back
+            ops.append({"op": "add_control", "control": {
+                "path": path, "min": float(v["min"]), "max": float(v["max"]),
+                "step": X.NEW_VARIABLE["step"], "label": v["name"]}})  # fmt: skip
+        return self._edit(ops, f"{v['name']} track cleared")
 
     # ------------------------------------------------------------ presets, + row, palette
 
@@ -929,10 +1056,40 @@ class Explorer:
             if not ids:
                 return self._log(_refused("type a system first (x' = ..., or a preset)"), "")
             params["system"] = ids[0]
+            if item["near"]:  # an equilibrium's close-up: the one nearest the window's centre
+                _, r = self._system()
+                params["near"] = [round(float(a), 6) for a in r.centre]
         oid = X.fresh_id(self._doc(), re.sub(r"^flow_", "", type_name))
-        return self._edit([{"op": "add_object", "object": {"id": oid, "type": type_name,
-                                                           "params": params}}],
-                          f"added {item['label']}")  # fmt: skip
+        ops = [{"op": "add_object", "object": {"id": oid, "type": type_name, "params": params}}]
+        what = f"added {item['label']}"
+        if not item["flow"]:
+            return self._edit(ops, what)
+        # A flow object may take seconds to compute (a limit cycle): it is computed on a fork
+        # on the analysis thread (its memos are shared), then committed here, quickly.
+        with self.ed.lock:
+            fork = self.ed.engine.fork()
+        self._gen += 1
+        job = {"ops": ops, "what": what, "id": oid, "gen": self._gen, "t": self.playhead}
+        job["future"] = self.analysis_pool.submit(_warm, fork, ops, oid, self.playhead)
+        self._placing.append(job)
+        self.message = f"placing {item['label']}: computing..."
+        if job["future"].done():
+            return self._finish_place(job)
+        return {"ok": True, "pending": True, "id": oid}
+
+    def _finish_place(self, job: dict[str, Any]) -> dict[str, Any]:
+        """A placement computed on the analysis thread is committed (one patch)."""
+        if job in self._placing:
+            self._placing.remove(job)
+        try:
+            job["future"].result()
+        except Exception as e:  # the fork refused it: the real edit says why, plainly
+            self.message = f"placing failed: {type(e).__name__}"
+        return self._edit(job["ops"], job["what"])
+
+    def placing(self) -> list[str]:
+        """Objects being computed before they are placed (the panel says "computing")."""
+        return [j["id"] for j in self._placing]
 
     # ------------------------------------------------------------ the transport (session)
 
@@ -1114,7 +1271,7 @@ class Explorer:
     def _cam_now(self) -> dict[str, Any]:
         """The camera's parameters as shown: the document's (with defaults) and the
         session's over them."""
-        _, cur = self.ed._camera()
+        _, cur = self.ed.camera_params()
         return {**cur, **self.camera_session}
 
     @staticmethod
@@ -1178,16 +1335,56 @@ class Explorer:
         if best is None:
             return None
         _, sid, k, p, r = best
-        return self._card(sid, k, p, r)
+        return self._card(sid, k, p, r, self._eq_names(st, sid)[k])
+
+    def _eq_points(self, st, sid: str) -> list[dict[str, Any]]:
+        obj = next((o for o in st.objects if o.impl.type == "flow_equilibria"
+                    and o.impl.semantics(st).get("system") == sid), None)  # fmt: skip
+        return list(obj.impl.semantics(st).get("points", ())) if obj is not None else []
+
+    def _eq_names(self, st, sid: str) -> list[str]:
+        return equilibrium_names(self._eq_points(st, sid))
+
+    def refresh_card(self) -> dict[str, Any] | None:
+        """The card follows its equilibrium (advice item 16): after any change it is found
+        again by position (the nearest within 5% of the window's diagonal), with fresh
+        numbers; one that is gone closes the card, one that changed kind says so."""
+        c = self.card
+        if c is None:
+            return None
+        key = self._view_key(), round(self.playhead, 6)
+        if c.get("_seen") == key:
+            return c
+        st = self._state()
+        sid = c["system"]
+        if sid not in {o.id for o in st.objects}:
+            self.card = None
+            self.message = f"{c['name']} is gone (its system was removed)"
+            return None
+        r = st[sid].impl.resolve(st)
+        pts = self._eq_points(st, sid)
+        if pts:
+            d = [float(np.linalg.norm(np.subtract(p["at"], c["at"]))) for p in pts]
+            k = int(np.argmin(d))
+        if not pts or d[k] > 0.05 * r.diag:
+            self.card = None
+            self.message = f"{c['name']} {_point_text(c['at'])} is gone at these values"
+            return None
+        new = self._card(sid, k, pts[k], r, equilibrium_names(pts)[k])
+        if new["kind"] != c["kind"]:
+            self.message = f"{c['name']} is now {new['name']}, a {new['kind']} (was a {c['kind']})"
+        new["_seen"] = key
+        self.card = new
+        return new
 
     @staticmethod
-    def _card(sid: str, k: int, p: dict[str, Any], r) -> dict[str, Any]:
+    def _card(sid: str, k: int, p: dict[str, Any], r, name: str | None = None) -> dict:
         ev = []
         for a, b in p["eigenvalues"]:
             real = abs(b) <= p.get("tolerance", 1e-9)
             ev.append(_num(a) if real else f"{_num(a)} {'+' if b > 0 else '-'} {_num(abs(b))}i")
         d = p["dims"]
-        name = f"E{k + 1}"
+        name = name or f"E{k + 1}"
         lines = [f"{name} = {_point_text(p['at'])}  {p['kind']}",
                  "eigenvalues " + ", ".join(ev),
                  f"dim Es = {d['s']}, dim Eu = {d['u']}"
@@ -1297,7 +1494,7 @@ class Explorer:
         """Session camera params for a drag of ``dx``, ``dy`` pixels from the press: orbit
         (3D, 0.4 degrees a pixel, as ``Editor.drag_camera``) or pan (2D; shift in 3D)."""
         cur = p["start"]
-        spec, _ = self.ed._camera()
+        spec, _ = self.ed.camera_params()
         if spec.kind == "orbit" and not p["pan"]:
             el = min(max(float(cur["elevation"]) - dy * 0.4, -89.0), 89.0)
             return {
@@ -1381,11 +1578,13 @@ class Explorer:
     def zoom_in(self, card: dict[str, Any] | None = None) -> dict[str, Any]:
         """Fly the camera to an equilibrium (session, ``ZOOM_SECONDS``), then commit one
         patch: the camera where it arrived and the equilibrium's ``EquilibriumView``."""
-        card = card or self.card
+        if card is not None:
+            self.card = card
+        card = self.refresh_card()  # fresh numbers: never a stale kind or position
         if card is None:
-            return _refused("click an equilibrium first")
+            return _refused(self.message or "click an equilibrium first")
         start = self._cam_now()
-        spec, _ = self.ed._camera()
+        spec, _ = self.ed.camera_params()
         if spec.kind == "orbit":
             to = {"target": [round(a, 6) for a in card["world"]],
                   "distance": round(max(float(start["distance"]) * 0.35, 1e-3), 6)}  # fmt: skip
@@ -1413,9 +1612,10 @@ class Explorer:
         if u < 1.0:
             return
         self._anim = None
-        card = a["card"]
+        self.card = a["card"]
+        card = self.refresh_card() or a["card"]  # the scene may have changed during the flight
         doc = self._doc()
-        spec, _ = self.ed._camera()
+        spec, _ = self.ed.camera_params()
         tracks = doc.timeline.tracks
         ops = [{"op": "set_param", "path": f"{spec.id}.{k}", "value": v}
                for k, v in a["to"].items() if f"{spec.id}.{k}" not in tracks]  # fmt: skip
@@ -1438,7 +1638,7 @@ class Explorer:
         except ValueError:
             return
         cur = self._cam_now()
-        spec, _ = self.ed._camera()
+        spec, _ = self.ed.camera_params()
         key = "distance" if spec.kind == "orbit" else "height"
         self.camera_session[key] = float(cur[key]) / max(f, 1e-3)
         self._input_at = time.monotonic()
@@ -1452,12 +1652,12 @@ class Explorer:
         if not self._camera_pending or not self.camera_session:
             return None
         self._camera_pending = False
-        _, cur = self.ed._camera()
+        _, cur = self.ed.camera_params()
         updates = {k: v for k, v in self.camera_session.items() if not _same(cur.get(k), v)}
         if not updates:
             self.camera_session = {}
             return None
-        r = self.ed._set_camera(updates, what)
+        r = self.ed.set_camera(updates, what)
         if r.get("ok"):
             self.camera_session = {}
         else:
@@ -1535,11 +1735,15 @@ class Explorer:
 
     # ------------------------------------------------------------ convert to script
 
-    def before_convert(self) -> str:
-        """Every row the person is typing in is committed or let go; the code to run."""
+    def prepare_convert(self) -> str:
+        """Every row the person is typing in is committed or let go, and the editor's text
+        becomes the code generated from the document now (what Run turns into the script).
+        The window then runs it as Run does; ``convert`` runs it here."""
         self.settle()
         with self.ed.lock:
-            return self.ed.code()["text"]
+            text = self.ed.code()["text"]
+        self.ed.set_buffer(text)
+        return text
 
     def convert(self, *, wait: bool = True) -> dict[str, Any]:
         """Convert to script (ask with ``CONVERT_WARNING`` first): Run on the code generated
@@ -1547,7 +1751,8 @@ class Explorer:
         on the editor's worker thread, finished by ``Editor.poll_run``)."""
         if self.read_only:
             return _refused("this is a script already")
-        r = self.ed.run_code(self.before_convert(), wait=wait)
+        self.prepare_convert()
+        r = self.ed.run(wait=wait)
         if r.get("ok") or r.get("running"):
             self._reset_session()
         return r
@@ -1566,9 +1771,13 @@ class Explorer:
         marks, self.marks = self.marks, []
         if not marks:
             return {"ok": True, "marks": 0}
-        spec, _ = self.ed._camera()
+        spec, _ = self.ed.camera_params()
         ops, names = marks_ops(self._doc(), spec.id, marks)
+        before = self.ed.engine.duration
         r = self._edit(ops, f"recorded {len(marks)} mark{'s' if len(marks) > 1 else ''}")
+        after = self.ed.engine.duration
+        if r.get("ok") and after > before + 1e-9:
+            self.message = f"recorded {len(marks)} marks: the scene now lasts {_num(after)} s"
         return {**r, "marks": len(marks), "markers": names}
 
     def mark(self) -> dict[str, Any]:
@@ -1576,7 +1785,14 @@ class Explorer:
         Only marks are kept (eased between), never every mouse wiggle."""
         if not self.recording:
             return _refused("press record first")
-        _, cur = self.ed._camera()
+        if len(self.marks) >= MAX_MARKS:
+            return _refused(f"at most {MAX_MARKS} marks in one recording: stop it, then "
+                            "record again")  # fmt: skip
+        if self.marks and self.playhead < self.marks[-1]["t"]:
+            self.message = (f"marked at tau {_num(self.playhead)}, before the last mark: it "
+                            f"plays {_num(HOLD)} s after it (marks keep the order you take "
+                            "them)")  # fmt: skip
+        _, cur = self.ed.camera_params()
         cam = {
             k: v
             for k, v in {**cur, **self.camera_session}.items()
@@ -1645,13 +1861,36 @@ class Explorer:
             return plan
         try:
             fork = self.export_engine(plan)
-            with self.ed.lock:
-                st = self.ws._render_job(Path(path), preset, start=0.0, end=plan["seconds"],
-                                         overwrite=overwrite, source=fork)  # fmt: skip
+            st = self.ed.render_engine(
+                fork, Path(path), preset, start=0.0, end=plan["seconds"], overwrite=overwrite
+            )
         except ToolError as e:
             return _refused(str(e))
-        self.ed.job = st["job"]
+        self.export_job = st["job"]  # its own: the editor's draft render stays followed
         return {"ok": True, **st, "plan": plan}
+
+    def export_status(self) -> dict[str, Any] | None:
+        """The export job's status (None when there is none); a finished one is let go."""
+        if self.export_job is None:
+            return None
+        try:
+            st = self.ed.job_status(self.export_job)
+        except ToolError:
+            self.export_job = None
+            return None
+        if st["state"] not in ("running", "cancelling"):
+            self.export_job = None
+        return st
+
+    def cancel_export(self) -> None:
+        if self.export_job is not None:
+            with contextlib.suppress(ToolError):  # it may have finished already
+                self.ed.cancel_render(self.export_job)
+            self.export_job = None
+
+    def needs_replace(self, path: str | Path) -> bool:
+        """The export's target exists: the person is asked before it is replaced."""
+        return Path(path).exists()
 
     # ------------------------------------------------------------ the analysis tab
 
@@ -1667,8 +1906,9 @@ class Explorer:
             if not sid:
                 continue
             r = st[sid].impl.resolve(st)
+            names = equilibrium_names(list(sem.get("points", ())))
             for k, p in enumerate(sem.get("points", ())):
-                c = self._card(sid, k, p, r)
+                c = self._card(sid, k, p, r, names[k])
                 out.append({k2: c[k2] for k2 in ("system", "name", "at", "kind", "lines")})
             if sem.get("window") is not None:
                 out.append({"system": sid, "name": "", "at": [], "kind": "searched",

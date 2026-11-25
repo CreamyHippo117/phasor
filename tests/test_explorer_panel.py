@@ -595,7 +595,7 @@ def test_clicking_an_equilibrium_opens_its_card_and_zoom_in_is_one_step(ex, cloc
     clock.tick(ZOOM_SECONDS)
     ex.poll()
     assert _depth(ex) == d0 + 1
-    assert ex.history_names()[-1].startswith("zoom in to E")
+    assert ex.history_names()[-1] == f"zoom in to C+ ({point['kind']})"
     doc = ex.ed.engine.document
     view = next(o for o in doc.objects if o.type == "flow_equilibrium_view")
     assert np.allclose(view.params["near"], point["at"])

@@ -967,6 +967,19 @@ class Engine:
     def checkpoint_document(self, name: str) -> Document:
         return self._checkpoints[name].compiled.doc
 
+    def undo_document(self) -> Document | None:
+        """The document ``undo`` would switch to (None: nothing to undo). Nothing changes."""
+        return self._undo[-1].compiled.doc if self._undo else None
+
+    def redo_document(self) -> Document | None:
+        """The document ``redo`` would switch to (None: nothing to redo). Nothing changes."""
+        return self._redo[-1].compiled.doc if self._redo else None
+
+    def forget_redo(self) -> None:
+        """Drop what redo could bring back (a step taken back because it was refused after
+        the fact is not something to redo)."""
+        self._redo.clear()
+
     def restore(self, name: str) -> PatchResult:
         """Go back to checkpoint ``name``: one undoable step; the version keeps counting up."""
         if name not in self._checkpoints:

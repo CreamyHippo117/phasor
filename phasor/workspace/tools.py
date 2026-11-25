@@ -12,6 +12,7 @@ failed patch changes nothing.
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import re
 import threading
@@ -362,6 +363,7 @@ class Workspace:
         "lively") is the living motion; ``palette`` the colors run along strokes
         (``scene_palette``)."""
         self._writable()
+        self._ai_not_while_typing("start a new scene")
 
         def go():
             name = default_look(look, theme)
@@ -408,6 +410,7 @@ class Workspace:
         plain scene, with ``notes`` on what could not be carried over). The modules a
         document names run only where scripts may run; never for an attached AI."""
         self._writable()
+        self._ai_not_while_typing("open another scene")
         return self._open(path, allow_scripts=self.allow_scripts and not self._by_ai)
 
     def scene_save(self, path: str | None = None) -> dict[str, Any]:
@@ -447,6 +450,10 @@ class Workspace:
         self._writable()
         ops = self._with_defaults(patch)
         self._no_new_code(ops)
+        locked = self._ai_locked_ops(ops)
+        if locked:
+            return {"ok": False, "version": self.engine.version, "errors": locked,
+                    "objects": len(self.engine.document.objects)}  # fmt: skip
         r = self.engine.apply(ops, origin="tweak")
         if r.ok:
             try:
@@ -507,12 +514,20 @@ class Workspace:
     def undo(self) -> dict[str, Any]:
         """Revert the last edit (each patch, verb or narration is one step)."""
         self._writable()
+        locked = self._ai_locked_doc(self.engine.undo_document())
+        if locked:
+            return {"undone": False, "ok": False, "version": self.engine.version,
+                    "errors": locked}  # fmt: skip
         r = self.engine.undo()
         return {"undone": r is not None, **(_slim_result(r.to_dict()) if r else {})}
 
     def redo(self) -> dict[str, Any]:
         """Re-apply the edit that undo reverted."""
         self._writable()
+        locked = self._ai_locked_doc(self.engine.redo_document())
+        if locked:
+            return {"redone": False, "ok": False, "version": self.engine.version,
+                    "errors": locked}  # fmt: skip
         r = self.engine.redo()
         return {"redone": r is not None, **(_slim_result(r.to_dict()) if r else {})}
 
@@ -649,6 +664,10 @@ class Workspace:
     def restore(self, name: str) -> dict[str, Any]:
         """Go back to a checkpoint, as one step (undo brings you back again)."""
         self._writable()
+        if self._by_ai and self._drafts and name in self.engine.checkpoints():
+            locked = self._ai_locked_doc(self.engine.checkpoint_document(name))
+            if locked:
+                raise ToolError(locked[0]["message"])
         r = self._guard(lambda: self.engine.restore(name))
         return {**self.summary(), "restored": name, "version": r.version}
 
@@ -1141,6 +1160,82 @@ class Workspace:
                             "would change it; read explorer_state again and retry once it "
                             "is not locked"})  # fmt: skip
         return out
+
+    # An attached AI and a row the person is typing in (Milestone 29 audit B2): every tool
+    # that changes the scene is refused when it would change or remove that row; the person's
+    # own edits are not (they are the one typing).
+
+    def _locked_message(self, key: str, version: str | None) -> dict[str, Any]:
+        return {"code": "row_locked", "row": key, "version": version,
+                "message": f"the person is typing in row {key!r}, and this would change it; "
+                "read explorer_state again and retry once it is not locked"}  # fmt: skip
+
+    def _ai_locked_ops(self, ops: Any) -> list[dict[str, Any]]:
+        """``scene_edit`` by an AI: the ops' targets against the rows being typed in."""
+        if not (self._by_ai and self._drafts):
+            return []
+        from phasor.core.patch import parse_patch
+
+        try:
+            dumped = [o.model_dump(mode="json") for o in parse_patch(ops).ops]
+        except Exception:  # not a patch: ``apply`` refuses it with its reason
+            return []
+        return self._locked_by(dumped)
+
+    def _ai_locked_doc(self, target: Document | None) -> list[dict[str, Any]]:
+        """``undo``, ``redo``, ``restore`` by an AI: the document it would switch to, against
+        the rows being typed in (a row that would vanish or change is refused)."""
+        if not (self._by_ai and self._drafts) or target is None:
+            return []
+        now = self._row_states(self.engine.document)
+        then = self._row_states(target)
+        return [
+            self._locked_message(k, now[k][0])
+            for k in sorted(self._drafts)
+            if k in now and then.get(k) != now[k]
+        ]
+
+    def _row_states(self, doc: Document) -> dict[str, tuple[str, str]]:
+        """Each row being typed in: its version and the tracks that animate its object (a
+        track on ``rho.value`` changes what the row means as much as its text does)."""
+        rows = {e["id"]: e for e in _explorer.rows_of(doc) if e["id"] in self._drafts}
+        out = {}
+        for k, e in rows.items():
+            tracks = {p: [seg.model_dump(mode="json") for seg in segs]
+                      for p, segs in doc.timeline.tracks.items()
+                      if p.startswith(f"{e['object']}.")}  # fmt: skip
+            out[k] = (e["version"], json.dumps(tracks, sort_keys=True))
+        return out
+
+    def _ai_not_while_typing(self, what: str) -> None:
+        if self._by_ai and self._drafts:
+            raise ToolError(f"the person is typing in row {sorted(self._drafts)[0]!r}: {what} "
+                            "once they are done (read explorer_state and retry)")  # fmt: skip
+
+    def _locked_versions(self) -> tuple[Any, dict[str, Any]]:
+        """The engine and the versions of the rows being typed in (``remote``'s check after
+        a tool that has no check of its own)."""
+        now = self._row_states(self.engine.document)
+        return self._engine, {k: now.get(k) for k in self._drafts}
+
+    def _undo_if_locked_changed(self, before: tuple[Any, dict[str, Any]],
+                                version: int) -> list[dict[str, Any]]:  # fmt: skip
+        """After an AI's tool that has no check of its own (``animate``, ``narrate``, a
+        look, ``polish``, ...): if it changed a row the person is typing in, its steps are
+        taken back (and not left to redo) and the call is refused."""
+        engine, versions = before
+        if engine is not self._engine or not versions:
+            return []
+        _, now = self._locked_versions()
+        changed = [k for k, v in versions.items() if v is not None and now.get(k) != v]
+        if not changed:
+            return []
+        e = self.engine
+        for _ in range(max(0, e.version - version)):
+            if e.undo() is None:
+                break
+        e.forget_redo()
+        return [self._locked_message(k, versions[k][0]) for k in changed]
 
     def explorer_edit(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
         """Add, retype, remove, show, hide, recolour and reorder Explorer rows and set

@@ -95,7 +95,7 @@ def clear_memos() -> None:
     cold one this way)."""
     from phasor.domains import flow as fl
 
-    with _LOCK:
+    with _LOCK, fl._LOCK:
         for memo in (_SEC, _LYA, _AREA, _SWP, _CYC, fl._PATHS, fl._MAN, fl._EQ):
             memo.clear()
 
