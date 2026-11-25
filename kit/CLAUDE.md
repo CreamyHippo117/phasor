@@ -27,6 +27,9 @@ with `scene_open` (again after every edit to the file), then `review`.
 
 ## How to make a scene
 
+For a whole video, or any idea where how to teach it is open, run `/scene-plan` first: it
+decides what to show and why, and writes `plans/NAME.md`. Build from an approved plan.
+
 1. **Understand the idea.** Restate it as a few beats: what appears, what moves, what the
    viewer should understand at each point. Ask at most one or two questions, only when the
    answer changes the scene.

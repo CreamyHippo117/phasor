@@ -2,18 +2,20 @@
 
 A folder where an AI writes phasor scenes and knows how, set up by `phasor kit [FOLDER]`
 (default: `Documents/phasor`, the desktop app's scenes folder). Start Claude Code there and
-type `/scene <your idea>`.
+type `/scene-plan <your idea>` to plan a video (taste first, no code), then
+`/scene plans/NAME.md` to build it; or `/scene <your idea>` for one small scene.
 
 This directory is the kit's single source; `phasor kit` copies it, with `docs/ai/`,
 `STYLE.md`, `skills/phasor/` and the sorted `examples/`, into the folder. Run it again after
 changing phasor to update the folder: everything the kit owns is replaced, and what is
-yours (`TASTE.md`, `WISHLIST.md`, `scenes/`, other MCP servers in `.mcp.json`) is kept.
+yours (`TASTE.md`, `WISHLIST.md`, `scenes/`, `plans/`, other MCP servers in `.mcp.json`) is kept.
 
 | File | In the folder | What it is for |
 | --- | --- | --- |
 | `CLAUDE.md` | `CLAUDE.md` | read at the start of every session: the loop, the rules, the commands for this machine |
 | `TASTE.md` | `TASTE.md` (yours) | the person's taste; imported into every session; the AI adds to it |
 | `WISHLIST.md` | `WISHLIST.md` (yours) | what scenes needed that phasor could not do |
+| `skills/scene-plan/SKILL.md` | `.claude/skills/scene-plan/` | the `/scene-plan` command: an idea becomes a plan for a beautiful teaching video (wide brainstorm with many subagents, pruned to one path); writes `plans/NAME.md`, no code |
 | `skills/scene/SKILL.md` | `.claude/skills/scene/` | the `/scene` command: idea, beats, script, checks, storyboard, preview |
 | `examples.toml` | `kit/examples/<kind>/`, `kit/examples/INDEX.md` | every example sorted by kind and tier |
 

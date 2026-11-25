@@ -11,6 +11,9 @@ The idea: $ARGUMENTS
 Follow these steps in order. `CLAUDE.md` in this folder has the commands and the rules;
 `TASTE.md` has the person's taste, and it outranks everything else here.
 
+0. **A plan?** If the idea is a plan from `/scene-plan` (`plans/NAME.md`), its
+   animations are the beats, in its order, with its look, timing and silences. Do not
+   re-plan or shorten it; skip to step 2. What phasor cannot do is already listed in it.
 1. **Beats.** Restate the idea as 3 to 7 beats, one line each: what is on screen, what
    moves, what the viewer should get. Give the scene a short file name. If something would
    change the whole scene (2D or 3D? narrated or silent? how long?), ask once, in one
