@@ -616,9 +616,11 @@ class Orbit(ObjectBase):
                 raise ValueError("window is (low, high) with low < high")
             return self
 
-    def _orbit(self, p):
-        """(points, converged_at, escaped) of the orbit (cached)."""
-        key = ("orbit", p.kind, p.function, p.a, p.start, p.steps, p.bail, p.tol)
+    def _orbit(self, p, steps: int | None = None):
+        """(points, converged_at, escaped) of the orbit (cached); ``steps`` overrides the
+        object's own step count."""
+        steps = p.steps if steps is None else steps
+        key = ("orbit", p.kind, p.function, p.a, p.start, steps, p.bail, p.tol)
 
         def make():
             step = dm.orbit_map(p.function, p.kind)
@@ -627,7 +629,7 @@ class Orbit(ObjectBase):
                 inner = step
                 step = lambda z, a: inner(z, a).real + 0j  # noqa: E731
                 z0 = complex(z0.real, 0.0)
-            return dm.orbit(step, z0, a, p.steps, p.bail, p.tol)
+            return dm.orbit(step, z0, a, steps, p.bail, p.tol)
 
         return _memo(key, make)
 
@@ -635,9 +637,7 @@ class Orbit(ObjectBase):
         """How many steps the orbit really has (it may end early), for ``steps`` if given
         instead of the object's own: what the ``iterate`` verb paces itself by."""
         p = self.me(state).params
-        if steps is not None:
-            p = p.model_copy(update={"steps": steps})
-        return len(self._orbit(p)[0]) - 1
+        return len(self._orbit(p, steps)[0]) - 1
 
     def _world(self, p, z) -> np.ndarray:
         z = np.asarray(z, dtype=np.complex128)

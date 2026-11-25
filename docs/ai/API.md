@@ -1611,6 +1611,26 @@ Example: `examples/convolution.py`. The prism looks make both signals and the ou
 product lit where they overlap. Numerics (a sum on a fine grid, checked against box * box = a
 triangle, decay * decay = t e^-at and Gaussian widths adding) are in
 `phasor/domains/convolution_math.py`.
+- `dyn.Orbit(kind="map", function="z**2 + a", a=(0, 0), start=(0, 0), steps=12, progress=1,
+  pos=(0, 0, 0), scale=1)` is a map applied again and again: the points of the orbit joined by
+  glowing segments, the colour running along the steps. `kind="newton"` iterates Newton's
+  method on the polynomial `function`; `kind="cobweb"` iterates a real map and draws its
+  graph, the diagonal and the staircase (`window`, the interval of x). The formula is read by
+  the whitelist parser, never run as Python. An orbit stops early when it converges (`tol`) or
+  leaves `|z| <= bail`. Animate `progress` or use the `iterate` verb
+  (`docs/ai/verbs_signals.md`); the inspector reports `steps_total`, `steps_shown`,
+  `converged`, `escaped` and the points. `fourier.PartialSum(spread=0..1)` separates the first
+  eight harmonics into rows (the `decompose` and `recompose` verbs).
+
+```python
+from phasor import Scene, dyn
+
+s = Scene("orbit_api", passes=None)
+s.add(dyn.Orbit(id="newton", kind="newton", function="z**3 - 1", start=(0.4, 0.9), steps=8))
+sem = s.engine.inspect(0.0, id="newton")["objects"][0]["semantic"]
+assert sem["steps_total"] > 0 and sem["steps_shown"] == sem["steps_total"]
+```
+
 - `dyn.StrangeAttractor(system="lorenz", sigma=10, rho=28, beta=8/3, seed=0, t_end=36,
   progress=1, pos=(0, 0, 0), size=6)` traces a single three-dimensional trajectory. Use
   `system="rossler"` or `"thomas"` for their classic parameter sets. The three named
