@@ -1,0 +1,1560 @@
+diff --git a/docs/ai/verbs_scale.md b/docs/ai/verbs_scale.md
+new file mode 100644
+index 0000000..51feb5f
+--- /dev/null
++++ b/docs/ai/verbs_scale.md
+@@ -0,0 +1,70 @@
++# Scale verbs: grow, shrink, squish, flatten
++
++Four verbs that change the size of any object, not only those with a radius:
++
++| verb | what it does |
++|---|---|
++| `grow(*ids, by=1.5)` | scale up by `by` about the object's own center |
++| `shrink(*ids, by=0.5)` | scale down by `by` (0.5: to half) about its center |
++| `squish(*ids, axis="y", to=0.4)` | squash along one axis (`"x"`, `"y"` or `"z"`) to `to` of its size; `to=1.0` restores that axis |
++| `flatten(*ids, axis="z")` | squash flat along `axis`; `squish(..., axis=..., to=1.0)` brings it back |
++
++They animate one parameter every object has, `stretch` (x, y, z), a per-axis scale of
++everything the object draws. It is owned by these verbs (as `dim` is by `dim_others`), so
++it never fights a type's own `r`, `size` or `scale`. Timing comes from the theme's
++`[motion.grow]`, `[motion.shrink]`, `[motion.squish]` and `[motion.flatten]`; several ids
++stagger by `[motion] stagger`.
++
++- **The center.** An object scales about the center of its unstretched bounds at that
++  moment (for an equation, the middle of its box, not its baseline `pos`), so it grows in
++  place. An object whose drawing changes while it is stretched (a curve being traced) scales
++  about the middle of what is drawn so far.
++- **Relative and absolute.** `grow` and `shrink` multiply the stretch the object has when
++  the verb starts, on every axis, so a squish is kept: `squish(to=0.5)` then `grow(by=2)` is
++  `(2, 1, 2)` along x, y, z. `squish` and `flatten` set one axis and keep the others. Each
++  factor is at least 0.001 (a flattened axis stays a sliver, never zero).
++- **Everything follows.** The renderer stretches what the object draws (strokes, fills,
++  surfaces, text, kernel-drawn fields such as `DomainColoring`), and the inspector, labels,
++  `focus_pull` and the camera solver see the stretched bounds and feature points. A stroke
++  is stretched with its curve: a squished line is thinner across the squish. Text is
++  squished as a picture (its letters get flatter). Semantics (zeros listed by a
++  `DomainColoring`, a `Dot`'s `position`) keep the unstretched numbers.
++- **In 2D**, everything sits at z = 0, so `flatten("thing")` (axis z) changes nothing you can
++  see; flatten along `"x"` or `"y"` instead. In 3D, `flatten(axis="z")` presses a surface
++  onto its middle plane.
++- A composite (a type with `build`) is not drawn itself: the verbs refuse it and name its
++  parts.
++
++```python
++from phasor import Dot, Equation, Scene
++from phasor.domains.algebra import Polygon
++
++sc = Scene("scale_verbs", passes=None)
++sc.add(Dot(id="point", pos=(-3, 0, 0), r=0.4))
++sc.add(Equation(id="law", parts=("$e^{i\\pi}$", "$+1=0$"), pos=(0, 1, 0)))
++sc.add(Polygon(id="square", n=4, r=1.0, pos=(3, 0, 0)))
++for name, t in (("big", 0.5), ("small", 1.5), ("squash", 2.5), ("flat", 3.5), ("back", 5.0)):
++    sc.marker(name, t)
++sc.at("big").grow("point", by=2)
++sc.at("small").shrink("point", by=0.5)
++sc.at("squash").squish("law", axis="y", to=0.4)
++sc.at("flat").flatten("square", axis="y")
++sc.at("back").squish("law", "square", axis="y", to=1.0)
++
++e = sc.engine
++b = e.state_at(1.4)["point"].impl.world_bounds(e.state_at(1.4))
++assert abs((b.hi[0] - b.lo[0]) - 1.6) < 1e-6  # r = 0.4, grown twice: 1.6 across
++st = e.state_at(4.8)
++assert st["square"].params.stretch[1] == 0.001  # flat
++assert e.state_at(7.0)["square"].params.stretch == (1.0, 1.0, 1.0)  # and back
++assert e.document.timeline.tracks["law.stretch"][0].verb == "squish"
++```
++
++The same through MCP, with the options as a dict:
++
++```json no-run
++{"tool": "animate", "args": {"verb": "squish", "targets": ["law"], "at": "squash",
++ "value": {"axis": "y", "to": 0.4}}}
++```
++
++`examples/verbs_scale.py` shows all four.
+diff --git a/examples/verbs_scale.py b/examples/verbs_scale.py
+new file mode 100644
+index 0000000..bd649b8
+--- /dev/null
++++ b/examples/verbs_scale.py
+@@ -0,0 +1,36 @@
++"""The scale verbs, one beat each: a point grows and shrinks back, an equation is squished
++and restored, a square is flattened to a line and comes back, and a domain-colored plane is
++squeezed sideways (its colors squeeze with it).
++
++Run:  uv run python examples/verbs_scale.py      (prints what the inspector reads)
++"""
++
++from phasor import Dot, Equation, Scene, Text, cx
++from phasor.domains.algebra import Polygon
++
++s = Scene("verbs_scale")
++s.set("camera.height", 6.0)
++
++s.add(Text(id="caption", text="grow, shrink, squish, flatten", pos=(0, 2.5, 0)))
++s.add(Dot(id="point", pos=(-3.8, 0.0, 0), r=0.35))
++s.add(Equation(id="law", parts=("$e^{i\\pi}$", "$+1=0$"), colors=("primary", "secondary"),
++               pos=(0, 1.3, 0), style={"size": "title"}))  # fmt: skip
++s.add(Polygon(id="square", n=4, r=0.9, pos=(3.8, 0.0, 0)))
++s.add(
++    cx.DomainColoring(id="plane", function="(z + 0.9j)**2 - 1", pos=(0, -0.9, 0), size=(3.2, 1.8))
++)
++
++for name, t in (("start", 0.0), ("grow", 0.5), ("shrink", 1.7), ("squish", 2.9),
++                ("restore", 4.1), ("flatten", 5.3), ("back", 6.7), ("end", 8.0)):  # fmt: skip
++    s.marker(name, t)
++s.at("grow").grow("point", by=1.8)
++s.at("shrink").shrink("point", by=1 / 1.8)
++s.at("squish").squish("law", axis="y", to=0.4)
++s.at("restore").squish("law", axis="y", to=1.0).squish("plane", axis="x", to=0.5)
++s.at("flatten").flatten("square", axis="y")
++s.at("back").squish("square", axis="y", to=1.0).squish("plane", axis="x", to=1.0)
++
++if __name__ == "__main__":
++    e = s.engine
++    for oid in ("point", "law", "square", "plane"):
++        print(oid, e.where(oid, 6.0)["bbox"]["norm"])
+diff --git a/phasor/core/objects.py b/phasor/core/objects.py
+index be8c479..310bc62 100644
+--- a/phasor/core/objects.py
++++ b/phasor/core/objects.py
+@@ -16,15 +16,16 @@ from the ``SceneState`` it is handed. The same instance doubles as the Python bu
+ 
+ from __future__ import annotations
+ 
++import contextvars
+ import functools
+ import inspect
+ from collections.abc import Callable
+ from dataclasses import dataclass
+ from pathlib import Path
+-from typing import Any, ClassVar, Literal, Protocol, runtime_checkable
++from typing import Annotated, Any, ClassVar, Literal, Protocol, runtime_checkable
+ 
+ import numpy as np
+-from pydantic import BaseModel, ConfigDict, Field
++from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+ 
+ from phasor.core.files import relative_path
+ from phasor.core.ids import is_valid_name
+@@ -37,6 +38,12 @@ PASSES: tuple[str, ...] = ("color", "id", "solo")
+ REQUIRED_MEMBERS = ("Params", "draw")  # ``build`` may stand in for ``draw`` (a composite)
+ DERIVED_MEMBERS = ("world_bounds", "features", "semantics")
+ CONTRACT_MEMBERS = ("Params", *DERIVED_MEMBERS, "draw")  # what every registered type has
++STRETCH_FLOOR = 1e-3  # the least a stretch factor can be: a flattened axis stays invertible
++IDENTITY = (1.0, 1.0, 1.0)
++
++
++def _floor_stretch(v: tuple[float, float, float]) -> tuple[float, float, float]:
++    return tuple(max(float(x), STRETCH_FLOOR) for x in v)  # type: ignore[return-value]
+ 
+ 
+ class ParamsBase(BaseModel):
+@@ -50,6 +57,11 @@ class ParamsBase(BaseModel):
+     z_index: int = 0  # draw order among coplanar objects; higher draws on top
+     # A brief brightening (the ``flash`` verb): the renderer adds light and glow by this much.
+     flash: float = Field(0.0, ge=0, le=1)
++    # Per-axis (x, y, z) scale of everything the object draws, about its pivot
++    # (``stretch_pivot``), owned by the grow/shrink/squish/flatten verbs. Applied centrally:
++    # the renderer's collector, and the bounds and features ``register`` wraps. Each factor
++    # is at least ``STRETCH_FLOOR`` (an easing that overshoots cannot make it 0 or negative).
++    stretch: Annotated[Vec3, AfterValidator(_floor_stretch)] = IDENTITY
+ 
+ 
+ @dataclass(frozen=True)
+@@ -77,6 +89,104 @@ class Bounds:
+         return cls(tuple(float(v) for v in p.min(0) - pad), tuple(float(v) for v in p.max(0) + pad))
+ 
+ 
++# ---------------------------------------------------------------- stretch (grow, squish, ...)
++#
++# ``ParamsBase.stretch`` scales what an object draws, per axis, about its pivot. Types never
++# see it: the renderer's collector transforms what ``draw`` emits (render/passes.py), and
++# ``register`` wraps every type's ``world_bounds`` and ``features`` (its own or derived) so
++# the inspector, the layout bake and the picture agree. While a wrapped member or the
++# collector computes an object's unstretched geometry, that object id is "raw": its own
++# members called from inside (a ``world_bounds`` that reads ``self.features``, a
++# ``super()`` call, a ``draw`` that asks for its own bounds) answer unstretched, so nothing
++# is stretched twice. Other objects keep their stretch.
++
++_RAW: contextvars.ContextVar[frozenset[str]] = contextvars.ContextVar(
++    "phasor_stretch_raw", default=frozenset()
++)
++
++
++class raw_geometry:
++    """``with raw_geometry(object_id):`` its members answer unstretched inside."""
++
++    def __init__(self, object_id: str) -> None:
++        self.object_id = object_id
++
++    def __enter__(self) -> None:
++        self._token = _RAW.set(_RAW.get() | {self.object_id})
++
++    def __exit__(self, *exc: object) -> None:
++        _RAW.reset(self._token)
++
++
++def stretch_of(obj: ObjectState) -> np.ndarray | None:
++    """The object's stretch as an array, or None when it is the identity (or the object is
++    being measured raw)."""
++    s = getattr(obj.params, "stretch", IDENTITY)
++    if s == IDENTITY or obj.id in _RAW.get():
++        return None
++    return np.asarray(s, dtype=np.float64)
++
++
++def stretch_pivot(impl: Any, state: SceneState, raw: Bounds | None = None) -> np.ndarray:
++    """What a stretch scales about: the center of the object's unstretched bounds at that
++    time (not its ``pos``, which for an equation is the baseline, not the middle), so it
++    grows about its own center."""
++    if raw is None:
++        with raw_geometry(impl.id):
++            raw = impl.world_bounds(state)
++    return raw.center
++
++
++def stretch_points(points: Any, s: np.ndarray, pivot: np.ndarray) -> np.ndarray:
++    """``points`` (..., 3) scaled by ``s`` per axis about ``pivot``."""
++    return pivot + (np.asarray(points, dtype=np.float64) - pivot) * s
++
++
++def _stretched_bounds(fn: Callable) -> Callable:
++    @functools.wraps(fn)
++    def world_bounds(self, state: SceneState) -> Bounds:
++        try:
++            s = stretch_of(state[self.id])
++        except KeyError:
++            s = None
++        if s is None:
++            return fn(self, state)
++        with raw_geometry(self.id):
++            b = fn(self, state)
++            pivot = stretch_pivot(self, state, b)
++        # A positive diagonal scale keeps a box axis-aligned: the new box is exact.
++        return Bounds.of_points(stretch_points(b.corners(), s, pivot))
++
++    world_bounds.stretch_wrapped = True  # type: ignore[attr-defined]
++    return world_bounds
++
++
++def _stretched_features(fn: Callable) -> Callable:
++    @functools.wraps(fn)
++    def features(self, state: SceneState) -> dict[str, np.ndarray]:
++        try:
++            s = stretch_of(state[self.id])
++        except KeyError:
++            s = None
++        if s is None:
++            return fn(self, state)
++        with raw_geometry(self.id):
++            out = fn(self, state)
++            pivot = stretch_pivot(self, state)
++        moved = {}
++        for name, value in out.items():  # points move with the picture; anything else stays
++            arr = np.asarray(value)
++            point_like = arr.dtype.kind in "fiu" and arr.ndim >= 1 and arr.shape[-1] == 3
++            moved[name] = stretch_points(arr, s, pivot) if point_like else value
++        return moved
++
++    features.stretch_wrapped = True  # type: ignore[attr-defined]
++    return features
++
++
++STRETCHED = {"world_bounds": _stretched_bounds, "features": _stretched_features}
++
++
+ class DrawContext(Protocol):
+     """What an object may ask a renderer to draw. Renderer-agnostic and pass-agnostic: the
+     renderer decides what a command means in the ``color``, ``id`` and ``solo`` passes."""
+@@ -312,6 +422,10 @@ def register(cls: type) -> type:
+     for m in DERIVED_MEMBERS:
+         if not hasattr(cls, m):
+             setattr(cls, m, (record.COMPOSITE if composite else record.DERIVED)[m])
++    if not composite:  # every type's bounds and features follow its stretch
++        for m, wrap in STRETCHED.items():
++            if not getattr(getattr(cls, m), "stretch_wrapped", False):
++                setattr(cls, m, wrap(getattr(cls, m)))
+     cls._phasor_source = source
+     _REGISTRY[name] = cls
+     return cls
+diff --git a/phasor/render/passes.py b/phasor/render/passes.py
+index 9e8eee3..de4dd9f 100644
+--- a/phasor/render/passes.py
++++ b/phasor/render/passes.py
+@@ -21,6 +21,7 @@ from typing import Any
+ import numpy as np
+ 
+ from phasor.core import text as text_metrics
++from phasor.core.objects import raw_geometry, stretch_of, stretch_pivot, stretch_points
+ from phasor.core.state import ObjectState, SceneState
+ from phasor.core.timing import stage
+ from phasor.layout.geometry import occludes
+@@ -253,21 +254,63 @@ def _stroke_hue(state, pass_, obj=None) -> tuple | None:
+     return (*hue, np.asarray(st["axis"], dtype=np.float64)) if "axis" in st else hue
+ 
+ 
++STRETCH_BUDGET = 16  # a stretched field computes at most this many times its pixels
++
++
++def _stretched_pixels(pixels, kr: float, ku: float):
++    """A field's ``pixels`` for its quad stretched by ``kr`` along ``right`` and ``ku`` along
++    ``up``. A share of the quad is the same place before and after, so the view is turned
++    back into the unstretched quad's units; when the two stretches differ, the callback's
++    square pixels are computed at the unstretched aspect and resampled (nearest) to fit.
++    The view's width is taken as ``height * pw / ph``, as every field takes it, so a field
++    squeezed to a pixel or two across is only roughly right (it is a sliver by then)."""
++
++    def stretched(pw: int, ph: int, center: tuple[float, float], height: float) -> np.ndarray:
++        ratio = ku / kr  # unstretched columns per stretched column, for the same rows
++        qw, qh = pw * max(ratio, 1.0), ph / min(ratio, 1.0)
++        over = max(np.sqrt(qw * qh / (STRETCH_BUDGET * pw * ph)), 1.0)  # keeps the aspect
++        qw, qh = max(1, round(qw / over)), max(1, round(qh / over))
++        img = np.asarray(pixels(qw, qh, (center[0] / kr, center[1] / ku), height / ku))
++        if (qw, qh) == (pw, ph):
++            return img
++        rows = np.minimum(((np.arange(ph) + 0.5) * qh / ph).astype(int), qh - 1)
++        cols = np.minimum(((np.arange(pw) + 0.5) * qw / pw).astype(int), qw - 1)
++        return img[rows][:, cols]
++
++    return stretched
++
++
+ class _Collector:
+-    """Records an object's draw calls; the renderer replays them for the current pass."""
++    """Records an object's draw calls; the renderer replays them for the current pass.
++    With ``stretch`` (scale per axis, pivot) it records the stretched geometry
++    (``ParamsBase.stretch``): positions and quads scaled about the pivot, normals by the
++    inverse, and text with the scale to apply to its quad when drawn."""
+ 
+-    def __init__(self, stroke_hue: tuple | None = None) -> None:
++    def __init__(self, stroke_hue: tuple | None = None, stretch: tuple | None = None) -> None:
+         self.commands: list[tuple[str, dict[str, Any]]] = []
+         # (lut, cycles per stroke, shift): the theme's hue along glowing strokes, or None.
+         self.stroke_hue = stroke_hue
++        self.stretch = stretch
++
++    def _moved(self, points):
++        return points if self.stretch is None else stretch_points(points, *self.stretch)
+ 
+     def triangles(self, positions, indices=None, *, color, glow=1.0, colors=None) -> None:
++        positions = self._moved(positions)
+         self.commands.append(
+             ("mesh", {"positions": positions, "indices": indices, "color": color, "glow": glow,
+                       "colors": colors})
+         )  # fmt: skip
+ 
+     def field(self, corner, right, up, *, pixels, opacity=1.0, glow=1.0) -> None:
++        if self.stretch is not None:
++            s = self.stretch[0]
++            r, u = np.asarray(right, dtype=np.float64), np.asarray(up, dtype=np.float64)
++            kr = float(np.linalg.norm(r * s) / max(np.linalg.norm(r), 1e-300))
++            ku = float(np.linalg.norm(u * s) / max(np.linalg.norm(u), 1e-300))
++            if (kr, ku) != (1.0, 1.0):
++                pixels = _stretched_pixels(pixels, kr, ku)
++            corner, right, up = self._moved(corner), r * s, u * s
+         self.commands.append(
+             ("field", {"corner": np.asarray(corner, dtype=np.float64), "right": np.asarray(right),
+                        "up": np.asarray(up), "pixels": pixels, "opacity": opacity,
+@@ -277,6 +320,13 @@ class _Collector:
+     def surface(self, positions, indices, *, normals, colors, uv=None, material="solid",
+                 opacity=1.0, glow=1.0) -> None:  # fmt: skip
+         n = len(positions)
++        if self.stretch is not None:
++            positions = self._moved(positions)
++            nm = np.asarray(normals, dtype=np.float64)
++            turned = nm / self.stretch[0]  # normals take the inverse transpose of the scale
++            size = np.linalg.norm(turned, axis=-1, keepdims=True)
++            normals = turned * (np.linalg.norm(nm, axis=-1, keepdims=True)
++                                / np.where(size > 0, size, 1.0))  # fmt: skip
+         self.commands.append(
+             ("surface", {"positions": np.asarray(positions, dtype=np.float64),
+                          "indices": np.asarray(indices), "normals": np.asarray(normals),
+@@ -289,10 +339,11 @@ class _Collector:
+              reveal=1.0) -> None:  # fmt: skip
+         if reveal <= 0:
+             return
+-        self.commands.append(
+-            ("text", {"text": text, "origin": origin, "height": height, "color": color,
+-                      "anchor": anchor, "glow": glow, "reveal": min(float(reveal), 1.0)})
+-        )  # fmt: skip
++        c = {"text": text, "origin": origin, "height": height, "color": color,
++             "anchor": anchor, "glow": glow, "reveal": min(float(reveal), 1.0)}  # fmt: skip
++        if self.stretch is not None:  # its quad is stretched when drawn
++            c["stretch"] = self.stretch
++        self.commands.append(("text", c))
+ 
+ 
+ class PendingRead:
+@@ -434,8 +485,15 @@ class GLRenderer:
+     # ------------------------------------------------------------ drawing
+ 
+     def _commands(self, state, obj: ObjectState, pass_) -> list:
+-        collector = _Collector(_stroke_hue(state, pass_, obj))
+-        obj.impl.draw(collector, state, pass_)
++        s = stretch_of(obj)
++        if s is None:
++            collector = _Collector(_stroke_hue(state, pass_, obj))
++            obj.impl.draw(collector, state, pass_)
++            return collector.commands
++        stretch = (s, stretch_pivot(obj.impl, state))
++        collector = _Collector(_stroke_hue(state, pass_, obj), stretch)
++        with raw_geometry(obj.id):  # its own bounds read inside draw are not stretched twice
++            obj.impl.draw(collector, state, pass_)
+         return collector.commands
+ 
+     def _draw_object(self, state, obj: ObjectState, pass_, size, order: int, zoom: float,
+@@ -491,7 +549,13 @@ class GLRenderer:
+                 corner, wv, hv = text_metrics.quad(
+                     c["text"], c["origin"], c["height"], c["anchor"], cam.right, cam.up
+                 )
+-                px = round(c["height"] / cam.units_per_height(c["origin"]) * size[1])
++                height, at = c["height"], c["origin"]
++                if "stretch" in c:  # the quad itself is stretched: squished text is squished
++                    s, pivot = c["stretch"]
++                    k = float(np.linalg.norm(hv * s) / max(np.linalg.norm(hv), 1e-300))
++                    corner, wv, hv = stretch_points(corner, s, pivot), wv * s, hv * s
++                    height, at = height * k, stretch_points(at, s, pivot)
++                px = round(height / cam.units_per_height(at) * size[1])
+                 tex = self._text_texture(c["text"], int(np.clip(px, 2, MAX_TEXT_PX)))
+                 tex.use(0)
+                 prog["u_tex"].value = 0
+diff --git a/phasor/scene.py b/phasor/scene.py
+index 8860d4a..0f52267 100644
+--- a/phasor/scene.py
++++ b/phasor/scene.py
+@@ -179,21 +179,21 @@ class At:
+ 
+     # ===== group S =====
+ 
+-    def grow(self, *args: Any, **options: Any) -> At:
+-        """grow (not built yet)."""
+-        return self._verb("grow", *args, **options)
++    def grow(self, *ids: str, by: float = 1.5) -> At:
++        """Scale objects up by ``by`` about their own center, staggered."""
++        return self._verb("grow", *ids, by=by)
+ 
+-    def shrink(self, *args: Any, **options: Any) -> At:
+-        """shrink (not built yet)."""
+-        return self._verb("shrink", *args, **options)
++    def shrink(self, *ids: str, by: float = 0.5) -> At:
++        """Scale objects down by ``by`` about their own center, staggered."""
++        return self._verb("shrink", *ids, by=by)
+ 
+-    def squish(self, *args: Any, **options: Any) -> At:
+-        """squish (not built yet)."""
+-        return self._verb("squish", *args, **options)
++    def squish(self, *ids: str, axis: str = "y", to: float = 0.4) -> At:
++        """Squash objects along ``axis`` to ``to`` of their size (``to=1`` restores)."""
++        return self._verb("squish", *ids, axis=axis, to=to)
+ 
+-    def flatten(self, *args: Any, **options: Any) -> At:
+-        """flatten (not built yet)."""
+-        return self._verb("flatten", *args, **options)
++    def flatten(self, *ids: str, axis: str = "z") -> At:
++        """Squash objects flat along ``axis``; ``squish(axis=..., to=1)`` restores them."""
++        return self._verb("flatten", *ids, axis=axis)
+ 
+     # ===== end of group S =====
+ 
+diff --git a/phasor/time/verbs.py b/phasor/time/verbs.py
+index 4c371db..fd76f32 100644
+--- a/phasor/time/verbs.py
++++ b/phasor/time/verbs.py
+@@ -21,6 +21,7 @@ from typing import Any
+ 
+ import numpy as np
+ 
++from phasor.core.objects import STRETCH_FLOOR
+ from phasor.core.schema import ExprSpec, MarkerRef, TimeRef
+ from phasor.core.state import SceneState
+ from phasor.time.compile import Compiled, evaluate
+@@ -489,19 +490,65 @@ class Verbs:
+         return Motion((*ops, seg), done)
+ 
+     # ===== group S =====
+-    # (replace each stub below with the real verb; see docs/ai/verbs_*.md)
++    # Scale verbs. They animate ``<id>.stretch`` (ParamsBase: a per-axis scale of what the
++    # object draws, about its ``pos`` or else its center), owned by these verbs like ``dim``
++    # is by dim_others, so they work on any object and never fight a type's own size.
+ 
+-    def grow(self, *ids: str, **options: Any) -> Motion:
+-        raise VerbError("grow is not built yet")
++    def _stretch(self, ids: Sequence[str], verb: str, target) -> Motion:
++        """Animate each object's stretch to ``target(current)`` (staggered), where
++        ``current`` is its stretch at the anchor."""
+ 
+-    def shrink(self, *ids: str, **options: Any) -> Motion:
+-        raise VerbError("shrink is not built yet")
++        def make(object_id: str, delay: float):
++            obj = self._object(object_id)
++            if callable(getattr(obj.impl, "build", None)):
++                parts = [o.id for o in self.state.objects if o.parent == object_id]
++                raise VerbError(f"{verb} scales an object that draws itself; {object_id!r} is "
++                                f"a composite of {parts}, which its build makes")  # fmt: skip
++            path = f"{object_id}.stretch"
++            self._base(path)  # refuses an expression
++            now = tuple(float(v) for v in obj.params.stretch)
++            to = [max(float(v), STRETCH_FLOOR) for v in target(now)]
++            seg, done = self._segment(path, to, verb, delay)
++            return [seg], done
+ 
+-    def squish(self, *ids: str, **options: Any) -> Motion:
+-        raise VerbError("squish is not built yet")
++        return self._each(ids, verb, make)
+ 
+-    def flatten(self, *ids: str, **options: Any) -> Motion:
+-        raise VerbError("flatten is not built yet")
++    @staticmethod
++    def _factor(verb: str, by: float) -> float:
++        if isinstance(by, bool) or not isinstance(by, int | float) or not by > 0:
++            raise VerbError(f"{verb} scales by a positive number, got by={by!r}")
++        return float(by)
++
++    @staticmethod
++    def _axis(verb: str, axis: str) -> int:
++        if axis not in ("x", "y", "z"):
++            raise VerbError(f"{verb} works along axis 'x', 'y' or 'z', not {axis!r}")
++        return "xyz".index(axis)
++
++    def grow(self, *ids: str, by: float = 1.5) -> Motion:
++        """Scale objects up by ``by`` about their own center (their ``pos``, else the middle
++        of what they draw), staggered. It multiplies what is there, so a squish is kept."""
++        k = self._factor("grow", by)
++        return self._stretch(ids, "grow", lambda now: [v * k for v in now])
++
++    def shrink(self, *ids: str, by: float = 0.5) -> Motion:
++        """Scale objects down by ``by`` (0.5: to half) about their own center, staggered."""
++        k = self._factor("shrink", by)
++        return self._stretch(ids, "shrink", lambda now: [v * k for v in now])
++
++    def squish(self, *ids: str, axis: str = "y", to: float = 0.4) -> Motion:
++        """Squash objects along one axis to ``to`` of their size (``to=1``: back to normal),
++        keeping the other axes; staggered."""
++        i = self._axis("squish", axis)
++        if isinstance(to, bool) or not isinstance(to, int | float) or not to >= 0:
++            raise VerbError(f"squish takes to= a size share of 0 or more, got to={to!r}")
++        return self._stretch(ids, "squish", lambda now: (*now[:i], float(to), *now[i + 1 :]))
++
++    def flatten(self, *ids: str, axis: str = "z") -> Motion:
++        """Squash objects flat along ``axis`` (onto a plane through their center; in a 2D
++        scene use 'x' or 'y'). ``squish(..., axis=..., to=1)`` brings them back."""
++        i = self._axis("flatten", axis)
++        return self._stretch(ids, "flatten", lambda now: (*now[:i], STRETCH_FLOOR, *now[i + 1 :]))
+ 
+     # ===== end of group S =====
+ 
+diff --git a/tests/golden/software/verbs_scale.png b/tests/golden/software/verbs_scale.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..2522662cf7ff3fbfaa981ba3a2a7f40b6d32941b
+GIT binary patch
+literal 35593
+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
+
+literal 0
+HcmV?d00001
+
+diff --git a/tests/test_open_contract.py b/tests/test_open_contract.py
+index 4a84235..b47b723 100644
+--- a/tests/test_open_contract.py
++++ b/tests/test_open_contract.py
+@@ -127,7 +127,7 @@ def test_derived_bounds_features_and_semantics():
+     assert impl.semantics(state) == {
+         "type": "m15_square",
+         "params": {"pos": [1.0, 2.0, 0.0], "side": 2.0, "opacity": 1.0, "dim": 1.0,
+-                   "z_index": 0, "flash": 0.0},
++                   "z_index": 0, "flash": 0.0, "stretch": [1.0, 1.0, 1.0]},
+     }  # fmt: skip
+ 
+ 
+@@ -202,7 +202,8 @@ def test_a_recording_is_made_again_when_an_object_it_read_changes():
+ 
+ def test_two_members_are_enough_and_the_rest_are_filled_in():
+     assert all(hasattr(Square, m) for m in CONTRACT_MEMBERS)
+-    assert Square.world_bounds is record.derived_world_bounds
++    # derived, then wrapped once so the bounds follow ``stretch`` (the scale verbs)
++    assert Square.world_bounds.__wrapped__ is record.derived_world_bounds
+ 
+ 
+ def test_registration_needs_params_and_draw():
+diff --git a/tests/test_verbs_scale.py b/tests/test_verbs_scale.py
+new file mode 100644
+index 0000000..400e574
+--- /dev/null
++++ b/tests/test_verbs_scale.py
+@@ -0,0 +1,338 @@
++"""Group S verbs: grow, shrink, squish, flatten, and the ``stretch`` every object has."""
++
++from __future__ import annotations
++
++import runpy
++from pathlib import Path
++
++import numpy as np
++import pytest
++
++from phasor import Dot, Equation, Line, Scene, Text, cx
++from phasor.core.objects import (
++    STRETCH_FLOOR,
++    ObjectBase,
++    ParamsBase,
++    register,
++    stretch_points,
++    unregister,
++)
++from phasor.domains.algebra import Polygon
++from phasor.domains.linalg import TransformGrid
++from phasor.inspect.passes import inspect_size
++from phasor.render.passes import _stretched_pixels
++from phasor.time.verbs import VerbError
++from tests.conftest import gl_available
++from tests.test_beauty import _golden
++
++ROOT = Path(__file__).resolve().parents[1]
++needs_gl = pytest.mark.skipif(not gl_available(), reason="needs OpenGL")
++IDS = ("d", "l", "p", "e", "g", "dc")
++
++
++def _scene(passes=None) -> Scene:
++    s = Scene("scale", passes=passes)
++    s.add(Dot(id="d", pos=(-3, 1, 0), r=0.4))
++    s.add(Line(id="l", points=[(-1, 1, 0), (1, 2, 0)]))
++    s.add(Polygon(id="p", r=1.0, pos=(3, 1, 0)))
++    s.add(Equation(id="e", parts=("$x$", "$=2$"), pos=(0, -2, 0)))
++    s.add(TransformGrid(id="g", pos=(-3, -2, 0), extent=1))
++    s.add(cx.DomainColoring(id="dc", function="z", pos=(3, -2, 0), size=(2, 1.5)))
++    s.marker("go", 1.0)
++    return s
++
++
++def _box(e, oid, t):
++    st = e.state_at(t)
++    b = st[oid].impl.world_bounds(st)
++    return np.asarray(b.lo), np.asarray(b.hi)
++
++
++def _tracks(e, verb):
++    return {p: segs for p, segs in e.document.timeline.tracks.items() if p.endswith(".stretch")
++            and any(s.verb == verb for s in segs)}  # fmt: skip
++
++
++# ---------------------------------------------------------------- the verbs
++
++
++def test_every_segment_carries_its_verb_and_each_id_is_staggered():
++    s = _scene()
++    s.marker("g2", 3.0)
++    s.marker("f", 5.0)
++    s.at("go").grow("d", "l")
++    s.at("g2").shrink("d")
++    s.at("g2").squish("p", axis="x", to=0.5)
++    s.at("f").flatten("e")
++    tracks = s.engine.document.timeline.tracks
++    assert [seg.verb for seg in tracks["d.stretch"]] == ["grow", "shrink"]
++    assert tracks["p.stretch"][0].verb == "squish" and tracks["e.stretch"][0].verb == "flatten"
++    assert tracks["l.stretch"][0].t0.offset > tracks["d.stretch"][0].t0.offset  # staggered
++    assert not [i for i in s.engine.lint(strict=True) if i.code == "raw_motion"]
++
++
++def test_end_is_the_theme_duration_plus_the_stagger():
++    s = _scene()
++    at = s.at("go").grow("d", "l", "p")
++    m = s.engine._snap.compiled.theme.motion
++    assert at._end == pytest.approx(2 * m["stagger"] + m["grow"]["duration"])
++
++
++@pytest.mark.parametrize("oid", IDS)
++def test_squish_changes_the_inspected_bounds_about_the_center(oid):
++    s = _scene()
++    s.at("go").squish(oid, axis="y", to=0.4)
++    e = s.engine
++    lo0, hi0 = _box(e, oid, 0.5)
++    lo1, hi1 = _box(e, oid, 3.0)
++    mid = _box(e, oid, 1.45)  # part way through
++    c0 = (lo0 + hi0) / 2
++    assert np.allclose((lo1 + hi1) / 2, c0, atol=1e-9)  # it stays where it is
++    assert hi1[0] - lo1[0] == pytest.approx(hi0[0] - lo0[0])  # x untouched
++    assert hi1[1] - lo1[1] == pytest.approx(0.4 * (hi0[1] - lo0[1]))
++    assert 0.4 * (hi0[1] - lo0[1]) < mid[1][1] - mid[0][1] < hi0[1] - lo0[1]
++    # what ``inspect`` reports is the same box
++    bbox = e.where(oid, 3.0)["bbox"]["norm"]
++    h = e.where(oid, 0.5)["bbox"]["norm"]
++    assert bbox[3] - bbox[1] == pytest.approx(0.4 * (h[3] - h[1]), abs=2e-3)
++
++
++def test_grow_and_shrink_keep_a_squish_and_round_trip():
++    s = _scene()
++    for name, t in (("a", 2.0), ("b", 3.0), ("c", 4.0), ("z", 5.0)):
++        s.marker(name, t)
++    s.at("go").squish("d", axis="x", to=0.5)
++    s.at("a").grow("d", by=2)
++    s.at("b").shrink("d", by=0.5)
++    s.at("c").squish("d", axis="x", to=1.0)
++    s.at("z").flatten("g").then().squish("g", axis="z", to=1.0)
++    e = s.engine
++    assert e.state_at(2.95)["d"].params.stretch == pytest.approx((1.0, 2.0, 2.0))
++    assert e.state_at(3.95)["d"].params.stretch == pytest.approx((0.5, 1.0, 1.0))
++    assert e.state_at(9.0)["d"].params.stretch == (1.0, 1.0, 1.0)
++    assert _box(e, "d", 9.0)[0] == pytest.approx(_box(e, "d", 0.5)[0])
++    flat = e.state_at(6.0)["g"].params.stretch
++    assert flat[2] == STRETCH_FLOOR and e.state_at(9.0)["g"].params.stretch == (1.0, 1.0, 1.0)
++
++
++def test_flatten_leaves_a_sliver_not_nothing():
++    s = _scene()
++    s.at("go").flatten("p", axis="y")
++    lo, hi = _box(s.engine, "p", 3.0)
++    assert 0 < hi[1] - lo[1] < 0.01
++
++
++def test_the_verbs_give_the_same_scene_whatever_order_they_are_written_in():
++    def build(order):
++        s = _scene()
++        s.marker("later", 2.5)
++        steps = {
++            "grow": lambda: s.at("go").grow("d"),
++            "squish": lambda: s.at("go").squish("e", "dc", axis="x", to=0.5),
++            "flatten": lambda: s.at("later").flatten("p", axis="y"),
++            "flash": lambda: s.at("go").flash("d"),
++        }
++        for k in order:
++            steps[k]()
++        return s.engine
++
++    a = build(["grow", "squish", "flatten", "flash"])
++    b = build(["flash", "flatten", "squish", "grow"])
++    for t in (0.5, 1.3, 2.9, 4.0):
++        assert a.inspect(t, detail="brief") == b.inspect(t, detail="brief")
++
++
++def test_bad_calls_say_what_is_wrong():
++    s = _scene()
++    with pytest.raises(VerbError, match="no object 'nope'"):
++        s.at("go").grow("nope")
++    with pytest.raises(VerbError, match="positive"):
++        s.at("go").shrink("d", by=0)
++    with pytest.raises(VerbError, match="'x', 'y' or 'z'"):
++        s.at("go").squish("d", axis="w")
++    with pytest.raises(VerbError, match="'x', 'y' or 'z'"):
++        s.at("go").flatten("d", axis=2)
++    with pytest.raises(VerbError, match="to="):
++        s.at("go").squish("d", to=-1)
++    with pytest.raises(VerbError, match="at least one"):
++        s.at("go").grow()
++
++
++def test_a_composite_is_refused_and_its_parts_are_named():
++    @register
++    class Pair(ObjectBase):
++        type = "scale_test_pair"
++
++        class Params(ParamsBase):
++            pass
++
++        def build(self, state):
++            return [Dot(id="a", pos=(0, 0, 0)), Dot(id="b", pos=(1, 0, 0))]
++
++    try:
++        s = Scene("comp", passes=None)
++        s.add(Pair(id="pair"))
++        s.marker("go", 1.0)
++        with pytest.raises(VerbError, match="pair.a"):
++            s.at("go").grow("pair")
++    finally:
++        unregister("scale_test_pair")
++
++
++# ---------------------------------------------------------------- applied centrally
++
++
++def test_a_type_with_its_own_bounds_is_not_stretched_twice():
++    """Bounds that read the object's own features (or a ``super()`` call) are measured
++    unstretched inside the wrapper, then stretched once."""
++
++    @register
++    class Box(ObjectBase):
++        type = "scale_test_box"
++
++        class Params(ParamsBase):
++            pos: tuple[float, float, float] = (0.0, 0.0, 0.0)
++
++        def features(self, state):
++            x, y, z = self.me(state).params.pos
++            return {"center": np.array([x, y, z]), "corner": np.array([x + 1, y + 1, z]),
++                    "label": "not a point"}  # fmt: skip
++
++        def world_bounds(self, state):
++            from phasor.core.objects import Bounds
++
++            f = self.features(state)  # its own (wrapped) features
++            return Bounds.of_points([2 * f["center"] - f["corner"], f["corner"]])
++
++        def draw(self, ctx, state):
++            b = self.world_bounds(state)  # its own bounds, inside draw
++            lo, hi = np.asarray(b.lo), np.asarray(b.hi)
++            ctx.triangles(np.array([lo, [hi[0], lo[1], 0], hi]), color=(1, 1, 1, 1))
++
++    @register
++    class Box2(Box):
++        type = "scale_test_box2"
++
++        def world_bounds(self, state):
++            return super().world_bounds(state)
++
++    try:
++        s = Scene("own", passes=None)
++        s.add(Box(id="b", pos=(2, 0, 0)))
++        s.add(Box2(id="c", pos=(-2, 0, 0)))
++        s.marker("go", 1.0)
++        s.at("go").squish("b", "c", axis="x", to=0.5)
++        st = s.engine.state_at(5.0)
++        for oid, cx_ in (("b", 2.0), ("c", -2.0)):
++            b = st[oid].impl.world_bounds(st)
++            assert b.lo[0] == pytest.approx(cx_ - 0.5) and b.hi[0] == pytest.approx(cx_ + 0.5)
++            assert b.lo[1] == pytest.approx(-1) and b.hi[1] == pytest.approx(1)
++            f = st[oid].impl.features(st)
++            assert f["corner"] == pytest.approx([cx_ + 0.5, 1, 0]) and f["label"] == "not a point"
++        assert type(Box2.world_bounds).__name__ == "function"
++        assert getattr(Box2.features, "stretch_wrapped", False)  # inherited, not wrapped twice
++        assert Box2.features is Box.features
++    finally:
++        unregister("scale_test_box")
++        unregister("scale_test_box2")
++
++
++def test_identity_stretch_changes_no_bounds_or_features_in_the_examples():
++    """With stretch (1, 1, 1) the wrapped members return exactly what the type's own do."""
++    for name in ("prism_primes", "motion_gallery"):
++        e = runpy.run_path(str(ROOT / "examples" / f"{name}.py"), run_name="x")["s"].engine
++        for t in (0.5, 6.0):
++            st = e.state_at(t)
++            for o in st.objects:
++                cls = type(o.impl)
++                if not hasattr(cls.world_bounds, "__wrapped__"):
++                    continue  # a composite
++                assert o.impl.world_bounds(st) == cls.world_bounds.__wrapped__(o.impl, st)
++                got, raw = o.impl.features(st), cls.features.__wrapped__(o.impl, st)
++                assert got.keys() == raw.keys()
++                for k in got:
++                    assert np.array_equal(np.asarray(got[k]), np.asarray(raw[k]))
++
++
++def test_a_squished_field_shows_the_same_place_in_each_share_of_its_quad():
++    """The ``pixels`` callback of a stretched field sees the unstretched quad: each pixel of
++    the stretched picture shows what the same share of the unstretched quad showed."""
++
++    def where(pw, ph, center, height):  # each pixel's quad coordinates (x, y)
++        width = height * pw / ph
++        xs = center[0] - width / 2 + (np.arange(pw) + 0.5) / pw * width
++        ys = center[1] + height / 2 - (np.arange(ph) + 0.5) / ph * height
++        out = np.zeros((ph, pw, 4))
++        out[..., 0], out[..., 1] = xs[None, :], ys[:, None]
++        return out
++
++    # a 4 x 2 quad squished to 4 x 1 (ku = 0.5), shown whole at 80 x 20 pixels: each pixel
++    # shows the unstretched place at the same share, to within one unstretched pixel
++    img = _stretched_pixels(where, 1.0, 0.5)(80, 20, (2.0, 0.5), 1.0)
++    assert img.shape == (20, 80, 4)
++    share_x = (np.arange(80) + 0.5) / 80
++    share_y = (np.arange(20) + 0.5) / 20
++    assert np.abs(img[0, :, 0] - 4 * share_x).max() <= 0.05 + 1e-9
++    assert np.abs(img[:, 0, 1] - 2 * (1 - share_y)).max() <= 0.05 + 1e-9
++    # squished across by 0.5 (kr): the same, the other way
++    img = _stretched_pixels(where, 0.5, 1.0)(40, 40, (1.0, 1.0), 2.0)
++    assert np.abs(img[0, :, 0] - 4 * (np.arange(40) + 0.5) / 40).max() <= 0.05 + 1e-9
++    # flattened: the callback is asked for a bounded number of pixels
++    asked = []
++
++    def counted(pw, ph, center, height):
++        asked.append(pw * ph)
++        return where(pw, ph, center, height)
++
++    flat = _stretched_pixels(counted, 1.0, STRETCH_FLOOR)(80, 2, (2.0, 0.001), 0.002)
++    assert flat.shape == (2, 80, 4) and asked[0] <= 16 * 80 * 2 + 200
++
++
++def test_stretch_points_scale_about_the_pivot():
++    p = stretch_points([[2.0, 3.0, 1.0]], np.array([0.5, 2.0, 1.0]), np.array([1.0, 1.0, 0.0]))
++    assert p.tolist() == [[1.5, 5.0, 1.0]]
++
++
++# ---------------------------------------------------------------- pictures
++
++
++@needs_gl
++@pytest.mark.gl
++def test_the_picture_agrees_with_the_inspected_bounds():
++    s = _scene(passes="auto")
++    s.at("go").squish(*IDS, axis="y", to=0.4)
++    s.add(Text(id="t", text="hello", pos=(0, 2.5, 0)))
++    e = s.engine
++    st = e.state_at(4.0)
++    size = inspect_size(st)
++    runner = e.pass_runner()
++    for oid in ("d", "l", "p", "g", "dc"):
++        ys, xs = np.nonzero(runner.solo_mask(st, size, oid))
++        x0, y0, x1, y1 = e.where(oid, 4.0)["bbox"]["norm"]
++        assert xs.min() / size[0] == pytest.approx(x0, abs=0.02)
++        assert (xs.max() + 1) / size[0] == pytest.approx(x1, abs=0.02)
++        assert ys.min() / size[1] == pytest.approx(y0, abs=0.03)
++        assert (ys.max() + 1) / size[1] == pytest.approx(y1, abs=0.03)
++
++
++@needs_gl
++@pytest.mark.gl
++def test_identity_stretch_draws_the_same_pixels():
++    """Setting stretch to (1, 1, 1) by hand draws exactly the unstretched picture, and a
++    stretch that is not the identity changes it."""
++    base = _scene(passes="auto").engine.still(0.5, (240, 135))
++    s = _scene(passes="auto")
++    for oid in IDS:
++        s.set(f"{oid}.stretch", (1.0, 1.0, 1.0))
++    assert np.array_equal(s.engine.still(0.5, (240, 135)), base)
++    s.at("go").grow(*IDS, by=1.2)
++    assert not np.array_equal(s.engine.still(4.0, (240, 135)), base)
++
++
++@needs_gl
++@pytest.mark.gl
++def test_the_scale_example_matches_its_golden():
++    e = runpy.run_path(str(ROOT / "examples" / "verbs_scale.py"), run_name="x")["s"].engine
++    assert not e.lint(strict=True)
++    sheet = e.storyboard([1.4, 3.6, 5.0, 6.0, 7.9], size=(320, 180))["image"]
++    _golden("verbs_scale", np.asarray(sheet), e.pass_runner().renderer_class())
