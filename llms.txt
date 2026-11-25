@@ -98,8 +98,11 @@
 - `source`: flash, pos, r
 - `spectrogram`: flash, smooth, isolines, hue_cycles, hue, fade, ambient, contrast, f0, f1, signal, wav, duration, fs, nwin, hop, window, fmax, playhead, pos, size
 - `spectrum`: flash, frequencies, amplitudes, window, samples, fs, pos, extent, bins
+- `star_lattice`: flash, loops, delays, directions, fan, spacing, by_delay, origin, max_time, max_order, max_points, arms, time, rise, decay, afterglow, lap_gain, color_by, arm_values, hue, hue_span, point_size, arm_opacity, crowd
 - `strange_attractor`: flash, system, sigma, rho, beta, seed, t_end, progress, pos, size
 - `subgroup_lattice`: flash, group, pos, width, height
+- `sweep_front`: flash, lattice, rim, veil, rings, sectors
+- `sweep_lattice`: flash, rule, size, source, order, basis, counts, origin, points, values, center, normal, flat, time, speed, extent, attack, decay, before, after, swell, white, fade, r, min_size, color_by, hue_step, hue, max_points
 - `taylor`: flash, function, center, order, xmin, xmax, ymax, pos
 - `text`: flash, text, pos, anchor, leader, leader_on, write
 - `tracer`: flash, path, progress, trail, r
