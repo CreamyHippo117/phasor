@@ -707,7 +707,7 @@ Use the strongest model where mistakes are expensive, Sonnet where the spec is c
 **Rules of the build**
 
 - One milestone per branch. No work on milestone N+1 until N's exit demo and tests pass.
-- Each milestone ends with: demo scene in `examples/`, golden frames, updated `docs/ai/`, and a short `MILESTONE_N.md` listing what was built and what was deferred.
+- Each milestone ends with: demo scene in `examples/`, golden frames, updated `docs/ai/`, and a short `docs/milestones/MILESTONE_N.md` listing what was built and what was deferred.
 - Review prompt at each boundary, run by the strong model: "Compare this branch against SPEC.md sections X and Y. List every deviation from the Core architecture contracts, then run the exit demo and report."
 - Any change to the seven core contracts needs your approval and a spec edit in the same commit.
 

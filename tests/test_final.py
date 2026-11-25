@@ -132,7 +132,7 @@ def test_every_type_draws_something_in_2d_and_3d(name, camera, request):
     if name in DRAWLESS:
         pytest.skip(f"{name} has nothing to draw")
     e = _one(name, camera)
-    # Hairlines are a fraction of a pixel in a tiny frame and vanish (see MILESTONE_11.md),
+    # Hairlines are a fraction of a pixel in a tiny frame and vanish (see docs/milestones/MILESTONE_11.md),
     # so judge at a size where a "hairline" is a line.
     img = e.still(0.0, (960, 540))
     assert img.shape == (540, 960, 3)

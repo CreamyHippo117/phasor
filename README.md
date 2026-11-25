@@ -3,9 +3,10 @@
 GPU-rendered math animations that an AI can see, check and fix. Working name.
 
 Design: [SPEC.md](SPEC.md). Rules for contributors and agents: [CLAUDE.md](CLAUDE.md).
-Status: every milestone on the roadmap is built (see the `MILESTONE_*.md` files); the Windows and
+Status: every milestone on the roadmap is built (see the `docs/milestones/MILESTONE_*.md` files); the Windows and
 NVIDIA/CUDA sides are not tested yet. License: MIT ([LICENSE](LICENSE)).
 Testing plan and what is untested: [TESTING.md](TESTING.md).
+Where every document lives: [docs/README.md](docs/README.md).
 API for humans and agents: [docs/ai/API.md](docs/ai/API.md). Driving it from an AI: [docs/ai/MCP.md](docs/ai/MCP.md).
 
 ```bash

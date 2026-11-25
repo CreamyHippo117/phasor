@@ -319,7 +319,7 @@ def test_opacity_blends_in_linear_light(demo):
 @pytest.mark.parametrize("t", [0.0, 2.0, 5.0])
 def test_golden_stills(demo, t):
     """SSIM >= 0.99 against stored stills. Goldens are kept per renderer class, because a
-    software rasterizer and a GPU do not antialias identically (MILESTONE_0.md, item 5)."""
+    software rasterizer and a GPU do not antialias identically (docs/milestones/MILESTONE_0.md, item 5)."""
     from PIL import Image
 
     from phasor.render.output import save_png

@@ -6,7 +6,7 @@ compounding. If this file and SPEC.md disagree, stop and ask.
 ## Where we are
 
 - Owner approved ADR 0001, ADR 0002 and id tombstones on 2026-11-18.
-- Current milestone: **all of 0-13 built (`MILESTONE_*.md`; 11 Sketch in `MILESTONE_11.md`, reinstated 2026-11-19); the roadmap is complete; boundary reviews of 2-6 (2026-11-18) and 7-9 (2026-11-19, by the authoring model, not independent) done; 10-13 await the owner's final reviews. Windows and CUDA untested**. See `MILESTONE_*.md` for what is built and deferred.
+- Current milestone: **all of 0-13 built (`docs/milestones/MILESTONE_*.md`; 11 Sketch in `docs/milestones/MILESTONE_11.md`, reinstated 2026-11-19); the roadmap is complete; boundary reviews of 2-6 (2026-11-18) and 7-9 (2026-11-19, by the authoring model, not independent) done; 10-13 await the owner's final reviews. Windows and CUDA untested**. See `docs/milestones/MILESTONE_*.md` for what is built and deferred.
 - Roadmap (owner, 2026-11-19): Milestones 11 (Sketch) and 13 (Manim import) were dropped,
   then both reinstated. The owner approved the three layers between the engine and the
   clients (`interactive`, `importers`, `workspace`) on 2026-11-19.
@@ -84,7 +84,7 @@ compounding. If this file and SPEC.md disagree, stop and ask.
 - Update `docs/ai/` in the same commit as the API change. Every ```python block there runs in CI.
 - Where SPEC and working code disagree, the code wins and SPEC is updated in the same commit,
   except for the seven contracts above, which need owner approval.
-- Record any deviation from SPEC in the current `MILESTONE_N.md` under "Deviations", with why.
+- Record any deviation from SPEC in the current `docs/milestones/MILESTONE_N.md` under "Deviations", with why.
 - Don't claim something works on Windows/CUDA unless it ran there. Say "untested on X".
 - All GL work goes through `render/passes.py` (`default_renderer()`), which shares one context
   and makes it current per render. Creating GL objects outside `with ctx:` corrupts state.
