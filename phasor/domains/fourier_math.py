@@ -76,6 +76,26 @@ def series_partial_sum(kind: str, terms: int, x) -> np.ndarray:
     return out
 
 
+def series_harmonics(kind: str, terms: int, x) -> np.ndarray:
+    """The terms of ``series_partial_sum`` one per row, shape (terms, len(x)): row j is the
+    j-th harmonic that the sum adds, and the rows add up to the partial sum."""
+    x = np.asarray(x, dtype=np.float64)
+    rows = np.zeros((terms, x.size))
+    for j in range(terms):
+        if kind == "square":
+            m = 2 * j + 1
+            rows[j] = 4 / (math.pi * m) * np.sin(m * x)
+        elif kind == "sawtooth":
+            m = j + 1
+            rows[j] = -2 / math.pi * (-1) ** m / m * np.sin(m * x)
+        elif kind == "triangle":
+            m = 2 * j + 1
+            rows[j] = 8 / (math.pi**2) * (-1) ** j / m**2 * np.sin(m * x)
+        else:
+            raise ValueError(f"unknown series {kind!r}; series are {SERIES}")
+    return rows
+
+
 def series_target(kind: str, x) -> np.ndarray:
     """The wave the series converges to."""
     x = np.mod(np.asarray(x, dtype=np.float64) + math.pi, 2 * math.pi) - math.pi

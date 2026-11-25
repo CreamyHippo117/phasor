@@ -271,17 +271,17 @@ class At:
 
     # ===== group F2a =====
 
-    def iterate(self, *args: Any, **options: Any) -> At:
-        """iterate (not built yet)."""
-        return self._verb("iterate", *args, **options)
+    def iterate(self, orbit_id: str, n: int | None = None) -> At:
+        """Show an orbit step by step (``n`` steps, one tenth of the theme's time each)."""
+        return self._verb("iterate", orbit_id, n)
 
-    def decompose(self, *args: Any, **options: Any) -> At:
-        """decompose (not built yet)."""
-        return self._verb("decompose", *args, **options)
+    def decompose(self, *ids: str) -> At:
+        """Split a Fourier sum into its harmonics, one row each."""
+        return self._verb("decompose", *ids)
 
-    def recompose(self, *args: Any, **options: Any) -> At:
-        """recompose (not built yet)."""
-        return self._verb("recompose", *args, **options)
+    def recompose(self, *ids: str) -> At:
+        """Bring the harmonics back into the sum."""
+        return self._verb("recompose", *ids)
 
     # ===== end of group F2a =====
 

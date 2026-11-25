@@ -568,14 +568,54 @@ class Verbs:
     # ===== group F2a =====
     # (replace each stub below with the real verb; see docs/ai/verbs_*.md)
 
-    def iterate(self, *ids: str, **options: Any) -> Motion:
-        raise VerbError("iterate is not built yet")
+    ITERATE_STEPS_PER_DURATION = 10  # the theme's ``iterate`` time is for this many steps
 
-    def decompose(self, *ids: str, **options: Any) -> Motion:
-        raise VerbError("decompose is not built yet")
+    def iterate(self, orbit_id: str, n: int | None = None) -> Motion:
+        """An orbit appears step by step: ``orbit_id`` (an ``orbit``) is shown and its
+        ``progress`` runs 0 -> 1 at an even pace, a tenth of the theme's ``iterate`` time per
+        step, so ``n`` steps (default: the orbit's own ``steps``) take ``n / 10`` of it. An
+        orbit that ends early (it converged or escaped) is paced by the steps it has."""
+        obj = self._of_type(orbit_id, "iterate", "orbit")
+        if n is not None and (isinstance(n, bool) or not isinstance(n, int) or n < 1):
+            raise VerbError(f"iterate's n is a whole number of steps, at least 1, not {n!r}")
+        path = f"{orbit_id}.progress"
+        steps_path = f"{orbit_id}.steps"
+        for each in (path, steps_path):
+            self._base(each)  # refuses an expression
+        ops: list[dict[str, Any]] = []
+        if n is not None:
+            ops.append({"op": "set_param", "path": steps_path, "value": n})
+        count = obj.impl.orbit_length(self.state, n)
+        spec = self.motion["iterate"]
+        d = spec["duration"] * max(count, 1) / self.ITERATE_STEPS_PER_DURATION
+        ops += self._show_at(orbit_id, "iterate", 0.0)
+        if self._starts_hidden(path):
+            ops.append({"op": "set_param", "path": path, "value": 0.0})
+        else:
+            ops.append(self._instant(path, 0.0, "iterate", 0.0))
+        ops.append(self._span(path, 1.0, "iterate", 0.0, d, "linear"))
+        return Motion(tuple(ops), d)
 
-    def recompose(self, *ids: str, **options: Any) -> Motion:
-        raise VerbError("recompose is not built yet")
+    def _spread(self, ids: Sequence[str], verb: str, to: float) -> Motion:
+        def make(object_id: str, delay: float):
+            if not self._has(object_id, "spread"):
+                kind = self.state[object_id].type
+                raise VerbError(f"{verb} needs a signal that splits into harmonics "
+                                f"(partial_sum); {object_id!r} is a {kind}")  # fmt: skip
+            self._base(f"{object_id}.spread")  # refuses an expression
+            seg, done = self._segment(f"{object_id}.spread", to, verb, delay)
+            return [seg], done
+
+        return self._each(ids, verb, make)
+
+    def decompose(self, *ids: str) -> Motion:
+        """A Fourier sum peels apart: ``spread`` runs to 1 and each harmonic takes a row of
+        its own under the sum, in its own colour."""
+        return self._spread(ids, "decompose", 1.0)
+
+    def recompose(self, *ids: str) -> Motion:
+        """The inverse of ``decompose``: the harmonics return into the sum (``spread`` to 0)."""
+        return self._spread(ids, "recompose", 0.0)
 
     # ===== end of group F2a =====
 

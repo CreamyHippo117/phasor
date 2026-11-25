@@ -29,7 +29,7 @@ from phasor.core.state import SceneState
 from phasor.core.values import Vec3
 from phasor.domains import fourier_math as fm
 from phasor.domains.heatmap import PRISM, HeatParams, heat_pixels, lut_colour, wheel_colour
-from phasor.domains.strokes import circle, disc, hue_colors, polyline, with_alpha
+from phasor.domains.strokes import circle, disc, hue_colors, lut_colors, polyline, with_alpha
 
 
 def _ydir(me, state: SceneState) -> float:
@@ -151,6 +151,7 @@ class PartialSum(ObjectBase):
         "target": ("emphasis", "muted"),
         "stroke": ("stroke", "regular"),
         "glow": ("glow", "none"),
+        "colormap": ("colormap", "spectrum"),  # one colour per harmonic when spread
     }
     Presets: ClassVar = {"glowing": {"style": {"glow": "soft"}}}
 
@@ -160,6 +161,13 @@ class PartialSum(ObjectBase):
         pos: Vec3 = (0.0, 0.0, 0.0)  # centre of the plot
         extent: tuple[float, float] = (6.0, 2.4)
         reveal: float = Field(1.0, ge=0, le=1)  # share of the period drawn
+        # 0: only the sum (the picture without this parameter); 1: the first ``ROWS`` harmonics
+        # each in a row of its own under the sum, in its own colour (verbs ``decompose`` and
+        # ``recompose`` animate it)
+        spread: float = Field(0.0, ge=0, le=1)
+
+    ROWS: ClassVar[int] = 8  # harmonics drawn as rows (a sum of 200 terms is not 200 rows)
+    PITCH: ClassVar[float] = 0.5  # row spacing, as a share of the plot height
 
     def _xs(self, p):
         return np.linspace(-math.pi, math.pi, 600)
@@ -178,8 +186,29 @@ class PartialSum(ObjectBase):
     def world_bounds(self, state: SceneState) -> Bounds:
         p = self.me(state).params
         x, y, z = p.pos
-        return Bounds((x - p.extent[0] / 2, y - p.extent[1] / 2, z),
-                      (x + p.extent[0] / 2, y + p.extent[1] / 2, z))  # fmt: skip
+        low = y - p.extent[1] / 2
+        high = y + p.extent[1] / 2
+        if p.spread > 0:  # the rows hang below the plot (above it on the overlay, y down)
+            reach = (p.spread * (self._rows(p) + 0.5) * self.PITCH + 0.25) * p.extent[1]
+            below = -_ydir(self.me(state), state) * reach
+            low, high = min(low, low + below), max(high, high + below)
+        return Bounds((x - p.extent[0] / 2, low, z), (x + p.extent[0] / 2, high, z))
+
+    def _rows(self, p) -> int:
+        return min(p.terms, self.ROWS)
+
+    def _row_curves(self, state: SceneState, p) -> list[np.ndarray]:
+        """The harmonics as curves, row j hung ``spread * (j + 1.5)`` pitches under the sum and
+        drawn smaller as it spreads (so the rows fit; at 0 they would lie on the sum)."""
+        rows = fm.series_harmonics(p.kind, self._rows(p), self._xs(p))
+        ydir = _ydir(self.me(state), state)
+        scale = 1.0 - 0.6 * p.spread
+        out = []
+        for j, y in enumerate(rows):
+            curve = self._curve(state, p, y * scale)
+            curve[:, 1] -= ydir * p.spread * (j + 1.5) * self.PITCH * p.extent[1]
+            out.append(curve)
+        return out
 
     def features(self, state: SceneState) -> dict[str, np.ndarray]:
         p = self.me(state).params
@@ -191,9 +220,15 @@ class PartialSum(ObjectBase):
         xs = self._xs(p)
         err = np.abs(fm.series_partial_sum(p.kind, p.terms, xs) - fm.series_target(p.kind, xs))
         away = np.abs(np.sin(xs)) > 0.3  # not next to a jump
-        return {"kind": "partial_sum", "series": p.kind, "terms": p.terms,
-                "gibbs_overshoot": round(fm.gibbs_overshoot(p.kind, p.terms), 5),
-                "max_error_away_from_jumps": round(float(err[away].max()), 5)}  # fmt: skip
+        out = {"kind": "partial_sum", "series": p.kind, "terms": p.terms,
+               "gibbs_overshoot": round(fm.gibbs_overshoot(p.kind, p.terms), 5),
+               "max_error_away_from_jumps": round(float(err[away].max()), 5)}  # fmt: skip
+        if p.spread > 0:  # taken apart: the harmonics, strongest first
+            rows = fm.series_harmonics(p.kind, self._rows(p), xs)
+            out["spread"] = p.spread
+            out["harmonics_shown"] = len(rows)
+            out["harmonic_amplitudes"] = [round(float(np.abs(r).max()), 5) for r in rows]
+        return out
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
         me = self.me(state)
@@ -213,6 +248,13 @@ class PartialSum(ObjectBase):
         y = fm.series_partial_sum(p.kind, p.terms, xs)
         color = with_alpha(me.style["color"], p.opacity)
         polyline(ctx, cam, self._curve(state, p, y), w, color=color, glow=me.style["glow"])
+        if p.spread > 0:  # the harmonics, each in its own colour, fading in as they part
+            rows = self._row_curves(state, p)
+            hues = lut_colors(me.style["colormap"], np.arange(len(rows)) / max(len(rows), 1))
+            fade = min(1.0, 3.0 * p.spread)
+            for curve, hue in zip(rows, hues, strict=True):
+                col = with_alpha(tuple(hue), p.opacity * fade)
+                polyline(ctx, cam, curve, w * 0.8, color=col, glow=me.style["glow"])
 
 
 # ---------------------------------------------------------------- Spectrum

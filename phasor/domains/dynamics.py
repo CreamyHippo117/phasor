@@ -21,7 +21,7 @@ of the origin. Its modes and the matrix exponential acting on a grid are the exi
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
 import numpy as np
 from pydantic import Field, field_validator, model_validator
@@ -35,6 +35,7 @@ from phasor.domains import linalg_math as lm
 from phasor.domains.strokes import (
     disc_batch,
     field_arrows,
+    lut_colors,
     polyline,
     segment_batch,
     with_alpha,
@@ -559,3 +560,191 @@ class StrangeAttractor(ObjectBase):
         colors = np.c_[rgb, np.full(len(points), p.opacity)]
         polyline(ctx, cam, points, width, color=with_alpha(me.style["color"], p.opacity),
                  glow=me.style["glow"], colors=colors)  # fmt: skip
+
+
+# ---------------------------------------------------------------- Orbit
+
+
+@register
+class Orbit(ObjectBase):
+    """The orbit z0, z1 = F(z0), z2 = F(z1), ... of a map, its points joined one to the next
+    by a glowing segment, the colour running along the steps. ``function`` is read with the
+    whitelist formula parser (a function of ``z``, with the constant ``a`` you give as
+    ``(re, im)``); ``kind`` says what is iterated:
+
+    - ``map``: ``function`` itself (``"z**2 + a"`` is the Mandelbrot / Julia orbit);
+    - ``newton``: Newton's method on the polynomial ``function`` (``"z**3 - 1"``);
+    - ``cobweb``: a real map such as ``"a*z*(1 - z)"`` (the logistic map), drawn as the graph,
+      the diagonal and the staircase between them.
+
+    One unit of z is ``scale`` world units, ``pos`` is where z = 0 sits. ``progress`` (0-1)
+    is the share of the ``steps`` shown. The orbit ends early when a step moves less than
+    ``tol`` (converged) or leaves ``|z| <= bail`` (escaped); the semantics say which."""
+
+    type: ClassVar[str] = "orbit"
+    Style: ClassVar = {
+        "color": ("emphasis", "primary"),
+        "accent": ("emphasis", "highlight"),
+        "guide": ("emphasis", "secondary"),
+        "stroke": ("stroke", "regular"),
+        "glow": ("glow", "soft"),
+        "colormap": ("colormap", "spectrum"),
+    }
+
+    MAX_SHOWN: ClassVar[int] = 24  # points listed in the semantics
+
+    class Params(ParamsBase):
+        kind: Literal["map", "newton", "cobweb"] = "map"
+        function: str = Field("z**2 + a", min_length=1)
+        a: tuple[float, float] = (0.0, 0.0)  # the constant ``a`` in the formula, (re, im)
+        start: tuple[float, float] = (0.0, 0.0)  # z0, (re, im)
+        steps: int = Field(12, ge=1, le=500)
+        progress: float = Field(1.0, ge=0, le=1)
+        pos: Vec3 = (0.0, 0.0, 0.0)  # where z = 0 is
+        scale: float = Field(1.0, gt=0, allow_inf_nan=False)  # world units per unit of z
+        window: tuple[float, float] = (0.0, 1.0)  # cobweb: the interval of x drawn
+        bail: float = Field(8.0, gt=0, allow_inf_nan=False)  # an orbit leaving |z| <= bail ends
+        tol: float = Field(1e-9, gt=0, allow_inf_nan=False)  # a step this short is convergence
+
+        @model_validator(mode="after")
+        def _formula(self):
+            try:
+                dm.orbit_map(self.function, self.kind)
+            except dm.FunctionError as e:
+                raise ValueError(str(e)) from None
+            if self.window[0] >= self.window[1]:
+                raise ValueError("window is (low, high) with low < high")
+            return self
+
+    def _orbit(self, p):
+        """(points, converged_at, escaped) of the orbit (cached)."""
+        key = ("orbit", p.kind, p.function, p.a, p.start, p.steps, p.bail, p.tol)
+
+        def make():
+            step = dm.orbit_map(p.function, p.kind)
+            z0, a = complex(*p.start), complex(*p.a)
+            if p.kind == "cobweb":  # a real map: stay on the real line
+                inner = step
+                step = lambda z, a: inner(z, a).real + 0j  # noqa: E731
+                z0 = complex(z0.real, 0.0)
+            return dm.orbit(step, z0, a, p.steps, p.bail, p.tol)
+
+        return _memo(key, make)
+
+    def orbit_length(self, state: SceneState, steps: int | None = None) -> int:
+        """How many steps the orbit really has (it may end early), for ``steps`` if given
+        instead of the object's own: what the ``iterate`` verb paces itself by."""
+        p = self.me(state).params
+        if steps is not None:
+            p = p.model_copy(update={"steps": steps})
+        return len(self._orbit(p)[0]) - 1
+
+    def _world(self, p, z) -> np.ndarray:
+        z = np.asarray(z, dtype=np.complex128)
+        o = np.asarray(p.pos, dtype=np.float64)
+        return np.stack(
+            [o[0] + p.scale * z.real, o[1] + p.scale * z.imag, np.full(z.shape, o[2])], axis=-1
+        )
+
+    def _path(self, p) -> np.ndarray:
+        """The vertices the segments run through, as complex numbers: the orbit's points, or
+        for a cobweb the staircase (x0, 0), (x0, x1), (x1, x1), (x1, x2), ..."""
+        pts = self._orbit(p)[0]
+        if p.kind != "cobweb":
+            return pts
+        x = pts.real
+        path = np.empty(2 * len(x) - 1, dtype=np.complex128)
+        path[0] = complex(x[0], 0.0)
+        path[1::2] = x[:-1] + 1j * x[1:]
+        path[2::2] = x[1:] + 1j * x[1:]
+        return path
+
+    def _graph(self, p) -> np.ndarray:
+        f = dm.orbit_map(p.function, "cobweb")
+        x = np.linspace(p.window[0], p.window[1], 160)
+        return x + 1j * f(x.astype(np.complex128), complex(*p.a)).real
+
+    def _shown(self, p) -> tuple[np.ndarray, int]:
+        """The visible stretch of the path (its last vertex may be partway along a segment)
+        and the number of whole steps shown."""
+        path = self._path(p)
+        steps = len(self._orbit(p)[0]) - 1
+        k = int(np.floor(p.progress * steps + 1e-9))
+        index = p.progress * (len(path) - 1)
+        whole = min(int(np.floor(index + 1e-9)), len(path) - 1)
+        visible = path[: whole + 1]
+        if index > whole + 1e-9 and whole + 1 < len(path):
+            head = path[whole] + (index - whole) * (path[whole + 1] - path[whole])
+            visible = np.append(visible, head)
+        return visible, k
+
+    def world_bounds(self, state: SceneState) -> Bounds:
+        p = self.me(state).params
+        zs = self._path(p)
+        if p.kind == "cobweb":
+            lo, hi = p.window
+            zs = np.concatenate([zs, self._graph(p), [complex(lo, lo), complex(hi, hi)]])
+        pts = self._world(p, zs)
+        pad = np.array([0.02 * p.scale, 0.02 * p.scale, 0.0])
+        return Bounds(tuple(pts.min(axis=0) - pad), tuple(pts.max(axis=0) + pad))
+
+    def features(self, state: SceneState) -> dict[str, np.ndarray]:
+        p = self.me(state).params
+        pts = self._orbit(p)[0]
+        _, k = self._shown(p)
+        return {"start": self._world(p, pts[:1])[0], "tip": self._world(p, pts[k : k + 1])[0]}
+
+    def semantics(self, state: SceneState) -> dict[str, Any]:
+        p = self.me(state).params
+        pts, converged_at, escaped = self._orbit(p)
+        _, k = self._shown(p)
+        shown = pts[: k + 1][: self.MAX_SHOWN]
+        last = pts[-1]
+        return {
+            "kind": "orbit",
+            "map": p.kind,
+            "function": p.function,
+            "steps_total": len(pts) - 1,
+            "steps_shown": k,
+            "progress": p.progress,
+            "converged": converged_at is not None,
+            "converged_at": converged_at,
+            "escaped": escaped,
+            "limit": [round(float(last.real), 6), round(float(last.imag), 6)]
+            if converged_at is not None
+            else None,
+            "points": [[round(float(z.real), 6), round(float(z.imag), 6)] for z in shown],
+        }
+
+    def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
+        me = self.me(state)
+        p = me.params
+        cam = state.camera_for(me)
+        unit = float(cam.units_per_height(np.asarray(p.pos, dtype=np.float64)))
+        w = me.style["stroke"] * unit
+        glow = me.style["glow"]
+        lut = me.style["colormap"]
+        if p.kind == "cobweb":  # the graph y = F(x) and the diagonal y = x
+            guide = with_alpha(me.style["guide"], p.opacity * 0.8)
+            polyline(ctx, cam, self._world(p, self._graph(p)), w * 0.7, color=guide)
+            lo, hi = p.window
+            polyline(ctx, cam, self._world(p, [complex(lo, lo), complex(hi, hi)]), w * 0.5,
+                     color=with_alpha(guide, 0.6))  # fmt: skip
+        visible, k = self._shown(p)
+        pts = self._orbit(p)[0]
+        if len(visible) >= 2:
+            along = np.arange(len(visible)) / max(len(self._path(p)) - 1, 1)
+            colors = lut_colors(lut, along * 0.85)
+            colors[:, 3] = p.opacity
+            polyline(ctx, cam, self._world(p, visible), w * 1.2, glow=glow, colors=colors,
+                     color=with_alpha(me.style["color"], p.opacity))  # fmt: skip
+        dots = pts[: k + 1]
+        if p.kind == "cobweb":
+            dots = dots.real + 1j * dots.real
+        colors = lut_colors(lut, np.arange(len(dots)) / max(len(pts) - 1, 1) * 0.85)
+        colors[:, 3] = p.opacity
+        disc_batch(ctx, cam, self._world(p, dots), unit * 0.010, colors=colors,
+                   glow=max(glow, 1.0))  # fmt: skip
+        disc_batch(ctx, cam, self._world(p, dots[-1:]), unit * 0.016,
+                   colors=with_alpha(me.style["accent"], p.opacity),
+                   glow=max(glow, 1.0) * 1.2)  # fmt: skip
