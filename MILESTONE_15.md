@@ -94,6 +94,12 @@ Status: **built; gates green on Linux (see Verification).** Untested on Windows 
    engine's `worker_payload`. Tests: `tests/test_open_contract.py` (`test_the_cli_*`).
 10. `Value` has no style roles (it draws nothing); `tests/test_final.py` exempts it from
     "has style roles" and "draws something" (`DRAWLESS`), and lists only shipped types.
+11. **The `unfold` verb (added 2026-11-25, after 15) keeps its maths in `core/unfold_math.py`,
+    not `domains/<name>_math.py`.** The verb lives in `time`, which may not import `domains`
+    (contract 6), and the `HingedCopy` object in `domains/unfold.py` needs the same maths;
+    `core` is the lowest layer both can import. Pure NumPy, no drawing, as the domains rule
+    asks. `HingedCopy` has no style roles (it draws its source's look);
+    `tests/test_final.py` exempts it as `BORROWED`.
 
 ## Bugs caught while building
 

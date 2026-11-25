@@ -278,6 +278,7 @@ assert s4.engine.lint(strict=True) == []
 | `circumscribe(id, shape="circle")` | draw a ring (or `"box"`) around an object, then fade it: the child `<id>.ring` |
 | `wiggle(*ids)` | a small side-to-side shake (objects with `pos`) |
 | `sweep(path, value, show=True)` | run a number evenly to `value`, with a live readout `<id>.readout` beside it |
+| `unfold(room, ray, flips=5, speed=None)` | a ray bouncing in a room as a straight line through mirror rooms: at each wall the ray reaches, a copy of the room swings over like a page (`<room>.mirror_e1`, ...); see "Echoes are mirror rooms" |
 
 Durations, easing and stagger come from the theme's `[motion]` table. Chain with `then()`:
 `s.at("loop_draw").trace("loop").then().reveal("loop.label")`. Several ids stagger.
@@ -1248,6 +1249,56 @@ room.add(ac.Wavefront3D(id="front", **clap))
 rays = room.engine.inspect(3.0, id="rays")["objects"][0]["semantic"]
 assert abs(rays["distance"] - 6.86) < 1e-6 and rays["reflections_so_far"] > 1
 assert room.engine.inspect(0.0, id="room")["objects"][0]["semantic"]["volume"] == 120.0
+```
+
+**Echoes are mirror rooms: the `unfold` verb** (`examples/mirror_rooms.py`). A ray that
+reflects off a wall carries on straight into the mirror copy of the room behind that wall.
+`s.at("m").unfold("room", ray="ray", flips=5)` shows it: the ray (a `Line`: its first point
+is where it starts, its second the way it goes) is drawn at a steady speed, and as it reaches
+each wall a mirror copy of the room swings over that wall like a page turning, landing just
+as the ray arrives, so the ray goes straight on into it. After `flips` walls the zig-zag is
+one straight line through a row of mirror rooms.
+
+- `room`: any box: `ac.Room`, a box `ac.Room3D` (not a mesh), or any object whose bounds are
+  the room (flat: 2D). In 2D the ray's points share one z.
+- The copies are the room's children `<room>.mirror_<where>`, named by where they sit:
+  `mirror_e2_n1` is two rooms east (+x) and one north (+y); `w`, `s`, `u`, `d` for -x, -y,
+  +z, -z. Each is hidden until its flip and dims and fades with the room. Unfolding the same
+  room twice into the same place is an error.
+- Timing: each flip takes the theme's `[motion.unfold]` time and lands as the ray arrives;
+  the ray moves at `speed` world units a second (default: one wall per flip on average).
+  The ray's `points` become the straight line to the far wall of the last copy (so they must
+  not be animated before), and its `progress` runs 0 to 1 at that speed.
+- The turn is a half turn about a hinge on the wall, never a reflection: about the wall's
+  edge for a flat room (exactly the mirror image), about the level line through the wall's
+  middle for a box (it tumbles over the top and lands exactly on its mirror box; the floor
+  and ceiling turn about x). Hinges always lift the copy up (+z) half way.
+- `HingedCopy(source=, hinges=[(point, axis, degrees), ...], turn=1)` is the copy: another
+  object drawn carried through a chain of hinge turns, the last one `turn` of the way (0-1).
+  It draws whatever the source draws (strokes still face the camera mid-turn) times its own
+  opacity. Semantics: `of`, `hinges`, `turn`, `angle`, `landed`, `hinge`, `center` (and
+  `backdrop` when its source is one), or `source_missing`. Use it directly for other
+  hinged pictures: a kaleidoscope, the net of a cube folding up (quarter turns).
+- The maths is `phasor.core.unfold_math`: `box_unfold(lo, hi, start, direction, flips)`
+  (each crossing's `distance`, `point`, the real `wall` and `wall_point` it reflects off,
+  `cell_to`, `hinge`), `chain_matrix`, `fold` (back into the real room), `zigzag` (the real
+  path), `image_point` (an image source), `cell_name`.
+
+```python
+from phasor import Line, Scene, ac
+from phasor.core import unfold_math
+
+echo = Scene("mirror rooms", passes=None)
+echo.add(ac.Room(id="room", size=(4, 2.5, 2)))
+echo.add(Line(id="ray", points=[(0.8, 0.6, 1.0), (1.8, 1.05, 1.0)]))
+echo.marker("flip", 1.0)
+echo.at("flip").unfold("room", ray="ray", flips=3)
+copies = [o.id for o in echo.engine.document.objects if o.type == "hinged_copy"]
+assert copies == ["room.mirror_e1", "room.mirror_e1_n1", "room.mirror_e2_n1"]
+done = echo.engine.inspect(20.0, id="room.mirror_e2_n1")["objects"][0]["semantic"]
+assert done["landed"] and done["center"] == [10.0, 3.75, 1.0]
+u = unfold_math.box_unfold((0, 0, 0), (4, 2.5, 2), (0.8, 0.6, 1.0), (1, 0.45, 0), 3)
+assert [c.wall for c in u.crossings] == ["east", "north", "west"]
 ```
 
 ## Graphs and networks (`nw`)

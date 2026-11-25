@@ -25,6 +25,7 @@ _LAZY = {
     "Callout": "phasor.domains.basic",
     "Counter": "phasor.domains.basic",
     "Value": "phasor.domains.basic",
+    "HingedCopy": "phasor.domains.unfold",
     "to_latex": "phasor.core.texconv",
     "to_mathtext": "phasor.core.texconv",
 }

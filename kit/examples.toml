@@ -167,6 +167,11 @@ kind = "physics"
 tier = "technique"
 teaches = "A lattice flashing as a surface sweeps it: the image sources of a room lit by the sphere of time since a clap, then the sphere opening into a plane"
 
+[examples.mirror_rooms]
+kind = "physics"
+tier = "technique"
+teaches = "The unfold verb: a ray bouncing in a room becomes a straight line through mirror rooms that swing over like pages"
+
 [examples.linear_system]
 kind = "fourier_linalg"
 tier = "technique"
