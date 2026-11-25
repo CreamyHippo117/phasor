@@ -118,6 +118,17 @@ s.marker("end", 4.0)
 21. **Render outside the folder** (audit S1). Render... > Choose... a file in `Videos`.
     Expected: it renders there.
 
+22. **Special characters** (re-audit B-A). In `try.py` change `"hello"` to `"10 km"` (a
+    no-break space: Ctrl+Shift+Space in Word, or paste one) in Notepad and save; open it in the
+    app: no `•` in the title; Ctrl+S; the file still has the no-break space (Notepad++: View >
+    Show Symbol).
+23. **A runaway that catches the cancel** (re-audit S-1). Add at the end:
+    `while True:` / `    try:` / `        while True: pass` / `    except BaseException: pass`;
+    Ctrl+Enter, then Cancel run. Expected: within about 5 s "the run did not stop ...", the
+    file holds the code from before, the window and an attached AI work.
+24. **The web export over a page open in a browser** (re-audit S-7): export a web page, open it
+    in a browser, export again to the same name: saved as `name (2).html`, said.
+
 ## D. Results (fill in)
 
 | # | Check | Expected | Measured / seen | Pass? |
@@ -145,6 +156,9 @@ s.marker("end", 4.0)
 | 19 | save after an outside edit | asks; nothing overwritten | | |
 | 20 | read-only script | "read-only", app keeps working | | |
 | 21 | render outside the folder | rendered in Videos | | |
+| 22 | special characters | opens clean; saved byte for byte | | |
+| 23 | runaway catching cancel | let go in ~5 s; file restored | | |
+| 24 | web export over an open page | `name (2).html`, said | | |
 
 Also note: the Windows version, whether the app was started from the Start menu, and anything
 that looked wrong or slow (with a screenshot if you can).
