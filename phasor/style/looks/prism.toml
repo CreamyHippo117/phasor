@@ -199,6 +199,9 @@ dim = 0.9  # a little see-through, like the other prism types
 [defaults.pole_zero.style]
 glow = "strong"
 
+[defaults.phasor_field.style]  # the hands and their smears glow in the hue of their angle
+glow = "strong"
+
 [defaults.frequency_response.params]
 dim = 0.9  # a little see-through, like the other prism types
 

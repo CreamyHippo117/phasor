@@ -192,6 +192,11 @@ kind = "fourier_linalg"
 tier = "technique"
 teaches = "A low-pass filter: poles and zeros over its transfer function, gain and phase, a signal and its spectrum cut"
 
+[examples.reverb_modes]
+kind = "fourier_linalg"
+tier = "technique"
+teaches = "The modes of a filter as turning, shrinking hands on a spiral, hue by angle, with the exact motion blur of the fast ones"
+
 [examples.fourier_winding]
 kind = "fourier_linalg"
 tier = "technique"
