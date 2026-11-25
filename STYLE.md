@@ -47,16 +47,20 @@ The owner's reference for teaching and look is 2swap.
   domain coloring encodes phase as hue, so it stays a rainbow.
 - Everywhere else, vary the palette and mix things up: two or three theme hues, sequential
   ramps (`ember`, `ocean`), a restrained wheel (`soft_phase`), one accent on a quiet field.
-  Don't reach for the same rainbow twice (`color_restraint`: at most three saturated hues).
+  Don't reach for the same rainbow twice (`color_restraint`: at most three saturated hues of
+  flat paint; anything colored through a colormap is not counted, because there hue encodes
+  a quantity: phase, strength, position along a curve, which tile).
 
 ## Hierarchy
 - One thing the eye lands on per beat, and it carries `highlight` (`focal_point`). Everything
-  else steps back (`primary`, `secondary`, `muted`, dimming).
+  else steps back (`primary`, `secondary`, `muted`, dimming). An animation that owns the
+  stage alone is its own focal point and needs no `highlight`; the rule applies from two
+  objects up.
 
 ## Negative space
 - _Yours to fill: how much empty frame feels right?_ Until then the linter's guard rails
-  are a frame that is neither empty nor crowded (`density`) and a clear outer margin
-  (`margin`).
+  are a frame that is not empty (`density`), not crowded by two or more objects together
+  (one animation alone may fill the whole frame), and a clear outer margin (`margin`).
 
 ## Motion rhythm
 - Motions belong to the words: anchored to markers, by verbs, with room to breathe.

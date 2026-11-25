@@ -128,10 +128,10 @@ crowded = 0.05       # a placed label still covered by more than this share is "
 occluded = 0.9       # 3D: a label less visible than this is "occluded_label"
 
 # Aesthetic rules (lint(aesthetic=True)); the taste knobs.
-hues = 7             # prism: a hue running along a curve is the point of the look
+hues = 7             # color_restraint: saturated flat-paint hues (hue along a curve or in a colormap is not counted)
 clip = 0.01          # glow_clip: share of pixels allowed to clip to white after tone mapping
 density_min = 0.008  # prism: thin glowing curves on black are meant to leave space
-density_max = 0.6    # ... and over this is "crowded"
+density_max = 0.6    # ... and over this, with two or more objects, is "crowded" (one alone may fill the frame)
 rhythm = 0.3         # motion_rhythm: seconds within which unrelated objects should not all move
 margin = 0.05        # margin: content must stay out of this outer share of the frame
 stroke_mix = 2       # stroke_mix: more than this many stroke weights in one frame
