@@ -47,7 +47,7 @@
 - `convolution`: flash, f, g, f_support, g_support, pos, extent, progress, ghost, shade, hue_cycles
 - `counter`: flash, value, digits, prefix, suffix, math, pos, anchor
 - `directivity`: flash, kind, elements, spacing, radius, frequency, steer, pos, size
-- `domain_coloring`: flash, function, pos, size, contour, softness, hue, radius, ambient, lines, a, to, blend, line_glow, light
+- `domain_coloring`: flash, function, pos, size, contour, softness, hue, radius, ambient, lines, a, to, blend, line_glow, light, white
 - `doppler`: flash, speed, frequency, time, pos, size
 - `dot`: flash, pos, r
 - `eigen_lines`: flash, matrix, pos, length
@@ -102,7 +102,7 @@
 - `taylor`: flash, function, center, order, xmin, xmax, ymax, pos
 - `text`: flash, text, pos, anchor, leader, leader_on, write
 - `tracer`: flash, path, progress, trail, r
-- `transform_grid`: flash, matrix, pos, extent, spacing, square, basis, flow, flow_time
+- `transform_grid`: flash, matrix, pos, extent, spacing, square, basis, flow, flow_time, lattice, solid, nodes
 - `value`: flash, value
 - `vector_field`: flash, p, q, pos, extent, spacing, color_by_size, length_by
 - `vector_field_3d`: flash, fp, fq, fr, pos, extent, counts, spacing, color_by_size, length_by
