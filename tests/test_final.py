@@ -25,7 +25,7 @@ for _m in phasor._MODULES:  # register every domain's types
     getattr(phasor, _m)
 TYPES = sorted(n for n, c in registered_types().items() if is_builtin(c))  # not test types
 # Types with nothing to draw and so no style roles (ADR 0005): a named number.
-DRAWLESS = {"value"}
+DRAWLESS = {"value", "follow"}  # follow: what the camera rides
 # The fewest parameters each type needs (the rest have defaults).
 REQUIRED = {
     "domain_coloring": {"function": "1/(z**2+1)"},
@@ -39,11 +39,13 @@ REQUIRED = {
     "pressure_slice": {"time": 0.004},  # 0: the sound has not started
     "tracer": {"path": "guide", "progress": 0.5},  # rides a curve
     "callout": {"target": "guide"},  # rings an object
+    "ripple": {"target": "guide", "phase": 0.4},  # 1 (the default): every ring has faded
+    "follow": {"target": "guide"},
     "sound_rays": {"time": 0.5},  # in a room; 0: the sound has not left
     "wavefront3d": {"time": 0.5},
 }
 # Types that point at another object: the scene gets a curve called "guide" for them.
-PARTNERED = {"tracer", "callout"}
+PARTNERED = {"tracer", "callout", "ripple", "follow"}
 # Sound in a 3D room: the scene gets a Room3D called "room" for them.
 IN_ROOM = {"sound_rays", "wavefront3d"}
 # Examples that build a Scene called ``s``: not domain_coloring (a script that renders the

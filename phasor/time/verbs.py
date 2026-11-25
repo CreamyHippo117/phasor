@@ -1036,16 +1036,134 @@ class Verbs:
     # ===== end of group E =====
 
     # ===== group F1 =====
-    # (replace each stub below with the real verb; see docs/ai/verbs_*.md)
 
-    def follow(self, *ids: str, **options: Any) -> Motion:
-        raise VerbError("follow is not built yet")
+    def _spot(self, object_id: str, at: Any, index: int, verb: str) -> dict[str, Any]:
+        """Params naming a spot on ``object_id``: one of its features (point ``index``) or,
+        for ``at`` = (x, y[, z]), a point."""
+        obj = self._object(object_id)
+        if isinstance(at, str):
+            feats = dict(obj.impl.features(self.state))
+            feats.setdefault("center", obj.impl.world_bounds(self.state).center)  # always
+            if at not in feats:
+                raise VerbError(f"{verb}: {object_id!r} ({obj.type}) has no feature {at!r}; its "
+                                f"features are {sorted(feats)}")  # fmt: skip
+            count = len(np.asarray(feats[at], dtype=np.float64).reshape(-1, 3))
+            if not 0 <= index < count:
+                raise VerbError(f"{verb}: {object_id!r} has {count} {at!r} point(s) now, so "
+                                f"index {index} is not one of them")  # fmt: skip
+            return {"target": object_id, "feature": at, "index": int(index)}
+        try:
+            pt = [float(v) for v in at]
+        except (TypeError, ValueError):
+            raise VerbError(f"{verb}: at= is a feature name or a point, not {at!r}") from None
+        if len(pt) not in (2, 3):
+            raise VerbError(f"{verb}: a point has 2 or 3 coordinates, got {pt}")
+        return {"target": object_id, "feature": "", "point": [*pt, 0.0][:3]}
 
-    def ripple(self, *ids: str, **options: Any) -> Motion:
-        raise VerbError("ripple is not built yet")
+    def follow(self, object_id: str, feature: str = "center", index: int = 0,
+               until: str | None = None) -> Motion:  # fmt: skip
+        """Keep the camera on point ``index`` of ``object_id``'s ``feature`` (a zero of a
+        domain coloring whose constant moves, a tracer's head) for the theme's ``follow``
+        time, or until the marker ``until``: the camera's center (2D) or target (3D) glides
+        onto it, rides along, and glides back. The probe ``<id>.follow`` is made the first
+        time; the layout bake moves the camera (the document's center/target stay unset)."""
+        if not isinstance(feature, str):
+            raise VerbError("follow: feature= is the name of one of the object's features")
+        spec = self.motion["follow"]
+        d = self._until(until, "follow") if until is not None else spec["duration"]
+        params = self._spot(object_id, feature, index, "follow")
+        probe = f"{object_id}.follow"
+        ops: list[dict[str, Any]] = []
+        if probe not in self.state:
+            ops.append({"op": "add_object", "object": {"id": probe, "type": "follow", "params": {
+                **params, "on": 0.0}}})  # fmt: skip
+        else:
+            old = self.state[probe].params
+            if (old.feature, old.index) != (params["feature"], params["index"]):
+                raise VerbError(f"{object_id!r} is already followed at {old.feature!r}"
+                                f"[{old.index}]; follow one feature per object")  # fmt: skip
+        ramp = min(0.25 * spec["duration"], d / 2)
+        path = f"{probe}.on"
+        ops.append(self._span(path, 1.0, "follow", 0.0, ramp, spec["ease"]))
+        ops.append(self._span(path, 0.0, "follow", d - ramp, d, spec["ease"]))
+        return Motion(tuple(ops), d)
 
-    def spotlight(self, *ids: str, **options: Any) -> Motion:
-        raise VerbError("spotlight is not built yet")
+    def ripple(self, object_id: str, at: Any = "center", index: int = 0, rings: int = 3) -> Motion:
+        """Rings of light spread from a spot on ``object_id`` and fade: ``at`` is one of its
+        features (point ``index`` of a domain coloring's ``"zeros"``, a ``"center"``) or a
+        point (x, y). The rings are the child ``<id>.ripple``, made the first time; the spot
+        is found again at every frame, so the rings ride a zero that moves."""
+        if not 1 <= int(rings) <= 8:
+            raise VerbError(f"ripple draws 1 to 8 rings, not {rings}")
+        params = {**self._spot(object_id, at, index, "ripple"), "rings": int(rings)}
+        child = f"{object_id}.ripple"
+        spec = self.motion["ripple"]
+        d = spec["duration"]
+        ops: list[dict[str, Any]] = []
+        if child not in self.state:
+            ops.append({"op": "add_object", "object": {"id": child, "type": "ripple", "params": {
+                **params, "phase": 0.0}}})  # fmt: skip
+        else:
+            old = self.state[child].params
+            now = {k: getattr(old, k) for k in params}
+            if "point" in now:
+                now["point"] = [float(v) for v in old.point]
+            if now != params:
+                raise VerbError(f"{object_id!r} already ripples with {now}; one spot per object "
+                                "(ripple another object for another spot)")  # fmt: skip
+        ops.append(self._instant(f"{child}.phase", 0.0, "ripple", 0.0))
+        ops.append(self._span(f"{child}.phase", 1.0, "ripple", 0.0, d, spec["ease"]))
+        return Motion(tuple(ops), d)
+
+    def spotlight(self, *ids: str, until: str | None = None, pad: float = 0.25) -> Motion:
+        """A pool of light on ``ids`` (around their bounds, ``pad`` more), the rest of the
+        frame dimmed, fields included. The first call fades the light in, later ones glide
+        it to the next target; ``until`` fades it out at that marker, and ``spotlight()``
+        with no ids fades it out now. The light is the overlay object ``spotlight``."""
+        spec = self.motion["spotlight"]
+        d = spec["duration"]
+        light = "spotlight"
+        if not ids:
+            if light not in self.state:
+                raise VerbError("spotlight() turns the light off, but there is none yet: write "
+                                "spotlight(target) first, or give it until=")  # fmt: skip
+            return Motion((self._segment(f"{light}.opacity", 0.0, "spotlight", 0.0)[0],), d)
+        corners = []
+        for object_id in ids:
+            obj = self._object(object_id)
+            if obj.layer == "overlay":
+                raise VerbError(f"{object_id!r} is on the overlay; the spotlight lights the world")
+            corners.append(obj.impl.world_bounds(self.state).corners())
+        pts = np.vstack(corners)
+        lo, hi = pts.min(axis=0), pts.max(axis=0)
+        center = [float(v) for v in (lo + hi) / 2]
+        if self.state.camera.perspective:
+            radius = float(np.linalg.norm(hi - lo)) / 2
+        else:  # what the camera sees: the box in the plane
+            radius = float(np.hypot(hi[0] - lo[0], hi[1] - lo[1])) / 2
+        least = 0.12 * float(  # at least 0.12 of the frame height: a pool, even on a point
+            self.state.camera.units_per_height(np.asarray(center))
+        )
+        radius = max(radius * (1.0 + pad), least)
+        ops: list[dict[str, Any]] = []
+        if light not in self.state:
+            ops.append({"op": "add_object", "object": {
+                "id": light, "type": "spotlight", "layer": "overlay",
+                "params": {"center": center, "radius": radius, "opacity": 0.0}}})  # fmt: skip
+        for name, value in (("center", center), ("radius", radius)):
+            path = f"{light}.{name}"
+            if self._starts_hidden(path):  # where it is when it first appears
+                ops.append({"op": "set_param", "path": path, "value": value})
+            ops.append(self._segment(path, value, "spotlight", 0.0)[0])
+        ops.append(self._segment(f"{light}.opacity", 1.0, "spotlight", 0.0)[0])
+        end = d
+        if until is not None:
+            off = self._until(until, "spotlight")
+            if off < d:
+                raise VerbError(f"spotlight: marker {until!r} comes before the light is on")
+            ops.append(self._segment(f"{light}.opacity", 0.0, "spotlight", off)[0])
+            end = off + d
+        return Motion(tuple(ops), end)
 
     # ===== end of group F1 =====
 

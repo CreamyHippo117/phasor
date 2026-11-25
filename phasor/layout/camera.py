@@ -568,3 +568,60 @@ def _check(c, plan, t, p, hidden) -> list[tuple[int, str, tuple[str, ...]]]:
 def _size(box, aspect: float) -> float:
     """How big an NDC box is, as a share of the frame height (its larger side)."""
     return max((box[3] - box[2]) / 2.0, (box[1] - box[0]) / 2.0 * aspect)
+
+
+def follow_keys(
+    c: Compiled, plan: Plan, times: tuple[float, ...], solved: dict[str, tuple]
+) -> dict[str, tuple]:
+    """The camera's center (2D) or target (3D) at every one of ``times`` while ``follow``
+    probes are on: the written value moved ``on`` of the way onto the probe's feature point
+    (several at once share by weight). Empty when no probe is ever on.
+
+    The point is tracked from key to key: the first time it is the probe's ``index``, then
+    the nearest point of that feature to the last one (a root finder may list zeros in any
+    order), and the last one is held while the feature has none. Pure: (document, plan)."""
+    from phasor.layout.plan import follow_param
+
+    if not plan.follows:
+        return {}
+    path = f"{c.doc.timeline.camera}.{follow_param(c)}"
+    last: dict[str, np.ndarray] = {}
+    out: list = []
+    on_ever = False
+    for k, t in enumerate(times):
+        cam_now = {p: v[k] for p, v in solved.items()}
+        state = evaluate(c, t, cam_now) if cam_now else evaluate(c, t)
+        written = np.asarray(state.values[path], dtype=np.float64)
+        pull, weight = np.zeros(3), 0.0
+        for probe in plan.follows:
+            p = state[probe].params
+            point = _followed_point(state, p, last.get(probe))
+            if point is None:
+                continue
+            last[probe] = point
+            if p.on > 0:
+                pull += p.on * (point - written)
+                weight += p.on
+        if weight > 0:
+            on_ever = True
+            pull /= max(weight, 1.0)
+            if path.endswith(".center"):
+                pull[2] = 0.0  # a 2D camera keeps its depth
+        out.append(tuple(float(v) for v in written + pull))
+    return {path: tuple(out)} if on_ever else {}
+
+
+def _followed_point(state: SceneState, p, previous: np.ndarray | None) -> np.ndarray | None:
+    if p.target not in state:
+        return None
+    obj = state[p.target]
+    feats = obj.impl.features(state)
+    if p.feature == "center" and "center" not in feats:  # every object has a middle
+        feats = {"center": obj.impl.world_bounds(state).center}
+    pts = np.asarray(feats.get(p.feature, ()), dtype=np.float64)
+    if pts.size == 0:
+        return previous
+    pts = pts.reshape(-1, 3)
+    if previous is None:
+        return pts[p.index] if p.index < len(pts) else None
+    return pts[int(np.argmin(np.linalg.norm(pts - previous, axis=1)))]
