@@ -278,7 +278,7 @@ assert s4.engine.lint(strict=True) == []
 | `circumscribe(id, shape="circle")` | draw a ring (or `"box"`) around an object, then fade it: the child `<id>.ring` |
 | `wiggle(*ids)` | a small side-to-side shake (objects with `pos`) |
 | `sweep(path, value, show=True)` | run a number evenly to `value`, with a live readout `<id>.readout` beside it |
-| `unfold(room, ray, flips=5, speed=None)` | a ray bouncing in a room as a straight line through mirror rooms: at each wall the ray reaches, a copy of the room swings over like a page (`<room>.mirror_e1`, ...); see "Echoes are mirror rooms" |
+| `unfold(room, ray, flips=5, speed=None, index=None)` | a ray bouncing in a room (a box, a convex polygon or a convex mesh) as a straight line through mirror rooms: at each wall the ray reaches, a copy of the room swings over like a page (`<room>.mirror_e1`, `<room>.mirror_b_a`, ...); `ray` is a `Line` or a `SoundRays` with `index`; see "Echoes are mirror rooms" |
 
 Durations, easing and stagger come from the theme's `[motion]` table. Chain with `then()`:
 `s.at("loop_draw").trace("loop").then().reveal("loop.label")`. Several ids stagger.
@@ -1259,30 +1259,58 @@ each wall a mirror copy of the room swings over that wall like a page turning, l
 as the ray arrives, so the ray goes straight on into it. After `flips` walls the zig-zag is
 one straight line through a row of mirror rooms.
 
-- `room`: any box: `ac.Room`, a box `ac.Room3D` (not a mesh), or any object whose bounds are
-  the room (flat: 2D). In 2D the ray's points share one z.
-- The copies are the room's children `<room>.mirror_<where>`, named by where they sit:
-  `mirror_e2_n1` is two rooms east (+x) and one north (+y); `w`, `s`, `u`, `d` for -x, -y,
-  +z, -z. Each is hidden until its flip and dims and fades with the room. Unfolding the same
-  room twice into the same place is an error.
+- `room`: a box: `ac.Room`, a box `ac.Room3D`, or any object whose bounds are the room
+  (flat: 2D); or any convex room: a convex polygon (a closed `Line`, whose last point is its
+  first, or an `algebra.Polygon`: 2D, billiards and the kaleidoscope) or a convex mesh
+  `ac.Room3D` (`path=`). A room that is not convex is refused: a ray can leave a non-convex
+  mirror copy through a dent, so the straight line would not be the echo's path. In 2D the
+  ray's points share one z.
+- `ray`: a `Line` (its first point is where it starts, its second the way it goes), or an
+  `ac.SoundRays` with `index=` naming one of its rays (0 to `count` - 1; it must bounce in
+  `room`): that ray, from the source, is drawn as a new line `<rays>.unfolded_<index>`.
+- The copies are the room's children. A box's are named by where they sit: `mirror_e2_n1`
+  is two rooms east (+x) and one north (+y); `w`, `s`, `u`, `d` for -x, -y, +z, -z. Any
+  other room's are named by the walls crossed to reach them, in order: `mirror_b_a_c` is
+  the room mirrored in wall b, then in that copy's wall a, then c. Walls are named `a`, `b`,
+  ... (`z`, `aa`, `ab`, ...): a polygon's wall k runs from corner k to corner k + 1 (corners
+  where the outline goes straight on do not count); a mesh's are the planes of its
+  triangles, in the order the `.obj` first uses them. Each copy is hidden until its flip and
+  dims and fades with the room. Unfolding the same room twice into the same place is an
+  error.
 - Timing: each flip takes the theme's `[motion.unfold]` time and lands as the ray arrives;
   the ray moves at `speed` world units a second (default: one wall per flip on average).
   The ray's `points` become the straight line to the far wall of the last copy (so they must
-  not be animated before), and its `progress` runs 0 to 1 at that speed.
-- The turn is a half turn about a hinge on the wall, never a reflection: about the wall's
-  edge for a flat room (exactly the mirror image), about the level line through the wall's
-  middle for a box (it tumbles over the top and lands exactly on its mirror box; the floor
-  and ceiling turn about x). Hinges always lift the copy up (+z) half way.
+  not be animated before), and its `progress` runs 0 to 1 at that speed. Where the ray meets
+  a corner (two walls or more at once) their flips follow one another, each starting as the
+  one before lands, all landed as the ray gets there (together they take the theme's time
+  or the time since the last wall, whichever is longer). The ray passes a corner as a ray a
+  hair to its left would; at a corner of 180/n degrees (a box's, an equilateral triangle's)
+  every nearby ray ends up in the same copy.
+- The turn is a half turn about a hinge on the wall: about the wall's edge for a flat room
+  (exactly the mirror image), about the level line through the wall's middle for a box or a
+  mesh (it tumbles over and lands exactly on its mirror room; the floor and ceiling turn
+  about x). Hinges always lift the copy up (+z) half way. A room in 3D that is not symmetric
+  about the plane through that line, square to the wall, cannot land on its mirror image by
+  turning (a mirror image has the other handedness): its copy appears already mirrored in
+  that plane, on top of the room it leaves, and the half turn then lands it exactly on the
+  reflection in the wall. Every landed copy is the true mirror image of the room.
 - `HingedCopy(source=, hinges=[(point, axis, degrees), ...], turn=1)` is the copy: another
   object drawn carried through a chain of hinge turns, the last one `turn` of the way (0-1).
-  It draws whatever the source draws (strokes still face the camera mid-turn) times its own
-  opacity. Semantics: `of`, `hinges`, `turn`, `angle`, `landed`, `hinge`, `center` (and
-  `backdrop` when its source is one), or `source_missing`. Use it directly for other
-  hinged pictures: a kaleidoscope, the net of a cube folding up (quarter turns).
+  A hinge's optional fourth entry, a normal, mirrors the copy first in the plane through
+  the point (see above). It draws whatever the source draws (strokes still face the camera
+  mid-turn) times its own opacity. Semantics: `of`, `hinges`, `turn`, `angle`, `landed`,
+  `hinge`, `center`, `mirrors` (how many hinges mirror; only when some do), `backdrop` when
+  its source is one, or `source_missing`. Use it directly for other hinged pictures: a
+  kaleidoscope (`unfold_math.mirror_chain`), the net of a cube folding up (quarter turns).
 - The maths is `phasor.core.unfold_math`: `box_unfold(lo, hi, start, direction, flips)`
   (each crossing's `distance`, `point`, the real `wall` and `wall_point` it reflects off,
-  `cell_to`, `hinge`), `chain_matrix`, `fold` (back into the real room), `zigzag` (the real
-  path), `image_point` (an image source), `cell_name`.
+  `cell_to`, `hinge`, `name`), `chain_matrix`, `fold` (back into the real room), `zigzag`
+  (the real path), `image_point` (an image source), `cell_name`. For any convex room:
+  `polygon(corners)` and `polyhedron(vertices, triangles)` make a `Polytope` (its walls'
+  `normals`, `offsets`, `names`); `room_unfold(room, start, direction, flips)` (crossings
+  with `distance`, `wall`, `index`, `word`, `name`, `point`, `wall_point`, `hinge`);
+  `copy_matrix(room, word)` (the true mirror copy, a 4x4; `apply` it to a point for an
+  image source), `mirror_chain(room, word)` (its hinges), `wall_name`, `word_name`.
 
 ```python
 from phasor import Line, Scene, ac
@@ -1299,6 +1327,31 @@ done = echo.engine.inspect(20.0, id="room.mirror_e2_n1")["objects"][0]["semantic
 assert done["landed"] and done["center"] == [10.0, 3.75, 1.0]
 u = unfold_math.box_unfold((0, 0, 0), (4, 2.5, 2), (0.8, 0.6, 1.0), (1, 0.45, 0), 3)
 assert [c.wall for c in u.crossings] == ["east", "north", "west"]
+```
+
+Polygon billiards and the kaleidoscope (`examples/kaleidoscope.py`): the room is a closed
+`Line`; the copies of an equilateral triangle tile the plane.
+
+```python
+import math
+
+from phasor import Line, Scene
+from phasor.core import unfold_math
+
+tri = [(0, 0, 0), (1, 0, 0), (0.5, math.sqrt(3) / 2, 0)]  # walls a (bottom), b, c
+kal = Scene("kaleidoscope", passes=None)
+kal.add(Line(id="mirrors", points=[*tri, tri[0]]))
+kal.add(Line(id="ray", points=[(0.5, 0.29, 0), (1.5, 0.29, 0)]))
+kal.at(0.5).unfold("mirrors", ray="ray", flips=3)
+copies = [o.id for o in kal.engine.document.objects if o.type == "hinged_copy"]
+assert copies == ["mirrors.mirror_b", "mirrors.mirror_b_a", "mirrors.mirror_b_a_c"]
+room = unfold_math.polygon(tri)
+u = unfold_math.room_unfold(room, (0.5, 0.29, 0), (1, 0, 0), 3)
+assert [c.wall for c in u.crossings] == ["b", "a", "c"]
+real = unfold_math.zigzag(u)  # the real path in the triangle: as long as the straight line
+assert abs(sum(math.dist(p, q) for p, q in zip(real, real[1:])) - u.end) < 1e-9
+image = unfold_math.apply(unfold_math.copy_matrix(room, (1,)), (0.5, 0.29, 0))  # in wall b
+assert abs(math.dist(image, (1.0, 0.577, 0))) < 0.01
 ```
 
 **Echoes of K feedback loops as a lattice in 3D** (`nd.StarLattice`, ANIMATIONS.md animation

@@ -177,10 +177,13 @@ class At:
         """Run a number evenly to ``value``, with a live readout beside its object."""
         return self._verb("sweep", path, value, show)
 
-    def unfold(self, room: str, ray: str, flips: int = 5, speed: float | None = None) -> At:
+    def unfold(self, room: str, ray: str, flips: int = 5, speed: float | None = None,
+               index: int | None = None) -> At:  # fmt: skip
         """A ray bouncing in a room as a straight line through mirror rooms: at each wall
-        the ray reaches, a mirror copy of the room swings over like a page."""
-        return self._verb("unfold", room, ray, flips, speed)
+        the ray reaches, a mirror copy of the room swings over like a page. ``room``: a box,
+        a convex polygon or a convex mesh; ``ray``: a ``Line``, or a ``SoundRays`` with
+        ``index`` naming one of its rays."""
+        return self._verb("unfold", room, ray, flips, speed, index)
 
 
 def _caller_dir() -> Path:
