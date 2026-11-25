@@ -776,6 +776,48 @@ assert p["plane"].params.white > 0 and p.strokes["axis"]  # white-hot wash, hue 
 assert c.engine.document.meta.theme == "chroma"
 ```
 
+**The second set of verbs.** 27 more choreography verbs, each timed by the theme's
+`[motion.<verb>]`, tagged with its name, and anchored to a marker like the first set. Each
+group has its own page with a runnable example; through MCP they are
+`animate(verb=..., targets=[...], value={options})`.
+
+| Page | Verbs |
+|---|---|
+| `docs/ai/verbs_scale.md` | `grow`, `shrink`, `squish`, `flatten`: scale any object about its centre, per axis |
+| `docs/ai/verbs_algebra.md` | `act`, `apply`, `generate`, `coset`, `quotient`, `permute` |
+| `docs/ai/verbs_equations.md` | `substitute`, `cancel`, `factor`, `expand`, `ignite`, `pulse` |
+| `docs/ai/verbs_camera.md` | `follow`, `ripple`, `spotlight` |
+| `docs/ai/verbs_signals.md` | `iterate`, `decompose`, `recompose` |
+| `docs/ai/verbs_space.md` | `lift`, `slice`, `project`, `dissolve`, `assemble` |
+
+Every object has a `stretch` parameter, `(1, 1, 1)` by default: a per-axis scale of what it
+draws, about the centre of its bounds. The scale verbs own it (`grow`, `shrink`, `squish`
+and `flatten` write it); bounds, features and the inspector follow the picture. New object
+types the verbs make as children, usually not added by hand:
+
+- `light.Ripple(target, ...)`: rings of light spreading from a spot (the `ripple` verb).
+- `light.Spotlight(center, radius, soft, strength)`: a pool of light with the rest of the
+  frame, fields included, dimmed (the `spotlight` verb).
+- `light.Follow(target, feature, index, on)`: what the camera follows (the `follow` verb);
+  it draws nothing.
+- `space.Landscape(function, to, blend, a, pos, size, n, height, cap, hue, lines)`: the
+  landscape of a function of z, `height` 0 flat (the `lift` verb).
+- `space.CutPlane(surface, axis, at, pad)`: a plane through a surface and the curve where
+  they meet (the `slice` verb).
+- `space.Dashed(start, end, progress, dashes, duty, square, back)`: a dashed line (the
+  `project` verb).
+
+```python
+from phasor import Dot, Scene
+
+s = Scene("scale_api", passes=None)
+s.add(Dot(id="d", pos=(0, 0)))
+s.marker("go", 1.0)
+s.at("go").grow("d", by=2.0)
+assert s.engine.state_at(0.0)["d"].params.stretch == (1.0, 1.0, 1.0)
+assert s.engine.state_at(4.0)["d"].params.stretch == (2.0, 2.0, 2.0)
+```
+
 **Palettes within the prism looks.** The lens and glow stay; the colors are a choice:
 `Scene(..., look="prism_everywhere", palette="moonlight")`. `spectrum` is the prism rainbow
 (the default), `moonlight` is white with a cool and warm shimmer, then `gold`, `glacier`,

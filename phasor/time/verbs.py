@@ -1307,7 +1307,7 @@ class Verbs:
         """Project an arrow (or a point) onto another arrow or a two-point line: a dashed
         perpendicular drops from the tip to the foot, then the projection arrow grows along
         the line from its start. Children: ``<id>.drop`` (a dashed line with a right-angle
-        mark), ``<id>.proj`` (an arrow) and ``<id>.proj.grow`` (a number), all following the
+        mark), ``<id>.proj`` (an arrow) and ``<id>.proj_grow`` (a number), all following the
         arrows through expressions; ``label`` writes a name beside the projection."""
         v = self._of_type(v_id, "project", "arrow", "dot")
         line = self._of_type(onto, "project", "arrow", "line")
@@ -1321,7 +1321,7 @@ class Verbs:
             o, e = f"{onto}.points[0]", f"{onto}.points[1]"
         dirn = f"normalize({e} - {o})"
         foot = f"{o} + dot({tip} - {o}, {dirn}) * {dirn}"
-        drop, proj, grow = f"{v_id}.drop", f"{v_id}.proj", f"{v_id}.proj.grow"
+        drop, proj, grow = f"{v_id}.drop", f"{v_id}.proj", f"{v_id}.proj_grow"
         if drop in self.state:
             for name, text in (("start", tip), ("end", foot)):
                 if self._written_expr(f"{drop}.{name}") != text:

@@ -268,7 +268,7 @@ class CutPlane(ObjectBase):
 
     class Params(ParamsBase):
         surface: str = ""  # the id of the surface to cut
-        axis: Literal["x", "y", "z"] = "x"
+        axis: Literal["x", "y", "z"] = "z"  # horizontal by default: visible from above too
         at: float = 0.0
         pad: float = Field(0.08, ge=0)  # the sheet reaches this share past the surface
 

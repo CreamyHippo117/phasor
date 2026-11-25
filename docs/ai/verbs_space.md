@@ -95,7 +95,7 @@ An arrow (`linalg.Arrow`) or a point (`Dot`) is projected onto another arrow or 
 `Line`. A dashed perpendicular (with a right-angle mark) drops from the tip to the foot, then
 the projection arrow grows along the line from its start. Children, all following the arrows
 through expressions (move `v` or `axis` afterwards and the whole construction follows):
-`<id>.drop` (`space.Dashed`), `<id>.proj` (`linalg.Arrow`) and `<id>.proj.grow` (a `Value`,
+`<id>.drop` (`space.Dashed`), `<id>.proj` (`linalg.Arrow`) and `<id>.proj_grow` (a `Value`,
 what the arrow's growth is driven by). `label` writes that text beside the projection
 (`<id>.proj.label`, kept near it by the layout). The projection is onto the line through the
 target's start along its direction; both arrows normally start at the same point. Projecting
