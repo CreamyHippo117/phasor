@@ -20,7 +20,8 @@ from typing import Any
 
 import numpy as np
 
-from phasor.core.pycode import find_tweaks, insert_code, with_tweaks
+from phasor.core import io
+from phasor.core.pycode import BlockError, find_tweaks, insert_code, read_tweaks, with_tweaks
 from phasor.engine import Engine
 from phasor.workspace import ToolError, Workspace
 
@@ -77,11 +78,104 @@ def _lf(text: str) -> str:
     return text.replace("\r\n", "\n")
 
 
+def _with_line_ends(text: str, disk: str) -> str:
+    """``text`` ("\\n" line ends) written with ``disk``'s: each line ``disk`` already has
+    keeps its own ending (matched with ``difflib``, so a mixed file stays mixed and a CRLF
+    file stays CRLF), a new line takes the ending most of ``disk`` uses."""
+    import difflib
+
+    if "\r\n" not in disk:
+        return text
+    old = disk.split("\n")[:-1]  # the lines that end in "\n" (a CR before it: CRLF)
+    crlf = [piece.endswith("\r") for piece in old]
+    plain = [piece[:-1] if c else piece for piece, c in zip(old, crlf, strict=True)]
+    most = sum(crlf) * 2 >= len(old)
+    *body, tail = text.split("\n")  # the last piece has no line end
+    ends: list[bool] = []
+    sm = difflib.SequenceMatcher(None, plain, body, autojunk=False)
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        ends.extend(crlf[i1:i2] if tag == "equal" else [most] * (j2 - j1))
+    return "".join(line + ("\r\n" if cr else "\n")
+                   for line, cr in zip(body, ends, strict=True)) + tail  # fmt: skip
+
+
+class RunCancelled(BaseException):
+    """Raised inside a script's thread to stop it (Cancel, or past its time). A
+    ``BaseException``, so a script's ``except Exception`` does not swallow it."""
+
+
+RUN_TIMEOUT = 600.0  # seconds a Run may take before it is stopped (PHASOR_RUN_TIMEOUT)
+
+
+def run_timeout() -> float:
+    import os
+
+    try:
+        return max(1.0, float(os.environ.get("PHASOR_RUN_TIMEOUT", RUN_TIMEOUT)))
+    except ValueError:
+        return RUN_TIMEOUT
+
+
+class RunTask:
+    """A script run on a worker thread (``Workspace._load_script``: it builds a new engine
+    and touches nothing shared), so the window and an attached AI stay alive while it runs.
+    ``cancel`` stops it by raising ``RunCancelled`` in its thread at its next Python
+    instruction (``PyThreadState_SetAsyncExc``): a pure-Python loop stops at once; a long
+    call into C (NumPy, a GL draw) stops when it returns. A run stuck in C forever cannot be
+    stopped in-process: the editor then lets it go and keeps the last good scene."""
+
+    def __init__(self, ws: Workspace, path: Path, *, restore: str | None,
+                 written: str | None = None, kind: str = "run") -> None:  # fmt: skip
+        import time
+
+        self.ws, self.path, self.kind = ws, Path(path), kind
+        self.restore, self.written = restore, written
+        self.result: Any = None
+        self.error: BaseException | None = None
+        self.done = threading.Event()
+        self.started = time.monotonic()
+        self.timeout = run_timeout()
+        self.cancelled = False
+        self.timed_out = False
+        self._thread = threading.Thread(target=self._go, name="phasor-run", daemon=True)
+
+    def start(self) -> RunTask:
+        self._thread.start()
+        return self
+
+    def _go(self) -> None:
+        try:
+            self.result = self.ws._load_script(self.path, True)
+        except BaseException as e:  # the script's mistake, or RunCancelled
+            self.error = e
+        finally:
+            self.done.set()
+
+    def past_time(self) -> bool:
+        import time
+
+        late = not self.done.is_set() and time.monotonic() - self.started > self.timeout
+        if late:
+            self.timed_out = True
+        return late
+
+    def cancel(self) -> None:
+        import ctypes
+
+        if self.done.is_set() or self.cancelled:
+            return
+        self.cancelled = True
+        tid = self._thread.ident
+        if tid is not None:
+            ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(tid),
+                                                       ctypes.py_object(RunCancelled))  # fmt: skip
+
+
 def _outside_block(text: str) -> str:
     """A script without its tweaks block: the code a Run builds the scene from (blank lines
     and trailing spaces left out, so the blank line written before a new block is not a
     change of code)."""
-    found = find_tweaks(text)
+    found = find_tweaks(text, strict=False)
     rest = text if found is None else text[: found[0]] + text[found[1] :]
     return "\n".join(line.rstrip() for line in rest.splitlines() if line.strip())
 
@@ -131,8 +225,10 @@ def _class_name(type_name: str) -> str:
 
 
 def _same_file(a: Path, b: Path) -> bool:
+    import filecmp
+
     try:
-        return a.stat().st_size == b.stat().st_size and a.read_bytes() == b.read_bytes()
+        return filecmp.cmp(a, b, shallow=False)  # sizes first, then chunk by chunk
     except OSError:
         return False
 
@@ -189,8 +285,18 @@ class Editor:
         self.block_edited = False  # the person typed in the block: Run to use it
         self.error: dict[str, Any] | None = None
         self.conflict: dict[str, Any] | None = None
-        self.job: str | None = None  # the render job the window shows (``draft_preview``)
-        self._job_opens = False  # play it when done (a preview)
+        # The tweaks block's markers cannot be read for certain ({"line", "message"}):
+        # nothing is written into it until the person fixes them (the tweaks stay in the
+        # scene); ``unwritten`` says the scene holds tweaks the text does not show yet.
+        self.block_problem: dict[str, Any] | None = None
+        self.unwritten = False
+        self.running: RunTask | None = None  # a Run or a reload on its worker thread
+        # Code the app added to a script (footage, sound, notes, narration, the snap): undo
+        # puts the text before it back and runs it, once the scene's own undo is used up.
+        self._script_undo: list[str] = []
+        self._script_redo: list[str] = []
+        self.job: str | None = None  # the Draft preview's render job (the status bar shows it)
+        self._ran = ""
         self._load_buffer()
 
     # ------------------------------------------------------------ the scene
@@ -222,6 +328,8 @@ class Editor:
         return {o.id for o in self.engine.document.objects}
 
     def _edit(self, patch: Any, what: str) -> dict[str, Any]:
+        if self.running is not None:
+            return self._refused("the script is running: wait for it, or cancel it")
         with self.lock:
             r = self.ws.scene_edit(patch)
         if r["ok"]:
@@ -229,6 +337,11 @@ class Editor:
             self.history.append(entry)
             self.ws.activity.append({"who": "you", **entry})
             self._sync_block()
+        elif self.is_script and any(e.get("code") == "scripted_scene" for e in r["errors"]):
+            msg = ("this changes the scene's structure or timing, which the script writes: "
+                   "change it in the code (markers: s.marker(...); a look: Scene(look=...)); "
+                   "only parameters, styles and layout rules are tweaks")  # fmt: skip
+            r = {**r, "errors": [{**r["errors"][0], "message": msg}, *r["errors"][1:]]}
         return r
 
     def activity(self) -> list[dict[str, Any]]:
@@ -240,38 +353,92 @@ class Editor:
         return {"ok": False, "version": -1, "errors": [{"code": "refused", "message": message}]}
 
     def undo(self) -> dict[str, Any]:
+        """Undo the last edit; on a script, when the scene's own undo is used up, the code
+        the app added last (a panel's footage, sound, notes, narration or snap) is taken back
+        out and the script runs again."""
         with self.lock:
             r = self.ws.undo()
+        if not r.get("undone") and self.is_script and self._script_undo and not self.running:
+            before = self._script_undo.pop()
+            now = self.buffer
+            got = self.run_code(before, keep_history=True)
+            if got["ok"]:
+                self._script_redo.append(now)
+            else:
+                self._script_undo.append(before)
+            return {"undone": got["ok"], "script": True, **got}
         self._sync_block()
         return r
 
     def redo(self) -> dict[str, Any]:
         with self.lock:
             r = self.ws.redo()
+        if not r.get("redone") and self.is_script and self._script_redo and not self.running:
+            after = self._script_redo.pop()
+            now = self.buffer
+            got = self.run_code(after, keep_history=True)
+            if got["ok"]:
+                self._script_undo.append(now)
+            else:
+                self._script_redo.append(after)
+            return {"redone": got["ok"], "script": True, **got}
         self._sync_block()
         return r
 
     def save(self, path: str | None = None) -> dict[str, Any]:
-        """Ctrl+S. A script scene: when its code (outside the tweaks block) changed since it
-        last ran, it runs first ("Run on save"; a mistake keeps the last good scene and
-        saves nothing); else the buffer, tweaks block and all, is written as it is."""
+        """Ctrl+S. A script scene: when its code changed since it last ran, it runs first
+        ("Run on save"; a mistake keeps the last good scene and saves nothing); else the
+        buffer, tweaks block and all, is written as it is. Nothing is written when the file
+        changed on disk since it was last run or saved here (``conflict``: the window asks
+        which version to keep), or when the scene holds tweaks the text cannot show because
+        the block's markers cannot be read (``block_problem``)."""
+        from phasor.workspace.tools import ScriptChanged
+
         if self.is_script and path is None:
+            if self.running is not None:
+                return self._refused("the script is running: wait for it, or cancel it")
             with self.lock:
-                if self._needs_run():
-                    r = self.run_code(self.buffer)
-                    if not r["ok"]:
-                        return {"ok": False, "errors": [{"code": "script_error",
-                                                         "message": r["error"]}]}  # fmt: skip
-                else:
-                    self.ws._write_script(self._native(self.buffer))
-                self.ws._save_tweaks()  # the overrides file of an old scene goes away
-                self.conflict = None
+                try:
+                    if self._needs_run():
+                        r = self.run_code(self.buffer)
+                        if not r["ok"]:
+                            code = "file_changed" if r.get("conflict") else "script_error"
+                            return {"ok": False, "errors": [{"code": code,
+                                                             "message": r["error"]}]}  # fmt: skip
+                    elif self.unwritten:
+                        problem = self.block_problem or {"message": "", "line": None}
+                        msg = (
+                            f"not saved: {problem['message']}; the scene holds tweaks the "
+                            "script cannot show until its tweaks block is fixed"
+                        )
+                        return {"ok": False, "errors": [{"code": "tweaks_block", "message": msg,
+                                                         "line": problem["line"]}]}  # fmt: skip
+                    else:
+                        self.ws._write_script(self._native(self.buffer))
+                except ScriptChanged as e:
+                    return self._changed_on_disk(e)
+                except ToolError as e:  # read-only, a full disk: nothing was written
+                    return self._refused(str(e))
+                self.ws.path.with_name(self.ws.path.stem + ".overrides.json").unlink(
+                    missing_ok=True
+                )  # the overrides file of an old scene: in the block now
                 self.saved_version = self.version
                 return {"saved": str(self.ws.path), "version": self.version}
         with self.lock:
             r = self.ws.scene_save(path)
             self.saved_version = self.version
             return r
+
+    def _changed_on_disk(self, e: Any) -> dict[str, Any]:
+        """A write was refused because the file changed outside: it becomes a ``conflict``
+        (the window asks which version to keep); nothing was written."""
+        if e.disk is not None:
+            self.conflict = {"disk": e.disk, "stamp": e.stamp}
+        return {
+            "ok": False,
+            "conflict": True,
+            "errors": [{"code": "file_changed", "message": str(e)}],
+        }
 
     @property
     def path(self) -> Path | None:
@@ -312,10 +479,13 @@ class Editor:
             if p.parent != Path(self.engine.base_dir).resolve():
                 self.engine._bring_files(p.parent)  # pictures and sounds go with it
             p.parent.mkdir(parents=True, exist_ok=True)
-            write_text(p, text)
+            try:
+                write_text(p, text)
+            except ToolError as e:
+                return self._refused(str(e))
             if p.parent != self.ws.root and self.ws.root not in p.parents:
                 self.ws.root = p.parent
-            r = self._run_file(p, text, restore=None)
+            r = self._finish_run(self._start_task(p, restore=None, kind="save_as"), wait=True)
             if not r["ok"]:
                 return {"ok": False, "errors": [{"code": "script_error", "message": r["error"]}]}
             self.saved_version = self.version
@@ -667,14 +837,13 @@ class Editor:
         self.error = None
         self.conflict = None
         self.block_edited = False
+        self.block_problem = None
+        self.unwritten = False
         self._ran = ""
         if self.is_script:
             assert self.ws.script_disk is not None
-            disk = self.ws.script_disk[0]
-            self._nl = "\r\n" if "\r\n" in disk else "\n"
-            self.buffer = self._ran = _lf(disk)
-            found = find_tweaks(self.buffer)
-            self._block = self.buffer[found[0] : found[1]] if found else ""
+            self.buffer = self._ran = _lf(self.ws.script_disk[0])
+            self._block = self._block_of(self.buffer)
             self._sync_block()
         else:
             try:
@@ -687,38 +856,67 @@ class Editor:
         self.buffer = _lf(text)
 
     def _native(self, text: str) -> str:
-        """``text`` with the script file's own line ends (a CRLF file stays CRLF)."""
-        text = _lf(text)
-        return text.replace("\n", self._nl) if self._nl != "\n" else text
+        """``text`` (with "\\n" line ends, as the editor holds it) with the file's own line
+        ends: each line the file already has keeps its own (a mixed file stays mixed), a new
+        line takes the ending most of the file uses."""
+        disk = self.ws.script_disk[0] if self.ws.script_disk else ""
+        return _with_line_ends(_lf(text), disk)
+
+    @staticmethod
+    def _block_of(text: str) -> str:
+        """The tweaks block's text in ``text`` ("" when it has none, or its markers cannot be
+        read)."""
+        found = find_tweaks(text, strict=False)
+        return text[found[0] : found[1]] if found else ""
 
     def _sync_block(self) -> None:
         """Write the live scene's tweaks (``engine.overrides``) into the buffer's tweaks
         block, so the script always says what the scene holds. The code outside the block
-        is not touched. A block the person edited by hand (and has not run) is left as it is:
-        ``block_edited`` says so, and Run takes the block as typed."""
+        is never touched. Not written: a block the person edited by hand and has not run
+        (``block_edited``: Run takes it as typed), and a block whose markers cannot be read
+        for certain (``block_problem``: a begin without an end, two blocks, the code not
+        readable yet; the tweaks stay in the scene, ``unwritten``)."""
         if not self.is_script:
             return
         try:
             overrides = self.engine.overrides
         except ToolError:
             return
-        found = find_tweaks(self.buffer)
-        now = self.buffer[found[0] : found[1]] if found else ""
-        if now != self._block:
+        if self._block_of(self.buffer) != self._block:
             self.block_edited = True
             return
-        new = with_tweaks(self.buffer, overrides, self.ws.script_var)
-        found = find_tweaks(new)
-        self._block = new[found[0] : found[1]] if found else ""
+        if io.dumps(read_tweaks(self.buffer)) == io.dumps(overrides):
+            # the block already says what the scene holds: left as the person wrote it
+            self.block_problem, self.unwritten, self.block_edited = None, False, False
+            try:
+                find_tweaks(self.buffer)
+            except BlockError as e:
+                self.block_problem = {"line": e.line, "message": str(e)}
+            return
+        try:
+            new = with_tweaks(self.buffer, overrides, self.ws.script_var)
+        except BlockError as e:
+            self.block_problem = {"line": e.line, "message": str(e)}
+            self.unwritten = overrides != read_tweaks(self.buffer)
+            return
+        self.block_problem = None
+        self.unwritten = False
+        self._block = self._block_of(new)
         self.buffer = new
         self.block_edited = False
 
     def _needs_run(self) -> bool:
-        """The buffer's code is not the code the scene was built from (outside the block),
-        or its block is not the live scene's tweaks."""
+        """The buffer's code is not the code the scene was built from, or its block is not
+        the live scene's tweaks."""
         if _outside_block(self.buffer) != _outside_block(self._ran):
             return True
-        return with_tweaks(self.buffer, self.engine.overrides, self.ws.script_var) != self.buffer
+        if self.block_problem is not None:  # the block cannot be read: compare it as text
+            return self.buffer != self._ran and not self.unwritten
+        try:
+            canon = with_tweaks(self.buffer, self.engine.overrides, self.ws.script_var)
+        except BlockError:
+            return self.buffer != self._ran
+        return canon != self.buffer
 
     def code(self) -> dict[str, Any]:
         """The scene as Python: the script in the editor (``buffer``), or one generated from
@@ -735,21 +933,26 @@ class Editor:
         return {"text": document_to_python(self.engine.document), "is_script": False,
                 "path": str(self.ws.root / f"{stem}.scene.py")}  # fmt: skip
 
-    def run(self) -> dict[str, Any]:
+    def run(self, *, wait: bool = True) -> dict[str, Any]:
         """Run (Ctrl+Enter): the editor's text becomes the scene."""
-        return self.run_code(self.buffer)
+        return self.run_code(self.buffer, wait=wait)
 
-    def run_code(self, text: str) -> dict[str, Any]:
-        """Run code as the scene (the person at the keyboard may: it is their code). On
-        success the code is saved at ``path`` (the script; for a document, ``name.scene.py``
-        beside it, which then is the scene) and the editor shows it. A mistake reports its
-        line (``error``), keeps the last good scene, and leaves the file as it was; the
-        editor keeps the text so it can be fixed. Running replaces the open scene (its undo
-        history starts again)."""
+    def run_code(self, text: str, *, wait: bool = True, keep_history: bool = False) -> dict:
+        """Run code as the scene (the person at the keyboard may: it is their code). The
+        code is saved at ``path`` (the script; for a document, a new ``name.scene.py``
+        beside it, which then is the scene) and runs on a worker thread, so the window stays
+        alive; ``wait=False`` returns at once (``running``) and ``poll_run`` finishes it. A
+        mistake reports its line (``error``), keeps the last good scene, and puts the file
+        back as it was; the editor keeps the text so it can be fixed. Refused, writing
+        nothing, when the script changed on disk since it last ran or was saved here (a
+        ``conflict``). Running replaces the open scene (its undo history starts again)."""
         import ast
 
-        from phasor.workspace.tools import read_text, write_text
+        from phasor.workspace.tools import ScriptChanged, write_text
 
+        if self.running is not None:
+            return {"ok": False, "error": "the script is already running: wait for it, or "
+                    "cancel it", "line": None}  # fmt: skip
         text = _lf(text)
         self.buffer = text
         try:
@@ -759,64 +962,151 @@ class Editor:
             return {"ok": False, "error": f"line {e.lineno}: {e.msg}", "line": e.lineno}
         path = Path(self.code()["path"])
         with self.lock:
-            old = read_text(path) if path.exists() else None
-            native = self._native(text)
-            write_text(path, native)
-            return self._run_file(path, native, restore=old if old is not None else "")
+            if self.is_script:
+                try:
+                    old = self.ws._check_disk()
+                except ScriptChanged as e:
+                    self._changed_on_disk(e)
+                    return {"ok": False, "error": str(e), "line": None, "conflict": True}
+                native = self._native(text)
+            else:
+                if path.exists():  # never over a script that is already there
+                    msg = (f"{path.name} exists already: open it (it is a script), or move it "
+                           "away, then Run again")  # fmt: skip
+                    self.error = {"line": None, "message": msg}
+                    return {"ok": False, "error": msg, "line": None}
+                old, native = "", text
+            try:
+                write_text(path, native)
+            except ToolError as e:
+                self.error = {"line": None, "message": str(e)}
+                return {"ok": False, "error": str(e), "line": None}
+            task = self._start_task(path, restore=old, written=native,
+                                    kind="undo" if keep_history else "run")  # fmt: skip
+        if not wait:
+            return {"ok": None, "running": True}
+        return self._finish_run(task, wait=True)
 
-    def _run_file(self, path: Path, text: str, *, restore: str | None) -> dict[str, Any]:
-        """Open ``path`` (holding ``text``) as the scene. ``restore``: what to write back
-        when it fails ("" removes the file; None leaves it: an outside edit is the file's
-        owner's)."""
-        from phasor.workspace.tools import write_text
+    def _start_task(self, path: Path, *, restore: str | None, written: str | None = None,
+                    kind: str = "run") -> RunTask:  # fmt: skip
+        """Run the script at ``path`` on a worker thread (``RunTask``). ``restore``: what to
+        write back if it fails ("" removes the file; None leaves it, as for an outside edit
+        whose owner is the other editor), and only while the file still holds ``written``."""
+        task = RunTask(self.ws, path, restore=restore, written=written, kind=kind)
+        self.running = task
+        self.ws.busy = "the script is running in the editor"
+        return task.start()
 
-        try:
-            with self.lock:  # the person's own code: it runs (the workspace's permission
-                self.ws._open(str(path), allow_scripts=True)  # is never raised for it)
-        except Exception as e:  # anything the script raises: shown at its line
+    def poll_run(self) -> dict[str, Any] | None:
+        """The window's timer: None while the run goes on (or when there is none); its
+        result once it is done (``event``: run, reload, ...). A run past its time is
+        cancelled (``RunTask.timeout``)."""
+        task = self.running
+        if task is None:
+            return None
+        if task.past_time():
+            task.cancel()
+        if not task.done.is_set():
+            return None
+        return self._finish_run(task, wait=False)
+
+    def cancel_run(self) -> dict[str, Any] | None:
+        """Stop a run that takes too long (Cancel): the last good scene stays."""
+        task = self.running
+        if task is None:
+            return None
+        task.cancel()
+        task.done.wait(2.0)
+        if not task.done.is_set():  # stuck in C code: let it go; nothing of it is used
+            self.running = None
+            self.ws.busy = None
+            self.error = {"line": None, "message": "the run was cancelled (it is still "
+                          "finishing in the background; nothing of it is used)"}  # fmt: skip
+            return {"ok": False, "error": self.error["message"], "line": None}
+        return self._finish_run(task, wait=False)
+
+    def _finish_run(self, task: RunTask, *, wait: bool) -> dict[str, Any]:
+        """Put a finished run in place (under the lock), or report its mistake."""
+        from phasor.workspace.tools import ScriptChanged, read_text, write_text
+
+        if wait:
+            while not task.done.wait(0.05):
+                if task.past_time():
+                    task.cancel()
+                    task.done.wait(2.0)
+                    break
+        if self.running is task:
+            self.running = None
+            self.ws.busy = None
+        path = task.path
+        if task.error is not None or task.result is None:
+            e = task.error or RunCancelled("the run did not finish")
             line = _error_line(e, path)
-            if restore == "":
-                path.unlink(missing_ok=True)
-            elif restore is not None:
-                write_text(path, restore)
+            if task.restore is not None:
+                try:  # put the file back, unless someone else changed it meanwhile
+                    if task.written is None or read_text(path) == task.written:
+                        if task.restore == "":
+                            path.unlink(missing_ok=True)
+                        else:
+                            write_text(path, task.restore)
+                except (OSError, ToolError):
+                    pass
             where = f"line {line}: " if line else ""
-            msg = f"{type(e).__name__}: {e}"
+            if isinstance(e, RunCancelled):
+                msg = str(e) or (f"the run was stopped: it took longer than {task.timeout:g} s "
+                                 "(PHASOR_RUN_TIMEOUT)" if task.timed_out
+                                 else "the run was cancelled")  # fmt: skip
+                line = None
+            else:
+                msg = f"{type(e).__name__}: {e}"
             self.error = {"line": line, "message": msg}
-            return {"ok": False, "error": f"{where}{msg}", "line": line}
-        self.generation += 1
-        self._frame = self._lint = self._player = None
-        self.preview = {}
-        if self.selected not in self._ids():
-            self.selected = None
-        self.t = min(self.t, max(self.engine.duration, 0.0))
-        self.saved_version = self.version
-        if restore is None:  # the file's own text (a reload, Save As): its line ends
-            self._nl = "\r\n" if "\r\n" in text else "\n"
-        text = _lf(text)
-        self._ran = text
-        self.buffer = text
-        self.error = None
-        self.conflict = None
-        found = find_tweaks(text)
-        self._block = text[found[0] : found[1]] if found else ""
-        self.block_edited = False
-        self._sync_block()  # the block in its canonical form (what the scene holds)
-        if self.is_script and self.buffer != text:
-            self.ws._write_script(self._native(self.buffer))
-            self._ran = self.buffer
-        return {"ok": True, "version": self.version, "migrated": None}
+            return {"ok": False, "error": f"{where}{msg}", "line": line, "event": task.kind}
+        run, ran_text, stamp = task.result
+        with self.lock:
+            out = self.ws._adopt_script(path, run, ran_text, stamp)
+            self.generation += 1
+            self._frame = self._lint = self._player = None
+            self.preview = {}
+            if self.selected not in self._ids():
+                self.selected = None
+            self.t = min(self.t, max(self.engine.duration, 0.0))
+            self.saved_version = self.version
+            text = _lf(ran_text)
+            self._ran = text
+            self.buffer = text
+            self.error = None
+            self.conflict = None
+            self._block = self._block_of(text)
+            self.block_edited = False
+            if task.kind not in ("undo", "add"):  # typed code: the app's additions are history
+                self._script_undo.clear()
+                self._script_redo.clear()
+            self._sync_block()  # the block in its canonical form (what the scene holds)
+            if self.is_script and self.buffer != text and self.block_problem is None:
+                try:
+                    self.ws._write_script(self._native(self.buffer))
+                    self._ran = self.buffer
+                except ScriptChanged as e:  # changed while it ran: ask, write nothing
+                    self._changed_on_disk(e)
+        return {
+            "ok": True,
+            "version": self.version,
+            "event": task.kind,
+            "migrated": out.get("migrated"),
+        }
 
     # ------------------------------------------------------------ the file on disk
 
-    def poll_file(self) -> dict[str, Any] | None:
+    def poll_file(self, *, background: bool = False) -> dict[str, Any] | None:
         """Called by the window's timer: has the script changed on disk (another editor,
         Claude Code over MCP)? With no unsaved edits here it is reloaded and run (an error
-        shows at its line and keeps the last good scene). With unsaved edits it is a
-        ``conflict``: both versions are kept and the person chooses
-        (``resolve_conflict``); nothing is merged. None when nothing changed."""
+        shows at its line and keeps the last good scene; ``background``: on the worker
+        thread, finished by ``poll_run``). With unsaved edits it is a ``conflict``: both
+        versions are kept and the person chooses (``resolve_conflict``); nothing is merged.
+        None when nothing changed."""
         from phasor.workspace.tools import file_stamp, read_text
 
-        if not self.is_script or self.conflict is not None:
+        if not self.is_script or self.conflict is not None or self.running is not None:
             return None
         path = self.ws.path
         assert path is not None and self.ws.script_disk is not None
@@ -835,14 +1125,16 @@ class Editor:
             self.ws.script_disk = (disk, stamp)
             return None
         if self.buffer == _lf(text0):  # nothing unsaved here: the file's version runs
-            with self.lock:
-                self.ws.script_disk = (disk, stamp)
-                r = self._run_file(path, disk, restore=None)
-            if not r["ok"]:
-                self.buffer = _lf(disk)  # the file's text, with its mistake shown
             self.ws.activity.append({"who": "file", "what": "the script changed on disk",
                                      "version": self.version, "t": self.t})  # fmt: skip
-            return {"event": "reloaded", **r}
+            task = self._start_task(path, restore=None, kind="reload")
+            if background:
+                return {"event": "reloading"}
+            r = self._finish_run(task, wait=True)
+            if not r["ok"]:
+                self.buffer = _lf(disk)  # the file's text, with its mistake shown
+                self.ws.script_disk = (disk, stamp)
+            return {**r, "event": "reloaded"}
         self.conflict = {"disk": disk, "stamp": stamp}
         return {"event": "conflict"}
 
@@ -852,16 +1144,17 @@ class Editor:
         if self.conflict is None:
             return {"ok": True}
         disk, stamp = self.conflict["disk"], self.conflict["stamp"]
-        self.conflict = None
         if keep == "file":
-            with self.lock:
-                self.ws.script_disk = (disk, stamp)
-                r = self._run_file(self.ws.path, disk, restore=None)
+            self.conflict = None
+            r = self._finish_run(self._start_task(self.ws.path, restore=None, kind="reload"),
+                                 wait=True)  # fmt: skip
             if not r["ok"]:
                 self.buffer = _lf(disk)
+                self.ws.script_disk = (disk, stamp)
             return r
         if keep != "mine":
             raise ValueError(f"keep is 'file' or 'mine', not {keep!r}")
+        self.conflict = None
         self.ws.script_disk = (disk, stamp)  # seen: the next save writes the editor's text
         return {"ok": True, "kept": "mine"}
 
@@ -914,6 +1207,12 @@ class Editor:
             out.append({"severity": "warning", "code": "file_changed", "ids": [], "times": [],
                         "message": "the script changed on disk while you had unsaved edits",
                         "line": None})  # fmt: skip
+        if self.block_problem is not None:
+            out.append({"severity": "error", "code": "tweaks_block", "ids": [], "times": [],
+                        "message": f"{self.block_problem['message']}: phasor writes nothing "
+                        "into the script until it is fixed" + (" (the scene holds tweaks the "
+                        "script does not show yet)" if self.unwritten else ""),
+                        "line": self.block_problem["line"]})  # fmt: skip
         if self.block_edited:
             out.append({"severity": "info", "code": "tweaks_edited", "ids": [], "times": [],
                         "message": "you edited the tweaks block: Run to use it (until then "
@@ -928,34 +1227,48 @@ class Editor:
     def _add_code(self, lines: list[str], what: str) -> dict[str, Any]:
         """A structural change to a script scene is code (``scripted_scene``): ``lines`` go
         into the script before the tweaks block (and before a trailing ``__main__`` guard),
-        and it runs. A mistake takes the lines back out and says why."""
+        and it runs. A mistake takes the lines back out and says why. Undo takes it back."""
+        if self.running is not None:
+            return self._refused("the script is running: wait for it, or cancel it")
         before = self.buffer
-        r = self.run_code(insert_code(before, lines))
+        try:
+            added = insert_code(before, lines)
+        except BlockError as e:
+            return self._refused(f"{e}: fix the script's tweaks block markers first")
+        r = self.run_code(added, keep_history=True)
         if not r["ok"]:
             self.buffer = before
             self.error = None
-            return {"ok": False, "errors": [{"code": "script_error", "message": r["error"]}]}
+            code = "file_changed" if r.get("conflict") else "script_error"
+            return {"ok": False, "errors": [{"code": code, "message": r["error"]}]}
+        self._script_undo.append(before)
+        self._script_redo.clear()
         entry = {"what": what, "version": self.version, "t": self.t}
         self.history.append(entry)
         self.ws.activity.append({"who": "you", **entry})
         return {"ok": True, "version": self.version, "errors": [], "code": lines}
 
-    def _add_object(self, type_name: str, params: dict[str, Any], *, prefix: str,
-                    what: str, code: list[str] | None = None) -> dict[str, Any]:  # fmt: skip
+    def _add_object(self, type_name: str, params: dict[str, Any], *, prefix: str, what: str,
+                    code: Any = None, copied: str | None = None) -> dict[str, Any]:  # fmt: skip
         """Add an object: an ``add_object`` edit to a document (one undo step), a line of
-        code in a script (``code``, else ``s.add(Type(...))`` with its import)."""
+        code in a script (``code(var, id)`` gives the lines, else ``s.add(Type(...))`` with
+        its import). A file copied for it is removed again when it is not added."""
         oid = self._new_id(prefix)
         if self.is_script:
             var = self.ws.script_var
             if code is None:
                 cls = _class_name(type_name)
                 args = ", ".join([f"id={oid!r}", *(f"{k}={v!r}" for k, v in params.items())])
-                code = [f"from phasor import {cls}", f"{var}.add({cls}({args}))"]
+                lines = [f"from phasor import {cls}", f"{var}.add({cls}({args}))"]
             else:
-                code = [c.replace("{id}", repr(oid)).replace("{s}", var) for c in code]
-            return {**self._add_code(code, what), "id": oid}
-        op = {"op": "add_object", "object": {"id": oid, "type": type_name, "params": params}}
-        return {**self._edit(op, what), "id": oid}
+                lines = code(var, oid)
+            r = {**self._add_code(lines, what), "id": oid}
+        else:
+            op = {"op": "add_object", "object": {"id": oid, "type": type_name, "params": params}}
+            r = {**self._edit(op, what), "id": oid}
+        if not r.get("ok") and copied:
+            Path(copied).unlink(missing_ok=True)
+        return {**r, "copied": copied if r.get("ok") else None}
 
     def _new_id(self, prefix: str) -> str:
         from phasor.core.ids import name_from
@@ -986,8 +1299,9 @@ class Editor:
             dest = dest.with_name(f"{src.stem}_{k}{src.suffix}")
             k += 1
         dest.parent.mkdir(parents=True, exist_ok=True)
-        if not dest.exists():
-            shutil.copy2(src, dest)
+        if dest.exists():  # the same file is there already: used, not copied (nor removed)
+            return {"path": dest.relative_to(folder).as_posix(), "copied": None}
+        shutil.copy2(src, dest)
         return {"path": dest.relative_to(folder).as_posix(), "copied": str(dest)}
 
     def _at_seconds(self, at: str | float | None) -> float:
@@ -1019,12 +1333,13 @@ class Editor:
         prefix = "background" if background else Path(rel).stem
         if background:
             params = {"path": rel, "fill": True, "fit": "cover", "z_index": BACKGROUND_Z}
-            code = [f"{{s}}.background({rel!r}, id={{id}})"]
+
+            def code(var: str, oid: str) -> list[str]:
+                return [f"{var}.background({rel!r}, id={oid!r})"]
         else:
             params, code = {"path": rel}, None
-        r = self._add_object(kind, params, prefix=prefix, code=code,
-                             what=f"{'background' if background else kind}: {rel}")  # fmt: skip
-        return {**r, "copied": brought["copied"]}
+        return self._add_object(kind, params, prefix=prefix, code=code, copied=brought["copied"],
+                                what=f"{'background' if background else kind}: {rel}")  # fmt: skip
 
     def add_sequence(self, frame: str | Path, *, background: bool = True,
                      fps: float = 24.0) -> dict[str, Any]:  # fmt: skip
@@ -1051,7 +1366,10 @@ class Editor:
         code = None
         if background:
             params.update(fill=True, fit="cover", z_index=BACKGROUND_Z)
-            code = [f"{{s}}.background({rel!r}, id={{id}}, fps={float(fps)!r})"]
+
+            def code(var: str, oid: str) -> list[str]:
+                return [f"{var}.background({rel!r}, id={oid!r}, fps={float(fps)!r})"]
+
         return self._add_object("image", params, prefix="background" if background else "frames",
                                 code=code, what=f"picture sequence: {rel}")  # fmt: skip
 
@@ -1059,15 +1377,18 @@ class Editor:
 
     def add_sound(self, path: str | Path, at: str | float | None = None,
                   gain: float = 0.0) -> dict[str, Any]:  # fmt: skip
-        """A sound clip that plays from a marker (its time now) or a number of seconds."""
+        """A sound clip that plays from a marker (it follows the marker when the marker
+        moves: a snap, a drag) or from a number of seconds."""
         brought = self.bring_file(path)
-        start = self._at_seconds(at)
+        markers = self.timeline()["markers"]
+        start: float | str = at if isinstance(at, str) and at in markers else self._at_seconds(at)
         params: dict[str, Any] = {"path": brought["path"], "start": start}
         if gain:
             params["gain"] = float(gain)
-        r = self._add_object("sound", params, prefix=Path(brought["path"]).stem,
-                             what=f"sound: {brought['path']} at {start:g}s")  # fmt: skip
-        return {**r, "copied": brought["copied"]}
+        when = start if isinstance(start, str) else f"{start:g}s"
+        return self._add_object("sound", params, prefix=Path(brought["path"]).stem,
+                                copied=brought["copied"],
+                                what=f"sound: {brought['path']} at {when}")  # fmt: skip
 
     def add_notes(self, path: str | Path | None = None, typed: str = "",
                   at: str | float | None = None, instrument: str = "auto",
@@ -1092,14 +1413,13 @@ class Editor:
             params["instrument"] = instrument
         if show:
             params["show"] = True
-        r = self._add_object("notes", params, prefix=prefix,
-                             what=f"notes: {params.get('path') or 'typed'}")  # fmt: skip
-        return {**r, "copied": copied}
+        return self._add_object("notes", params, prefix=prefix, copied=copied,
+                                what=f"notes: {params.get('path') or 'typed'}")  # fmt: skip
 
     def export_midi(self, out: str | Path | None = None, overwrite: bool = False) -> dict:
         """Write the scene's notes to a ``.mid`` (default ``<scene>.mid`` beside the scene;
         never over a file the scene reads; over another only with ``overwrite``)."""
-        target = Path(out) if out else self._default_output(".mid")
+        target = Path(out) if out else self.default_output(".mid")
         with self.lock:
             return self.ws.export_midi(str(target), overwrite=overwrite)
 
@@ -1130,11 +1450,14 @@ class Editor:
                 try:
                     out = self.ws.narrate(script, audio=rel)
                 except ToolError as e:
-                    return {"ok": False, "errors": [{"code": "narration", "message": str(e)}]}
-            r = {"ok": True, "version": self.version, "errors": [], **out}
-            self.ws.activity.append({"who": "you", "what": f"narration: {rel}",
-                                     "version": self.version, "t": self.t})  # fmt: skip
-        return {**r, "copied": brought["copied"]}
+                    r = {"ok": False, "errors": [{"code": "narration", "message": str(e)}]}
+                else:
+                    r = {"ok": True, "version": self.version, "errors": [], **out}
+                    self.ws.activity.append({"who": "you", "what": f"narration: {rel}",
+                                             "version": self.version, "t": self.t})  # fmt: skip
+        if not r.get("ok") and brought["copied"]:
+            Path(brought["copied"]).unlink(missing_ok=True)
+        return {**r, "copied": brought["copied"] if r.get("ok") else None}
 
     def speech_preview(self, audio: str | None = None) -> dict[str, Any]:
         """Speech and pauses in a recording (the narration's, or ``audio`` in the scene's
@@ -1199,8 +1522,9 @@ class Editor:
 
     # ------------------------------------------------------------ renders (jobs)
 
-    def _default_output(self, suffix: str) -> Path:
-        """``<scene>.<suffix>`` in the scene's folder: the script's or document's name."""
+    def default_output(self, suffix: str) -> Path:
+        """``<scene><suffix>`` in the scene's folder: the script's or document's name (the
+        title before the first save)."""
         from phasor.core.ids import file_stem
 
         p = self.ws.path
@@ -1210,58 +1534,67 @@ class Editor:
 
     def render_plan(self, preset: str) -> dict[str, Any]:
         """What the Render dialog shows for a quality: picture size, frames a second, the
-        file it writes by default (a draft: ``<scene>.draft.mp4``, never the real one)."""
+        file it writes by default (a draft: ``<scene>.draft.mp4`` beside the scene, the same
+        file ``render_start`` writes; never the real one)."""
         from phasor.render.presets import preset_named
 
         p = preset_named(preset)
         meta = self.engine.document.meta
+        path = (self.ws.default_render_path("draft") if preset == "draft"
+                else self.default_output(".mp4"))  # fmt: skip
         return {"preset": preset, "size": p.size(meta.width, meta.height),
-                "fps": p.fps or meta.fps, "note": p.note,
-                "path": str(self._default_output(".draft.mp4" if preset == "draft"
-                                                 else ".mp4"))}  # fmt: skip
+                "fps": p.fps or meta.fps, "note": p.note, "path": str(path)}  # fmt: skip
 
     def start_render(self, preset: str = "draft", out: str | Path | None = None,
                      fps: float | None = None, overwrite: bool | None = None,
                      start: float | str | None = None, end: float | str | None = None,
-                     frame: float | None = None, play: bool = False) -> dict[str, Any]:  # fmt: skip
-        """Start a render job (``Workspace.render_start``) of the scene as it is now; the
-        window shows ``poll_job``. ``frame``: one picture at that time (a ``.png``). ``fps``
-        equal to the preset's is the preset's (None). ``play``: open the result in the
-        system's player when it is done (the Draft preview)."""
+                     frame: float | None = None) -> dict[str, Any]:  # fmt: skip
+        """Start a render job of the scene as it is now, to ``out`` anywhere the person
+        chose (a file dialog; the attached AI's ``render_start`` stays in its folder).
+        Returns its status: the caller keeps its ``job`` id and follows it
+        (``job_status``, ``cancel_render``). ``frame``: one picture at that time (a
+        ``.png``). ``fps`` equal to the preset's is the preset's (None)."""
         plan = self.render_plan(preset)
         target = Path(out) if out else Path(plan["path"])
-        if overwrite is None and preset == "draft" and target.name.endswith(".draft.mp4"):
+        if overwrite is None and out is None and preset == "draft":
             overwrite = True  # a draft replaces the last draft (never the real render)
         if frame is not None or (fps is not None and abs(fps - float(plan["fps"])) < 1e-9):
             fps = None
         with self.lock:
-            r = self.ws.render_start(preset, out=str(target), fps=fps, overwrite=overwrite,
-                                     start=start, end=end, frame=frame)  # fmt: skip
-        self.job, self._job_opens = r["job"], play
-        return r
+            return self.ws._render_job(target, preset, start=start, end=end, fps=fps,
+                                       frame=frame, overwrite=overwrite)  # fmt: skip
 
     def draft_preview(self) -> dict[str, Any]:
         """The Draft preview button: the ``draft`` preset (15 fps, small, no blur, bloom,
         haze or life; repeated frames not drawn again), to ``<scene>.draft.mp4``, played
-        when done."""
-        return self.start_render("draft", play=True)
+        when done (``poll_job``)."""
+        r = self.start_render("draft")
+        self.job = r["job"]
+        return r
+
+    def job_status(self, job: str) -> dict[str, Any]:
+        return self.ws.render_status(job)
+
+    def cancel_render(self, job: str) -> dict[str, Any]:
+        """Stop that render job (the shared lock is not held while it stops)."""
+        return self.ws.render_cancel(job)
 
     def poll_job(self) -> dict[str, Any] | None:
-        """The shown job's status; ``open`` is the file to play when a preview is done."""
+        """The Draft preview's status; ``open`` is the file to play when it is done."""
         if self.job is None:
             return None
         st = self.ws.render_status(self.job)
         if st["state"] in ("done", "failed", "cancelled"):
             self.job = None
-            if st["state"] == "done" and self._job_opens:
+            if st["state"] == "done":
                 st = {**st, "open": st["path"]}
         return st
 
     def cancel_job(self) -> dict[str, Any] | None:
+        """Cancel the Draft preview (only it: a render the dialog started is its own)."""
         if self.job is None:
             return None
-        with self.lock:
-            r = self.ws.render_cancel(self.job)
+        r = self.cancel_render(self.job)
         self.job = None
         return r
 

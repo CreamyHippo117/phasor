@@ -201,31 +201,39 @@ class ExportJob:
         self._buf = ""
         self._snapshot: Path | None = None
         self._log: Any = None
-        self._before: tuple[int, int] | None = None  # the output file before the job, if any
+        # The process writes here (a hidden file of its own beside ``out``, made exclusively);
+        # it becomes ``out`` only when the export finished (Milestone 25: a cancel or a
+        # failure leaves nothing, and a file that was at ``out`` stays as it was).
+        self._partial: Path | None = None
 
-    def command(self, scene: str) -> list[str]:
+    def command(self, scene: str, out: str | Path | None = None) -> list[str]:
+        """The command line for this export, writing to ``out`` (default: the target)."""
+        o = str(out if out is not None else self.out)
         if self.kind == "picture":
-            return cli_command("render", scene, "-o", str(self.out), "--frame", f"{self.t:g}",
+            return cli_command("render", scene, "-o", o, "--frame", f"{self.t:g}",
                                "--preset", self.preset)  # fmt: skip
         if self.kind == "video":
-            return cli_command("render", scene, "-o", str(self.out), "--preset", self.preset)
-        return cli_command("web", scene, "-o", str(self.out), "--steps", str(self.steps))
+            return cli_command("render", scene, "-o", o, "--preset", self.preset)
+        return cli_command("web", scene, "-o", o, "--steps", str(self.steps))
 
     def start(self) -> None:
         """Snapshot the scene and start the process. Raises ``OSError`` (leaving nothing
         behind) when the output folder cannot be made or the process cannot start."""
+        from phasor.workspace.jobs import partial_path
+
         self.out.parent.mkdir(parents=True, exist_ok=True)  # before anything is written
-        self._before = _stamp(self.out)
         fd, name = tempfile.mkstemp(prefix=".phasor-export-", suffix=".phasor.json",
                                     dir=self.scene_dir)  # fmt: skip
         os.close(fd)
         self._snapshot = Path(name)
         try:
+            self._partial = partial_path(self.out)
             self.engine.save(self._snapshot)
             # Kept open for the life of the job (the process writes to it); closed in _cleanup.
             self._log = tempfile.TemporaryFile(mode="w+", encoding="utf-8")  # noqa: SIM115
             self.proc = subprocess.Popen(
-                self.command(str(self._snapshot)), stdout=self._log, stderr=self._log,
+                self.command(str(self._snapshot), self._partial), stdout=self._log,
+                stderr=self._log,
                 cwd=self.scene_dir, creationflags=NO_WINDOW,
             )  # fmt: skip
         except BaseException:
@@ -246,10 +254,17 @@ class ExportJob:
             self.frame, self.frames = (int(x) for x in found[-1])
         code = self.proc.poll()
         if code is not None:
-            self.done, self.ok = True, code == 0 and self.out.exists()
+            made = self._partial is not None and self._partial.exists()
+            self.done, self.ok = True, code == 0 and made and self._partial.stat().st_size > 0
             lines = [ln.strip() for ln in re.split(r"[\r\n]+", text) if ln.strip()]
             msg = [ln for ln in lines if not _FRAME.fullmatch(ln)]
             self.message = msg[-1] if msg else ("done" if self.ok else f"exit code {code}")
+            if self.ok:
+                try:
+                    os.replace(self._partial, self.out)
+                    self._partial = None
+                except OSError as e:  # Windows: the old file is open in another program
+                    self.ok, self.message = False, f"{self.out.name} could not be replaced: {e}"
             self._cleanup()
         return self.status()
 
@@ -258,9 +273,9 @@ class ExportJob:
                 "message": self.message, "out": str(self.out)}  # fmt: skip
 
     def cancel(self) -> None:
-        """Stop the process and remove what it wrote: a cancelled export leaves no partial
-        file (Milestone 21 left one; fixed in Milestone 25). A file that was there before and
-        was not touched stays."""
+        """Stop the process and remove what it wrote (its partial file): a cancelled export
+        leaves nothing (Milestone 21 left a partial file; fixed in Milestone 25), and a file
+        that was at ``out`` before stays as it was."""
         if self.proc is not None and self.proc.poll() is None:
             self.proc.terminate()
             try:
@@ -268,12 +283,13 @@ class ExportJob:
             except subprocess.TimeoutExpired:
                 self.proc.kill()
                 self.proc.wait(timeout=5)
-            if _stamp(self.out) != self._before:
-                self.out.unlink(missing_ok=True)
         self.done, self.ok, self.message = True, False, "cancelled"
         self._cleanup()
 
     def _cleanup(self) -> None:
+        if self._partial is not None:  # ours (made exclusively): never a file of yours
+            self._partial.unlink(missing_ok=True)
+            self._partial = None
         if self._snapshot is not None:
             from phasor.core import io
 
@@ -283,14 +299,6 @@ class ExportJob:
         if self._log is not None:
             self._log.close()
             self._log = None
-
-
-def _stamp(path: Path) -> tuple[int, int] | None:
-    try:
-        st = path.stat()
-    except OSError:
-        return None
-    return st.st_mtime_ns, st.st_size
 
 
 # ---------------------------------------------------------------- the launcher

@@ -63,7 +63,8 @@ def _later(path: Path, text: str) -> None:
 
 def _poll(w, n: int = 1) -> None:
     for _ in range(n):
-        w._poll_file()
+        w._poll_file()  # a reload runs on the worker thread
+        w.wait_for_run()
 
 
 def test_the_script_is_on_the_left_and_the_preview_on_the_right(win):
@@ -189,7 +190,7 @@ def test_draft_preview_renders_in_the_background_and_plays_the_result(win, scene
     assert win.ed.job is None and win.job_bar.isHidden()
     assert "cancelled" in win.statusBar().currentMessage()
     assert scene.with_name("scene.draft.mp4").read_bytes() == b"x" * 8  # the last good draft
-    assert not jobmod.partial_path(scene.with_name("scene.draft.mp4")).exists()
+    assert not list(scene.parent.glob(".*.partial.*"))
 
 
 def test_the_render_dialog_chooses_the_quality_and_its_cancel_leaves_nothing(win, scene,
@@ -215,7 +216,7 @@ def test_the_render_dialog_chooses_the_quality_and_its_cancel_leaves_nothing(win
     for j in win.ed.ws._jobs.all():
         j.wait(10)
     assert final.read_bytes() == b"the real one"
-    assert not jobmod.partial_path(final).exists()
+    assert not list(scene.parent.glob(".*.partial.*"))
 
 
 def test_the_panels_add_footage_sound_and_notes_to_the_script(win, scene, tmp_path_factory):
@@ -278,3 +279,43 @@ def test_a_script_the_app_did_not_write_asks_once_before_it_runs(tmp_path, monke
     w = d.open(script)  # asked once: the next time it just opens
     assert w is not None and len(asked) == 2
     w.close()
+
+
+def test_a_tweak_keeps_the_text_boxs_own_undo(win):
+    """Audit S8: every tweak replaced the whole text, wiping the box's undo history."""
+    box = win.code.text
+    cur = box.textCursor()
+    cur.movePosition(cur.MoveOperation.End)
+    box.setTextCursor(cur)
+    box.insertPlainText("# typing\n")
+    assert box.document().isUndoAvailable()
+    win.ed.set_param("pole", "r", "0.3")
+    win.code.refresh()
+    assert "s.tweak('pole.r', 0.3)" in box.toPlainText() and "# typing" in box.toPlainText()
+    assert box.document().isUndoAvailable()
+
+
+def test_the_run_button_keeps_the_window_alive_and_cancel_stops_a_runaway(win):
+    """Audit S7: a ``while True`` froze every window and the attached AI."""
+    win.code.QUICK = 0.1
+    win.code.text.setPlainText(SCRIPT + "while True:\n    pass\n")
+    win.code.run()
+    assert not win.code.stop.isHidden() and "running" in win.code.status.text()
+    win.tick()  # the window goes on
+    win.code.stop.click()
+    assert win.code.stop.isHidden() and "cancelled" in win.code.status.text()
+    assert win.ed.engine.document.object("pole") is not None
+
+
+def test_the_command_line_asks_before_running_a_script(tmp_path, monkeypatch):
+    """Audit nit: ``phasor gui X.py --root DIR`` ran the script without the question."""
+    from phasor.gui import cli, desktop
+
+    monkeypatch.setenv("PHASOR_CONFIG_DIR", str(tmp_path / "settings"))
+    script = tmp_path / "s.py"
+    script.write_text(SCRIPT, encoding="utf-8")
+    asked = []
+    monkeypatch.setattr(desktop, "confirm_run", lambda p: asked.append(p) or False)
+    assert cli._may_run(script) is False and len(asked) == 1
+    monkeypatch.setattr(desktop, "confirm_run", lambda p: asked.append(p) or True)
+    assert cli._may_run(script) and cli._may_run(script) and len(asked) == 2

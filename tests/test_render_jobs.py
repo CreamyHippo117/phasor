@@ -77,9 +77,14 @@ def test_a_job_reports_progress_and_finishes_into_its_file(ws, monkeypatch):
     done = ws.render_status(st["job"])
     assert done["progress"] == 1.0 and done["result"]["frames"] == 20
     assert out.read_bytes() == b"x" * 20
-    assert not jobmod.partial_path(out).exists()
+    assert not list(out.parent.glob(".*.partial.*"))
     engine, written, preset, _ = fake.seen[0]
-    assert preset == "draft" and written == jobmod.partial_path(out)
+    assert (
+        preset == "draft"
+        and written.parent == out.parent
+        and written.name.startswith(".jobs.draft.")
+    )
+    assert written.name.endswith(".partial.mp4")
     assert engine is not ws.engine  # a snapshot: later edits never reach the job
     assert [j["job"] for j in ws.render_status()["jobs"]] == [st["job"]]
 
@@ -98,7 +103,7 @@ def test_cancel_stops_it_and_leaves_the_old_file_as_it_was(ws, monkeypatch):
     r = ws.render_cancel(st["job"])
     assert r["state"] == "cancelled"
     assert final.read_bytes() == b"the real render"  # untouched
-    assert not jobmod.partial_path(final).exists()  # nothing half-written left behind
+    assert not list(final.parent.glob(".*.partial.*"))  # nothing half-written left behind
     assert ws.render_cancel(st["job"])["state"] == "cancelled"  # again: nothing to do
 
 
@@ -150,9 +155,10 @@ def test_a_real_draft_job_renders_and_a_cancelled_one_leaves_nothing(ws):
     r = ws.render_status(st["job"])
     assert r["state"] == "done", r
     assert (ws.out_dir / "jobs.draft.mp4").stat().st_size > 0
+    ws.scene_edit({"op": "set_marker", "name": "late", "t": 30.0})  # long enough to cancel
     st = ws.render_start("preview", out="long.mp4")
     ws.render_cancel(st["job"])
-    _wait(lambda: ws.render_status(st["job"])["state"] in ("cancelled", "done"), timeout=60)
-    if ws.render_status(st["job"])["state"] == "cancelled":
-        assert not (ws.root / "long.mp4").exists()
-    assert not (ws.root / "long.partial.mp4").exists()
+    _wait(lambda: ws.render_status(st["job"])["state"] != "running", timeout=120)
+    assert ws.render_status(st["job"])["state"] == "cancelled"
+    assert not (ws.root / "long.mp4").exists()
+    assert not list(ws.root.glob(".*.partial.*"))

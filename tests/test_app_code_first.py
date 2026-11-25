@@ -52,7 +52,8 @@ def ed(scene):
 
 
 def _doc(engine) -> str:
-    return io.dumps(engine.document)
+    """The document and the tweaks laid over it (both must agree: the audit's fuzz)."""
+    return io.dumps(engine.document) + io.dumps(engine.overrides)
 
 
 def _fresh(text: str, folder: Path) -> str:
@@ -217,7 +218,7 @@ def test_footage_sound_and_notes_on_a_script_become_code(ed, scene, media):
     bg = ed.engine.document.object("background")
     assert bg.type == "video" and bg.params["fill"] and bg.params["z_index"] == -1000
     r = ed.add_sound(media / "narration_demo.wav", at="go", gain=-6)
-    assert r["ok"] and ed.engine.document.object(r["id"]).params["start"] == 1.0
+    assert r["ok"] and ed.engine.document.object(r["id"]).params["start"] == "go"
     r = ed.add_notes(typed="C4 0 0.5, E4 0.5 0.5", at="go", instrument="bell")
     notes = ed.engine.document.object(r["id"]).params
     assert notes["start"] == "go" and notes["notes"][1][0] == 64 and notes["instrument"] == "bell"
@@ -348,15 +349,17 @@ def test_draft_preview_plays_when_done_and_render_never_takes_the_finals_name(ed
     final.write_bytes(b"kept")
     with pytest.raises(ToolError, match="exists"):
         ed.start_render("final")
-    ed.start_render("final", overwrite=True)
-    time.sleep(0.05)
-    r = ed.cancel_job()
-    assert r["state"] in ("cancelled", "cancelling") or r["state"] == "running"
-    fake.gate.set()
+    mine = ed.start_render("final", overwrite=True)  # the dialog keeps its own job id
+    preview = ed.draft_preview()
+    assert ed.cancel_job()["job"] == preview["job"]  # Cancel in the status bar: the draft only
+    threading.Timer(0.3, fake.gate.set).start()
+    r = ed.cancel_render(mine["job"])  # the dialog's Cancel: its own render
+    assert r["job"] == mine["job"] and r["state"] in ("cancelled", "cancelling")
     for j in ed.ws._jobs.all():
         j.wait(10)
+    assert ed.job_status(mine["job"])["state"] == "cancelled"
     assert final.read_bytes() == b"kept"  # the cancelled render left the old file alone
-    assert not jobmod.partial_path(final).exists()
+    assert not list(scene.parent.glob(".*.partial.*"))  # nothing half-written left behind
 
 
 # ---------------------------------------------------------------- the invariant (ADR 0004)

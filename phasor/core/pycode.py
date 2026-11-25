@@ -207,24 +207,99 @@ def tweak_lines(overrides: Any, var: str = "s") -> list[str]:
     return lines
 
 
+def _split(text: str) -> list[str]:
+    """Lines with their ends, split on "\\n" only (as ``tokenize`` and ``ast`` count them; a
+    form feed or a Unicode line separator inside a line is not a new line)."""
+    lines = [x + "\n" for x in text.split("\n")]
+    lines[-1] = lines[-1][:-1]
+    return [x for x in lines if x]
+
+
 def _newline(text: str) -> str:
-    return "\r\n" if "\r\n" in text else "\n"
+    """The line end most lines of ``text`` use (new lines are written with it)."""
+    crlf = text.count("\r\n")
+    return "\r\n" if crlf and crlf >= text.count("\n") - crlf else "\n"
 
 
-def find_tweaks(text: str) -> tuple[int, int] | None:
-    """Where the block is in ``text``: (offset of its first line, offset just past its end
-    line and that line's newline), or None when the script has none. A begin line without an
-    end line is no block (the markers are kept by hand: nothing is guessed)."""
-    start = None
-    pos = 0
-    for line in text.splitlines(keepends=True):
-        bare = line.strip()
-        if start is None and bare.startswith(TWEAKS_BEGIN):
-            start = pos
-        elif start is not None and bare == TWEAKS_END:
-            return start, pos + len(line)
-        pos += len(line)
-    return None
+class BlockError(ValueError):
+    """The tweaks block's markers cannot be read for certain (a begin without an end, two
+    blocks, an end before its begin, a marker indented or the code not readable yet):
+    nothing is written into the script until the person fixes it. ``line`` is where."""
+
+    def __init__(self, message: str, line: int | None = None) -> None:
+        super().__init__(message + (f" (line {line})" if line else ""))
+        self.line = line
+
+
+def _marker_lines(text: str) -> tuple[list[int], list[int]]:
+    """The 1-based lines of the begin and end markers that are real comments at column 0
+    (``tokenize``: a marker inside a string or docstring is not one). Raises ``BlockError``
+    when the code cannot be tokenized (an open string or bracket) and a marker could be in
+    it, or a marker comment is indented."""
+    import io as _io
+    import tokenize
+
+    try:
+        toks = list(tokenize.generate_tokens(_io.StringIO(text).readline))
+    except (tokenize.TokenError, SyntaxError) as e:
+        line = e.args[1][0] if len(e.args) > 1 and isinstance(e.args[1], tuple) else None
+        raise BlockError("the script cannot be read yet (an open string or bracket), so its "
+                         "tweaks block cannot be found for certain", line) from None  # fmt: skip
+    begins: list[int] = []
+    ends: list[int] = []
+    for t in toks:
+        if t.type != tokenize.COMMENT:
+            continue
+        bare = t.string.rstrip()
+        marker = bare.startswith(TWEAKS_BEGIN) or bare == TWEAKS_END
+        if marker and t.start[1] != 0:
+            raise BlockError("a tweaks marker is indented: markers start at the beginning "
+                             "of their line", t.start[0])  # fmt: skip
+        if bare.startswith(TWEAKS_BEGIN):
+            begins.append(t.start[0])
+        elif bare == TWEAKS_END:
+            ends.append(t.start[0])
+    return begins, ends
+
+
+def find_tweaks(text: str, *, strict: bool = True) -> tuple[int, int] | None:
+    """Where the block is in ``text``: (offset of its begin line, offset just past its end
+    line and that line's newline), or None when the script has none. Only real comment
+    lines at column 0 count (not text in a string). A begin without an end, an end without
+    a begin, an end before its begin, or two blocks: ``BlockError`` (nothing is guessed;
+    phasor writes nothing until the person fixes the markers). ``strict=False`` (reading
+    only, never writing) says None instead of raising."""
+    if TWEAKS_BEGIN not in text and TWEAKS_END not in text:
+        try:  # no marker anywhere: writing a block is still only safe in readable code
+            if strict:
+                _marker_lines(text)
+        except BlockError:
+            raise
+        return None
+    try:
+        begins, ends = _marker_lines(text)
+        if not begins and not ends:
+            return None
+        if len(begins) > 1 or len(ends) > 1:
+            where = (begins[1:] or ends[1:])[0]
+            raise BlockError("the script has more than one tweaks block: keep one (move the "
+                             "tweaks into it)", where)  # fmt: skip
+        if not ends:
+            raise BlockError("the tweaks block has a begin marker but no end marker "
+                             f"({TWEAKS_END!r})", begins[0])  # fmt: skip
+        if not begins:
+            raise BlockError("the tweaks block has an end marker but no begin marker", ends[0])
+        if ends[0] < begins[0]:
+            raise BlockError("the tweaks block's end marker comes before its begin marker",
+                             ends[0])  # fmt: skip
+    except BlockError:
+        if strict:
+            raise
+        return None
+    starts = [0]
+    for line in _split(text):
+        starts.append(starts[-1] + len(line))
+    return starts[begins[0] - 1], starts[ends[0]]
 
 
 def _guard_line(text: str) -> int | None:
@@ -254,7 +329,7 @@ def insertion_offset(text: str) -> int:
         return found[0]
     guard = _guard_line(text)
     if guard is not None:
-        lines = text.splitlines(keepends=True)
+        lines = _split(text)
         return sum(len(x) for x in lines[:guard])
     return len(text)
 
@@ -276,6 +351,8 @@ def with_tweaks(text: str, overrides: Any, var: str = "s") -> str:
     block is kept byte for byte (a missing final newline is added when the block goes last)."""
     nl = _newline(text)
     lines = tweak_lines(overrides, var)
+    if not lines and TWEAKS_BEGIN not in text and TWEAKS_END not in text:
+        return text  # nothing to write and no block: nothing to look for
     block = TWEAKS_HEADER + nl + "".join(line + nl for line in lines) + TWEAKS_END + nl
     found = find_tweaks(text)
     if found is not None:
@@ -285,7 +362,7 @@ def with_tweaks(text: str, overrides: Any, var: str = "s") -> str:
         return text
     guard = _guard_line(text)
     if guard is not None:
-        src = text.splitlines(keepends=True)
+        src = _split(text)
         at = sum(len(x) for x in src[:guard])
         return text[:at] + block + nl + text[at:]
     if text and not text.endswith(("\n", "\r")):
@@ -301,7 +378,7 @@ def read_tweaks(text: str) -> Any:
 
     from phasor.core.schema import ConstraintSpec, Overrides
 
-    found = find_tweaks(text)
+    found = find_tweaks(text, strict=False)
     params: dict[str, Any] = {}
     styles: dict[str, Any] = {}
     rules: list[ConstraintSpec] = []

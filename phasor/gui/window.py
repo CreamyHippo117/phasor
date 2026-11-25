@@ -649,6 +649,10 @@ class CodePanel(QWidget):
         run.setToolTip("Build the scene from this code (Ctrl+Enter; Ctrl+S runs and saves)")
         run.setShortcut("Ctrl+Return")
         run.clicked.connect(self.run)
+        self.stop = QPushButton("Cancel run")
+        self.stop.setToolTip("Stop a script that takes too long: the last scene that ran stays")
+        self.stop.clicked.connect(self.cancel)
+        self.stop.hide()
         self._typed = False  # a document's generated code was typed in
         self._loading = False
         self._note = ""  # the result of the last Run, kept across refreshes
@@ -659,6 +663,7 @@ class CodePanel(QWidget):
         lay.setContentsMargins(4, 4, 4, 4)
         row = QHBoxLayout()
         row.addWidget(self.title, 1)
+        row.addWidget(self.stop)
         row.addWidget(run)
         lay.addLayout(row)
         lay.addWidget(self.text, 1)
@@ -697,15 +702,7 @@ class CodePanel(QWidget):
             self.ed.set_buffer(want)
             self._typed = False
         if self.text.toPlainText() != want:
-            cur = self.text.textCursor().position()
-            scroll = self.text.verticalScrollBar().value()
-            self._loading = True
-            self.text.setPlainText(want)
-            self._loading = False
-            c = self.text.textCursor()
-            c.setPosition(min(cur, len(want)))
-            self.text.setTextCursor(c)
-            self.text.verticalScrollBar().setValue(scroll)
+            self._replace_text(want)
         code = self.ed.code()
         self.title.setText(Path(code["path"]).name + ("" if code["is_script"] else " (generated)"))
         self._marks()
@@ -717,6 +714,32 @@ class CodePanel(QWidget):
             return
         where = ("script: " if code["is_script"] else "generated: ") + code["path"]
         self.status.setText(f"{self._note}   ({where})" if self._note else where)
+
+    def _replace_text(self, want: str) -> None:
+        """Put ``want`` in the box by editing only the part that differs, as one step of
+        the box's own undo (Ctrl+Z in the text): the person's typing history stays, and the
+        cursor and scroll stay where they were."""
+        old = self.text.toPlainText()
+        a = 0
+        while a < min(len(old), len(want)) and old[a] == want[a]:
+            a += 1
+        b = 0
+        while b < min(len(old), len(want)) - a and old[-1 - b] == want[-1 - b]:
+            b += 1
+
+        def qpos(text: str, i: int) -> int:  # Qt counts UTF-16 code units
+            return len(text[:i].encode("utf-16-le")) // 2
+
+        scroll = self.text.verticalScrollBar().value()
+        cur = QTextCursor(self.text.document())
+        cur.beginEditBlock()
+        cur.setPosition(qpos(old, a))
+        cur.setPosition(qpos(old, len(old) - b), QTextCursor.MoveMode.KeepAnchor)
+        self._loading = True
+        cur.insertText(want[a : len(want) - b])
+        self._loading = False
+        cur.endEditBlock()
+        self.text.verticalScrollBar().setValue(scroll)
 
     def _marks(self) -> None:
         """The error's line in red, the selected object's line in amber."""
@@ -743,8 +766,31 @@ class CodePanel(QWidget):
                 self.text.centerCursor()
         self._marks()
 
+    QUICK = 2.0  # seconds Run waits before the window carries on (the run goes on behind)
+
     def run(self) -> None:
-        r = self.ed.run_code(self.text.toPlainText())
+        """Run: on a worker thread, so a long or runaway script never freezes the window
+        (Cancel run stops it); a quick one is shown at once."""
+        r = self.ed.run_code(self.text.toPlainText(), wait=False)
+        if r["ok"] is None:
+            task = self.ed.running
+            if task is not None and task.done.wait(self.QUICK):
+                r = self.ed.poll_run() or r
+        if r["ok"] is None:
+            self.stop.show()
+            self.status.setText("running... (Cancel run stops it; the preview shows the last "
+                                "scene that ran)")  # fmt: skip
+            return
+        self.finish(r)
+
+    def cancel(self) -> None:
+        r = self.ed.cancel_run()
+        if r is not None:
+            self.finish(r)
+
+    def finish(self, r: dict) -> None:
+        """A run is over (here, or noticed by the window's timer)."""
+        self.stop.hide()
         if r["ok"]:
             self._note = "ran: the scene was rebuilt from this code"
             self._typed = False
@@ -946,7 +992,7 @@ class SoundPanel(QWidget):
 
     def export(self, path: str | None = None, overwrite: bool = False) -> dict | None:
         if path is None:
-            start = str(self.ed._default_output(".mid"))
+            start = str(self.ed.default_output(".mid"))
             path, _ = QFileDialog.getSaveFileName(self, "Export the notes", start,
                                                   "MIDI (*.mid)")  # fmt: skip
             if not path:
@@ -1156,7 +1202,7 @@ class RenderDialog(QDialog):
             self.status.setText("This scene has no sliders: the page will show only the picture.")
         else:
             self.status.setText("")
-        base = Path(self.out.text()) if self.out.text() else self.win.ed._default_output("")
+        base = Path(self.out.text()) if self.out.text() else self.win.ed.default_output("")
         # a draft never takes the real render's name (as `phasor render --preset draft`)
         draft = ".draft" if k != "web" and self.preset.currentData() == "draft" else ""
         self.out.setText(str(base.with_name(base.name.split(".")[0] + draft + self._suffix(k))))
@@ -1192,11 +1238,11 @@ class RenderDialog(QDialog):
         fps = self.fps.value() if self._kind() == "video" else None
         try:
             frame = self.time.value() if self._kind() == "picture" else None
-            ed.start_render(preset, out=out, overwrite=overwrite, fps=fps, frame=frame)
+            r = ed.start_render(preset, out=out, overwrite=overwrite, fps=fps, frame=frame)
         except ToolError as e:
             self.status.setText(f"Could not start: {e}")
             return
-        self.job = ed.job
+        self.job = r["job"]  # this dialog's own render (the Draft preview has its own)
         self.go.setEnabled(False)
         self.show_file.hide()
         self.bar.setRange(0, 0)
@@ -1204,10 +1250,11 @@ class RenderDialog(QDialog):
         self.status.setText("Rendering... (you can keep editing; it renders the scene as it was "
                             "when you pressed Render)")  # fmt: skip
 
-    def poll(self, st: dict | None) -> None:
-        """The window's timer hands the job's status here."""
-        if st is None or self.job is None or st.get("job") != self.job:
+    def poll(self) -> None:
+        """The window's timer: how far this dialog's own render is."""
+        if self.job is None:
             return
+        st = self.win.ed.job_status(self.job)
         if st["frames"]:
             self.bar.setRange(0, st["frames"])
             self.bar.setValue(st["frame"])
@@ -1222,10 +1269,12 @@ class RenderDialog(QDialog):
                 self.status.setText(f"Render failed: {st.get('error', '')}")
             else:
                 self.status.setText("Cancelled: nothing was left behind.")
+            if st.get("note"):
+                self.status.setText(self.status.text() + "  " + st["note"])
 
     def cancel(self) -> None:
         if self.job is not None:
-            self.win.cancel_job()
+            self.win.ed.cancel_render(self.job)  # this dialog's render, not the draft's
             self.bar.hide()
             self.go.setEnabled(True)
             self.job = None
@@ -1360,11 +1409,18 @@ class EditorWindow(QMainWindow):
         self.actions["Who changed what"] = self.activity_dock.toggleViewAction()
 
     def save_scene(self) -> None:
-        """Ctrl+S. The desktop app asks where when the scene has never been saved."""
+        """Ctrl+S. The desktop app asks where when the scene has never been saved. When the
+        script changed on disk meanwhile, nothing is written until the person chooses."""
         try:
-            self._report(self.ed.save())
-        except ToolError as e:
-            self.statusBar().showMessage(str(e), 8000)
+            r = self.ed.save()
+            if isinstance(r, dict) and r.get("conflict"):
+                choice = self.ask_conflict()
+                got = self.ed.resolve_conflict(choice)
+                r = self.ed.save() if choice == "mine" else got
+                self.refresh_all()
+            self._report(r)
+        except (ToolError, OSError) as e:  # a read-only file, a full disk: said, not raised
+            self.statusBar().showMessage(f"Not saved: {e}", 8000)
         self.code.refresh()
 
     # ------------------------------------------------------------ renders
@@ -1401,8 +1457,6 @@ class EditorWindow(QMainWindow):
 
     def _poll_job(self) -> None:
         st = self.ed.poll_job()
-        if self.render_dialog is not None:
-            self.render_dialog.poll(st)
         if st is None:
             return
         if st["frames"]:
@@ -1419,6 +1473,8 @@ class EditorWindow(QMainWindow):
                     self.play_file(st["open"])
             elif st["state"] == "failed":
                 self.statusBar().showMessage(f"Render failed: {st.get('error', '')}", 12000)
+            if st.get("note"):
+                self.statusBar().showMessage(st["note"], 12000)
 
     # ------------------------------------------------------------ the script file
 
@@ -1434,17 +1490,44 @@ class EditorWindow(QMainWindow):
         return "mine" if box.clickedButton() is mine else "file"
 
     def _poll_file(self) -> None:
-        r = self.ed.poll_file()
+        r = self.ed.poll_file(background=True)
         if r is None:
             return
         if r["event"] == "conflict":
             choice = self.ask_conflict()
             self._ran(self.ed.resolve_conflict(choice))
             return
+        if r["event"] == "reloading":
+            self.code.stop.show()
+            self.statusBar().showMessage("The script changed on disk: running it...", 4000)
+            return
+        self._reloaded(r)
+
+    def _reloaded(self, r: dict) -> None:
         msg = ("The script changed on disk: reloaded." if r["ok"] else
                f"The script changed on disk and does not run: {r['error']}")  # fmt: skip
         self.statusBar().showMessage(msg, 8000)
         self._ran(r)
+
+    def _poll_run(self) -> None:
+        """A run on its worker thread is over: show it (a Run, or a reload)."""
+        r = self.ed.poll_run()
+        if r is None:
+            return
+        if r.get("event") == "reload":
+            self.code.stop.hide()
+            self._reloaded(r)
+        else:
+            self.code.finish(r)
+
+    def wait_for_run(self, timeout: float = 60.0) -> None:
+        """Tick until a run on its worker thread is over (tests, and closing the window)."""
+        import time
+
+        end = time.monotonic() + timeout
+        while self.ed.running is not None and time.monotonic() < end:
+            self.ed.running.done.wait(0.05)
+            self._poll_run()
 
     # ------------------------------------------------------------ events
 
@@ -1489,10 +1572,14 @@ class EditorWindow(QMainWindow):
             self.playing = self.ed.play_step(TICK_MS / 1000)
             self.viewport.refresh()
             self.timeline.update()
-        if self._ticks % self.POLL_FILE_TICKS == 0:
+        if self.ed.running is not None:
+            self._poll_run()
+        elif self._ticks % self.POLL_FILE_TICKS == 0:
             self._poll_file()
         if self.ed.job is not None:
             self._poll_job()
+        if self.render_dialog is not None and self.render_dialog.job is not None:
+            self.render_dialog.poll()
         if self.ed.changed():  # an edit here, by an attached AI, or the file reloaded
             self.refresh_all()
 
@@ -1543,6 +1630,8 @@ class EditorWindow(QMainWindow):
         self.timer.stop()
         if self.ed.job is not None:
             self.ed.cancel_job()
+        if self.ed.running is not None:
+            self.ed.cancel_run()
         super().closeEvent(ev)
 
 

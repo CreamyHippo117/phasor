@@ -23,7 +23,7 @@ from phasor.core.diff import diff_documents
 from phasor.core.ids import file_stem
 from phasor.core.issues import DocumentError, Issue
 from phasor.core.objects import is_builtin, registered_types
-from phasor.core.pycode import read_tweaks, with_tweaks
+from phasor.core.pycode import BlockError, read_tweaks, with_tweaks
 from phasor.core.schema import Document, Meta
 from phasor.engine import Engine
 from phasor.scene import Scene, run_script
@@ -86,6 +86,15 @@ class ToolError(Exception):
         self.issues = [i.to_dict() for i in issues or []]
 
 
+class ScriptChanged(ToolError):
+    """The open script changed on disk since it was last run or written here: nothing is
+    written over it. ``disk`` and ``stamp``: the file as it is now (None when it is gone)."""
+
+    def __init__(self, message: str, disk: str | None, stamp: tuple[int, int] | None) -> None:
+        super().__init__(message)
+        self.disk, self.stamp = disk, stamp
+
+
 class Workspace:
     def __init__(
         self,
@@ -118,6 +127,9 @@ class Workspace:
         self.script_lines: dict[str, int] = {}
         self.script_disk: tuple[str, tuple[int, int]] | None = None
         self._jobs = _jobs.Jobs()  # render jobs (``render_start``)
+        # Set while the editor runs the script on its worker thread: the scene it builds
+        # replaces this one, so an edit now would be lost; edits are refused meanwhile.
+        self.busy: str | None = None
 
     # ------------------------------------------------------------ plumbing
 
@@ -199,39 +211,80 @@ class Workspace:
             self.script_disk = None
             self.script_lines = {}
             return self.summary()
+        run, text, stamp = self._load_script(p, allow_scripts)
+        return self._adopt_script(p, run, text, stamp)
+
+    def _load_script(self, p: Path, allow_scripts: bool) -> tuple[Any, str, tuple[int, int]]:
+        """Run the script at ``p``: (its ``ScriptRun``, the text that ran, its stamp). The
+        text is read *before* the script runs, so a change another editor makes while it
+        runs is a change the editor has not seen (it reloads or asks). Touches nothing of
+        this workspace: the editor runs it on a worker thread, then ``_adopt_script``."""
+        text, stamp = read_text(p), file_stamp(p)
         run = self._guard(lambda: run_script(p, allow_scripts=allow_scripts))
+        return run, text, stamp
+
+    def _adopt_script(self, p: Path, run: Any, text: str, stamp: tuple[int, int]) -> dict:
+        """Make a finished script run the open scene (under the caller's lock)."""
         self._engine = run.engine
         self.path = p
         self.script_var, self.script_lines = run.var, run.lines
-        self.script_disk = (read_text(p), file_stamp(p))
+        self.script_disk = (text, stamp)
         out = self.summary()
         if run.overrides_file is not None:
             # ADR 0004: an old overrides file is folded into the script's tweaks block the
             # first time the script is opened here, then removed (its tweaks are in the code).
-            self._write_script(with_tweaks(self.script_disk[0], run.engine.overrides,
-                                           self.script_var))  # fmt: skip
-            run.overrides_file.unlink(missing_ok=True)
-            out["migrated"] = str(run.overrides_file)
+            # Not when the block's markers cannot be read for certain, or the file changed
+            # meanwhile: then the overrides file stays, and it is read as before.
+            try:
+                self._write_script(with_tweaks(text, run.engine.overrides, self.script_var))
+            except (BlockError, ToolError) as e:
+                out["migration_skipped"] = str(e)
+            else:
+                run.overrides_file.unlink(missing_ok=True)
+                out["migrated"] = str(run.overrides_file)
         return out
+
+    def _check_disk(self) -> str:
+        """The script on disk is the text this workspace last ran or wrote: else another
+        editor changed it, and writing now would lose that change (``ScriptChanged``; the
+        editor asks which version to keep). Returns the text."""
+        assert self.path is not None and self.script_disk is not None
+        try:
+            disk, stamp = read_text(self.path), file_stamp(self.path)
+        except FileNotFoundError:
+            raise ScriptChanged(f"{self.path.name} is gone from the disk", None, None) from None
+        if disk != self.script_disk[0]:
+            raise ScriptChanged(
+                f"{self.path.name} changed on disk since it was last run or saved here (another "
+                "editor or an AI): nothing was written; open it again, or let the person choose "
+                "which version to keep", disk, stamp)  # fmt: skip
+        self.script_disk = (disk, stamp)
+        return disk
 
     def _write_script(self, text: str) -> None:
         """Write the open script (its line endings as they are) and remember what was
-        written, so the editor does not take this write for an outside edit."""
+        written, so the editor does not take this write for an outside edit. Refused when
+        the file changed on disk since it was last run or written here (``_check_disk``)."""
         assert self.path is not None and self.path.suffix == ".py"
+        self._check_disk()
         write_text(self.path, text)
         self.script_disk = (text, file_stamp(self.path))
 
     def _save_tweaks(self) -> Path:
         """A script scene's save: its tweaks go into the block at the end of the script
-        (ADR 0004); the code outside the block is not touched. An old overrides file beside
-        it is removed (its tweaks are in the block now)."""
+        (ADR 0004); the code outside the block is not touched. Refused (nothing written)
+        when the block's markers cannot be read for certain (``BlockError``: the person
+        fixes them; the tweaks stay in the scene) or the file changed on disk since it was
+        last run or written here. An old overrides file beside it is removed."""
         assert self.path is not None
-        text = read_text(self.path)
-        new = with_tweaks(text, self.engine.overrides, self.script_var)
+        text = self._check_disk()
+        try:
+            new = with_tweaks(text, self.engine.overrides, self.script_var)
+        except BlockError as e:
+            raise ToolError(f"{self.path.name}: {e}; the tweaks were not written (they stay in "
+                            "the scene): fix the markers, then save again") from e  # fmt: skip
         if new != text:
             self._write_script(new)
-        else:
-            self.script_disk = (text, file_stamp(self.path))
         self.path.with_name(self.path.stem + io.OVERRIDES_SUFFIX).unlink(missing_ok=True)
         return self.path
 
@@ -245,6 +298,11 @@ class Workspace:
         self._engine = e.fork(allow_scripts=True)
         return {"modules": list(self._engine.document.meta.modules),
                 "version": self._engine.version}  # fmt: skip
+
+    def _writable(self) -> None:
+        if self.busy:
+            raise ToolError(f"{self.busy}: the scene is about to be replaced by what it builds; "
+                            "try again in a moment")  # fmt: skip
 
     @property
     def engine(self) -> Engine:
@@ -322,6 +380,7 @@ class Workspace:
         (white with a cool and warm shimmer), ``gold``, ``glacier``, ``borealis``, ``rose``,
         or None for the theme's own. In the prism looks it recolors every glowing curve and
         the lines the look runs a hue along; fringes, vignette and glow stay. One undo step."""
+        self._writable()
         from phasor.style.theme import PALETTES
 
         e = self.engine
@@ -353,6 +412,7 @@ class Workspace:
         script itself: saving writes them into the tweaks block at its end (``# --- phasor
         tweaks``) and leaves its other code as it is; ``path`` (a ``.phasor.json``) instead
         saves a copy of it as a document."""
+        self._writable()
         e = self.engine
         if path is None and self.path is None:
             raise ToolError("this scene has no path yet: pass path, e.g. 'residues.phasor.json'")
@@ -381,6 +441,7 @@ class Workspace:
         An ``add_object`` may name a ``preset`` (see ``object_types``); the scene's look fills
         in what is left unset, and explicit values always win. Attached to the editor, an
         edit that changes ``meta.modules`` or adds an updater is refused (``scene_code``)."""
+        self._writable()
         ops = self._with_defaults(patch)
         self._no_new_code(ops)
         r = self.engine.apply(ops, origin="tweak")
@@ -442,11 +503,13 @@ class Workspace:
 
     def undo(self) -> dict[str, Any]:
         """Revert the last edit (each patch, verb or narration is one step)."""
+        self._writable()
         r = self.engine.undo()
         return {"undone": r is not None, **(_slim_result(r.to_dict()) if r else {})}
 
     def redo(self) -> dict[str, Any]:
         """Re-apply the edit that undo reverted."""
+        self._writable()
         r = self.engine.redo()
         return {"redone": r is not None, **(_slim_result(r.to_dict()) if r else {})}
 
@@ -467,6 +530,7 @@ class Workspace:
         ``transform_matching`` and ``become`` take ``targets=[from, to]``; ``sweep`` takes
         ``path`` and ``value``; ``circumscribe`` takes one target and ``value`` "circle" or
         "box"."""
+        self._writable()
         if verb not in VERBS:
             raise ToolError(f"unknown verb {verb!r}; verbs are {list(VERBS)}")
         e = self.engine
@@ -522,6 +586,7 @@ class Workspace:
         found in the audio), or empty (its phrases become the blocks). A recording keeps its
         own timing, so ``pace`` is not applied to it; ``snap_to_narration`` moves your
         markers onto it."""
+        self._writable()
         e = self.engine
         if e.scripted:
             raise ToolError("this scene is built by a script: change the narration there")
@@ -578,6 +643,7 @@ class Workspace:
 
     def restore(self, name: str) -> dict[str, Any]:
         """Go back to a checkpoint, as one step (undo brings you back again)."""
+        self._writable()
         r = self._guard(lambda: self.engine.restore(name))
         return {**self.summary(), "restored": name, "version": r.version}
 
@@ -721,6 +787,7 @@ class Workspace:
         ``rounds`` (3) times; each round is undoable. Returns the score before and after and
         what is left for you to judge. Colors and sizes the scene typed (``off_palette``,
         ``off_scale``) snap to the nearest role only with ``snap=True``: ask the person."""
+        self._writable()
         if not isinstance(snap, bool):  # a JSON "false" is truthy: never snap by accident
             raise ToolError(f"snap must be true or false, not {snap!r}")
         r = self.engine.polish(min(max(rounds, 1), 3), snap=snap)
@@ -833,10 +900,37 @@ class Workspace:
 
         if not isinstance(preset, str) or preset not in PRESETS:
             raise ToolError(f"preset is one of {sorted(PRESETS)}")
+        target = self._inside(out) if out else self.default_render_path(preset, frame)
+        self._not_an_input(target)
+        return target
+
+    def default_render_path(self, preset: str, frame: Any = None) -> Path:
+        """Where a render goes when no path is given: a draft beside the scene's file,
+        ``<scene>.draft.mp4`` (the editor's Draft preview writes the same file; never the
+        real render's name); other presets ``<scene>.mp4`` in the output folder. ``<scene>``
+        is the file's name (a script's or a document's), else the title."""
+        suffix = (".draft" if preset == "draft" else "") + (".png" if frame is not None
+                                                           else ".mp4")  # fmt: skip
+        if self.path is not None and preset == "draft":
+            return self.path.parent / (self.path.name.split(".")[0] + suffix)
+        return self.out_dir / (file_stem(self.engine.document.meta.title) + suffix)
+
+    def _not_an_input(self, target: Path) -> None:
+        """A render never writes over a file the scene reads (a clip, a picture, a sound,
+        the narration's recording, the script itself)."""
         e = self.engine
-        stem = file_stem(e.document.meta.title) + (".draft" if preset == "draft" else "")
-        default = self.out_dir / (f"{stem}.png" if frame is not None else f"{stem}.mp4")
-        return self._inside(out) if out else default
+        reads = set(e._files_read())
+        n = e.document.narration
+        if n is not None and n.voice.startswith("file:"):
+            from phasor.core import files
+
+            with contextlib.suppress(ValueError):
+                reads.add(files.resolve(e.base_dir, n.voice[len("file:") :]))
+        if self.path is not None:
+            reads.add(self.path.resolve())
+        if target.resolve() in {r.resolve() for r in reads}:
+            raise ToolError(f"{target.name} is a file the scene reads: a render never writes "
+                            "over it; choose another name")  # fmt: skip
 
     def render_start(
         self, preset: str = "draft", out: str | None = None, start: float | str | None = None,
@@ -850,14 +944,33 @@ class Workspace:
         now; later edits do not reach it. An existing file is replaced only with
         ``overwrite`` (a draft's own default file always is), and only when the render
         finished: until then the old file stays."""
+        target = self._render_target(preset, out, frame)
+        if overwrite is None and out is None and preset == "draft":
+            overwrite = True  # a draft's own default file: the last draft, replaced
+        return self._render_job(target, preset, start, end, fps, frame, overwrite)
+
+    def _render_job(
+        self,
+        target: Path,
+        preset: str,
+        start: Any = None,
+        end: Any = None,
+        fps: float | None = None,
+        frame: Any = None,
+        overwrite: bool | None = None,
+    ) -> dict[str, Any]:
+        """Start a render job to ``target``, a path the caller chose: the editor's person may
+        render anywhere (not a tool, so an attached AI cannot reach it; ``render_start``
+        keeps the AI in its folder). Same checks as ``render_start`` otherwise."""
         from phasor.render.job import resolve_time
         from phasor.render.presets import check_fps
 
-        target = self._render_target(preset, out, frame)
         e = self.engine
+        target = Path(target).resolve()
+        self._not_an_input(target)
         if not isinstance(overwrite, bool | type(None)):
             raise ToolError(f"overwrite must be true or false, not {overwrite!r}")
-        replace = overwrite if overwrite is not None else (preset == "draft" and not out)
+        replace = bool(overwrite)
         if target.exists() and not replace:
             raise ToolError(f"{target.name} exists: pass overwrite=true to replace it (it is "
                             "replaced only when the new render finished)")  # fmt: skip
@@ -903,7 +1016,7 @@ class Workspace:
         except KeyError as err:
             raise ToolError(str(err.args[0])) from err
         if j.running:
-            j.cancel()
+            j.cancel(wait=jobs_wait())
         return j.status()
 
     def export_midi(self, out: str | None = None, overwrite: bool = False) -> dict[str, Any]:
@@ -1168,12 +1281,35 @@ def read_text(path: Path) -> str:
         return f.read()
 
 
+def jobs_wait() -> float:
+    """How long ``render_cancel`` waits for a job to stop (it is called under the editor's
+    lock: short; the job finishes cleaning up on its own thread)."""
+    return 0.5
+
+
 def write_text(path: Path, text: str) -> None:
-    """Write ``text`` as it is (no line-ending translation), replacing the file in one step."""
+    """Write ``text`` as it is (no line-ending translation), replacing the file in one step.
+    The file keeps its permissions; a read-only file is refused (``ToolError``), never
+    replaced (on Windows replacing it fails; elsewhere it would silently lose its mode)."""
+    import stat
+
+    mode = None
+    if path.exists():
+        st = path.stat()
+        mode = stat.S_IMODE(st.st_mode)
+        if not os.access(path, os.W_OK) or not mode & stat.S_IWUSR:
+            raise ToolError(f"{path.name} is read-only: nothing was written (make it writable, "
+                            "or Save As another file)")  # fmt: skip
     tmp = path.with_name(f".{path.name}.phasor-tmp")
-    with open(tmp, "w", encoding="utf-8", newline="") as f:
-        f.write(text)
-    os.replace(tmp, path)
+    try:
+        with open(tmp, "w", encoding="utf-8", newline="") as f:
+            f.write(text)
+        if mode is not None:
+            os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except OSError as e:
+        tmp.unlink(missing_ok=True)
+        raise ToolError(f"{path.name} could not be written: {e}") from e
 
 
 def file_stamp(path: Path) -> tuple[int, int]:

@@ -31,7 +31,12 @@ def _run(args: argparse.Namespace) -> int:
         print(f"phasor gui: {e}. Install it with: uv sync --extra gui", file=sys.stderr)
         return 1
     if args.root:  # one scene in a chosen workspace folder (the AI may use that folder)
+        from pathlib import Path
+
         from phasor.gui.window import open_editor
+
+        if args.scene and Path(args.scene).suffix == ".py" and not _may_run(Path(args.scene)):
+            return 1
 
         app, _window, server = open_editor(args.scene, args.root, serve_ai=not args.no_ai)
         try:
@@ -40,6 +45,24 @@ def _run(args: argparse.Namespace) -> int:
             if server is not None:
                 server.stop()
     return run([args.scene] if args.scene else [], serve_ai=not args.no_ai)
+
+
+def _may_run(path) -> bool:
+    """A script runs when it opens: the first time, the person says so (as the desktop app
+    asks, ``desktop.confirm_run``), once per script."""
+    from phasor.gui.app import Settings
+    from phasor.gui.desktop import confirm_run
+    from phasor.gui.window import qt_app
+
+    settings = Settings.load()
+    if settings.is_trusted(path):
+        return True
+    qt_app()
+    if not confirm_run(path.resolve()):
+        return False
+    settings.trust(path)
+    settings.save()
+    return True
 
 
 def main(argv: list[str] | None = None) -> int:

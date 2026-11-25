@@ -132,13 +132,7 @@ class Desktop:
 
     def confirm_run(self, path: Path) -> bool:
         """Ask before running a script the app did not write (asked once per script)."""
-        box = QMessageBox()
-        box.setWindowTitle("Run this script?")
-        box.setText(f"{path.name} is Python code: opening it runs it, with your rights on this "
-                    "computer. Run it only if you trust where it came from (you, or an AI "
-                    "you asked). You are asked once per script.")  # fmt: skip
-        box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        return box.exec() == QMessageBox.StandardButton.Yes
+        return confirm_run(path)
 
     def closed(self, win: DesktopWindow) -> None:
         if win in self.windows:
@@ -203,6 +197,20 @@ class Desktop:
 
     def error(self, title: str, text: str) -> None:
         QMessageBox.warning(None, title, text)
+
+
+def confirm_run(path: Path) -> bool:
+    """Ask before running a script the app did not write: opening a script runs it. Asked
+    once per script path (``Settings.trusted``); the desktop app and ``phasor gui SCRIPT
+    --root DIR`` both ask."""
+    box = QMessageBox()
+    box.setWindowTitle("Run this script?")
+    box.setText(f"{path.name} is Python code: opening it runs it, with your rights on this "
+                "computer. Run it only if you trust where it came from (you, or an AI you "
+                "asked). You are asked once per script file; a script you let run is not "
+                "asked about again, even after another program changes it.")  # fmt: skip
+    box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+    return box.exec() == QMessageBox.StandardButton.Yes
 
 
 def _doc_of(p: Path) -> Path:
@@ -316,6 +324,15 @@ class DesktopWindow(EditorWindow):
         name = Path(self.ed.path).name if self.ed.path else f"{state[2]} (not saved yet)"
         self.setWindowTitle(f"{'• ' if self.ed.dirty else ''}{name} — phasor")
 
+    def _ran(self, result: dict) -> None:
+        super()._ran(result)
+        # a script that ran here (``name.scene.py`` made by Run, a Save As): it may run again
+        # without asking
+        path = self.ed.path if result.get("ok") and self.ed.is_script else None
+        if path is not None and not self.desktop.settings.is_trusted(path):
+            self.desktop.settings.trust(path)
+            self.desktop.settings.save()
+
     def tick(self) -> None:
         super().tick()
         self.update_title()
@@ -398,7 +415,8 @@ class DesktopWindow(EditorWindow):
 
     def export(self) -> None:
         if self.export_dialog is not None and (
-            (self.export_job is not None and not self.export_job.done) or self.export_dialog.job
+            (self.export_job is not None and not self.export_job.done)
+            or self.export_dialog.job is not None
         ):
             self.export_dialog.show()
             self.export_dialog.raise_()

@@ -70,7 +70,8 @@ MAX_START = 1e6  # seconds
 @register
 class Sound(ObjectBase):
     """A sound clip (Manim's ``add_sound``): a sound file in the scene's folder that plays
-    from ``start`` seconds, ``gain`` dB louder (negative: quieter). Nothing is drawn:
+    from ``start`` (seconds, or a marker's name: it then follows the marker, Milestone 25),
+    ``gain`` dB louder (negative: quieter). Nothing is drawn:
     ``phasor render`` mixes it into the video's sound, next to the narration, cut where the
     scene ends. A WAV is read as it is (PCM, 8 to 32-bit, 8 to 192 kHz, 1 to 16 channels);
     any other sound file (the sound of an ``.mp4``, ``.m4a``, ``.mp3``, ``.ogg``, ``.flac``,
@@ -85,8 +86,28 @@ class Sound(ObjectBase):
 
     class Params(ParamsBase):
         path: str = Field(min_length=1)  # relative to the scene's folder, and inside it
-        start: float = Field(0.0, ge=0, le=MAX_START)  # seconds into the scene
+        start: float | str = 0.0  # seconds into the scene, or a marker's name
         gain: float = Field(0.0, ge=MIN_GAIN, le=MAX_GAIN)  # dB
+
+        @field_validator("start", mode="before")
+        @classmethod
+        def _start(cls, v: Any) -> float | str:
+            import math
+
+            from phasor.core.ids import is_valid_name
+
+            if isinstance(v, str):
+                try:
+                    v = float(v)  # "1.5": seconds, as a float field always took it
+                except ValueError:
+                    if not is_valid_name(v):
+                        raise ValueError(f"start {v!r}: seconds, or a marker's name") from None
+                    return v
+            if isinstance(v, bool) or not isinstance(v, int | float):
+                raise ValueError(f"start {v!r}: seconds, or a marker's name")
+            if not (math.isfinite(v) and 0 <= v <= MAX_START):
+                raise ValueError(f"start {v} s (0 to {MAX_START:g})")
+            return float(v)
 
         @field_validator("path")
         @classmethod
@@ -132,6 +153,8 @@ class Sound(ObjectBase):
         from phasor.time.narration import Clip
 
         p = self.me(state).params
+        if isinstance(p.start, str):  # at a marker: the engine places it (``_at_markers``)
+            return Clip(path=p.path, start=0.0, gain=p.gain, marker=p.start)
         return Clip(path=p.path, start=p.start, gain=p.gain)
 
     def draw(self, ctx: DrawContext, state: SceneState) -> None:

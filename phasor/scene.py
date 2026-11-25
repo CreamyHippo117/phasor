@@ -247,7 +247,7 @@ class Scene:
         engine_kwargs.setdefault("allow_scripts", script_of(caller) is not None)
         self.engine = Engine(Document(meta=meta), **engine_kwargs)
         self.lines: dict[str, tuple[str, int]] = {}  # id -> (file, line) of the code adding it
-        self._orphans = Overrides()  # tweaks whose object the script no longer makes
+        self._tweaks = Overrides()  # every tweak made, in the order made (orphans too)
 
     @classmethod
     def of(cls, engine: Engine) -> Scene:
@@ -256,7 +256,7 @@ class Scene:
         scene = cls.__new__(cls)
         scene.engine = engine
         scene.lines = {}
-        scene._orphans = Overrides()
+        scene._tweaks = Overrides()
         look = engine.document.meta.look
         scene.look = load_look(look) if look else None
         return scene
@@ -423,13 +423,14 @@ class Scene:
         if all(i in known for i in ids):
             # A script's scene records it in its overrides (``Engine.apply``), never its base.
             self.engine.apply(op, origin="tweak").raise_for_errors()
-        else:
-            self._orphans = record_tweaks(self._orphans, parse_patch([op]))
+        # Every tweak in the order the script made it, those whose object is gone (kept,
+        # lint ``orphan_override``) among them: the order of layout rules is their order.
+        self._tweaks = record_tweaks(self._tweaks, parse_patch([op]))
 
     @property
     def tweaks(self) -> Overrides:
         """Every tweak the script made (``tweak*``), those whose object is gone included."""
-        return merge_overrides(self.engine.overrides, self._orphans)
+        return self._tweaks
 
     def at(self, when: str | float, offset: float = 0.0) -> At:
         """A time to animate from: a marker name or seconds, plus an optional offset."""
