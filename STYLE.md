@@ -21,6 +21,20 @@ The owner pointed at videos on the explicit formula for primes (Fourier over the
   picture's own artifact, not part of the style.) `look="prism"` is all of this;
   `examples/prism_primes.py` is the reference scene.
 
+## The stage and the voice (2026-11-25)
+The owner's reference for teaching and look is 2swap.
+- **One animation owns the stage**: it fills the frame on midnight black, alone, and keeps
+  it for as long as it needs (iterations, new cases, a parameter turning). A small figure
+  in the middle of an empty frame is a fault; so is cutting away before it has finished.
+- **The animation does the talking**: a brief explanation, then a long silent stretch over
+  ambient music, then more words only if needed. A picture that needs the voice to make
+  sense is illustrating, not teaching.
+- Full, bright color edge to edge is welcome when the mathematics is that full (a domain
+  coloring, a tiling). Hue assigned by structure (phase, position, which tile) keeps the
+  whole wheel.
+- No hard cuts: one animation becomes the next.
+- As many animations as the story needs, never one to fill time.
+
 ## Alive, not rigid
 - Nothing sits perfectly still: glow breathes, points drift a hair, color fields turn slowly.
   That is the `life` setting (`off`, `subtle`, `lively`); everything must also work with it
