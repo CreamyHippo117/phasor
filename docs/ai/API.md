@@ -2709,17 +2709,23 @@ while the mouse is down, the hover, the equilibrium card.
   previewed on a fork, and committed after a 0.2 s pause (1 s when it would make a new
   slider, so a pause mid-name never makes one for `sig`) or when you leave the row (a row
   that does not read is kept with its error in plain words). The row you type in is locked
-  against the AI (`row_locked`). Each row has a kind badge (choose a kind over the guess),
+  against the AI (`row_locked`): any AI tool that would change or remove it (an
+  `explorer_edit`, a raw `scene_edit`, `undo`, `redo`, `restore`, a new or opened scene,
+  a verb) is refused or taken back. A row that disappears under your typing (your own
+  undo) keeps what you typed in the new row; several pasted lines become a row each. Each row has a kind badge (choose a kind over the guess),
   visibility, a colour (a style role) and delete; a variable has its slider (drag previews,
   release commits), a value box, the range box (`>`), **play** (session) and **keep** (a
-  track on its value: it renders). **Presets** load a classic system; **+ row** adds a
+  track on its value: it renders; the slider goes with it in the same step, since a
+  track drives the value now, and comes back when the track is cleared). **Presets** load a classic system; **+ row** adds a
   tracer, a disk or ball of starting points, a source (2D field term) or a section plane,
   and **Insert** places any shipped type that has an example (the palette is generated from
   the registry).
 - **Viewport:** a click on empty space drops a tracer there (3D: on the plane through the
   orbit target facing the camera); shift+drag draws a disk or ball (centre, then radius);
   drag a set's centre or rim, or a tracer's dot, to move or resize it; click an equilibrium
-  for its card (position, kind, eigenvalues, subspace dimensions), double-click or **zoom
+  for its card (position, kind, eigenvalues, subspace dimensions; named `O` at the origin,
+  `C+`/`C-` by the sign of the first coordinate, so names do not move with a slider; the
+  card follows its point as the scene changes and closes when it is gone), double-click or **zoom
   in** to fly the camera there and add its `EquilibriumView`; drag turns the 3D camera
   (ctrl or the middle button slides it) or slides the 2D one; the wheel zooms (committed
   once it rests); space pauses, left and right step, `r` restarts. While you interact the

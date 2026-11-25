@@ -446,7 +446,9 @@ class Workspace:
         is invalid nothing changes. Returns the result and the lint issues it added or fixed.
         An ``add_object`` may name a ``preset`` (see ``object_types``); the scene's look fills
         in what is left unset, and explicit values always win. Attached to the editor, an
-        edit that changes ``meta.modules`` or adds an updater is refused (``scene_code``)."""
+        edit that changes ``meta.modules`` or adds an updater is refused (``scene_code``),
+        and so is one that would change an Explorer row the person is typing in
+        (``row_locked``; also for ``undo``, ``redo`` and ``restore``)."""
         self._writable()
         ops = self._with_defaults(patch)
         self._no_new_code(ops)

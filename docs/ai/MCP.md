@@ -318,7 +318,10 @@ yet). Work like this:
 3. Change things only with `explorer_edit` (or `explorer_preset`): each call is one undo
    step. Read its `rows` (ids, kinds, errors) and `lint_delta` before you answer. A row the
    person is typing in is `locked`: the edit is refused with `row_locked` and the row's
-   `version`; read `explorer_state` again and retry later.
+   `version`; read `explorer_state` again and retry later. The same holds for every tool
+   that would change or remove that row: `scene_edit`, `undo`, `redo` and `restore` are
+   refused with `row_locked`, `scene_new` and `scene_open` wait, and any other tool that
+   changed it (a verb on its value) is taken back and refused.
 
 ```json calls
 {"tool": "scene_new", "title": "explorer", "look": "none"}
