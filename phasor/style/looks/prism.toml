@@ -219,6 +219,10 @@ hue_along = 1.0
 [defaults.winding.style]
 glow = "strong"
 
+# sampling and aliasing (ANIMATIONS.md S5): the true wave, its alias and the beacons shine
+[defaults.sampling.style]
+glow = "strong"
+
 [defaults.directivity.style]
 glow = "strong"
 

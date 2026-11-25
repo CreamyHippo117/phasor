@@ -6,6 +6,7 @@
     s.add(fourier.PartialSum(id="wave", kind="square", terms=9))
     s.add(fourier.Spectrum(id="spec", frequencies=(100.5,), amplitudes=(1.0,), window="hann"))
     s.add(fourier.Spectrogram(id="sg", f0=200, f1=1200))
+    s.add(fourier.Sampling(id="smp", frequency=7, fs=expr("lerp(40, 9, t / 8)")))
 
 Numerics are in ``fourier_math``; these draw them. Everything is a pure function of the
 parameters.
@@ -29,7 +30,15 @@ from phasor.core.state import SceneState
 from phasor.core.values import Vec3
 from phasor.domains import fourier_math as fm
 from phasor.domains.heatmap import PRISM, HeatParams, heat_pixels, lut_colour, wheel_colour
-from phasor.domains.strokes import circle, disc, hue_colors, polyline, with_alpha
+from phasor.domains.strokes import (
+    circle,
+    disc,
+    disc_batch,
+    hue_colors,
+    polyline,
+    polylines,
+    with_alpha,
+)
 
 
 def _ydir(me, state: SceneState) -> float:
@@ -637,3 +646,128 @@ class Spectrogram(ObjectBase):
             w = me.style["stroke"] * float(cam.units_per_height(np.asarray(line[0])))
             polyline(ctx, cam, line, w, color=with_alpha(me.style["playhead"], p.opacity),
                      glow=2.5)  # fmt: skip
+
+
+# ---------------------------------------------------------------- Sampling
+
+
+MAX_SAMPLES = 4000  # beacons per picture: more is a smear, not a picture
+MAX_CURVE_POINTS = 6000
+
+
+@register
+class Sampling(ObjectBase):
+    """Samples taken from a fast wave, and the slow wave they also fit (ANIMATIONS.md S5).
+
+    The true wave ``sin(2 pi f t + phase)`` is sampled ``fs`` times a second for ``duration``
+    seconds; each sample is a beacon on a stem. Once ``fs`` is below twice ``f`` (Nyquist) the
+    samples also lie exactly on a slower wave at the alias frequency ``|f - k fs|``, drawn in a
+    second hue; above Nyquist the two are one. Animate ``fs`` to sweep down through Nyquist
+    and watch the alias appear, and ``progress`` to take the samples one after another.
+    ``pos`` is the centre of the plot, ``size`` its (width, height): x spans ``duration``,
+    y spans -1.2 to 1.2. A backdrop: labels may sit on it."""
+
+    type: ClassVar[str] = "sampling"
+    Style: ClassVar = {
+        "color": ("emphasis", "secondary"),  # the true wave
+        "alias": ("emphasis", "highlight"),  # the slow wave the samples also fit
+        "beacon": ("emphasis", "primary"),
+        "guide": ("emphasis", "muted"),
+        "stroke": ("stroke", "regular"),
+        "glow": ("glow", "none"),
+    }
+    Life: ClassVar = frozenset({"glow"})
+
+    class Params(ParamsBase):
+        frequency: float = Field(7.0, gt=0, le=1000, allow_inf_nan=False)  # of the true wave, Hz
+        fs: float = Field(20.0, gt=0, le=2000, allow_inf_nan=False)  # samples per second
+        duration: float = Field(1.0, gt=0, le=60, allow_inf_nan=False)  # seconds shown
+        phase: float = Field(0.7, allow_inf_nan=False)  # radians, so the first sample is not 0
+        progress: float = Field(1.0, ge=0, le=1)  # share of the duration sampled so far
+        pos: Vec3 = (0.0, 0.0, 0.0)  # centre of the plot
+        size: tuple[float, float] = (6.0, 2.4)
+
+        @model_validator(mode="after")
+        def _not_a_smear(self):
+            if self.fs * self.duration > MAX_SAMPLES:
+                raise ValueError(f"fs * duration is at most {MAX_SAMPLES} samples")
+            return self
+
+    def _times(self, p) -> np.ndarray:
+        t = fm.sample_times(p.fs, p.duration)
+        return t[t <= p.progress * p.duration + 1e-9]
+
+    def _xy(self, p, ydir: float, t, v) -> np.ndarray:
+        x, y, z = p.pos
+        t, v = np.broadcast_arrays(np.asarray(t, dtype=np.float64), np.asarray(v))
+        return np.stack(
+            [
+                x + (t / p.duration - 0.5) * p.size[0],
+                y + ydir * v / 1.2 * p.size[1] / 2,
+                np.full(t.shape, z),
+            ],
+            axis=-1,
+        )
+
+    def _curve_t(self, p) -> np.ndarray:
+        n = int(np.clip(24 * p.frequency * p.duration, 400, MAX_CURVE_POINTS))
+        return np.linspace(0.0, p.progress * p.duration, n)
+
+    def world_bounds(self, state: SceneState) -> Bounds:
+        p = self.me(state).params
+        x, y, z = p.pos
+        return Bounds((x - p.size[0] / 2, y - p.size[1] / 2, z),
+                      (x + p.size[0] / 2, y + p.size[1] / 2, z))  # fmt: skip
+
+    def features(self, state: SceneState) -> dict[str, np.ndarray]:
+        me = self.me(state)
+        p = me.params
+        t = self._times(p)
+        return {"samples": self._xy(p, _ydir(me, state), t, fm.wave(p.frequency, t, p.phase))}
+
+    def semantics(self, state: SceneState) -> dict[str, Any]:
+        p = self.me(state).params
+        return {
+            "kind": "sampling",
+            "backdrop": True,
+            "frequency_hz": p.frequency,
+            "sample_rate_hz": p.fs,
+            "nyquist_hz": fm.nyquist(p.fs),
+            "alias_hz": round(float(fm.alias_frequency(p.frequency, p.fs)), 9),
+            "aliasing": fm.aliases(p.frequency, p.fs),
+            "duration_s": p.duration,
+            "sample_count": len(self._times(p)),
+            "samples_per_cycle": round(p.fs / p.frequency, 6),
+        }
+
+    def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
+        me = self.me(state)
+        p = me.params
+        cam = state.camera_for(me)
+        ydir = _ydir(me, state)
+        w = me.style["stroke"] * float(cam.units_per_height())
+        glow = me.style["glow"]
+        x, y, z = p.pos
+        guide = with_alpha(me.style["guide"], p.opacity)
+        polyline(ctx, cam, [(x - p.size[0] / 2, y, z), (x + p.size[0] / 2, y, z)], w * 0.6,
+                 color=with_alpha(guide, 0.6))  # fmt: skip
+
+        def curve(freq, key, width):
+            """One wave, with an explicit colour per point: its hue carries which wave it is,
+            so the theme's drifting stroke hue must not repaint it."""
+            pts = self._xy(p, ydir, tt := self._curve_t(p), fm.wave(freq, tt, p.phase))
+            col = np.tile(with_alpha(me.style[key], p.opacity), (len(pts), 1))
+            polyline(ctx, cam, pts, width, color=col[0], colors=col, glow=glow)
+
+        t = self._times(p)
+        if fm.aliases(p.frequency, p.fs):  # the slow wave the samples also fit
+            curve(fm.alias_signed(p.frequency, p.fs), "alias", w)
+        curve(p.frequency, "color", w)
+        if len(t) == 0:
+            return
+        tops = self._xy(p, ydir, t, fm.wave(p.frequency, t, p.phase))
+        stems = np.stack([tops.copy(), tops.copy()], axis=1)
+        stems[:, 0, 1] = y
+        polylines(ctx, cam, stems, w * 0.5, color=with_alpha(guide, 0.9), glow=1.0)
+        disc_batch(ctx, cam, tops, 2.5 * w, colors=with_alpha(me.style["beacon"], p.opacity),
+                   glow=glow)  # fmt: skip

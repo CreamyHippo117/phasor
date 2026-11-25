@@ -67,6 +67,7 @@ _TABLES = {
         "clutter",
         "crowded",
         "occluded",
+        "pole_radius",
         "hues",
         "clip",
         "density_min",

@@ -30,6 +30,7 @@ SCENES = [
     ),
     ("prism_heat", "heat maps in the prism look: a hot spot, a vibrating drum, a chirp"),
     ("prism_spectrogram", "a spectrogram of a formula, the playhead a glowing line sweeping it"),
+    ("sampling", "sampling: beacons on a fast wave, and the slow wave they also fit"),
     ("prism_drum_3d", "a vibrating drum in 3D, a net of glowing lines, orbiting"),
     ("point_cloud", "a million polynomial roots that glide and tear open, falling toward z = i"),
     ("prism_fractal", "fractals in the prism look: a morphing Julia set, a dive, glowing edges"),

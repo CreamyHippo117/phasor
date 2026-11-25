@@ -208,3 +208,41 @@ def convolve(a, b) -> np.ndarray:
     n = len(a) + len(b) - 1
     size = 1 << (n - 1).bit_length()
     return np.fft.irfft(np.fft.rfft(a, size) * np.fft.rfft(b, size), size)[:n]
+
+
+# ---------------------------------------------------------------- sampling and aliasing
+
+
+def nyquist(fs: float) -> float:
+    """Half the sampling rate: the highest frequency the samples can tell apart."""
+    return fs / 2.0
+
+
+def alias_signed(f, fs: float):
+    """The tone ``f`` as the samples see it: ``f - k fs`` for the whole ``k`` that brings it
+    nearest zero, in [-fs/2, fs/2]. Negative means the slow wave runs the other way round."""
+    f = np.asarray(f, dtype=np.float64)
+    out = f - fs * np.round(f / fs)
+    return float(out) if out.ndim == 0 else out
+
+
+def alias_frequency(f, fs: float):
+    """The folded frequency ``|f - k fs|`` nearest zero: what a tone at ``f`` looks like
+    when sampled at ``fs`` (equal to ``f`` up to Nyquist)."""
+    return np.abs(alias_signed(f, fs))
+
+
+def aliases(f: float, fs: float) -> bool:
+    """Whether sampling a tone at ``f`` with rate ``fs`` aliases it (``f`` above Nyquist)."""
+    return bool(abs(f) > nyquist(fs) * (1.0 + 1e-12))
+
+
+def wave(f: float, t, phase: float = 0.0) -> np.ndarray:
+    """``sin(2 pi f t + phase)``: the unit tone the sampling picture is made of."""
+    return np.sin(2.0 * math.pi * f * np.asarray(t, dtype=np.float64) + phase)
+
+
+def sample_times(fs: float, duration: float) -> np.ndarray:
+    """``0, 1/fs, 2/fs, ...`` up to and including ``duration`` (when it is a whole sample)."""
+    n = math.floor(duration * fs + 1e-9) + 1
+    return np.arange(n) / fs
