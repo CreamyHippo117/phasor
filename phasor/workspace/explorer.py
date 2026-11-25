@@ -658,6 +658,55 @@ def _fresh(base: str, taken: set[str]) -> str:
     return unique_names([base], reserved)[0]
 
 
+def fresh_id(doc: Document, base: str) -> str:
+    """A new object id named by meaning (``disk``, ``disk_2``): not used, not retired and
+    not the parent of an id (contract 2: ids are never reused)."""
+    taken = {o.id for o in doc.objects} | set(doc.retired_ids) | {c.id for c in doc.cameras}
+    return _fresh(base, taken)
+
+
+def _short(v: Any) -> str:
+    return _num(v) if isinstance(v, int | float) and not isinstance(v, bool) else str(v)
+
+
+def describe_edit(rows: Any, limit: int = 60) -> str:
+    """A readable name for an ``explorer_edit`` call (the undo history and "who changed
+    what"): ``rho = 24.74``, ``x' = y``, ``removed point``, ``hid lorenz``; several edits are
+    joined with "; ". Never raises (an AI's hostile call is still named)."""
+    if not isinstance(rows, list | tuple) or not rows:
+        return "rows"
+    out = []
+    for ed in rows[:3]:
+        if not isinstance(ed, dict):
+            out.append("rows")
+            continue
+        key = str(ed.get("id", ""))[:40]
+        if isinstance(ed.get("text"), str):
+            text = " ".join(ed["text"].split())[:limit]
+            out.append(text if key else f"added {text}")
+        elif ed.get("remove") is True:
+            out.append(f"removed {key}")
+        elif "value" in ed:
+            out.append(f"{key} = {_short(ed['value'])}")
+        elif "visible" in ed:
+            out.append(f"{'showed' if ed['visible'] else 'hid'} {key}")
+        elif "color" in ed:
+            out.append(f"{key} colour {str(ed['color'])[:20]}")
+        elif "kind" in ed:
+            out.append(f"{key} as {str(ed['kind'])[:20] or 'its guess'}")
+        elif "at" in ed:
+            out.append(f"moved {key} to row {_short(ed['at'])}")
+        elif any(k in ed for k in ("min", "max", "step")):
+            out.append(
+                f"{key} range "
+                + ", ".join(f"{k} {_short(ed[k])}" for k in ("min", "max", "step") if k in ed)
+            )
+        else:
+            out.append(f"{key} settings" if key else "rows")
+    more = f" (+{len(rows) - 3} more)" if len(rows) > 3 else ""
+    return "; ".join(out)[: 2 * limit] + more
+
+
 def _plain(v: Any) -> Any:
     if isinstance(v, tuple | list):
         return [_plain(x) for x in v]

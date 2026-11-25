@@ -963,14 +963,17 @@ class Workspace:
         fps: float | None = None,
         frame: Any = None,
         overwrite: bool | None = None,
+        source: Engine | None = None,
     ) -> dict[str, Any]:
         """Start a render job to ``target``, a path the caller chose: the editor's person may
         render anywhere (not a tool, so an attached AI cannot reach it; ``render_start``
-        keeps the AI in its folder). Same checks as ``render_start`` otherwise."""
+        keeps the AI in its folder). Same checks as ``render_start`` otherwise. ``source``:
+        a private fork to render instead of the open scene (the Explorer's export: a flow
+        time range over a duration, never written into the document); the job owns it."""
         from phasor.render.job import resolve_time
         from phasor.render.presets import check_fps
 
-        e = self.engine
+        e = self.engine if source is None else source
         target = Path(target).resolve()
         self._not_an_input(target)
         if not isinstance(overwrite, bool | type(None)):
@@ -992,7 +995,8 @@ class Workspace:
         except ValueError as err:
             raise ToolError(str(err)) from err
         target.parent.mkdir(parents=True, exist_ok=True)
-        snap = self._guard(e.snapshot)  # the scene now; the job thread never reads ``e``
+        # the scene now; the job thread never reads ``e`` (a ``source`` fork is the job's own)
+        snap = self._guard(e.snapshot) if source is None else source
         job = _jobs.RenderJob(snap, target, preset=preset, start=start, end=end, fps=fps,
                               frame=frame)  # fmt: skip
         try:

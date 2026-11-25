@@ -480,6 +480,35 @@ class Editor:
                 self.ws.root = p.parent
             return self.save(str(p))
 
+    def open_document(self, path: str | Path) -> dict[str, Any]:
+        """Open another ``.phasor.json`` in this editor (the Explorer's R2/R3 tabs: two
+        documents, two files), as a reload does: a new scene, its own (empty) history.
+        Refused while a script runs or while this scene has unsaved edits (``needs_save``:
+        the window asks first). Rows locked to the person here are let go."""
+        if self.running is not None:
+            return self._refused("the script is running: wait for it, or cancel it")
+        if self.dirty:
+            return {**self._refused("save this scene first: it has edits not saved"),
+                    "needs_save": True}  # fmt: skip
+        p = Path(path).resolve()
+        if not p.name.endswith(io.DOC_SUFFIX):
+            return self._refused(f"{p.name} is not a {io.DOC_SUFFIX} document")
+        with self.lock:
+            if p.parent != self.ws.root and self.ws.root not in p.parents:
+                self.ws.root = p.parent
+            try:
+                self.ws.scene_open(str(p))
+            except ToolError as e:
+                return self._refused(str(e))
+            self.ws._drafts.clear()
+            self.generation += 1
+            self.selected = None
+            self.preview = {}
+            self.history = []
+            self.saved_version = self.version
+            self._load_buffer()
+        return {"ok": True, "version": self.version, "errors": [], "opened": str(p)}
+
     def _script_save_as(self, p: Path) -> dict[str, Any]:
         from phasor.workspace.tools import write_text
 

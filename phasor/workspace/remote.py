@@ -42,6 +42,18 @@ def tool_names() -> tuple[str, ...]:
     )
 
 
+def _describe(method: str, params: dict[str, Any]) -> str:
+    """What an AI's call did, for "who changed what" and the undo names ("AI: rho = 24.74"):
+    an Explorer edit by its rows, a preset by its name, anything else by the tool's name."""
+    from phasor.workspace.explorer import describe_edit
+
+    if method == "explorer_edit":
+        return describe_edit(params.get("rows"))
+    if method == "explorer_preset":
+        return f"preset {str(params.get('name', ''))[:40]}"
+    return method
+
+
 class RemoteServer:
     def __init__(self, workspace: Workspace, lock: threading.RLock | None = None,
                  *, host: str = "127.0.0.1", port: int = 0) -> None:  # fmt: skip
@@ -97,7 +109,8 @@ class RemoteServer:
             self.calls += 1
             after = self._version()
             if after != before:  # it changed the scene: the editor shows who did what
-                self.workspace.activity.append({"who": "ai", "what": method, "version": after})
+                self.workspace.activity.append({"who": "ai", "what": _describe(method, params),
+                                                "version": after})  # fmt: skip
         return {"ok": True, "result": result}
 
     def _version(self) -> int:

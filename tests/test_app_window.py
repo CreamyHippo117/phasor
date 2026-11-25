@@ -69,7 +69,8 @@ def _poll(w, n: int = 1) -> None:
 
 def test_the_script_is_on_the_left_and_the_preview_on_the_right(win):
     split = win.centralWidget()
-    assert isinstance(split, QSplitter) and split.widget(0) is win.code
+    assert isinstance(split, QSplitter) and split.widget(0) is win.left
+    assert win.left.currentWidget() is win.code  # the script, or the Explorer's rows (M29)
     assert win.code.text.toPlainText() == SCRIPT
     titles = [win.tabs.tabText(i) for i in range(win.tabs.count())]
     assert titles[:8] == ["Problems", "Inspector", "Looks", "Narration", "Sound and MIDI",

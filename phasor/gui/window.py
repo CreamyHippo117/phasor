@@ -10,6 +10,10 @@ Ctrl+Enter; an error is marked at its line); on the right the viewport (click to
 see its line, drag a selected object to move it), the timeline (markers, animated spans,
 the playhead) and tabs: Problems (click to go to the object and its line), Inspector, Looks,
 Narration, Sound and MIDI, Footage, Sliders, AI. Toolbar: Run, Draft preview, Render.
+
+View > Explorer (Milestone 29) puts the Explorer's rows in the left pane instead of the
+script (``ExplorerPanel``; its logic is ``gui.explorer.Explorer``) and sends the viewport's
+presses, drags, wheel and keys to it; an explorer document opens there.
 """
 
 from __future__ import annotations
@@ -52,6 +56,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QProgressBar,
@@ -60,6 +65,7 @@ from PySide6.QtWidgets import (
     QSlider,
     QSpinBox,
     QSplitter,
+    QStackedWidget,
     QTabWidget,
     QTextEdit,
     QVBoxLayout,
@@ -67,6 +73,7 @@ from PySide6.QtWidgets import (
 )
 
 from phasor.gui.controller import Editor
+from phasor.gui.explorer import CONVERT_WARNING, NEW, Explorer
 from phasor.style import explicit
 from phasor.style.theme import ROLE_GROUPS
 from phasor.workspace import ToolError
@@ -90,10 +97,14 @@ class Viewport(QLabel):
     turned = Signal(float, float, tuple, bool)  # pixels dx, dy, viewport size, pan
     zoomed = Signal(float)  # factor: > 1 moves in
     hovered = Signal(float, float, tuple)  # viewport point and size
+    explored = Signal(object)  # what a click or drag did in the Explorer (its result)
 
     def __init__(self, editor: Editor) -> None:
         super().__init__()
         self.ed = editor
+        # In the Explorer (Milestone 29) every press, drag, wheel turn and key goes to it.
+        self.explorer: Explorer | None = None
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setMinimumSize(320, 180)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setMouseTracking(True)
@@ -110,6 +121,9 @@ class Viewport(QLabel):
 
     def refresh(self) -> None:
         size = self.frame_size()
+        if self.explorer is not None:
+            self._explorer_refresh(size)
+            return
         try:
             img = self.ed.frame(size)
         except RuntimeError as e:  # no OpenGL on this machine
@@ -122,6 +136,24 @@ class Viewport(QLabel):
         pix = QPixmap.fromImage(to_qimage(img))
         if self.ed.selected:
             self._outline(pix)
+        self.setPixmap(pix)
+
+    def _explorer_refresh(self, size: tuple[int, int]) -> None:
+        """The Explorer's picture: half size while the person interacts, shown at the
+        display size (clicks map to the display size either way)."""
+        try:
+            img, _quality = self.explorer.frame(size)
+        except RuntimeError as e:  # no OpenGL on this machine
+            self.error = str(e)
+            self._size = size  # clicks still work: they are mapped without the picture
+            self.setText(f"No preview here: {e}\n\nThe rows, sliders, analysis and the AI "
+                         "still work.")  # fmt: skip
+            return
+        self.error = None
+        self._size = size
+        pix = QPixmap.fromImage(to_qimage(img))
+        if (pix.width(), pix.height()) != size:
+            pix = pix.scaled(size[0], size[1])
         self.setPixmap(pix)
 
     def _outline(self, pix: QPixmap) -> None:
@@ -149,12 +181,43 @@ class Viewport(QLabel):
     def mousePressEvent(self, ev) -> None:
         self._press = ev.position()
         self._shift = bool(ev.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+        if self.explorer is not None and self._size[0]:
+            self.setFocus()
+            pan = bool(ev.modifiers() & Qt.KeyboardModifier.ControlModifier) or (
+                ev.button() == Qt.MouseButton.MiddleButton)  # fmt: skip
+            self.explorer.press(*self._local(ev.position()), self._size, self._shift, pan)
 
     def mouseMoveEvent(self, ev) -> None:
+        if self.explorer is not None and self._size[0]:
+            if self.explorer.move(*self._local(ev.position()), self._size):
+                self.refresh()
+            elif not ev.buttons():  # hover: the coordinates in the status bar, as elsewhere
+                self.hovered.emit(*self._local(ev.position()), self._size)
+            return
         if self._size[0] and not ev.buttons():
             self.hovered.emit(*self._local(ev.position()), self._size)
 
+    def mouseDoubleClickEvent(self, ev) -> None:
+        if self.explorer is not None and self._size[0]:
+            self.explored.emit(self.explorer.double_click(*self._local(ev.position()),
+                                                          self._size))  # fmt: skip
+
+    def keyPressEvent(self, ev) -> None:
+        names = {Qt.Key.Key_Left: "left", Qt.Key.Key_Right: "right", Qt.Key.Key_R: "r",
+                 Qt.Key.Key_Space: "space"}  # fmt: skip
+        if self.explorer is not None and ev.key() in names:
+            self.explorer.key(names[ev.key()])
+            self.refresh()
+            return
+        super().keyPressEvent(ev)
+
     def mouseReleaseEvent(self, ev) -> None:
+        if self.explorer is not None:
+            if self._size[0]:
+                self.explored.emit(self.explorer.release(*self._local(ev.position()),
+                                                         self._size))  # fmt: skip
+            self._press = None
+            return
         if self._press is None or not self._size[0]:
             return
         moved = (ev.position() - self._press).manhattanLength()
@@ -174,6 +237,10 @@ class Viewport(QLabel):
         self._press = None
 
     def wheelEvent(self, ev) -> None:
+        if self.explorer is not None:
+            self.explorer.wheel(1.1 ** (ev.angleDelta().y() / 120))
+            self.refresh()
+            return
         self.zoomed.emit(1.1 ** (ev.angleDelta().y() / 120))
 
     def resizeEvent(self, ev) -> None:
@@ -1286,6 +1353,473 @@ class RenderDialog(QDialog):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(self.out.text()).parent)))
 
 
+class RowWidget(QWidget):
+    """One row of the Explorer: visibility, the kind badge, the text as typed (its error in
+    plain words under it), colour, delete; a variable adds its slider, value box, play and
+    keep, and the range box (``>``). It forwards everything to the ``Explorer``."""
+
+    RES = 1000
+
+    def __init__(self, panel: ExplorerPanel, row: dict[str, Any]) -> None:
+        super().__init__()
+        self.panel, self.xp, self.key = panel, panel.xp, row["id"]
+        self.row = row
+        top = QHBoxLayout()
+        top.setContentsMargins(0, 0, 0, 0)
+        self.visible = QCheckBox()
+        self.visible.setChecked(bool(row.get("visible", True)))
+        self.visible.setToolTip("show or hide this row")
+        self.visible.toggled.connect(lambda on: panel.done(self.xp.set_visible(self.key, on)))
+        self.badge = QComboBox()
+        self.badge.setToolTip("the kind this row is read as (choose one over the guess)")
+        badge = row["badge"]
+        self.badge.addItem(badge["kind"] if badge["override"] else f"{badge['kind']} (guess)", "")
+        for k in badge["choices"]:
+            self.badge.addItem(k, k)
+        self.badge.setEnabled(bool(badge["choices"]) and row["id"] != NEW)
+        self.badge.activated.connect(self._kind)
+        self.text = QLineEdit(row.get("typing", row.get("source", "")))
+        self.text.setPlaceholderText("type an equation: x' = y, rho = 28, (1, 2) ...")
+        self.text.setReadOnly(bool(row.get("is_object")) or self.xp.read_only)
+        self.text.textEdited.connect(lambda t: panel.typed(self.key, t))
+        self.text.editingFinished.connect(lambda: panel.left(self.key))
+        self.color = QComboBox()
+        self.color.setToolTip("colour (a style role)")
+        self.color.addItem("colour", "")
+        for role in ROLE_GROUPS.get("emphasis", ()):
+            self.color.addItem(role, role)
+        self.color.activated.connect(self._color)
+        self.remove = QPushButton("x")
+        self.remove.setToolTip("delete this row")
+        self.remove.setMaximumWidth(28)
+        self.remove.clicked.connect(lambda: panel.done(self.xp.delete(self.key)))
+        top.addWidget(self.visible)
+        top.addWidget(self.badge)
+        top.addWidget(self.text, 1)
+        top.addWidget(self.color)
+        top.addWidget(self.remove)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(2, 2, 2, 2)
+        lay.addLayout(top)
+        self.error = QLabel(row.get("error") or "")
+        self.error.setWordWrap(True)
+        self.error.setStyleSheet("color: #ff6b6b;")
+        self.error.setVisible(bool(row.get("error")))
+        lay.addWidget(self.error)
+        self.slider: QSlider | None = None
+        if row["kind"] == "variable" and row["id"] != NEW:
+            self._slider(lay, row)
+        if row.get("locked"):
+            self.setToolTip("you are typing here: the AI cannot change this row until you leave it")
+
+    def _slider(self, lay: QVBoxLayout, row: dict[str, Any]) -> None:
+        line = QHBoxLayout()
+        self.slider = QSlider(Qt.Orientation.Horizontal)
+        self.slider.setRange(0, self.RES)
+        self.value = QLineEdit(f"{row['value']:.6g}")
+        self.value.setMaximumWidth(90)
+        self.value.returnPressed.connect(
+            lambda: self.panel.done(self.xp.set_value(self.key, self.value.text()))
+        )
+        self.play = QPushButton("play")
+        self.play.setCheckable(True)
+        self.play.setChecked(bool(row.get("playing")))
+        self.play.toggled.connect(lambda on: self.panel.done(self.xp.slider_play(self.key, on)))
+        self.keep = QPushButton("keep")
+        self.keep.setToolTip("make the playing slider a track on its value (it renders)")
+        self.keep.clicked.connect(lambda: self.panel.done(self.xp.slider_keep(self.key)))
+        more = QPushButton(">")
+        more.setMaximumWidth(24)
+        more.setToolTip("range and step")
+        self.range = QWidget()
+        rl = QHBoxLayout(self.range)
+        rl.setContentsMargins(0, 0, 0, 0)
+        self.lo, self.hi = QLineEdit(f"{row['min']:.6g}"), QLineEdit(f"{row['max']:.6g}")
+        self.step = QLineEdit(f"{row['step']:.6g}" if row.get("step") else "")
+        for label, w in (("min", self.lo), ("max", self.hi), ("step", self.step)):
+            rl.addWidget(QLabel(label))
+            rl.addWidget(w)
+            w.returnPressed.connect(self._range)
+        self.range.hide()
+        more.clicked.connect(lambda: self.range.setVisible(not self.range.isVisible()))
+        self.set_value(row)
+        self.slider.sliderMoved.connect(self._moved)
+        self.slider.sliderReleased.connect(
+            lambda: self.panel.done(self.xp.slider_release(self.key))
+        )
+        line.addWidget(self.slider, 1)
+        for w in (self.value, self.play, self.keep, more):
+            line.addWidget(w)
+        if row.get("animated"):
+            self.slider.setEnabled(False)
+            self.value.setToolTip("animated by a track")
+        lay.addLayout(line)
+        lay.addWidget(self.range)
+
+    def set_value(self, row: dict[str, Any]) -> None:
+        if self.slider is None or self.slider.isSliderDown():
+            return
+        span = (row["max"] - row["min"]) or 1.0
+        self.slider.blockSignals(True)
+        self.slider.setValue(round((row["value"] - row["min"]) / span * self.RES))
+        self.slider.blockSignals(False)
+        if not self.value.hasFocus():
+            self.value.setText(f"{row['value']:.6g}")
+
+    def _moved(self, v: int) -> None:
+        r = self.row
+        got = self.xp.slider_drag(self.key, r["min"] + v / self.RES * (r["max"] - r["min"]))
+        if got.get("ok"):
+            self.value.setText(f"{got['value']:.6g}")
+        self.panel.preview.emit()
+
+    def _range(self) -> None:
+        self.panel.done(self.xp.slider_range(self.key, min=self.lo.text(), max=self.hi.text(),
+                                             step=self.step.text()))  # fmt: skip
+
+    def _kind(self, index: int) -> None:
+        self.panel.done(self.xp.set_kind(self.key, self.badge.itemData(index) or ""))
+
+    def _color(self, index: int) -> None:
+        role = self.color.itemData(index)
+        if role:
+            self.panel.done(self.xp.set_color(self.key, role))
+
+
+class ExportFlowDialog(QDialog):
+    """Export a video of the explorer: "from tau 0 to 30 in 20 s", through the normal
+    renderer (a render job on a fork; the document is not changed)."""
+
+    def __init__(self, panel: ExplorerPanel) -> None:
+        super().__init__(panel)
+        self.panel, self.xp = panel, panel.xp
+        self.setWindowTitle("Export video")
+        self.tau0, self.tau1, self.seconds = QLineEdit("0"), QLineEdit("30"), QLineEdit("20")
+        self.preset = QComboBox()
+        for p in ("draft", "preview", "final", "4k"):
+            self.preset.addItem(p, p)
+        self.out = QLineEdit(str(panel.xp.export_path()))
+        self.plan = QLabel("")
+        self.plan.setWordWrap(True)
+        form = QFormLayout()
+        form.addRow("From flow time (tau)", self.tau0)
+        form.addRow("To flow time (tau)", self.tau1)
+        form.addRow("In seconds", self.seconds)
+        form.addRow("Quality", self.preset)
+        form.addRow("Save to", self.out)
+        buttons = QDialogButtonBox()
+        self.go = buttons.addButton("Export", QDialogButtonBox.ButtonRole.AcceptRole)
+        close = buttons.addButton("Close", QDialogButtonBox.ButtonRole.RejectRole)
+        self.go.clicked.connect(self.start)
+        close.clicked.connect(self.reject)
+        for w in (self.tau0, self.tau1, self.seconds):
+            w.textChanged.connect(self.check)
+        lay = QVBoxLayout(self)
+        lay.addLayout(form)
+        lay.addWidget(self.plan)
+        lay.addWidget(buttons)
+        self.check()
+
+    def check(self) -> dict[str, Any]:
+        r = self.xp.export_plan(self.tau0.text(), self.tau1.text(), self.seconds.text())
+        if r.get("ok"):
+            self.plan.setText("  ".join([r["text"], *r["notes"]]))
+        else:
+            self.plan.setText("Cannot export: " + r["errors"][0]["message"])
+        self.go.setEnabled(bool(r.get("ok")))
+        return r
+
+    def confirm_replace(self, path: Path) -> bool:
+        """A file of that name exists: replaced only when the person says so (and only when
+        the new one is done)."""
+        box = QMessageBox(self)
+        box.setWindowTitle("Replace the file?")
+        box.setText(f"{path.name} exists. Replace it when the new video is done?")
+        yes = box.addButton("Replace", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        return box.clickedButton() is yes
+
+    def start(self) -> dict[str, Any]:
+        out = Path(self.out.text())
+        replace = out.exists() and self.confirm_replace(out)
+        if out.exists() and not replace:
+            return {"ok": False, "errors": [{"code": "exists", "message": "not replaced"}]}
+        r = self.xp.export(out, self.tau0.text(), self.tau1.text(), self.seconds.text(),
+                           self.preset.currentData(), overwrite=replace or None)  # fmt: skip
+        self.panel.done(r)
+        if r.get("ok"):
+            self.plan.setText(f"Exporting {r['plan']['text']} to {r['path']} (the status bar "
+                              "follows it)")  # fmt: skip
+        return r
+
+
+class ExplorerPanel(QWidget):
+    """The Explorer (Milestone 29, View > Explorer): R2/R3, the ``+ row`` menu with the
+    insert palette, presets, the rows with their sliders, the equilibrium card, the
+    transport, record/mark/export, Convert to script, and tabs for the analysis and the
+    AI's notes. All logic is ``gui.explorer.Explorer``; this only draws it and forwards
+    input."""
+
+    changed = Signal(object)  # a result to report (the window refreshes)
+    preview = Signal()  # the picture should be drawn again (a slider mid-drag, the transport)
+    convert_asked = Signal()
+
+    def __init__(self, explorer: Explorer) -> None:
+        super().__init__()
+        self.xp = explorer
+        self.r2, self.r3 = QPushButton("R2"), QPushButton("R3")
+        for b, sp in ((self.r2, "R2"), (self.r3, "R3")):
+            b.setCheckable(True)
+            b.clicked.connect(lambda _=False, sp=sp: self.switch(sp))
+        self.add_button = QPushButton("+ row")
+        self.add_menu = QMenu(self)
+        self.add_button.setMenu(self.add_menu)
+        self.add_menu.aboutToShow.connect(self.fill_add_menu)
+        self.presets = QComboBox()
+        self.presets.addItem("Presets...", "")
+        for p in explorer.presets():
+            self.presets.addItem(p["name"].replace("_", " "), p["name"])
+            self.presets.setItemData(self.presets.count() - 1, p["note"],
+                                     Qt.ItemDataRole.ToolTipRole)  # fmt: skip
+        self.presets.activated.connect(self._preset)
+        self.convert = QPushButton("Convert to script")
+        self.convert.setToolTip(CONVERT_WARNING)
+        self.convert.clicked.connect(self.convert_asked.emit)
+        head = QHBoxLayout()
+        for w in (self.r2, self.r3, self.add_button, self.presets):
+            head.addWidget(w)
+        head.addStretch(1)
+        head.addWidget(self.convert)
+        self.note = QLabel("")
+        self.note.setWordWrap(True)
+        self.list = QVBoxLayout()
+        self.list.setContentsMargins(0, 0, 0, 0)
+        holder = QWidget()
+        holder.setLayout(self.list)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(holder)
+        self.rows: dict[str, RowWidget] = {}
+        self._shape: tuple = ()
+        # the transport: session state, never in the document or its history
+        self.back, self.play = QPushButton("<<"), QPushButton("play")
+        self.fwd, self.reverse = QPushButton(">>"), QPushButton("reverse")
+        self.restart, self.speed = QPushButton("restart"), QLineEdit("1")
+        self.speed.setMaximumWidth(60)
+        self.readout = QLabel("")
+        self.play.setCheckable(True)
+        self.reverse.setCheckable(True)
+        self.back.clicked.connect(lambda: self._transport(lambda: self.xp.step(-1)))
+        self.fwd.clicked.connect(lambda: self._transport(lambda: self.xp.step(1)))
+        self.play.clicked.connect(lambda: self._transport(self.xp.toggle_play))
+        self.reverse.clicked.connect(lambda: self._transport(self.xp.toggle_reverse))
+        self.restart.clicked.connect(lambda: self._transport(self.xp.restart))
+        self.speed.returnPressed.connect(
+            lambda: self._transport(lambda: self.xp.set_speed(self.speed.text()))
+        )
+        transport = QHBoxLayout()
+        for w in (self.back, self.play, self.fwd, self.reverse, self.restart, QLabel("speed"),
+                  self.speed, self.readout):  # fmt: skip
+            transport.addWidget(w)
+        transport.addStretch(1)
+        self.record, self.mark = QPushButton("record"), QPushButton("mark")
+        self.record.setCheckable(True)
+        self.record.setToolTip("record: the camera and slider values at the moments you mark "
+                               "become the animation when you stop (eased between)")  # fmt: skip
+        self.record.toggled.connect(lambda on: self.done(self.xp.record(on)))
+        self.mark.clicked.connect(lambda: self.done(self.xp.mark()))
+        self.export = QPushButton("Export video...")
+        self.export.clicked.connect(self.open_export)
+        send = QHBoxLayout()
+        for w in (self.record, self.mark, self.export):
+            send.addWidget(w)
+        send.addStretch(1)
+        self.card = QLabel("")
+        self.card.setWordWrap(True)
+        self.card.setStyleSheet("background: #161a23; padding: 6px;")
+        self.zoom = QPushButton("zoom in")
+        self.zoom.clicked.connect(lambda: self.done(self.xp.zoom_in()))
+        card = QHBoxLayout()
+        card.addWidget(self.card, 1)
+        card.addWidget(self.zoom)
+        self.tabs = QTabWidget()
+        self.analysis = QListWidget()
+        self.lyap = QPushButton("Lyapunov estimate")
+        self.lyap.clicked.connect(lambda: self.done(self.xp.lyapunov()))
+        self.sweep_name, self.sweep_lo = QLineEdit("rho"), QLineEdit("0")
+        self.sweep_hi, self.sweep_n = QLineEdit("30"), QLineEdit("17")
+        self.sweep_go = QPushButton("Sweep")
+        self.sweep_go.clicked.connect(lambda: self.done(self.xp.sweep(
+            self.sweep_name.text(), self.sweep_lo.text(), self.sweep_hi.text(),
+            self.sweep_n.text())))  # fmt: skip
+        an = QWidget()
+        al = QVBoxLayout(an)
+        tools = QHBoxLayout()
+        tools.addWidget(self.lyap)
+        for label, w in (("sweep", self.sweep_name), ("from", self.sweep_lo),
+                         ("to", self.sweep_hi), ("n", self.sweep_n)):  # fmt: skip
+            tools.addWidget(QLabel(label))
+            tools.addWidget(w)
+        tools.addWidget(self.sweep_go)
+        al.addWidget(self.analysis, 1)
+        al.addLayout(tools)
+        self.ai_notes = QListWidget()
+        self.tabs.addTab(an, "Analysis")
+        self.tabs.addTab(self.ai_notes, "AI notes")
+        lay = QVBoxLayout(self)
+        lay.addLayout(head)
+        lay.addWidget(self.note)
+        lay.addWidget(scroll, 3)
+        lay.addLayout(card)
+        lay.addLayout(transport)
+        lay.addLayout(send)
+        lay.addWidget(self.tabs, 2)
+        self.export_dialog: ExportFlowDialog | None = None
+
+    # ---------------------------------------------------------- forwarding
+
+    def done(self, r: Any) -> None:
+        self.changed.emit(r)
+        self.refresh()
+
+    def typed(self, key: str, text: str) -> None:
+        self.xp.type_row(key, text)
+
+    def left(self, key: str) -> None:
+        if key in self.xp.drafts:
+            self.done(self.xp.leave(key))
+
+    def switch(self, space: str) -> None:
+        r = self.xp.switch_space(space)
+        if r.get("needs_save"):
+            self.xp.message = "Save this explorer first (File > Save): R2 and R3 are two files."
+        self.done(r)
+
+    def _preset(self, index: int) -> None:
+        name = self.presets.itemData(index)
+        self.presets.setCurrentIndex(0)
+        if name:
+            self.done(self.xp.load_preset(name))
+
+    def fill_add_menu(self) -> None:
+        self.add_menu.clear()
+        for item in self.xp.add_items():
+            a = self.add_menu.addAction(item["label"])
+            a.setEnabled(item["why"] is None)
+            if item["why"]:
+                a.setToolTip(item["why"])
+            a.triggered.connect(lambda _=False, k=item["key"]: self.done(self.xp.add(k)))
+        insert = self.add_menu.addMenu("Insert")
+        for p in self.xp.palette():
+            a = insert.addAction(p["label"])
+            a.setToolTip(p["about"])
+            a.triggered.connect(lambda _=False, t=p["type"]: self.done(self.xp.place(t)))
+
+    def _transport(self, fn) -> None:
+        fn()
+        self.show_transport()
+        self.preview.emit()
+
+    def open_export(self) -> ExportFlowDialog:
+        self.export_dialog = ExportFlowDialog(self)
+        self.export_dialog.show()
+        return self.export_dialog
+
+    # ---------------------------------------------------------- drawing
+
+    def show_sliders(self) -> None:
+        """Playing sliders: their handles and values follow (session values)."""
+        for e in self.xp.sliders():
+            w = self.rows.get(e["id"])
+            if w is not None and w.slider is not None:
+                w.row = {**w.row, **e}
+                w.set_value(w.row)
+
+    def show_transport(self) -> None:
+        self.play.setChecked(self.xp.playing)
+        self.reverse.setChecked(self.xp.reverse)
+        perf = self.xp.perf_text()
+        self.readout.setText(f"tau = {self.xp.flow_time():.3f}   {self.xp.speed_text()}"
+                             + (f"   {perf}" if perf else ""))  # fmt: skip
+
+    def refresh(self) -> None:
+        """Draw the rows from the Explorer: rebuilt when the list's shape changed, else
+        updated in place (the row being typed in keeps its cursor)."""
+        xp = self.xp
+        space = xp.space()
+        self.r2.setChecked(space == "R2")
+        self.r3.setChecked(space == "R3")
+        for w in (self.convert, self.add_button, self.presets):
+            w.setEnabled(not xp.read_only)
+        self.record.setEnabled(not xp.read_only or xp.recording)
+        self.mark.setEnabled(xp.recording)
+        self.note.setText(xp.message if not xp.read_only else
+                          "A script now: rows are code; sliders still move (tweaks).")  # fmt: skip
+        rows = xp.rows()
+        if NEW not in xp.drafts and not xp.read_only:
+            rows.append({"id": NEW, "kind": "new", "source": "", "error": None, "visible": True,
+                         "badge": {"kind": "new", "override": None, "choices": ()}})  # fmt: skip
+        # what makes the list rebuild (a row typed in keeps its widget: only its badge and
+        # error change while the person types)
+        shape = tuple((e["id"],) if e["id"] == NEW else (
+            e["id"], e["kind"] if "typing" not in e else "typing", e.get("animated"),
+            e.get("source"), e.get("visible")) for e in rows)  # fmt: skip
+        if shape != self._shape:
+            self._shape = shape
+            self._rebuild(rows)
+        for e in rows:
+            w = self.rows.get(e["id"])
+            if w is None:
+                continue
+            w.row = e
+            w.error.setText(e.get("error") or "")
+            w.error.setVisible(bool(e.get("error")))
+            if "typing" in e and not e["badge"]["override"]:
+                w.badge.setItemText(0, f"{e['badge']['kind']} (guess)")
+            if e["kind"] == "variable":
+                w.set_value(e)
+        c = xp.card
+        self.card.setText("\n".join(c["lines"]) if c else "Click an equilibrium for its card; "
+                          "double-click it to zoom in.")  # fmt: skip
+        self.zoom.setEnabled(c is not None)
+        self.show_transport()
+        self.analysis.clear()
+        for e in xp.equilibria_table() if xp._systems() else []:
+            self.analysis.addItem("   ".join(e["lines"]))
+        for name, a in xp.analysis().items():
+            text = json.dumps(a["result"], default=str)[:400] if a["state"] == "done" else (
+                a["error"] or a["state"])  # fmt: skip
+            self.analysis.addItem(f"{name}{' (stale)' if a['stale'] else ''}: {text}")
+        self.ai_notes.clear()
+        for n in xp.ai_notes():
+            self.ai_notes.addItem(f"AI: {n['what']}")
+        if xp.ai_notes():
+            self.ai_notes.addItem("")
+        for n in reversed(xp.history_names()):
+            self.ai_notes.addItem(n)
+
+    def _rebuild(self, rows: list[dict[str, Any]]) -> None:
+        focus = self.xp.focus
+        while self.list.count():
+            item = self.list.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.blockSignals(True)
+                w.text.blockSignals(True)
+                w.deleteLater()
+        self.rows = {}
+        for e in rows:
+            w = RowWidget(self, e)
+            self.rows[e["id"]] = w
+            self.list.addWidget(w)
+        self.list.addStretch(1)
+        if focus in self.rows:
+            t = self.rows[focus].text
+            t.setFocus()
+            t.setCursorPosition(len(t.text()))
+
+
 class EditorWindow(QMainWindow):
     """The code-first window (APP_PLAN.md): the script on the left; on the right the preview,
     the timeline and the tabs (Problems, Inspector, Looks, Narration, Sound and MIDI,
@@ -1313,6 +1847,12 @@ class EditorWindow(QMainWindow):
         self.footage = FootagePanel(editor)
         self.ai = AIPanel(editor, attach_hint)
         self.activity = ActivityDock(editor)
+        # The Explorer (Milestone 29): the left pane shows the script or the rows.
+        self.xp = Explorer(editor)
+        self.explorer = ExplorerPanel(self.xp)
+        self.left = QStackedWidget()
+        self.left.addWidget(self.code)
+        self.left.addWidget(self.explorer)
         self.readout = QLabel("")
         self.job_bar = QProgressBar()
         self.job_bar.setMaximumWidth(220)
@@ -1342,7 +1882,7 @@ class EditorWindow(QMainWindow):
         self.tabs.addTab(self.controls, "Sliders")
         self.tabs.addTab(self.ai, "AI")
         self.panels = _extra_panels(self)
-        for title, widget in self.panels:  # e.g. Sketch; Explorer (Milestone 29) docks here
+        for title, widget in self.panels:  # e.g. Sketch (the Explorer is View > Explorer)
             self.tabs.addTab(widget, title)
         right.addWidget(self.tabs)
         right.setStretchFactor(0, 4)
@@ -1353,7 +1893,7 @@ class EditorWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.activity_dock)
         self.activity_dock.hide()  # under View: hidden, not deleted (APP_PLAN)
         split = QSplitter(Qt.Orientation.Horizontal)
-        split.addWidget(self.code)
+        split.addWidget(self.left)
         split.addWidget(right)
         split.setStretchFactor(1, 3)
         split.setSizes([620, 880])
@@ -1375,11 +1915,64 @@ class EditorWindow(QMainWindow):
         self.looks.changed.connect(self._report)
         for panel in (self.narration, self.sound, self.footage):
             panel.changed.connect(self._panel_changed)
+        self.viewport.explored.connect(self._explored)
+        self.explorer.changed.connect(self._explored)
+        self.explorer.preview.connect(self.viewport.refresh)
+        self.explorer.convert_asked.connect(self.convert_to_script)
         self.statusBar().showMessage(attach_hint or "Ready")
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.tick)
         self.timer.start(TICK_MS)
+        # an explorer document opens in the Explorer (it stays a .phasor.json: EXPLORER.md)
+        self.show_explorer(self.xp.is_explorer_document())
         self.refresh_all()
+
+    # ------------------------------------------------------------ the Explorer
+
+    @property
+    def explorer_on(self) -> bool:
+        return self.left.currentWidget() is self.explorer
+
+    def show_explorer(self, on: bool) -> None:
+        """View > Explorer: the rows in the left pane and the viewport's input to the
+        Explorer; off: the script and the editor's own viewport."""
+        self.left.setCurrentWidget(self.explorer if on else self.code)
+        self.viewport.explorer = self.xp if on else None
+        act = self.actions.get("Explorer")
+        if act is not None and act.isChecked() != on:
+            act.setChecked(on)
+        if on:
+            self.explorer.refresh()
+        self.viewport.refresh()
+
+    def confirm_convert(self) -> bool:
+        """Asked at the moment of conversion (one-way for structure)."""
+        box = QMessageBox(self)
+        box.setWindowTitle("Convert to script")
+        box.setText(CONVERT_WARNING)
+        go = box.addButton("Convert", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        return box.clickedButton() is go
+
+    def convert_to_script(self) -> None:
+        if self.xp.read_only or not self.confirm_convert():
+            return
+        self.ed.set_buffer(self.xp.before_convert())
+        self.code.refresh(force=True)
+        self.code.run()  # on the worker thread, as Run: the window stays alive
+
+    def _explored(self, result: Any) -> None:
+        if isinstance(result, dict) and result.get("card"):
+            self.statusBar().showMessage(result["card"]["lines"][0], 6000)
+        elif self.xp.message:
+            self.statusBar().showMessage(self.xp.message, 6000)
+        self._report(result)
+        if self.ed.changed():
+            self.refresh_all()
+        else:
+            self.viewport.refresh()
+            self.explorer.refresh()
 
     def _actions(self) -> None:
         """The toolbar. Its actions are kept in ``self.actions`` so a menu bar can show the
@@ -1408,10 +2001,19 @@ class EditorWindow(QMainWindow):
             bar.addAction(act)
             self.actions[text] = act
         self.actions["Who changed what"] = self.activity_dock.toggleViewAction()
+        explorer = QAction("Explorer", self)
+        explorer.setCheckable(True)
+        explorer.setShortcut("Ctrl+Shift+E")
+        explorer.setToolTip("The Explorer: rows, sliders and the flow (the left pane shows "
+                            "the rows instead of the script)")  # fmt: skip
+        explorer.toggled.connect(self.show_explorer)
+        bar.addAction(explorer)
+        self.actions["Explorer"] = explorer
 
     def save_scene(self) -> None:
         """Ctrl+S. The desktop app asks where when the scene has never been saved. When the
         script changed on disk meanwhile, nothing is written until the person chooses."""
+        self.xp.settle()  # a row typed just now is saved with the rest
         try:
             if self.ed.save_needs_run() and self.ed.conflict is None:
                 # Run on save, on the worker thread: a long script never freezes the window
@@ -1555,6 +2157,10 @@ class EditorWindow(QMainWindow):
     # ------------------------------------------------------------ events
 
     def toggle_play(self) -> None:
+        if self.explorer_on:  # the Explorer's transport (session state)
+            self.xp.toggle_play()
+            self.explorer.show_transport()
+            return
         self.playing = not self.playing
         if self.playing and self.ed.t >= self.ed.engine.duration:
             self.ed.set_time(0.0)
@@ -1587,11 +2193,21 @@ class EditorWindow(QMainWindow):
 
     def tick(self) -> None:
         self._ticks += 1
+        if self.explorer_on:
+            changed = self.xp.poll()
+            moved = self.xp.advance(TICK_MS / 1000)
+            if changed or moved:
+                self.viewport.refresh()
+                self.explorer.show_transport()
+            if moved and self.xp.playing_sliders:
+                self.explorer.show_sliders()
+            if changed:
+                self.explorer.refresh()
         self._show_readout()
         if self._preview_dirty:
             self._preview_dirty = False
             self.viewport.refresh()
-        if self.playing:
+        if self.playing and not self.explorer_on:
             self.playing = self.ed.play_step(TICK_MS / 1000)
             self.viewport.refresh()
             self.timeline.update()
@@ -1650,9 +2266,14 @@ class EditorWindow(QMainWindow):
         self.sound.refresh()
         self.footage.refresh()
         self.activity.refresh()
+        if self.explorer_on:
+            self.explorer.refresh()
 
     def closeEvent(self, ev) -> None:
         self.timer.stop()
+        for key in list(self.xp.drafts):
+            self.xp.leave(key)
+        self.xp.close()
         if self.ed.job is not None:
             self.ed.cancel_job()
         if self.ed.running is not None:

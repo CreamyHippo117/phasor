@@ -278,6 +278,7 @@ class DesktopWindow(EditorWindow):
         v.addAction(self.actions["Play"])
         act(v, "Back to the &Start", lambda: self._scrub(0.0), "Home")
         v.addAction(self.actions["Who changed what"])
+        v.addAction(self.actions["Explorer"])
 
         s = bar.addMenu("&Settings")
         math = s.addMenu("&Math Typesetting")
@@ -375,6 +376,7 @@ class DesktopWindow(EditorWindow):
 
     def maybe_save(self) -> bool:
         """Before closing: True when it is fine to go on (saved, discarded or clean)."""
+        self.xp.settle()  # a row typed just now counts as an unsaved edit
         if not self.ed.dirty:
             return True
         box = QMessageBox(self)

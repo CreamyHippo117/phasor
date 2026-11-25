@@ -52,9 +52,9 @@ Two kinds of state:
 | 26 | Flow core, headless: parser hardening, `flow_math`, batched RK4 + `Simulation`, equilibria, 3D classification, 1D manifolds, set refinement, objects (`Variable`, `System`, `FieldArrows`, `Tracer`, `FlowSet`, `Equilibria`, `EquilibriumView`, `Manifold`), presets, docs, examples, goldens | none | cloud | DONE (independently audited, 4 blockers fixed; `MILESTONE_26.md`) |
 | 27 | Rows, variables, AI tools: `normalize_row`, row classifier, `source` params, auto `Control`, `explorer_state/edit/preset`, `find_equilibria`, `flow_probe`, `sweep_parameter`, MCP.md, llms.txt, skill | 26 interfaces | cloud | DONE (independently audited, 2 blockers fixed; `MILESTONE_27.md`); the panel's typed-row lock is in place, rows for graphs/curves/surfaces are saved but not drawn yet |
 | 28 | World-space batches `ctx.points3d/lines3d/arrows3d` (GL + software), flow objects moved onto them, thinning while dragging | M21 | cloud; PC timing | built, independently audited (1 blocker + 5 should-fix fixed; `MILESTONE_28.md`); PC timing in `pc_tasks/12_world_batches.md` |
-| 29 | The Explorer panel in the M25 window: transport, click/drag tools, equilibrium card, R2/R3 | 27, M25 | cloud; PC feel | planned |
+| 29 | The Explorer panel in the M25 window: transport, click/drag tools, equilibrium card, R2/R3; also record marks -> scene and the export dialog (from 31) and the insert palette's first form (from 32) | 27, M25 | cloud; PC feel | built, not audited (`MILESTONE_29.md`); feel on the PC: `pc_tasks/14_explorer_feel.md` |
 | 30 | Analysis pack: Poincare section, Lyapunov, time-series strip, twin tracers, divergence map, bifurcation sweep, limit cycles | 26, 27 | cloud | planned |
-| 31 | Scale and handoff: CUDA flow kernel, 1e5-1e6 points, basins/FTLE kernels, record marks -> scene, export dialog | 28, 29 | PC | planned |
+| 31 | Scale and handoff: CUDA flow kernel, 1e5-1e6 points, basins/FTLE kernels (record marks -> scene and the export dialog were built in 29) | 28, 29 | PC | planned |
 
 Parallel plan: 26 (maths first, then objects) and 27's parser/normaliser run at once; after
 26, 27's tools, 28 and 30 in parallel (they touch `workspace/`, `render/`, `domains/`).
@@ -104,4 +104,4 @@ delete-and-retype (`retired_ids`); parse every formula in `examples/`, `showcase
 
 ## Status
 
-Planned 2026-11-24. 26 flow core DONE (audited, merged); 27 rows and AI tools DONE (audited, merged); 30 analysis pack built and under audit; 28 (world-space batches) built and audited, awaiting the PC's numbers; 29 after Milestone 25. 29 waits for Milestone 25.
+Planned 2026-11-24. 26 flow core DONE (audited, merged); 27 rows and AI tools DONE (audited, merged); 30 analysis pack built and under audit; 28 (world-space batches) built and audited, awaiting the PC's numbers; 29 (the panel) built 2026-11-25 on Milestone 25's window, not audited yet; its feel is the owner's check (`pc_tasks/14_explorer_feel.md`).

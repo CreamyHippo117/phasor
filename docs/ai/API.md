@@ -2691,6 +2691,79 @@ assert ed.engine.document.object("pole") is not None
 assert parse_notes("C4 0 0.5, E4 0.5 0.5")[1][0] == 64.0
 ```
 
+### The Explorer panel (Milestone 29)
+
+**View > Explorer** (Ctrl+Shift+E) swaps the script in the left pane for the Explorer's
+rows; an explorer document (a `.phasor.json` with rows) opens there and stays a document.
+The panel is a view of the one document: its rows are `explorer.rows_of`, and every change
+is one undoable patch with a readable name (`rho = 24.74`, `added disk`; an attached AI's
+are `AI: ...`). What is only the session never reaches the document or its history: the
+playhead and the transport (play, pause, speed with its "x normal" readout, reverse replays
+the playhead, restart, step), a row mid-typing, a slider mid-drag or playing, the camera
+while the mouse is down, the hover, the equilibrium card.
+
+- **Rows:** typing is read on a worker thread (late answers for older text are dropped),
+  previewed on a fork, and committed after a 0.2 s pause (1 s when it would make a new
+  slider, so a pause mid-name never makes one for `sig`) or when you leave the row (a row
+  that does not read is kept with its error in plain words). The row you type in is locked
+  against the AI (`row_locked`). Each row has a kind badge (choose a kind over the guess),
+  visibility, a colour (a style role) and delete; a variable has its slider (drag previews,
+  release commits), a value box, the range box (`>`), **play** (session) and **keep** (a
+  track on its value: it renders). **Presets** load a classic system; **+ row** adds a
+  tracer, a disk or ball of starting points, a source (2D field term) or a section plane,
+  and **Insert** places any shipped type that has an example (the palette is generated from
+  the registry).
+- **Viewport:** a click on empty space drops a tracer there (3D: on the plane through the
+  orbit target facing the camera); shift+drag draws a disk or ball (centre, then radius);
+  drag a set's centre or rim, or a tracer's dot, to move or resize it; click an equilibrium
+  for its card (position, kind, eigenvalues, subspace dimensions), double-click or **zoom
+  in** to fly the camera there and add its `EquilibriumView`; drag turns the 3D camera
+  (ctrl or the middle button slides it) or slides the 2D one; the wheel zooms (committed
+  once it rests); space pauses, left and right step, `r` restarts. While you interact the
+  picture is drawn at half size with `quality="interactive"`, then in full 150 ms later.
+- **R2 / R3:** two files (`<name>_r2`/`<name>_r3.phasor.json`, the one you started from
+  kept), each with its own field and camera; save before switching.
+- **Record, export:** **record** then **mark** keeps the camera and slider values at the
+  moments you choose; stopping turns them into markers and eased segments (one patch).
+  **Export video...** asks "from tau 0 to 30 in 20 s" and renders a fork through the normal
+  renderer. **Convert to script** (asked first) writes `name.scene.py`: from then on rows are
+  code and sliders are tweaks. Tabs: **Analysis** (the equilibria, a Lyapunov estimate, a
+  sweep; each marked stale once the scene changes) and **AI notes**.
+
+The logic is `phasor.gui.explorer.Explorer`, plain Python tested without Qt (the clock and
+the reader's executor are injected):
+
+```python
+import tempfile
+
+from phasor.gui.controller import Editor
+from phasor.gui.explorer import DEBOUNCE, NEW, Explorer, Immediate
+from phasor.workspace import Workspace
+
+ws = Workspace(tempfile.mkdtemp())
+ws.scene_new("lab", look="none")
+now = [0.0]
+ex = Explorer(Editor(ws), clock=lambda: now[0], pool=Immediate(), analysis_pool=Immediate())
+ex.load_preset("lorenz")
+version = ws.engine.version
+ex.type_row("rho", "rho = 24.74")  # locked to the person; previewed, not committed
+ex.poll()
+assert ws.engine.version == version and ws.explorer_edit([{"id": "rho", "value": 1}])["ok"] is False
+now[0] += DEBOUNCE
+ex.poll()  # the pause: one patch
+assert ex.history_names()[-1] == "rho = 24.74"
+ex.play()
+for _ in range(90):
+    ex.advance(1 / 30)  # session only: the document and its history do not change
+assert ws.engine.version == version + 1 and ex.speed_text() == "1x normal"
+ex.add("ball")
+ex.type_row(NEW, "(1, 1, 1)")
+ex.leave()
+assert ex.history_names()[-2:] == ["added ball", "added (1, 1, 1)"]
+assert ex.export_plan(0, 30, 20)["text"] == "from tau 0 to 30 in 20 s"
+ex.close()
+```
+
 ## The editor and the AI on one scene (`phasor gui`)
 
 `phasor gui scene.py` opens the same window as the desktop app, without its menus. While
