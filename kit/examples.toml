@@ -226,3 +226,8 @@ teaches = "The chroma look on a complex function: a luminous wash of vivid phase
 kind = "fourier_linalg"
 tier = "technique"
 teaches = "The chroma look on algebra: a 3D lattice (TransformGrid lattice=True) turned by quaternions, every edge and node coloured by where it sits"
+
+[examples.verbs_signals]
+kind = "motion"
+tier = "technique"
+teaches = "iterate: an orbit appears step by step (Newton, Julia, logistic cobweb); decompose/recompose: a Fourier sum splits into coloured harmonic rows and returns"

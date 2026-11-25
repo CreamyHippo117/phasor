@@ -96,11 +96,8 @@ New types are in `domains/space.py`; `project` uses `linalg.Arrow` and `Line` as
 
 The shared files the agents were told not to touch:
 
-1. `kit/examples.toml`: one entry per example (`verbs_signals` is merged but not yet listed:
-   `kind = "motion"`, `tier = "technique"`, `teaches = "iterate: an orbit appears step by
-   step (Newton, Julia, logistic cobweb); decompose/recompose: a Fourier sum splits into
-   coloured harmonic rows and returns"`). The test `test_every_example_is_sorted_into_the_catalogue`
-   fails without these. Kinds: basics, complex, fourier_linalg, fractals, motion, physics,
+1. `kit/examples.toml`: one entry per example (`verbs_signals` is done). The test
+   `test_every_example_is_sorted_into_the_catalogue` fails without them. Kinds: basics, complex, fourier_linalg, fractals, motion, physics,
    three_d.
 2. `docs/ai/API.md`: add `dyn.Orbit`, `PartialSum.spread`, and one entry for every other new
    object type or parameter (the per-group notes are in `docs/ai/verbs_<group>.md`).
