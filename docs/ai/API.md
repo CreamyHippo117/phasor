@@ -1301,6 +1301,61 @@ u = unfold_math.box_unfold((0, 0, 0), (4, 2.5, 2), (0.8, 0.6, 1.0), (1, 0.45, 0)
 assert [c.wall for c in u.crossings] == ["east", "north", "west"]
 ```
 
+**Nets and geodesics: `net.Polyhedron`** (`examples/spider_and_fly.py`). The other classic
+unfolding: a polyhedron's surface opened out flat into a net, where the shortest path on the
+surface between two points (a geodesic) is a straight line. `from phasor import net`.
+
+- `net.Polyhedron(id=, size=(2, 2, 2), origin=(0, 0, 0), unfold=0.0, geodesic=[a, b],
+  root="", tree={}, trace=1.0, fill=0.35)`: a box (corner at `origin`; faces `bottom`,
+  `top` (z), `south`, `north` (y), `west`, `east` (x)), or any convex polyhedron
+  (`vertices`, `faces` as vertex indices in any winding, `names` one per face, default
+  `f0`, `f1`, ...; a surface that is not closed, flat-faced and convex is refused).
+- `unfold` (0-1, animate it with `morph`): 0 is the closed solid, 1 the flat net. Each face
+  hangs on its parent face by their shared edge and turns about it by the angle between
+  their outward normals (a quarter turn on a cube, 180 minus the dihedral angle in
+  general), every turn `unfold` of the way, so the faces open together, stay joined and
+  land outside up in the plane of `root` (default `bottom`, or the first face), which never
+  moves. A face's place is its chain of hinges up the tree, the same `Hinge` chains as a
+  `HingedCopy`.
+- `tree` (`{face: the face it hangs on}`): the net. Default: the geodesic's faces stay
+  joined in a row and the rest join breadth first (so the geodesic lies straight on the
+  net). A tree that cuts the geodesic between two of its faces, or does not reach the root,
+  is refused.
+- `geodesic` (two points on the surface): the shortest path between them, found by trying
+  every run of faces laid flat (each face crossed at most once, never through a vertex) and
+  keeping the shortest straight line that passes through every shared edge: the spider and
+  the fly. It is drawn bent over the solid's edges and straight on the net; `trace` (0-1)
+  is the share drawn.
+- Parts (ids by meaning): `<id>.face_<name>` (a `Face` each), `<id>.geodesic` (a `Line`),
+  `<id>.geodesic_start`, `<id>.geodesic_end` (dots). Style roles: `color` (faces), `path`
+  (the geodesic, `highlight`), `stroke`, `glow`, `material` (`glass`).
+- Semantics: `faces`, `root`, `unfold`, `shape` (`solid`, `opening`, `net`), `hinges`
+  (`{face: {"onto", "angle"}}`, the angle turned now) and `geodesic` (`length`, `faces`
+  crossed in order, `straight`: whether it is one straight line now).
+- `Face(points=[...], fill=0.35)`: a flat convex polygon in 3D, a lit see-through fill and an
+  outline (a backdrop: labels may sit on it). Semantics: `sides`, `area`, `center`, `normal`.
+- The maths is `phasor.domains.net_math` (pure NumPy): `box`, `solid`, `geodesic(solid, a,
+  b)` (`length`, `faces`, `points`: start, each edge crossing, end), `hinge`,
+  `spanning_tree(solid, root, keep=run)`, `net_matrices(solid, root, parent, amount)`.
+
+```python
+from phasor import Scene, net
+from phasor.domains import net_math
+
+room = net_math.box((30, 12, 12))  # spider 1 below the ceiling, fly 1 above the floor
+path = net_math.geodesic(room, (0, 6, 11), (30, 6, 1))
+assert round(path.length, 9) == 40 and len(path.faces) == 5  # not 42
+assert round(net_math.geodesic(net_math.box(), (0, 0, 0), (1, 1, 1)).length ** 2, 9) == 5
+
+box = Scene("net", passes=None)
+box.add(net.Polyhedron(id="cube", root="top", geodesic=[(0, 0, 0), (2, 2, 2)]))
+box.marker("open", 1.0)
+box.at("open").morph("cube.unfold", 1.0)
+seen = {o["id"]: o["semantic"] for o in box.engine.inspect(5.0)["objects"]}
+assert "cube.face_top" in seen and seen["cube"]["shape"] == "net"
+assert seen["cube"]["geodesic"]["straight"] and seen["cube"]["hinges"]["north"]["angle"] == 90
+```
+
 **Echoes of K feedback loops as a lattice in 3D** (`nd.StarLattice`, ANIMATIONS.md animation
 10). `from phasor import nd`. An echo of a feedback-delay network with K loops is the point n
 of N^K that counts its laps round each loop; it arrives at sum n_i d_i. Each loop gets an arm

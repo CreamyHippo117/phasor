@@ -172,6 +172,11 @@ kind = "physics"
 tier = "technique"
 teaches = "The unfold verb: a ray bouncing in a room becomes a straight line through mirror rooms that swing over like pages"
 
+[examples.spider_and_fly]
+kind = "three_d"
+tier = "technique"
+teaches = "A net folding and unfolding: the shortest path on a box (the spider and the fly, 40 not 42) bends over its edges and lies straight on its net"
+
 [examples.echo_lattice]
 kind = "physics"
 tier = "technique"
