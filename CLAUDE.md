@@ -20,11 +20,11 @@ compounding. If this file and SPEC.md disagree, stop and ask.
   finished Windows app come after, unless the owner says otherwise.
 - Desktop app (owner, 2026-11-22): code-first, one shared script that the person, the AI and
   the app all edit. Plan: `APP_PLAN.md` (answered); ADR 0004 (tweaks inside the script,
-  touches contract 2) accepted by the owner; phase 1 not started.
+  touches contract 2) accepted by the owner; phases 1 and 2 built in Milestone 25 (`MILESTONE_25.md`, audited); phases 3 and 4 not started.
 - Manim parity, the whole CPU, and an open object contract: `MANIM_PARITY.md` (Milestones 14-20,
   owner 2026-11-23, answers recorded there); ADR 0005 accepted, plan approved, interleaved with
   `BEAUTY.md`. **14 (CPU kernels) and 15 (open contract) are DONE** (gate 2026-11-23, after independent audits; `MILESTONE_14.md`, `MILESTONE_15.md`) on `claude/eloquent-mayer-jiqxs9`. **16 (paths, fills, shapes), 17 (text shapes, morphing), 18 (explicit styles) and 19 (diagram kit) are DONE** (audited; `MILESTONE_16.md` to `MILESTONE_19.md`); **20 (importer parity, real Manim compared) is DONE** (audited; `MILESTONE_20.md`): the whole plan 14-20 is built. What is left is the owner's PC checks (`pc_tasks/09`, `10_manim_real.md`, `11_platforms_after_20.md`) and decisions (`MANIM_PARITY.md`). Owner's PC (Windows 11, RTX 4070 Ti, tier A; 2026-11-23, results in `pc_tasks/10_manim_real.md` and `pc_tasks/11_platforms_after_20.md`): full suite 2362 passed, 0 failed after the fixes it found; real Manim 11 of 11 scenes pass; sound renders measured in sync (chime not yet listened to). Still untested: macOS, `TESTING.md` B1 (no OpenGL on the PC), a heard check of the chime, and the rest of **`pc_tasks/09_pc_checks_after_14_15.md`** (CUDA worker count, Riemann timing, GPU goldens); owner decisions are in `MANIM_PARITY.md`.
-- Studio (owner, 2026-11-24): preview render, audio and media inputs, MIDI, and a desktop app that works: `STUDIO.md` (Milestones 21-25). 21 draft render and 24 video and picture inputs are DONE (audited); 22 audio inputs and narration snap and 23 MIDI are DONE (audited); 25 the desktop app (`APP_PLAN.md` phases 1-2 plus the buttons) comes last.
+- Studio (owner, 2026-11-24): preview render, audio and media inputs, MIDI, and a desktop app that works: `STUDIO.md` (Milestones 21-25). 21 draft render and 24 video and picture inputs are DONE (audited); 22 audio inputs and narration snap and 23 MIDI are DONE (audited); 25 the desktop app (`APP_PLAN.md` phases 1-2 plus the buttons) is built and audited (`MILESTONE_25.md`); the packaged app awaits `pc_tasks/13_desktop_app.md`.
 - Explorer (owner, 2026-11-24): a Desmos-like dynamical-systems workbench on the one engine (rows, sliders, vector fields, flows, equilibria, AI tools): `EXPLORER.md` (Milestones 26-31; design review in `docs/decisions/explorer_advice_2026-11-24.md`). **26 flow core is DONE** (audited; `MILESTONE_26.md`); **27 rows and AI tools are DONE** (audited); 30 analysis pack is built and under audit; **28 world-space batches is built and audited** (PC timing in `pc_tasks/12`); the panel (29) waits for 25.
 - Render speed: `GPU_SPEED.md` (steps 1-4 done, workers included); resume at its "Next
   session"; measure with wall clock before and after each step.
@@ -37,9 +37,10 @@ compounding. If this file and SPEC.md disagree, stop and ask.
    CLI/MCP/GUI are thin clients. Every mutation is `Engine.apply(patch) -> PatchResult`
    (validate, record undo, return lint delta). No other write path.
 2. **Document is truth.** pydantic v2 in `core/schema.py`, `schema_version` + `core/migrate.py`.
-   `name.phasor.json` (sorted keys) + `name.overrides.json` (id + param path, plus added
-   constraints; ADR 0002). Re-running a
-   script never loses overrides; a dangling override is lint `orphan_override`.
+   `name.phasor.json` (sorted keys); tweaks (id + param path, plus added constraints; ADR 0002)
+   live in the script's managed tweaks block for a script scene (ADR 0004, accepted by the
+   owner) and in `name.overrides.json` for a scene with no script. Re-running a script never
+   loses tweaks; a dangling one is lint `orphan_override`.
    IDs: `[a-z][a-z0-9_]*`, dots for children, never reused (removed ids go to
    `retired_ids`), named by meaning not counters.
 3. **Time is pure.** `Engine.state_at(t)` depends only on (document, t) and the occlusion oracle (ADR 0002), returns frozen data.
