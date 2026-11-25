@@ -356,6 +356,10 @@ class ParametricSurface(ObjectBase):
             U, V, rel[..., 0], rel[..., 1], rel[..., 2]
         )
 
+    def grid_points(self, state: SceneState) -> np.ndarray:
+        """The surface as a (nu, nv, 3) grid of world points (what ``slice`` cuts)."""
+        return self._positions(self.me(state).params)[0]
+
     def world_bounds(self, state: SceneState) -> Bounds:
         p = self.me(state).params
         pos = self._positions(p)[0]

@@ -357,7 +357,7 @@ def test_coset_gathers_each_coset_into_a_cluster_keeping_its_color_roles():
     centres = [after[c].mean(axis=0) for c in cosets]
     for c, mid in zip(cosets, centres, strict=True):  # a cluster is tight
         assert max(np.linalg.norm(after[k] - mid) for k in c) < 1.0
-    spread = min(np.linalg.norm(a - b) for i, a in enumerate(centres) for b in centres[i + 1:])
+    spread = min(np.linalg.norm(a - b) for i, a in enumerate(centres) for b in centres[i + 1 :])
     assert spread > 1.0  # and the clusters are apart
     assert np.allclose(before, _points(e, 0.0))  # nothing moves before the verb
     assert 0 < e.state_at(1.8)["clock"].params.gather < 1

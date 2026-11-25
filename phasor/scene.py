@@ -289,25 +289,28 @@ class At:
 
     # ===== group F2b =====
 
-    def lift(self, *args: Any, **options: Any) -> At:
-        """lift (not built yet)."""
-        return self._verb("lift", *args, **options)
+    def lift(self, plane_id: str, height: float = 0.6) -> At:
+        """Raise a domain coloring into the landscape of its function (``<id>.surface``)."""
+        return self._verb("lift", plane_id, height)
 
-    def slice(self, *args: Any, **options: Any) -> At:
-        """slice (not built yet)."""
-        return self._verb("slice", *args, **options)
+    def slice(self, surface_id: str, axis: str = "x", at: float | None = None,
+              start: float | None = None) -> At:  # fmt: skip
+        """Sweep a cutting plane through a surface, drawing the curve where they meet."""
+        return self._verb("slice", surface_id, axis, at, start)
 
-    def project(self, *args: Any, **options: Any) -> At:
-        """project (not built yet)."""
-        return self._verb("project", *args, **options)
+    def project(self, v_id: str, onto: str, label: str | None = None) -> At:
+        """Project an arrow (or point) onto an arrow or line: a dashed drop, then the shadow."""
+        return self._verb("project", v_id, onto, label)
 
-    def dissolve(self, *args: Any, **options: Any) -> At:
-        """dissolve (not built yet)."""
-        return self._verb("dissolve", *args, **options)
+    def dissolve(self, *ids: str, count: int = 900, spread: float | None = None,
+                 seed: int = 0) -> At:  # fmt: skip
+        """Shatter objects into drifting points of light (``<id>.dust``)."""
+        return self._verb("dissolve", *ids, count=count, spread=spread, seed=seed)
 
-    def assemble(self, *args: Any, **options: Any) -> At:
-        """assemble (not built yet)."""
-        return self._verb("assemble", *args, **options)
+    def assemble(self, *ids: str, count: int = 900, spread: float | None = None,
+                 seed: int = 0) -> At:  # fmt: skip
+        """Points of light fly together into the object, which fades in as they arrive."""
+        return self._verb("assemble", *ids, count=count, spread=spread, seed=seed)
 
     # ===== end of group F2b =====
 

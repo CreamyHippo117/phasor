@@ -33,9 +33,11 @@ s.at("turn").act("square", "r")
 s.at("flip").act("square", "s")
 e = s.engine
 
+
 def element(t):
     state = e.state_at(t)
     return state["square"].impl.semantics(state)["element"]
+
 
 assert element(0.5) == "e"  # before anything
 assert element(3.0) == "r"  # a quarter turn counterclockwise
@@ -61,8 +63,10 @@ s.at("shear").apply("grid", ((1.0, 1.0), (0.0, 1.0)))
 s.at("turn").apply("grid", ((0.0, -1.0), (1.0, 0.0)))
 e = s.engine
 
+
 def matrix(t):
     return np.array(e.state_at(t)["grid"].params.matrix)
+
 
 assert np.allclose(matrix(0.5), np.eye(2))
 assert np.allclose(matrix(3.0), ((1, 1), (0, 1)))
@@ -84,8 +88,10 @@ s.marker("grow", 1.0)
 s.at("grow").generate("cay")
 e = s.engine
 
+
 def reach(t):
     return e.state_at(t)["cay"].params.reach
+
 
 assert reach(0.5) == 0.0 and reach(5.0) == 1.0
 assert 0 < reach(2.0) < 1
@@ -113,9 +119,11 @@ s.at("gather").coset("clock")
 s.at("collapse").quotient("clock")
 e = s.engine
 
+
 def points(t):
     state = e.state_at(t)
     return state["clock"].impl.features(state)["points"]
+
 
 cosets = [[0, 4, 8], [1, 5, 9], [2, 6, 10], [3, 7, 11]]
 assert not np.allclose(points(0.5), points(4.0))  # the elements moved into clusters
@@ -160,9 +168,11 @@ s.at("swap").permute("p", "(1 2 3)(4 5)")
 s.at("again").permute("p", [0, 1, 2, 3, 4])
 e = s.engine
 
+
 def tokens(t):
     state = e.state_at(t)
     return state["p"].impl.features(state)["tokens"]
+
 
 slots = e.state_at(0.0)["p"].impl.features(e.state_at(0.0))["slots"]
 assert np.allclose(tokens(0.5), slots)

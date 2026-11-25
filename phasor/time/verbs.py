@@ -22,6 +22,8 @@ from typing import Any
 import numpy as np
 
 from phasor.core.objects import STRETCH_FLOOR
+from phasor.core.record import record
+from phasor.core.rng import rng
 from phasor.core.schema import ExprSpec, MarkerRef, TimeRef
 from phasor.core.state import SceneState
 from phasor.time.compile import Compiled, evaluate
@@ -1222,24 +1224,262 @@ class Verbs:
     # ===== end of group F2a =====
 
     # ===== group F2b =====
-    # (replace each stub below with the real verb; see docs/ai/verbs_*.md)
 
-    def lift(self, *ids: str, **options: Any) -> Motion:
-        raise VerbError("lift is not built yet")
+    def _child(self, child: str, kind: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+        """``add_object`` for a helper child the first time a verb needs it, else nothing."""
+        if child in self.state:
+            return []
+        return [{"op": "add_object", "object": {"id": child, "type": kind, "params": params}}]
 
-    def slice(self, *ids: str, **options: Any) -> Motion:
-        raise VerbError("slice is not built yet")
+    def _written_expr(self, path: str) -> str | None:
+        """The expression text the document has for ``path`` (None when it is not one)."""
+        target, _, name = path.rpartition(".")
+        spec = self.c.doc.object(target)
+        value = spec.params.get(name) if spec else None
+        return value.expr if isinstance(value, ExprSpec) else None
 
-    def project(self, *ids: str, **options: Any) -> Motion:
-        raise VerbError("project is not built yet")
+    def lift(self, plane_id: str, height: float = 0.6) -> Motion:
+        """A flat domain coloring rises into the landscape of its function: ``|f|``
+        (compressed to ``log(1 + |f|)``, poles clipped) becomes height, colored by phase,
+        under a glowing net, while the flat colors fade. The surface is the child
+        ``<id>.surface`` (a ``Landscape``), made the first time with the plane's function,
+        position, size and constant ``a`` linked by expressions. ``height`` is world units
+        per unit of ``log(1 + |f|)`` (the peak is three times it)."""
+        plane = self._of_type(plane_id, "lift", "domain_coloring")
+        if height <= 0:
+            raise VerbError(f"lift needs a height above 0, not {height}")
+        surf = f"{plane_id}.surface"
+        spec = self.motion["lift"]
+        d = spec["duration"]
+        p = plane.params
+        if surf in self.state and not self._has(surf, "height"):
+            raise VerbError(f"{surf!r} exists but is not a landscape")
+        ops = self._child(surf, "landscape", {
+            "function": p.function.strip(), "to": p.to.strip(), "height": 0.0, "opacity": 0.0,
+            "blend": {"expr": f"{plane_id}.blend"}, "a": {"expr": f"{plane_id}.a"},
+            "pos": {"expr": f"{plane_id}.pos"}, "size": {"expr": f"{plane_id}.size"},
+            "lines": 20})  # fmt: skip
+        ops += [
+            self._span(f"{surf}.opacity", 1.0, "lift", 0.0, 0.3 * d, "smooth"),
+            self._span(f"{surf}.height", float(height), "lift", 0.0, d, spec["ease"]),
+            self._span(f"{plane_id}.opacity", 0.0, "lift", 0.45 * d, d, "smooth"),
+        ]
+        return Motion(tuple(ops), d)
 
-    def dissolve(self, *ids: str, **options: Any) -> Motion:
-        raise VerbError("dissolve is not built yet")
+    def slice(self, surface_id: str, axis: str = "x", at: float | None = None,
+              start: float | None = None) -> Motion:  # fmt: skip
+        """A cutting plane sweeps through a surface (``ParametricSurface``, ``pde.Surface``
+        or a ``Landscape``) along ``axis`` ("x", "y" or "z"), from ``start`` to ``at`` (world
+        coordinates; by default the surface's whole extent), with the curve where it meets
+        the surface drawn on it. The plane is the child ``<id>.cut`` (a ``CutPlane``), made
+        the first time; a later slice on the same axis starts where the plane is."""
+        obj = self._object(surface_id)
+        if axis not in ("x", "y", "z"):
+            raise VerbError(f"slice cuts along 'x', 'y' or 'z', not {axis!r}")
+        if not hasattr(obj.impl, "grid_points"):
+            raise VerbError("slice cuts a ParametricSurface, a pde Surface or a Landscape; "
+                            f"{surface_id!r} is a {obj.type}")  # fmt: skip
+        k = "xyz".index(axis)
+        flat = np.asarray(obj.impl.grid_points(self.state)).reshape(-1, 3)
+        lo, hi = float(flat[:, k].min()), float(flat[:, k].max())
+        inset = 0.02 * (hi - lo)
+        cut = f"{surface_id}.cut"
+        old = self.state[cut] if cut in self.state else None  # noqa: SIM401
+        if old is not None and old.params.axis != axis:
+            raise VerbError(f"{cut!r} cuts along {old.params.axis!r}; slice the other way "
+                            "with a second plane, not this one")  # fmt: skip
+        end = hi - inset if at is None else float(at)
+        begin = float(start) if start is not None else (
+            lo + inset if old is None else float(old.params.at))  # fmt: skip
+        spec = self.motion["slice"]
+        d = spec["duration"]
+        ops = self._child(cut, "cut_plane", {"surface": surface_id, "axis": axis, "at": begin,
+                                             "opacity": 0.0})  # fmt: skip
+        if old is not None:
+            ops.append(self._instant(f"{cut}.at", begin, "slice", 0.0))
+        ops += [
+            self._span(f"{cut}.opacity", 1.0, "slice", 0.0, 0.2 * d, "smooth"),
+            self._span(f"{cut}.at", end, "slice", 0.0, d, spec["ease"]),
+        ]
+        return Motion(tuple(ops), d)
 
-    def assemble(self, *ids: str, **options: Any) -> Motion:
-        raise VerbError("assemble is not built yet")
+    def project(self, v_id: str, onto: str, label: str | None = None) -> Motion:
+        """Project an arrow (or a point) onto another arrow or a two-point line: a dashed
+        perpendicular drops from the tip to the foot, then the projection arrow grows along
+        the line from its start. Children: ``<id>.drop`` (a dashed line with a right-angle
+        mark), ``<id>.proj`` (an arrow) and ``<id>.proj.grow`` (a number), all following the
+        arrows through expressions; ``label`` writes a name beside the projection."""
+        v = self._of_type(v_id, "project", "arrow", "dot")
+        line = self._of_type(onto, "project", "arrow", "line")
+        tip = f"{v_id}.end" if v.type == "arrow" else f"{v_id}.pos"
+        if line.type == "arrow":
+            o, e = f"{onto}.start", f"{onto}.end"
+        else:
+            n = len(line.params.points)
+            if n != 2:
+                raise VerbError(f"project onto a line needs a two-point line; {onto!r} has {n}")
+            o, e = f"{onto}.points[0]", f"{onto}.points[1]"
+        dirn = f"normalize({e} - {o})"
+        foot = f"{o} + dot({tip} - {o}, {dirn}) * {dirn}"
+        drop, proj, grow = f"{v_id}.drop", f"{v_id}.proj", f"{v_id}.proj.grow"
+        if drop in self.state:
+            for name, text in (("start", tip), ("end", foot)):
+                if self._written_expr(f"{drop}.{name}") != text:
+                    raise VerbError(
+                        f"{v_id!r} already projects onto something else ({drop!r}); "
+                        "project a copy of it to project twice"
+                    )
+        spec = self.motion["project"]
+        d = spec["duration"]
+        ops = self._child(drop, "dashed", {
+            "start": {"expr": tip}, "end": {"expr": foot}, "progress": 0.0, "square": 0.12,
+            "back": {"expr": f"normalize({o} - ({foot}))"}})  # fmt: skip
+        ops += self._child(grow, "value", {"value": 0.0})
+        ops += self._child(proj, "arrow", {
+            "start": {"expr": o}, "end": {"expr": f"{o} + (({foot}) - {o}) * {grow}.value"},
+            "opacity": 0.0})  # fmt: skip
+        if drop in self.state:  # again: start over
+            ops += [self._instant(f"{drop}.progress", 0.0, "project", 0.0),
+                    self._instant(f"{grow}.value", 0.0, "project", 0.0),
+                    self._instant(f"{proj}.opacity", 0.0, "project", 0.0)]  # fmt: skip
+        ops += [
+            self._span(f"{drop}.progress", 1.0, "project", 0.0, 0.5 * d, spec["ease"]),
+            self._instant(f"{proj}.opacity", 1.0, "project", 0.5 * d),
+            self._span(f"{grow}.value", 1.0, "project", 0.5 * d, d, spec["ease"]),
+        ]
+        if label:
+            name = f"{proj}.label"
+            ops += self._child(name, "text", {"text": label, "opacity": 0.0})
+            if name not in self.state:
+                ops.append({"op": "add_constraint", "rule": f"{name} near {proj}"})
+            ops.append(self._span(f"{name}.opacity", 1.0, "project", 0.8 * d, d, "smooth"))
+        return Motion(tuple(ops), d)
+
+    # -- dissolve / assemble: an object and its cloud of points
+
+    def _dust(self, object_id: str, count: int, spread: float | None, seed: int):
+        """(child id, ``add_object`` ops or [], the spread) for the point cloud that stands
+        for ``object_id``: points sampled from the geometry it records at the anchor."""
+        obj = self._object(object_id)
+        if not 12 <= count <= 20000:
+            raise VerbError(f"count is between 12 and 20000, not {count}")
+        dust = f"{object_id}.dust"
+        b = obj.impl.world_bounds(self.state)
+        lo, hi = np.asarray(b.lo, dtype=np.float64), np.asarray(b.hi, dtype=np.float64)
+        extent = float(max(hi[0] - lo[0], hi[1] - lo[1], 0.05))
+        far = max(0.35 * extent, 0.4) if spread is None else float(spread)
+        if far <= 0:
+            raise VerbError(f"spread must be above 0, not {spread}")
+        pad = 0.2 * extent + 0.2
+        w, h = (hi[0] - lo[0]) + 2 * (far + pad), (hi[1] - lo[1]) + 2 * (far + pad)
+        if dust in self.state:
+            old = self.state[dust].params
+            if spread is None and old.scatter > 0:
+                far = float(old.scatter)  # picks up where the points were left
+            if old.size[0] < 0.9 * w or old.size[1] < 0.9 * h:  # life nudges bounds a hair
+                raise VerbError(f"{dust!r} is too small for a spread of {far}; "
+                                "dissolve with the spread it was made with")  # fmt: skip
+            return dust, [], far
+        center = (lo + hi) / 2
+        pts = _sample_geometry(record(obj.impl, self.state), lo, hi, count,
+                               rng(f"{object_id}/dust", seed))  # fmt: skip
+        values = 0.5 + rng(f"{object_id}/dust-hue", seed).uniform(-0.08, 0.08, len(pts))
+        params = {
+            "source": "points", "seed": seed, "pos": [float(c) for c in center],
+            "points": [[round(float(x - center[0]), 5), round(float(y - center[1]), 5)]
+                       for x, y, _ in pts],
+            "values": [round(float(v), 4) for v in values], "count": len(pts),
+            "size": [float(w), float(h)], "point_size": 1.3, "exposure": 0.05,
+            "opacity": 0.0, "scatter": 0.0,
+        }  # fmt: skip
+        return dust, self._child(dust, "point_cloud", params), far
+
+    def dissolve(self, *ids: str, count: int = 900, spread: float | None = None,
+                 seed: int = 0) -> Motion:  # fmt: skip
+        """Shatter each object into ``count`` points of light that drift apart, each along
+        its own random direction (``rng(id, seed)``) up to ``spread`` world units, while the
+        object fades. The points are sampled from the geometry the object draws at the
+        anchor and live in the child ``<id>.dust`` (a ``PointCloud``), which lies in the
+        plane of the object (x and y of a 3D one)."""
+        spec = self.motion["dissolve"]
+        d = spec["duration"]
+
+        def make(object_id: str, delay: float):
+            dust, ops, far = self._dust(object_id, count, spread, seed)
+            ops = list(ops)
+            ops += [
+                self._instant(f"{dust}.scatter", 0.0, "dissolve", delay),
+                self._span(f"{dust}.opacity", 1.0, "dissolve", delay, delay + 0.25 * d, "smooth"),
+                self._span(f"{object_id}.opacity", 0.0, "dissolve", delay, delay + 0.25 * d,
+                           "smooth"),
+                self._span(f"{dust}.scatter", far, "dissolve", delay, delay + d, spec["ease"]),
+            ]  # fmt: skip
+            return ops, delay + d
+
+        return self._each(ids, "dissolve", make)
+
+    def assemble(self, *ids: str, count: int = 900, spread: float | None = None,
+                 seed: int = 0) -> Motion:  # fmt: skip
+        """The reverse of ``dissolve``: scattered points of light (``<id>.dust``) fly back
+        onto the object's geometry as it is at the anchor, and the object fades in as they
+        arrive. Used on its own, the object is hidden until then."""
+        spec = self.motion["assemble"]
+        d = spec["duration"]
+
+        def make(object_id: str, delay: float):
+            dust, ops, far = self._dust(object_id, count, spread, seed)
+            ops = list(ops)
+            path = f"{object_id}.opacity"
+            obj = self.state[object_id]
+            target = obj.params.opacity / obj.params.dim if obj.params.dim > 0 else 0.0
+            target = target if target > 0 else 1.0
+            if self._starts_hidden(path):
+                base = self._base(path)
+                target = float(base) if base not in (None, 0, 0.0) else 1.0
+                ops.append({"op": "set_param", "path": path, "value": 0.0})
+            ops += [
+                self._instant(f"{dust}.scatter", far, "assemble", delay),
+                self._instant(f"{dust}.opacity", 1.0, "assemble", delay),
+                self._span(f"{dust}.scatter", 0.0, "assemble", delay, delay + d, spec["ease"]),
+                self._span(path, target, "assemble", delay + 0.75 * d, delay + d, "smooth"),
+                self._span(f"{dust}.opacity", 0.0, "assemble", delay + 0.75 * d, delay + d,
+                           "smooth"),
+            ]  # fmt: skip
+            return ops, delay + d
+
+        return self._each(ids, "assemble", make)
 
     # ===== end of group F2b =====
+
+
+def _sample_geometry(rec, lo: np.ndarray, hi: np.ndarray, count: int, gen) -> np.ndarray:
+    """``count`` points (x, y, z) on what an object drew: along its recorded center lines
+    in proportion to their length, else on its recorded vertices (with a little scatter when
+    there are fewer than ``count``), else anywhere in its box (text, a kernel-drawn
+    field)."""
+    lines = [s for s in rec.strokes if len(s) >= 2]
+    if lines:
+        seg = [np.linalg.norm(np.diff(s, axis=0), axis=1) for s in lines]
+        total = np.array([x.sum() for x in seg])
+        if total.sum() > 1e-9:
+            which = gen.choice(len(lines), size=count, p=total / total.sum())
+            out = np.empty((count, 3))
+            for k, s in enumerate(lines):
+                mine = np.nonzero(which == k)[0]
+                if not len(mine):
+                    continue
+                cum = np.concatenate([[0.0], np.cumsum(seg[k])])
+                u = gen.uniform(0.0, cum[-1], len(mine))
+                out[mine] = np.stack([np.interp(u, cum, s[:, c]) for c in range(3)], axis=1)
+            return out
+    verts = np.unique(np.round(rec.points, 6), axis=0) if len(rec.points) else np.zeros((0, 3))
+    if len(verts) >= 12 and not set(rec.kinds) <= {"text", "field"}:
+        pick = gen.choice(len(verts), size=count, replace=len(verts) < count)
+        out = verts[pick]
+        if len(verts) < count:
+            out = out + gen.normal(0.0, 0.01 * max(float(np.ptp(verts[:, :2])), 0.1), out.shape)
+        return out
+    return lo + gen.uniform(0.0, 1.0, (count, 3)) * (hi - lo)
 
 
 def _resample(points: np.ndarray, n: int) -> np.ndarray:
