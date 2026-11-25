@@ -192,9 +192,10 @@ lint: lint cannot tell you a layout is ugly.
 ## The beauty pass
 
 `review` and `lint` take `aesthetic: true` for the taste rules on top of the correctness
-ones: `focal_point` (exactly one `highlight` per beat), `color_restraint` (at most three
-saturated hues; a phase-coloring plane is exempt, hue is its meaning), `glow_clip`,
-`density`, `motion_rhythm`, `margin`, `stroke_mix`. Then:
+ones: `focal_point` (exactly one `highlight` per beat once there are two objects; a lone object
+is its own), `color_restraint` (at most three saturated flat-paint hues; anything colored
+through a colormap is not counted, hue is its meaning), `glow_clip`,
+`density` (one object alone may fill the frame), `motion_rhythm`, `margin`, `stroke_mix`. Then:
 
 1. `critique` returns `score` (0 = nothing to criticise), issues tied to ids and markers,
    `fix` ops (certain) and `suggested` ops (judgement), and the rubric text (`STYLE.md`).

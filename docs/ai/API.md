@@ -789,8 +789,9 @@ assert p.engine.inspect(0, id="eq")["objects"][0]["semantic"]["colors"][1] == "s
 ```
 
 **Taste, the art director and variants.** `lint(aesthetic=True)` adds the taste rules:
-`focal_point` (one `highlight` per beat), `color_restraint` (three saturated hues at most;
-phase coloring exempt), `glow_clip`, `density`, `motion_rhythm`, `margin`, `stroke_mix`.
+`focal_point` (one `highlight` per beat once there are two objects; a lone object is its
+own), `color_restraint` (three saturated flat-paint hues at most; colormaps are not counted),
+`glow_clip`, `density`, `motion_rhythm`, `margin`, `stroke_mix`.
 Thresholds are the theme's `[lint]`. `engine.critique()` scores them (0 is nothing to
 criticise) with the markers and the fixes; `engine.polish(rounds=3)` applies them, each round
 one undo step; `engine.variants(beat)` shows calmer and bolder looks of one beat side by side;
@@ -1253,7 +1254,7 @@ around them: the `orbit` verb, or drag in the editor. Formulas are text in `t` (
 - **How field arrows look** (both types): `preset="dense"` is many small thin arrows with
   heads in proportion, lengths eased (`length_by="soft"`: tanh of size, so weak arrows still
   show and strong ones never touch) and color saying how strong (the `magnitude` colormap,
-  cool to warm; exempt from `color_restraint`, since the hue is read as a quantity).
+  cool to warm; not counted by `color_restraint`, since the hue is read as a quantity).
   `preset="bold"` is few thick glowing arrows. Without a preset: lengths in proportion to
   size (`length_by="size"`). A dense 3D *box* gets crowded: use a plane (extent z = 0) or a
   larger `spacing`.
