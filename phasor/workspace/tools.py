@@ -219,7 +219,8 @@ class Workspace:
         text is read *before* the script runs, so a change another editor makes while it
         runs is a change the editor has not seen (it reloads or asks). Touches nothing of
         this workspace: the editor runs it on a worker thread, then ``_adopt_script``."""
-        text, stamp = read_text(p), file_stamp(p)
+        stamp = file_stamp(p)  # the stamp first: a write between the two is seen as a change
+        text = read_text(p)
         run = self._guard(lambda: run_script(p, allow_scripts=allow_scripts))
         return run, text, stamp
 
@@ -266,8 +267,8 @@ class Workspace:
         written, so the editor does not take this write for an outside edit. Refused when
         the file changed on disk since it was last run or written here (``_check_disk``)."""
         assert self.path is not None and self.path.suffix == ".py"
-        self._check_disk()
-        write_text(self.path, text)
+        seen = self._check_disk()
+        write_text(self.path, text, expect=seen)
         self.script_disk = (text, file_stamp(self.path))
 
     def _save_tweaks(self) -> Path:
@@ -933,7 +934,7 @@ class Workspace:
                 reads.add(files.resolve(e.base_dir, n.voice[len("file:") :]))
         if self.path is not None:
             reads.add(self.path.resolve())
-        if target.resolve() in {r.resolve() for r in reads}:
+        if any(_same_target(target, r) for r in reads):
             raise ToolError(f"{target.name} is a file the scene reads: a render never writes "
                             "over it; choose another name")  # fmt: skip
 
@@ -949,24 +950,31 @@ class Workspace:
         now; later edits do not reach it. An existing file is replaced only with
         ``overwrite`` (a draft's own default file always is), and only when the render
         finished: until then the old file stays."""
-        target = self._render_target(preset, out, frame)
+        try:
+            target = self._render_target(preset, out, frame)
+        except OSError as err:
+            raise ToolError(f"the render cannot write there ({err.strerror or err})") from err
         if overwrite is None and out is None and preset == "draft":
             overwrite = True  # a draft's own default file: the last draft, replaced
         return self._render_job(target, preset, start, end, fps, frame, overwrite)
 
-    def _render_job(
-        self,
-        target: Path,
-        preset: str,
-        start: Any = None,
-        end: Any = None,
-        fps: float | None = None,
-        frame: Any = None,
-        overwrite: bool | None = None,
-    ) -> dict[str, Any]:
+    def _render_job(self, target: Path, preset: str, start: Any = None, end: Any = None,
+                    fps: float | None = None, frame: Any = None,
+                    overwrite: bool | None = None) -> dict[str, Any]:  # fmt: skip
         """Start a render job to ``target``, a path the caller chose: the editor's person may
         render anywhere (not a tool, so an attached AI cannot reach it; ``render_start``
-        keeps the AI in its folder). Same checks as ``render_start`` otherwise."""
+        keeps the AI in its folder). Same checks as ``render_start`` otherwise. A path the
+        system refuses (a name too long, a folder that cannot be written) is a
+        ``ToolError``, and no job is left behind."""
+        try:
+            return self._start_job(Path(target), preset, start, end, fps, frame, overwrite)
+        except OSError as err:
+            raise ToolError(f"{Path(target).name[:80]}: the render cannot write there "
+                            f"({err.strerror or err})") from err  # fmt: skip
+
+    def _start_job(self, target: Path, preset: str, start: Any = None, end: Any = None,
+                   fps: float | None = None, frame: Any = None,
+                   overwrite: bool | None = None) -> dict[str, Any]:  # fmt: skip
         from phasor.render.job import resolve_time
         from phasor.render.presets import check_fps
 
@@ -994,11 +1002,13 @@ class Workspace:
         target.parent.mkdir(parents=True, exist_ok=True)
         snap = self._guard(e.snapshot)  # the scene now; the job thread never reads ``e``
         job = _jobs.RenderJob(snap, target, preset=preset, start=start, end=end, fps=fps,
-                              frame=frame)  # fmt: skip
+                              frame=frame, overwrite=bool(overwrite))  # fmt: skip
         try:
             self._jobs.start(job)
         except ValueError as err:
             raise ToolError(str(err)) from err
+        except OSError as err:  # a name too long, a folder that cannot be written
+            raise ToolError(f"{target.name}: the render cannot write there ({err})") from err
         return job.status()
 
     def render_status(self, job: str | None = None) -> dict[str, Any]:
@@ -1022,6 +1032,8 @@ class Workspace:
             raise ToolError(str(err.args[0])) from err
         if j.running:
             j.cancel(wait=jobs_wait())
+            if j.running and (j._thread is None or not j._thread.is_alive()):
+                j.state = "cancelled"  # a job whose thread is gone: cleared, never stuck
         return j.status()
 
     def export_midi(self, out: str | None = None, overwrite: bool = False) -> dict[str, Any]:
@@ -1286,17 +1298,49 @@ def read_text(path: Path) -> str:
         return f.read()
 
 
+def _same_target(target: Path, read: Path) -> bool:
+    """Whether writing ``target`` would write over ``read``: the same path (case folded
+    where the system folds it), the same file (a hard link, another spelling), or, for a
+    picture sequence ``shot_%04d.png``, any name the sequence could read in its folder."""
+    from phasor.core import files
+
+    t = target.resolve()
+    if files.is_sequence(str(read)):
+        name = read.name
+        m = re.search(r"%(0(\d))?d", name)
+        assert m is not None
+        width = int(m.group(2)) if m.group(2) else 1
+        pattern = (re.escape(name[: m.start()]) + rf"\d{{{width},}}"
+                   + re.escape(name[m.end() :]))  # fmt: skip
+        same_dir = os.path.normcase(str(t.parent)) == os.path.normcase(str(read.parent.resolve()))
+        flags = re.IGNORECASE if os.path.normcase("A") == "a" else 0
+        return same_dir and re.fullmatch(pattern, t.name, flags) is not None
+    r = read.resolve()
+    if os.path.normcase(str(t)) == os.path.normcase(str(r)):
+        return True
+    try:
+        return t.exists() and r.exists() and os.path.samefile(t, r)
+    except OSError:
+        return False
+
+
 def jobs_wait() -> float:
     """How long ``render_cancel`` waits for a job to stop (it is called under the editor's
     lock: short; the job finishes cleaning up on its own thread)."""
     return 0.5
 
 
-def write_text(path: Path, text: str) -> None:
-    """Write ``text`` as it is (no line-ending translation), replacing the file in one step.
-    The file keeps its permissions; a read-only file is refused (``ToolError``), never
-    replaced (on Windows replacing it fails; elsewhere it would silently lose its mode)."""
+def write_text(path: Path, text: str, *, expect: str | None = None) -> None:
+    """Write ``text`` as it is (no line-ending translation), replacing the file in one step:
+    a temporary file of its own (a unique name beside it, made exclusively), flushed to the
+    disk, then renamed over the file. The file keeps its permissions; a read-only file is
+    refused (``ToolError``), never replaced (on Windows replacing it fails; elsewhere it
+    would silently lose its mode). ``expect``: the text the file must still hold, checked
+    again just before the rename (``ScriptChanged`` otherwise; the window between the check
+    and the rename is a few microseconds). A hard link to the file is not kept (the rename
+    makes a new file)."""
     import stat
+    import tempfile
 
     mode = None
     if path.exists():
@@ -1305,16 +1349,34 @@ def write_text(path: Path, text: str) -> None:
         if not os.access(path, os.W_OK) or not mode & stat.S_IWUSR:
             raise ToolError(f"{path.name} is read-only: nothing was written (make it writable, "
                             "or Save As another file)")  # fmt: skip
-    tmp = path.with_name(f".{path.name}.phasor-tmp")
     try:
-        with open(tmp, "w", encoding="utf-8", newline="") as f:
+        fd, name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".phasor-tmp",
+                                    dir=path.parent)  # fmt: skip
+    except OSError as e:
+        raise ToolError(f"{path.name} could not be written: {e}") from e
+    tmp = Path(name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
             f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
         if mode is not None:
             os.chmod(tmp, mode)
+        if expect is not None:
+            try:
+                now = read_text(path)
+            except FileNotFoundError:
+                now = None
+            if now != expect:
+                raise ScriptChanged(f"{path.name} changed on disk just now (another editor): "
+                                    "nothing was written", now, None)  # fmt: skip
         os.replace(tmp, path)
     except OSError as e:
         tmp.unlink(missing_ok=True)
         raise ToolError(f"{path.name} could not be written: {e}") from e
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def file_stamp(path: Path) -> tuple[int, int]:

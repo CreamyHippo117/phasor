@@ -97,12 +97,12 @@ class Sound(ObjectBase):
             from phasor.core.ids import is_valid_name
 
             if isinstance(v, str):
+                if is_valid_name(v):  # a marker's name first ("inf" and "nan" are names too)
+                    return v
                 try:
                     v = float(v)  # "1.5": seconds, as a float field always took it
                 except ValueError:
-                    if not is_valid_name(v):
-                        raise ValueError(f"start {v!r}: seconds, or a marker's name") from None
-                    return v
+                    raise ValueError(f"start {v!r}: seconds, or a marker's name") from None
             if isinstance(v, bool) or not isinstance(v, int | float):
                 raise ValueError(f"start {v!r}: seconds, or a marker's name")
             if not (math.isfinite(v) and 0 <= v <= MAX_START):
