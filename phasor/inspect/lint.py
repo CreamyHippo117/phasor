@@ -900,6 +900,16 @@ def run(
                     f.add("flow_budget", (e["id"],), t, why="; ".join(why))
             if sem.get("too_fast"):
                 f.add("flow_too_fast", (e["id"],), t, n=sem["too_fast"])
+            repairs = sem.get("batch_input")  # world-space batch input repaired (M28)
+            if repairs is None and e["id"] in state:  # a type with its own semantics (audit S1)
+                impl = state[e["id"]].impl
+                if record.uses_batches(type(impl)):
+                    repairs = list(record.record(impl, state).issues) or None
+            if isinstance(repairs, list) and len(repairs) > th["batch_repairs"]:
+                f.add("batch_input", (e["id"],), t, what="; ".join(map(str, repairs[:4])),
+                      n=len(repairs))  # fmt: skip
+            if sem.get("bad_ref"):  # an analysis object pointing at nothing (Milestone 30)
+                f.add("flow_ref", (e["id"],), t, why=sem["bad_ref"])
             if sem.get("kind") == "flow_note":  # an Explorer row that draws nothing
                 f.add("explorer_row", (e["id"],), t, error=sem.get("error"),
                       source=sem.get("source", ""))  # fmt: skip
@@ -1065,6 +1075,17 @@ def run(
                          f"{info['first']!r} already names; systems read {info['first']!r} "
                          "and this one changes nothing", "warning", ids, times=ts,
                          fix_hint=f"remove {ids[0]!r}, or give it another name")  # fmt: skip
+        if code == "batch_input":
+            more = f" (and {info['n'] - 4} more)" if info["n"] > 4 else ""
+            return Issue(code, f"{ids[0]!r} drew a world-space batch from arrays that had to be "
+                         f"repaired {when}: {info['what']}{more}", "warning", ids, times=ts,
+                         fix_hint="give points3d/lines3d/arrows3d finite (n, 3) arrays and one "
+                         "colour or size, or one per item")  # fmt: skip
+        if code == "flow_ref":
+            return Issue(code, f"{ids[0]!r} {when}: {info['why']}; it shows nothing from it",
+                         "warning", ids, times=ts, fix_hint="name an object of the same "
+                         "System (a Probe or FlowSet for 'of', a Probe or TwinProbes for "
+                         "'source'), or clear the reference")  # fmt: skip
         if code == "flow_too_fast":
             return Issue(code, f"{ids[0]!r}: {info['n']} point(s) moved further in one step "
                          f"than the window allows even after sub-steps {when}, and were "

@@ -156,6 +156,18 @@ def _small(exprs) -> bool:
     return all(sp.count_ops(e) <= JAC_OPS and _depth(e) <= JAC_DEPTH for e in exprs)
 
 
+def _values(values) -> list:
+    """Variable values as floats, or as arrays (one value per point: a sweep advances every
+    value of a variable at once, ``flow_analysis_math.sweep``)."""
+    return [np.asarray(v, dtype=np.float64) if isinstance(v, np.ndarray) else float(v)
+            for v in values]  # fmt: skip
+
+
+def _take(values, sel) -> tuple:
+    """The values of the points ``sel`` selects (arrays are per point; floats are shared)."""
+    return tuple(v[sel] if isinstance(v, np.ndarray) else v for v in values)
+
+
 class Compiled:
     """NumPy functions of one system: the field and its Jacobian, with the coordinates and
     then the variables as arguments (compiled once per expression; ``compiled``)."""
@@ -180,8 +192,8 @@ class Compiled:
     def fields(self, coords, values=()) -> list[np.ndarray]:
         """Each component at the points ``coords`` (one array per coordinate, any shape)."""
         coords = [np.asarray(c, dtype=np.float64) for c in coords]
-        shape = np.broadcast(*coords).shape
-        vals = [float(v) for v in values]
+        vals = _values(values)
+        shape = np.broadcast(*coords, *(v for v in vals if isinstance(v, np.ndarray))).shape
         with np.errstate(all="ignore"):
             return [np.broadcast_to(np.asarray(fn(*coords, *vals), dtype=np.float64), shape)
                     for fn in self._fns]  # fmt: skip
@@ -202,7 +214,7 @@ class Compiled:
         out = np.full((len(pts), d, d), np.nan)
         if self._jac is not None:
             cols = [pts[:, i] for i in range(d)]
-            vals = [float(v) for v in values]
+            vals = _values(values)
             with np.errstate(all="ignore"):
                 for k, fn in enumerate(self._jac):
                     out[:, k // d, k % d] = np.broadcast_to(
@@ -210,7 +222,7 @@ class Compiled:
                     )
         bad = ~np.isfinite(out).all(axis=(1, 2))
         if bad.any():
-            out[bad] = self._central(pts[bad], values)
+            out[bad] = self._central(pts[bad], _take(values, bad))
         return out
 
     def _central(self, pts: np.ndarray, values) -> np.ndarray:
@@ -228,6 +240,13 @@ class Compiled:
 @functools.lru_cache(maxsize=128)
 def compiled(exprs: tuple[sp.Expr, ...], variables: tuple[str, ...]) -> Compiled:
     return Compiled(exprs, variables)
+
+
+@functools.lru_cache(maxsize=256)
+def _sreprs(exprs: tuple[sp.Expr, ...]) -> tuple[str, ...]:
+    """The expressions' exact text (``srepr``), once per system: a key is asked for at every
+    draw, and printing is the slow part of it (Milestone 28, measured)."""
+    return tuple(sp.srepr(e) for e in exprs)
 
 
 @dataclass(frozen=True)
@@ -293,7 +312,7 @@ class System:
     def key(self, values: dict[str, float] | None = None) -> str:
         """A hash of what decides the field: the expressions and the values of the
         variables the system actually uses (a slider it does not use changes nothing)."""
-        blob = repr(([sp.srepr(e) for e in self.exprs], self.values_of(values)))
+        blob = repr((list(_sreprs(self.exprs)), self.values_of(values)))
         return hashlib.sha256(blob.encode()).hexdigest()[:20]
 
     def jacobian_exact(self, point, values=None) -> np.ndarray:
@@ -455,7 +474,7 @@ def step(fn: Compiled, vals, p: np.ndarray, dt: float, max_step: float | None = 
             for k in range(int(n.max())):
                 sel = n > k
                 h = (dt / n[sel])[:, None]
-                q[sel] = _rk4(fn, vals, q[sel], h)
+                q[sel] = _rk4(fn, _take(vals, sel), q[sel], h)
         code[fast & np.isfinite(need)] = TOO_FAST
     code[(code == ALIVE) & ~np.isfinite(q).all(axis=1)] = NONFINITE
     return q, code

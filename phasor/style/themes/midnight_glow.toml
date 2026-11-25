@@ -157,6 +157,7 @@ off_scale = 1.25     # off_scale: an explicit size more than this many times off
 tick_gap = 0.25      # crowded_ticks: numbers along an axis closer than this many text heights
 flow_work = 5e7      # flow_budget: a flow set or path past this many point-steps (points x steps to the flow time)
 flow_arrows = 4000   # flow_budget: a field drawn with more arrows than this
+batch_repairs = 0  # batch_input: repairs to a world-space batch's arrays allowed (M28)
 narration_drift = 0.3  # narration_drift: a hand-placed marker farther than this (s) from every sentence of a recording
 
 # Living motion (SPEC "Living motion"). Everything is a smooth deterministic function of

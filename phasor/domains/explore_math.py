@@ -3,7 +3,7 @@
 (``flow_math``); nothing here draws or writes. Every answer says what it was computed from
 and how far it can be trusted: a tolerance is a number, never an adjective.
 
-- ``lyapunov``: the largest Lyapunov exponent (Benettin) with the spread of two halves;
+- the largest Lyapunov exponent (``flow_analysis_math.benettin``, the one implementation);
 - ``probe``: what a seed does over a flow time: positions (only while they are
   reproducible and ``dt/2`` agrees), escape, a bounding box, a period, the dt check;
 - ``sweep``: equilibria along one variable, and candidate bifurcations, refined by
@@ -17,8 +17,8 @@ from typing import Any
 
 import numpy as np
 
+from phasor.domains import flow_analysis_math as fa
 from phasor.domains.flow_math import (
-    ALIVE,
     ESCAPED,
     MERGE,
     NONFINITE,
@@ -30,7 +30,6 @@ from phasor.domains.flow_math import (
     equilibria,
     integrate,
     newton,
-    step,
 )
 
 MAX_SAMPLES = 64  # positions one probe reports
@@ -66,84 +65,54 @@ def _sv(v) -> list[float | None]:
 # ---------------------------------------------------------------- Lyapunov and probes
 
 
-def lyapunov(fn: Compiled, vals, seeds, steps: int, dt: float, *, renorm: int = 10,
-             max_step: float | None = None) -> list[dict[str, Any]]:  # fmt: skip
-    """The largest Lyapunov exponent of each seed (Benettin: a twin ``1e-8`` away,
-    renormalised every ``renorm`` steps; the first fifth of the run is a transient and not
-    counted). ``spread`` is the difference between the estimates of the two halves counted.
-    ``converged`` only when the spread is under 10% of the value and the value is clear of 0
-    by twice the spread (a limit cycle's or a centre's 0 is never 'converged')."""
-    seeds = np.atleast_2d(np.asarray(seeds, dtype=np.float64))
-    s, d = seeds.shape
-    d0 = 1e-8
-    e = np.ones(d) / math.sqrt(d)
-    p = np.vstack([seeds, seeds + d0 * e])
-    blocks = max(int(steps) // renorm, 0)
-    logs = np.full((blocks, s), np.nan)
-    alive = np.ones(s, dtype=bool)
-    with np.errstate(all="ignore"):
-        for b in range(blocks):
-            for _ in range(renorm):
-                p, code = step(fn, vals, p, dt, max_step)
-                alive &= (code[:s] == ALIVE) & (code[s:] == ALIVE)
-            if not alive.any():
-                break
-            gap = p[s:] - p[:s]
-            dist = np.linalg.norm(gap, axis=1)
-            ok = alive & np.isfinite(dist) & (dist > 0)
-            logs[b, ok] = np.log(dist[ok] / d0)
-            alive &= ok
-            scale = (d0 / np.where(ok, dist, 1.0))[:, None]
-            p[s:] = np.where(ok[:, None], p[:s] + gap * scale, p[s:])
-            p = np.where(np.isfinite(p), p, 0.0)  # a stopped seed keeps finite arithmetic
-    out = []
-    skip = blocks // 5
+def _lyapunov(system: System, vals, seeds, steps: int, dt: float, *,
+              max_step: float | None = None) -> list[dict[str, Any]]:  # fmt: skip
+    """The largest Lyapunov exponent of each seed: ``flow_analysis_math.benettin`` (the one
+    implementation; a twin renormalised every 10 steps, the first fifth of the run a
+    transient) judged by ``flow_analysis_math.judge`` (``converged`` needs a small spread
+    over 8 blocks and no trend across them, so a limit cycle's, a centre's or a shear's
+    near-zero value is never 'converged' as chaos)."""
+    renorm, nb = 10, 8
+    n = int(steps)
+    tr = n // 5
+    per = (n - tr) // (renorm * nb)
     span = renorm * abs(dt)
-    for k in range(s):
-        used = logs[skip:, k]
-        if not alive[k] or len(used) < 4 or not np.isfinite(used).all():
-            out.append({"value": None, "spread": None, "T": sig(len(used) * span),
-                        "converged": False})  # fmt: skip
+    if per < 1:
+        return [{"value": None, "spread": None, "T": sig(max(n - tr, 0) * abs(dt)),
+                 "converged": False} for _ in range(len(seeds))]  # fmt: skip
+    dirs = np.stack([fa.separation(system, vals, x) for x in seeds])
+    with np.errstate(all="ignore"):
+        runs = fa.benettin(system.fn, vals, seeds, dirs, dt=dt, transient=tr, every=renorm,
+                           blocks=nb, per=per, max_step=max_step)  # fmt: skip
+    out = []
+    for r in runs:
+        T = sig(nb * per * span)
+        if r["rates"] is None:
+            out.append({"value": None, "spread": None, "T": T, "converged": False})
             continue
-        half = len(used) // 2
-        lam = float(used.sum() / (len(used) * span))
-        a = float(used[:half].sum() / (half * span))
-        b = float(used[half:].sum() / ((len(used) - half) * span))
-        spread = abs(a - b)
-        ok = spread <= 0.1 * abs(lam) and abs(lam) > 2 * spread
-        out.append({"value": sig(lam), "spread": sig(spread), "T": sig(len(used) * span),
-                    "converged": bool(ok)})  # fmt: skip
+        j = fa.judge(r["rates"])
+        out.append({"value": sig(j["value"]), "spread": sig(j["spread"]), "T": T,
+                    "converged": j["converged"]})  # fmt: skip
     return out
 
 
-def _period(pts: np.ndarray, dt: float, size: float) -> dict[str, Any]:
-    """A period estimate from the second half of a path: the times it comes back within 1%
-    of its size to where that half started (at least three returns at steady intervals)."""
+def _period(fn: Compiled, vals, pts: np.ndarray, dt: float, size: float) -> dict[str, Any]:
+    """A period estimate from a path (``flow_analysis_math.path_returns`` and
+    ``returns_repeat``, the one period test, at a probe's loose tolerance of 1e-3 of its
+    size): returns to the plane across the flow through the point a tenth of the way in."""
     pts = pts[np.isfinite(pts).all(axis=1)]
     n = len(pts)
     if n < 20 or size <= 0:
         return {"period": None, "returns": 0}
-    ref = pts[n // 2]
-    dist = np.linalg.norm(pts[n // 2 :] - ref, axis=1)
-    if dist.max() < 1e-9 * max(size, 1.0):
+    if np.linalg.norm(pts[n // 2 :] - pts[n // 2], axis=1).max() < 1e-9 * max(size, 1.0):
         return {"period": None, "returns": 0, "period_note": "at rest"}
-    tol = 0.01 * size
-    k = np.arange(1, len(dist) - 1)
-    mins = k[(dist[k] < tol) & (dist[k] <= dist[k - 1]) & (dist[k] <= dist[k + 1])]
-    away = np.flatnonzero(dist > 2 * tol)
-    if not len(away):
-        return {"period": None, "returns": 0, "period_note": "stays within 2% of its size"}
-    mins = mins[mins > away[0]]
-    keep: list[int] = []
-    for m in mins:  # one return is one dip: it must leave between two
-        if not keep or (dist[keep[-1] : m] > 2 * tol).any():
-            keep.append(int(m))
-    if len(keep) < 3:
-        return {"period": None, "returns": len(keep)}
-    gaps = np.diff(np.r_[0, keep]) * abs(dt)
-    if gaps.std() > 0.05 * gaps.mean():
-        return {"period": None, "returns": len(keep), "period_note": "returns at uneven intervals"}
-    return {"period": sig(gaps.mean()), "returns": len(keep)}
+    with np.errstate(all="ignore"):
+        rets = fa.path_returns(fn, vals, pts, dt, n // 10, 0.25 * size)
+    m, why = fa.returns_repeat(rets, 1e-3, size, persist=2, drift=False)
+    if not m:
+        return {"period": None, "returns": len(rets),
+                **({"period_note": why} if why else {})}  # fmt: skip
+    return {"period": sig(rets[-1][1] - rets[-1 - m][1]), "returns": len(rets), "loops": m}
 
 
 def probe(system: System, values, seeds, T: float, dt: float, *, samples: int = 16,
@@ -177,7 +146,7 @@ def probe(system: System, values, seeds, T: float, dt: float, *, samples: int = 
     with np.errstate(all="ignore"):
         path = integrate(fn, vals, seeds, n, h, escape=escape, max_step=max_step)
         half = integrate(fn, vals, seeds, 2 * n, h / 2, escape=escape, max_step=max_step)
-        lyap = lyapunov(fn, vals, seeds, n, h, max_step=max_step)
+        lyap = _lyapunov(system, vals, seeds, n, h, max_step=max_step)
     times = np.unique(np.linspace(0, n, samples).round().astype(int))
     tol = DT_AGREE * max(size, 1e-9)
     out = []
@@ -239,7 +208,7 @@ def probe(system: System, values, seeds, T: float, dt: float, *, samples: int = 
                          "tolerance": sig(tol), "agree": agree, "why": why,
                          "agree_until": sig(over[0] * h) if len(over) else None},
             "converged": agree,
-            **_period(fin, h, float(np.linalg.norm(box[1] - box[0])) if box else 0.0),
+            **_period(fn, vals, fin, h, float(np.linalg.norm(box[1] - box[0])) if box else 0.0),
         }  # fmt: skip
         later = pts[shown:]
         later = later[np.isfinite(later).all(axis=1)]
@@ -477,6 +446,10 @@ def sweep(system: System, values: dict[str, float], name: str, lo: float, hi: fl
             ):  # fmt: skip
                 ra, rb = part(ca), part(cb)
                 if ra is None or rb is None or (ra < 0) == (rb < 0):
+                    continue
+                # a sign within the eigenvalue tolerance is noise (a double root such as
+                # (x - mu)**2 has an eigenvalue 0 at every value): not a crossing
+                if max(abs(ra), abs(rb)) <= 10 * max(ca["tolerance"], cb["tolerance"]):
                     continue
                 if kind != "Hopf" and len(a) != len(b) and i not in artifact:
                     continue  # the count change names it

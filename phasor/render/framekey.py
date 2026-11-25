@@ -42,6 +42,9 @@ def _feed(h: Any, x: Any) -> None:
             u(np.ascontiguousarray(x).tobytes())
     elif isinstance(x, np.generic):
         _feed(h, x.item())
+    elif callable(getattr(x, "frame_key", None)):  # a world-space batch: arrays by their hash
+        u(b"K" + type(x).__qualname__.encode() + b";")
+        _feed(h, x.frame_key())
     elif isinstance(x, (tuple, list)):
         u(b"(" + str(len(x)).encode() + b";")
         for item in x:

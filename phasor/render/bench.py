@@ -197,3 +197,106 @@ def save_frames(result: dict[str, Any], directory: str | Path = "benchmarks") ->
     path = d / f"{result['when'][:10]}_frames_{result['scene']}_{result['backend']}_{w}x{h}.json"
     path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return path
+
+
+# ---------------------------------------------------------------- a live view (Milestone 28)
+
+VIEW_MOTIONS = ("orbit", "pan", "flow")
+
+
+def _moved_camera(cam: Any, motion: str, k: int, pivot: np.ndarray) -> Any:
+    """``cam`` after ``k`` steps of a mouse drag: ``orbit`` turns it 3 degrees a step about
+    the world z axis through ``pivot``; ``pan`` slides it 1% of the frame height sideways."""
+    import dataclasses
+
+    if motion == "pan":
+        d = cam.right * (0.01 * k * float(cam.units_per_height()))
+        move = np.eye(4)
+        move[:3, 3] = -d
+        return dataclasses.replace(cam, view_proj=cam.view_proj @ move, eye=cam.eye + d)
+    a = np.radians(3.0 * k)
+    rot = np.array([[np.cos(a), -np.sin(a), 0.0], [np.sin(a), np.cos(a), 0.0], [0.0, 0.0, 1.0]])
+    back = np.eye(4)  # world -> where the unturned camera saw it
+    back[:3, :3] = rot.T
+    back[:3, 3] = pivot - rot.T @ pivot
+    return dataclasses.replace(cam, view_proj=cam.view_proj @ back,
+                               eye=rot @ (cam.eye - pivot) + pivot, right=rot @ cam.right,
+                               up=rot @ cam.up, forward=rot @ cam.forward)  # fmt: skip
+
+
+def run_view_bench(engine: Any, name: str, t: float, motions: tuple[str, ...], *,
+                   width: int = 640, height: int = 360, count: int = 30,
+                   quality: str = "full", cpu_expand: bool = False,
+                   pivot=(0.0, 0.0, 0.0), step: float = 1 / 30) -> dict[str, Any]:  # fmt: skip
+    """Frames per second of a live view of ``engine``'s scene at time ``t``, drawn the way
+    the Explorer's viewport will draw (advice 1.4): the draft look (no bloom, lens or fog),
+    sRGB bytes read back, ``quality`` as asked. Each motion draws ``count`` frames after one
+    warm-up: ``orbit``/``pan`` move the camera only (a session camera, as while the mouse is
+    down), ``flow`` advances the scene time by ``step`` a frame (the flow time with it when
+    the system has a ``rate``). Each call starts with no batch buffers on the card, so runs
+    at the same times are comparable. ``cpu_expand``: batches expanded on the CPU instead of in the
+    vertex shader (the cost of building triangles every frame, as strokes do). Reports
+    milliseconds per frame (mean, median), fps from the median, batch buffers uploaded per
+    frame, and the load average (POSIX) so a shared machine's numbers can be judged."""
+    import dataclasses
+    import os
+    import statistics
+
+    from phasor.render.post import finish
+    from phasor.render.presets import DRAFT
+
+    runner = engine.pass_runner()
+    theme = engine.theme
+    size = (int(width), int(height))
+    out: dict[str, Any] = {}
+    old = runner.expand_on_cpu
+    runner.expand_on_cpu = bool(cpu_expand)
+    runner.forget_batches()  # every run uploads from nothing: runs are comparable
+    try:
+        for motion in motions:
+            if motion not in VIEW_MOTIONS:
+                raise ValueError(f"motion is one of {', '.join(VIEW_MOTIONS)}, not {motion!r}")
+            base = engine.state_at(t)
+            centre = np.asarray(pivot, dtype=np.float64)
+            times, uploads = [], []
+            for k in range(count + 1):
+                start = time.perf_counter()
+                if motion == "flow":
+                    state = engine.state_at(t + k * step)
+                else:
+                    cam = _moved_camera(base.camera, motion, k, centre)
+                    state = dataclasses.replace(base, camera=cam)
+                before = runner.uploads["batch"]
+                pic, _ = runner.start_color_raw(state, size, fog=False, emission=False,
+                                                quality=quality).collect()  # fmt: skip
+                finish(pic[::-1], theme, None, output="srgb8", effects=DRAFT)
+                if k:  # the first frame warms up (programs, buffers, kernels)
+                    times.append(time.perf_counter() - start)
+                    uploads.append(runner.uploads["batch"] - before)
+            ms = [1000 * x for x in times]
+            med = statistics.median(ms)
+            out[motion] = {"ms_mean": round(statistics.fmean(ms), 2),
+                           "ms_median": round(med, 2),
+                           "fps": round(1000 / med, 1) if med > 0 else None,
+                           "batch_uploads_per_frame": round(statistics.fmean(uploads), 3),
+                           }  # fmt: skip
+    finally:
+        runner.expand_on_cpu = old
+    load = os.getloadavg() if hasattr(os, "getloadavg") else None  # (POSIX only)
+    return {"case": name, "frame": list(size), "frames": count, "quality": quality,
+            "expand": "cpu" if cpu_expand else "shader",
+            "gl_renderer": runner.on_gl_info("GL_RENDERER"), "platform": platform.platform(),
+            "cores": os.cpu_count(),
+            "load_average": None if load is None else [round(x, 2) for x in load],
+            "motions": out}  # fmt: skip
+
+
+def save_view(results: list[dict[str, Any]], directory: str | Path = "benchmarks") -> Path:
+    d = Path(directory)
+    d.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(UTC).isoformat(timespec="seconds")
+    w, h = results[0]["frame"] if results else (0, 0)
+    path = d / f"{stamp[:10]}_explorer_view_{active_backend()}_{w}x{h}.json"
+    body = {"when": stamp, "commit": _commit(), "machine": platform.node(), "cases": results}
+    path.write_text(json.dumps(body, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path

@@ -20,6 +20,7 @@ from typing import Any
 
 import numpy as np
 
+from phasor.core import batches
 from phasor.core import text as text_metrics
 from phasor.core.state import ObjectState, SceneState
 from phasor.core.timing import stage
@@ -62,6 +63,9 @@ _FS = {
 #version 430
 uniform vec4 u_color;
 uniform float u_glow;
+#ifdef BATCH
+uniform float u_tint;
+#endif
 #ifdef TEXTURED
 uniform sampler2D u_tex;
 in vec2 v_uv;
@@ -94,6 +98,9 @@ void main() {
     // Empty texels of a text quad write nothing, depth included: otherwise glass drawn
     // later is cut out behind the whole rectangle of a label.
     if (a < 0.004) discard;
+#endif
+#ifdef BATCH
+    rgb *= u_tint;  // the flash verb on a batch drawn in one colour (as on a plain mesh)
 #endif
     frag = vec4(rgb * u_glow * a, a);  // premultiplied; glow > 1 is HDR light
     emit = vec4(rgb * max(u_glow - 1.0, 0.0) * a, a);
@@ -214,6 +221,181 @@ void main() {
     emit = vec4(base * g * a, a);
 }
 """
+# World-space batches (Milestone 28, ``core/batches.py``). The arrays live in shader storage
+# buffers that depend only on the batch (never on the camera); each instance (a dot, a line
+# segment, an arrow) pulls what it needs by ``gl_InstanceID`` and its corner by
+# ``gl_VertexID``, and is expanded to face the camera here. ``core.batches.instances`` is
+# the same arithmetic in NumPy (the reference: tests compare the two through transform
+# feedback). One of POINTS, LINES, FLAT, CONE is defined.
+_VS_BATCH = """
+#version 430
+uniform mat4 u_vp;
+uniform float u_bias;
+uniform float u_zoom;
+uniform vec3 u_eye;
+uniform vec3 u_right;
+uniform vec3 u_up;
+uniform vec3 u_forward;
+uniform int u_persp;
+uniform float u_height;   // ortho: world units per frame height
+uniform float u_tan;      // perspective: tan(vertical fov / 2)
+uniform int u_units;      // 0 world, 1 share of the frame height, 2 pixels
+uniform float u_px;       // 1 / the picture's height in pixels
+uniform int u_anchored;
+uniform vec3 u_anchor;
+uniform float u_head;
+uniform int u_n;          // items in the batch
+uniform int u_each;       // bit 1: a colour per item (else col[0]), bit 2: a size per item
+uniform int u_strips;     // lines: 1 when strip[] says where strips start, 0: all one strip
+layout(std430, binding = 0) readonly buffer B0 { float pos[]; };
+layout(std430, binding = 1) readonly buffer B1 { vec4 col[]; };
+layout(std430, binding = 2) readonly buffer B2 { float siz[]; };
+#ifdef LINES
+layout(std430, binding = 3) readonly buffer B3 { int strip[]; };
+#endif
+#if defined(FLAT) || defined(CONE)
+layout(std430, binding = 3) readonly buffer B3 { float tipv[]; };
+#endif
+out vec4 v_color;
+out vec3 v_world;
+const float TAU = 6.283185307179586;
+
+vec3 P(int i) { return vec3(pos[3 * i], pos[3 * i + 1], pos[3 * i + 2]); }
+vec4 C(int i) { return (u_each & 1) != 0 ? col[i] : col[0]; }
+float S(int i) { return (u_each & 2) != 0 ? siz[i] : siz[0]; }
+
+float world_size(float s, vec3 at) {
+    if (u_units == 0) return s;
+    float share = u_units == 1 ? s : s * u_px;
+    if (u_persp == 0) return share * u_height;
+    vec3 ref = u_anchored == 1 ? u_anchor : at;
+    return share * max(dot(ref - u_eye, u_forward), 1e-6) * 2.0 * u_tan;
+}
+
+void emit(vec3 p) {
+    v_world = p;
+    gl_Position = u_vp * vec4(p, 1.0);
+    gl_Position.xy *= u_zoom;
+    gl_Position.z -= u_bias * gl_Position.w;
+}
+
+#ifdef LINES
+vec2 flat2(vec3 p) { return vec2(dot(p, u_right), dot(p, u_up)); }
+// the normal (in the camera plane) of the segment from point i to i + 1
+vec2 seg_normal(int i) {
+    vec3 dp = P(i + 1) - P(i);  // project the difference: no cancellation
+    vec2 d = flat2(dp);
+    float n = sqrt(d.x * d.x + d.y * d.y);
+    if (u_persp == 1 && n <= 1e-3 * sqrt(dot(dp, dp))) {  // along the view: its screen direction
+        vec3 r0 = P(i) - u_eye;
+        vec3 r1 = P(i + 1) - u_eye;
+        d = flat2(r1) / max(dot(r1, u_forward), 1e-6) - flat2(r0) / max(dot(r0, u_forward), 1e-6);
+        n = sqrt(d.x * d.x + d.y * d.y);
+    }
+    vec2 u = d / (n == 0.0 ? 1.0 : n);
+    return vec2(-u.y, u.x);
+}
+#endif
+
+void main() {
+    int j = gl_InstanceID;
+    int k = gl_VertexID;
+#ifdef POINTS
+    vec3 c = P(j);
+    float r = world_size(S(j), c);
+    vec2 corner = vec2(0.0);
+    if (k > 0) {
+        float a = TAU * float(k - 1) / 12.0;
+        corner = vec2(cos(a), sin(a));
+    }
+    emit(c + r * (corner.x * u_right + corner.y * u_up));
+    v_color = C(j);
+#endif
+#ifdef LINES
+    // instance j: the segment j -> j + 1; vertices 0, 1 at point j, 2, 3 at j + 1 (+, -)
+    int i = j + k / 2;
+    float side = (k % 2 == 0) ? 1.0 : -1.0;
+    vec3 p = P(i);
+    if (u_strips == 1 && strip[j] != strip[j + 1]) {  // across two strips: nothing
+        v_world = p;
+        v_color = vec4(0.0);
+        gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
+        return;
+    }
+    bool has_prev = i > 0 && (u_strips == 0 || strip[i - 1] == strip[i]);
+    bool has_next = i + 1 < u_n && (u_strips == 0 || strip[i + 1] == strip[i]);
+    vec2 before = has_prev ? seg_normal(i - 1) : vec2(0.0);
+    vec2 after = has_next ? seg_normal(i) : vec2(0.0);
+    vec2 n_in = has_prev ? before : after;
+    vec2 n_out = has_next ? after : before;
+    vec2 m = n_in + n_out;
+    m = m / max(sqrt(m.x * m.x + m.y * m.y), 1e-9);
+    float scale = 1.0 / max(m.x * n_in.x + m.y * n_in.y, 0.25);
+    float half_w = world_size(S(i), p) / 2.0;
+    vec2 off = m * (scale * half_w);
+    emit(p + side * (off.x * u_right + off.y * u_up));
+    v_color = C(i);
+#endif
+#ifdef FLAT
+    vec3 a = P(j);
+    vec3 b = vec3(tipv[3 * j], tipv[3 * j + 1], tipv[3 * j + 2]);
+    vec3 d = b - a;
+    float len = sqrt(dot(d, d));
+    vec3 mid = (a + b) / 2.0;
+    vec3 view = u_persp == 1 ? mid - u_eye : u_forward;
+    vec3 s = cross(d, view);
+    float sn = sqrt(dot(s, s));
+    s = sn > 1e-12 ? s / max(sn, 1e-12) : u_right;
+    float w = world_size(S(j), mid) / 2.0;
+    float hw = max(w * 2.2, len * u_head * 0.45);
+    vec3 base = b - d * u_head;
+    vec3 q;
+    if (k == 0) q = a - s * w;
+    else if (k == 1) q = a + s * w;
+    else if (k == 2) q = base + s * w;
+    else if (k == 3) q = base - s * w;
+    else if (k == 4) q = base - s * hw;
+    else if (k == 5) q = base + s * hw;
+    else q = b;
+    emit(q);
+    v_color = C(j);
+#endif
+#ifdef CONE
+    vec3 a = P(j);
+    vec3 b = vec3(tipv[3 * j], tipv[3 * j + 1], tipv[3 * j + 2]);
+    vec3 d = b - a;
+    d = d / max(sqrt(dot(d, d)), 1e-12);
+    vec3 pick = abs(d.x) < 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0);
+    vec3 u = cross(d, pick);
+    u = u / max(sqrt(dot(u, u)), 1e-12);
+    vec3 v = cross(d, u);
+    float r = world_size(S(j), a) / 2.0;
+    vec3 q;
+    float shade;
+    if (k < 8) {
+        float t = TAU * float(k) / 8.0;
+        q = a + r * (cos(t) * u + sin(t) * v);
+        shade = 0.55;
+    } else if (k == 8) {
+        q = b;
+        shade = 1.0;
+    } else {
+        q = a;
+        shade = 0.4;
+    }
+    emit(q);
+    v_color = vec4(C(j).rgb * shade, C(j).a);
+#endif
+}
+"""
+BATCH_KINDS = {("points", "disc"): "b_points", ("lines", "strip"): "b_lines",
+               ("arrows", "flat"): "b_flat", ("arrows", "cone"): "b_cone"}  # fmt: skip
+BATCH_BUFFERS = 512  # storage buffers kept by content (``GLRenderer._batch_buffer``)
+BATCH_BYTES = 768 * 2**20  # ... and their bytes
+BATCH_SPARE = 8  # evicted buffers kept for reuse instead of released
+BATCH_SPARE_BYTES = 4 * 2**20  # ... only those this small (a bigger one is released)
+BATCH_KEEP_RENDERS = 32  # renders (any pass) a batch buffer outlives its last use
+QUALITIES = ("full", "interactive")
 MATERIALS = {"solid": 0, "glass": 1, "wire": 2, "emissive": 3}
 WIRE_LINES = (16.0, 8.0)  # grid lines across the surface's u and v ranges
 
@@ -236,6 +418,8 @@ def _define(src: str, kind: str) -> str:
     head, _, rest = src.strip().partition("\n")
     defines = {"mesh": "", "vmesh": "#define VCOLOR", "text": "#define TEXTURED",
                "image": "#define TEXTURED\n#define IMAGE"}  # fmt: skip
+    for k in BATCH_KINDS.values():  # world-space batches: colour per vertex, from storage
+        defines[k] = f"#define VCOLOR\n#define BATCH\n#define {k[2:].upper()}"
     return f"{head}\n{defines[kind]}\n{rest}"
 
 
@@ -249,12 +433,37 @@ def _stroke_hue(state, pass_) -> tuple | None:
 
 
 class _Collector:
-    """Records an object's draw calls; the renderer replays them for the current pass."""
+    """Records an object's draw calls; the renderer replays them for the current pass.
 
-    def __init__(self, stroke_hue: tuple | None = None) -> None:
+    ``quality`` is a render hint objects may read (``ctx.quality``): ``"full"``, or
+    ``"interactive"`` while a person drags (an arrow field thinned to a budget, point sets
+    strided). It never changes the document; the inspector and lint always see ``"full"``."""
+
+    def __init__(self, stroke_hue: tuple | None = None, quality: str = "full") -> None:
         self.commands: list[tuple[str, dict[str, Any]]] = []
         # (lut, cycles per stroke, shift): the theme's hue along glowing strokes, or None.
         self.stroke_hue = stroke_hue
+        self.quality = quality
+
+    # World-space batches (``core/batches.py``): sanitised once here; what was repaired is
+    # reported by lint from the recorder, which sees the same calls.
+
+    def _batch(self, made) -> None:
+        b, _ = made
+        if b is not None:
+            self.commands.append(("batch", {"batch": b}))
+
+    def points3d(self, centers, **kw) -> None:
+        self._batch(batches.make_points(centers, **kw))
+
+    def lines3d(self, points, **kw) -> None:
+        if self.stroke_hue is not None and _glows(kw) and np.ndim(kw.get("colors", 0)) <= 1:
+            kw = {**kw, "colors": _hue_along(points, kw.get("lengths"), self.stroke_hue,
+                                             kw.get("colors", (1.0, 1.0, 1.0, 1.0)))}  # fmt: skip
+        self._batch(batches.make_lines(points, **kw))
+
+    def arrows3d(self, tails, tips, **kw) -> None:
+        self._batch(batches.make_arrows(tails, tips, **kw))
 
     def triangles(self, positions, indices=None, *, color, glow=1.0, colors=None) -> None:
         self.commands.append(
@@ -288,6 +497,38 @@ class _Collector:
             ("text", {"text": text, "origin": origin, "height": height, "color": color,
                       "anchor": anchor, "glow": glow, "reveal": min(float(reveal), 1.0)})
         )  # fmt: skip
+
+
+def _glows(kw: dict) -> bool:
+    try:
+        return float(kw.get("glow", 1.0)) > 1.0
+    except (TypeError, ValueError):
+        return False
+
+
+def _hue_along(points, lengths, hue: tuple, color) -> Any:
+    """The theme's ``[strokes]`` hue run along each strip of a glowing ``lines3d`` (as
+    ``strokes.polylines`` runs it along a glowing stroke), ``color``'s alpha kept. Input that
+    is not clean points is left as it was, for ``make_lines`` to judge."""
+    from phasor.core.color import hue_colors
+
+    try:
+        pts = np.asarray(points, dtype=np.float64)
+        flat = pts.reshape(-1, 3)
+        if lengths is not None:
+            cuts = np.cumsum(np.asarray(lengths, dtype=np.int64))[:-1]
+        elif pts.ndim == 3:
+            cuts = np.arange(1, pts.shape[0]) * pts.shape[1]
+        else:
+            cuts = []
+        alpha = float(np.asarray(color, dtype=np.float64).reshape(-1)[3])
+        lut, cycles, shift = hue
+        runs = [hue_colors(r, lut, cycles, shift) for r in np.split(flat, cuts) if len(r)]
+        out = np.concatenate(runs)
+        out[:, 3] = alpha
+        return out
+    except (TypeError, ValueError, IndexError):
+        return color
 
 
 class PendingRead:
@@ -346,6 +587,21 @@ class GLRenderer:
         self._bridge = None
         self._arena: dict[tuple, tuple] = {}  # (program, layout, indexed) -> (vao, vbos, ibo)
         self._free_packs: dict[tuple[int, int], list] = {}  # size -> free pack-buffer pairs
+        # World-space batches: storage buffers by content (dtype, bytes, hash), most recently
+        # used last; spare buffers to refill; one empty vertex array per program.
+        self._batch_cache: OrderedDict[tuple, Any] = OrderedDict()
+        self._batch_spare: list = []
+        self._batch_used: set[tuple] = set()  # keys drawn in the current render: never evicted
+        self._batch_seen: dict[tuple, int] = {}  # key -> the render that last drew it
+        self._renders = 0
+        self._batch_vaos: dict[Any, Any] = {}
+        # Draw batches as plain triangles expanded on the CPU (``core.batches.expand``)
+        # instead of in the vertex shader: the reference picture the tests compare against.
+        self.expand_on_cpu = False
+        self._limits: dict[str, int] | None = None  # storage-buffer limits, read once
+        # Uploads, for tests and ``phasor bench``: "batch" storage buffers written (and their
+        # bytes), "arena" vertex and index buffers refilled for the other draw calls.
+        self.uploads = {"batch": 0, "batch_bytes": 0, "arena": 0}
 
     # ------------------------------------------------------------ resources
 
@@ -371,8 +627,9 @@ class GLRenderer:
         if key == ("color", "lit") and key not in self._programs:
             self._programs[key] = self.ctx.program(vertex_shader=_VS_LIT, fragment_shader=_FS_LIT)
         if key not in self._programs:
+            vs = _VS_BATCH if kind.startswith("b_") else _VS
             self._programs[key] = self.ctx.program(
-                vertex_shader=_define(_VS, kind), fragment_shader=_define(_FS[pass_], kind)
+                vertex_shader=_define(vs, kind), fragment_shader=_define(_FS[pass_], kind)
             )
         return self._programs[key]
 
@@ -423,16 +680,189 @@ class GLRenderer:
         vao, vbos, ibo = self._arena[key]
         for b, a in zip(vbos, arrays, strict=True):
             _refill(b, np.ascontiguousarray(a, dtype="f4"))
+        self.uploads["arena"] += len(vbos) + (ibo is not None)
         if ibo is None:
             return vao, len(arrays[0])
         idx = np.ascontiguousarray(indices, dtype="i4")
         _refill(ibo, idx)
         return vao, idx.size
 
+    def _batch_buffer(self, b: batches.Batch, name: str):
+        """The storage buffer holding ``b``'s array ``name``: found by content, so an array
+        drawn before (whatever the camera) is not uploaded again."""
+        a = b.arrays()[name]
+        key = (a.dtype.str, a.nbytes, b.digest(name))
+        self._batch_used.add(key)
+        self._batch_seen[key] = self._renders
+        buf = self._batch_cache.get(key)
+        if buf is not None:
+            self._batch_cache.move_to_end(key)
+            return buf
+        buf = self._spare_for(a.nbytes) or self.ctx.buffer(reserve=max(a.nbytes, 16))
+        _refill(buf, a)
+        self.uploads["batch"] += 1
+        self.uploads["batch_bytes"] += a.nbytes
+        self._batch_cache[key] = buf
+        self._evict_batches()
+        return buf
+
+    def _spare_for(self, nbytes: int):
+        """A spare buffer that fits ``nbytes`` without being much larger (audit S2: a small
+        array must not sit in a buffer of megabytes), or None."""
+        fits = [b for b in self._batch_spare if b.size <= 4 * max(nbytes, ARENA_MIN_BYTES)]
+        if not fits:
+            return None
+        best = max(fits, key=lambda b: b.size)
+        self._batch_spare.remove(best)
+        return best
+
+    def _evict_batches(self) -> None:
+        """Let go of buffers not drawn in the last ``BATCH_KEEP_RENDERS`` renders (a flow
+        that moves makes new positions every frame: the old ones are dead), and past the
+        caps the least recently used; never one drawn in the current render."""
+        total = sum(x.size for x in self._batch_cache.values())
+        total += sum(x.size for x in self._batch_spare)  # spares count against the cap
+        for old in list(self._batch_cache):
+            stale = self._renders - self._batch_seen.get(old, -1) > BATCH_KEEP_RENDERS
+            over = len(self._batch_cache) > BATCH_BUFFERS or total > BATCH_BYTES
+            if old in self._batch_used or not (stale or over):
+                continue
+            gone = self._batch_cache.pop(old)
+            self._batch_seen.pop(old, None)
+            total -= gone.size
+            if len(self._batch_spare) < BATCH_SPARE and gone.size <= BATCH_SPARE_BYTES:
+                self._batch_spare.append(gone)
+                total += gone.size
+            else:
+                gone.release()
+
+    def _limits_current(self) -> dict[str, int]:
+        """The storage-buffer limits of this context (the context must be current): the
+        largest block in bytes, and how many blocks a vertex shader may read. GL 4.3 only
+        promises 16 MB and none in the vertex stage (audit S5)."""
+        if self._limits is None:
+            info = self.ctx.info
+            self._limits = {
+                "block_bytes": int(info.get("GL_MAX_SHADER_STORAGE_BLOCK_SIZE", 0) or 0),
+                "vertex_blocks": int(info.get("GL_MAX_VERTEX_SHADER_STORAGE_BLOCKS", 0) or 0),
+            }
+        return self._limits
+
+    def storage_limits(self) -> dict[str, int]:
+        """``{"block_bytes", "vertex_blocks"}``, read on the GL thread."""
+
+        def read() -> dict[str, int]:
+            with self.ctx:
+                return dict(self._limits_current())
+
+        return on_gl_thread(read)
+
+    def _fits(self, b: batches.Batch) -> bool:
+        """Whether the shader can draw ``b``: four storage blocks in the vertex stage and every
+        array within the largest block. Otherwise it is drawn from the CPU expansion (the
+        same triangles, built each frame)."""
+        lim = self._limits_current()
+        biggest = max(a.nbytes for a in b.arrays().values())
+        return lim["vertex_blocks"] >= 4 and biggest <= lim["block_bytes"]
+
+    def forget_batches(self) -> None:
+        """Let go of every batch buffer (a benchmark starting each run from nothing)."""
+
+        def run() -> None:
+            with self.ctx:
+                for buf in [*self._batch_cache.values(), *self._batch_spare]:
+                    buf.release()
+            self._batch_cache.clear()
+            self._batch_spare.clear()
+            self._batch_seen.clear()
+
+        on_gl_thread(run)
+
+    def batch_memory(self) -> dict[str, int]:
+        """Storage buffers kept for batches (and spares) and their bytes on the card."""
+        return {"buffers": len(self._batch_cache), "spares": len(self._batch_spare),
+                "bytes": sum(x.size for x in self._batch_cache.values())
+                + sum(x.size for x in self._batch_spare)}  # fmt: skip
+
+    def _draw_batch(self, prog, b: batches.Batch, cam, size, flash: float) -> None:
+        """One batch, instanced: its arrays bound as storage buffers, the camera as uniforms."""
+        for k, name in enumerate(b.arrays()):
+            self._batch_buffer(b, name).bind_to_storage_buffer(k)
+        self._set_camera_uniforms(prog, b, cam, size)
+        if "u_tint" in prog:
+            prog["u_tint"].value = (1.0 + 0.8 * flash) if b.tint else 1.0
+        vao = self._batch_vao(prog, (b.kind, b.shape))
+        instances = b.n - 1 if b.kind == "lines" else b.n
+        if instances > 0:
+            vao.render(instances=instances)
+
+    @staticmethod
+    def _set_camera_uniforms(prog, b: batches.Batch, cam, size) -> None:
+        anchor = b.anchor if b.anchor is not None else (0.0, 0.0, 0.0)
+        values = {"u_eye": tuple(float(x) for x in cam.eye),
+                  "u_right": tuple(float(x) for x in cam.right),
+                  "u_up": tuple(float(x) for x in cam.up),
+                  "u_forward": tuple(float(x) for x in cam.forward),
+                  "u_persp": int(cam.perspective), "u_height": float(cam.height),
+                  "u_tan": float(cam.tan_half_fov), "u_units": batches.UNITS.index(b.units),
+                  "u_px": 1.0 / max(size[1], 1), "u_anchored": int(b.anchor is not None),
+                  "u_anchor": anchor, "u_head": float(b.head), "u_n": int(b.n),
+                  "u_each": b.each, "u_strips": int(b.strips is not None)}  # fmt: skip
+        for name, value in values.items():
+            if name in prog:  # (a uniform the kind does not use is compiled away)
+                prog[name].value = value
+
+    def _batch_vao(self, prog, kind: tuple[str, str]):
+        """An empty vertex array (the shader pulls its data) with the kind's triangles."""
+        if prog not in self._batch_vaos:
+            tri = np.ascontiguousarray(batches.TEMPLATES[kind], dtype="i4")
+            ibo = self.ctx.buffer(tri.tobytes())
+            self._batch_vaos[prog] = self.ctx.vertex_array(prog, [], index_buffer=ibo,
+                                                           index_element_size=4)  # fmt: skip
+        return self._batch_vaos[prog]
+
+    def batch_vertices(self, b: batches.Batch, cam, size: tuple[int, int]) -> np.ndarray:
+        """What the vertex shader makes of ``b``: each instance's vertices in world units
+        (k, v, 3), read back through transform feedback. For tests: it must equal
+        ``core.batches.instances`` up to float32 rounding."""
+
+        def run() -> np.ndarray:
+            import moderngl
+
+            with self.ctx:
+                kind = (b.kind, b.shape)
+                key = ("feedback", BATCH_KINDS[kind])
+                if key not in self._programs:
+                    self._programs[key] = self.ctx.program(
+                        vertex_shader=_define(_VS_BATCH, BATCH_KINDS[kind]),
+                        varyings=["v_world"])  # fmt: skip
+                prog = self._programs[key]
+                fbo, _ = self._target("solo", size)  # (a framebuffer must be bound)
+                fbo.use()
+                prog["u_vp"].write(cam.view_proj.astype("f4").T.tobytes())
+                prog["u_bias"].value = 0.0
+                prog["u_zoom"].value = 1.0
+                self._batch_used.clear()
+                for k, name in enumerate(b.arrays()):
+                    self._batch_buffer(b, name).bind_to_storage_buffer(k)
+                self._set_camera_uniforms(prog, b, cam, size)
+                v = batches.VERTICES[kind]
+                count = b.n - 1 if b.kind == "lines" else b.n
+                out = self.ctx.buffer(reserve=max(count * v * 12, 12))
+                vao = self.ctx.vertex_array(prog, [])
+                vao.transform(out, moderngl.POINTS, vertices=v, instances=count)
+                data = np.frombuffer(out.read(), dtype=np.float32)[: count * v * 3].copy()
+                vao.release()
+                out.release()
+                return data.reshape(count, v, 3)
+
+        return on_gl_thread(run)
+
     # ------------------------------------------------------------ drawing
 
-    def _commands(self, state, obj: ObjectState, pass_) -> list:
-        collector = _Collector(_stroke_hue(state, pass_))
+    def _commands(self, state, obj: ObjectState, pass_, quality: str = "full") -> list:
+        # id and solo passes are what the inspector measures: always the full drawing
+        collector = _Collector(_stroke_hue(state, pass_), quality if pass_ == "color" else "full")
         obj.impl.draw(collector, state, pass_)
         return collector.commands
 
@@ -440,6 +870,23 @@ class GLRenderer:
                      commands=None, fog: bool = True) -> None:  # fmt: skip
         cam = state.camera_for(obj)
         for kind, c in self._commands(state, obj, pass_) if commands is None else commands:
+            if kind == "batch":
+                b = c["batch"]
+                if not self.expand_on_cpu and self._fits(b):
+                    prog = self._program(pass_, BATCH_KINDS[(b.kind, b.shape)])
+                    self._object_uniforms(prog, obj, pass_, cam, order, zoom,
+                                          (1.0, 1.0, 1.0, b.opacity), b.glow)  # fmt: skip
+                    self._draw_batch(prog, b, cam, size, float(obj.params.flash))
+                    continue
+                # the reference: the same triangles, expanded here, drawn as a plain mesh
+                pos, idx, cols = batches.expand(b, cam, size[1])
+                if b.tint and pass_ == "color":
+                    cols = cols.copy()
+                    cols[:, :3] *= 1.0 + 0.8 * float(obj.params.flash)
+                kind, c = "mesh", {"positions": pos, "indices": idx, "glow": b.glow,
+                                   "color": (1.0, 1.0, 1.0, b.opacity), "colors": cols}  # fmt: skip
+                if not len(idx):
+                    continue
             if kind == "surface" and pass_ == "color":
                 if obj.params.flash > 0:  # the flash verb lights surfaces too
                     c = {**c, "glow": float(c.get("glow", 1.0)) * (1.0 + 1.5 * obj.params.flash)}
@@ -471,16 +918,8 @@ class GLRenderer:
             if kind == "mesh" and pass_ == "color" and c.get("colors") is not None:
                 kind = "vmesh"
             prog = self._program(pass_, kind)
-            prog["u_vp"].write(cam.view_proj.astype("f4").T.tobytes())
-            prog["u_bias"].value = order * DEPTH_BIAS
-            prog["u_zoom"].value = 1.0 / zoom
-            if pass_ == "color":
-                flash = float(obj.params.flash)  # the flash verb: more light, more glow
-                rgb = [float(x) * (1.0 + 0.8 * flash) for x in c["color"][:3]]
-                prog["u_color"].value = (*rgb, float(c["color"][3]))
-                prog["u_glow"].value = float(c.get("glow", 1.0)) * (1.0 + 1.5 * flash)
-            elif pass_ == "id":
-                prog["u_id"].value = obj.index
+            self._object_uniforms(prog, obj, pass_, cam, order, zoom, c["color"],
+                                  c.get("glow", 1.0))  # fmt: skip
             if kind == "image":
                 c["quad"][1].use(0)
                 prog["u_tex"].value = 0
@@ -517,6 +956,21 @@ class GLRenderer:
                 vao, n = self._vertex_array(prog, (("3f", "in_pos"),), [c["positions"]],
                                             c["indices"])  # fmt: skip
             vao.render(vertices=n)
+
+    @staticmethod
+    def _object_uniforms(prog, obj, pass_, cam, order: int, zoom: float, color, glow) -> None:
+        """The uniforms every flat draw shares: camera, depth bias, zoom, and the color
+        pass's color and glow (with the flash verb) or the id pass's object index."""
+        prog["u_vp"].write(cam.view_proj.astype("f4").T.tobytes())
+        prog["u_bias"].value = order * DEPTH_BIAS
+        prog["u_zoom"].value = 1.0 / zoom
+        if pass_ == "color":
+            flash = float(obj.params.flash)  # the flash verb: more light, more glow
+            rgb = [float(x) * (1.0 + 0.8 * flash) for x in color[:3]]
+            prog["u_color"].value = (*rgb, float(color[3]))
+            prog["u_glow"].value = float(glow) * (1.0 + 1.5 * flash)
+        elif pass_ == "id":
+            prog["u_id"].value = obj.index
 
     def _draw_lit(self, state, cam, c, order: int, zoom: float, fog: bool = True) -> None:
         prog = self._program("color", "lit")
@@ -613,11 +1067,15 @@ class GLRenderer:
 
     def _render_current(
         self, state, pass_, size, *, only=None, force=frozenset(), zoom=1.0, raw=False,
-        fog=True, emission=True, plan=None,
+        fog=True, emission=True, plan=None, quality="full",
     ) -> np.ndarray:  # fmt: skip
         import moderngl
 
         ctx = self.ctx
+        self._batch_used.clear()
+        self._renders += 1
+        if self._renders % 8 == 0:
+            self._evict_batches()
         target, resolved = self._target(pass_, size)
         target.use()
         ctx.viewport = (0, 0, *size)
@@ -645,7 +1103,7 @@ class GLRenderer:
             if plan is not None and pass_ == "color":  # recorded already (``frame_plan``)
                 commands = plan.commands[order]
             else:
-                commands = self._commands(state, obj, pass_)
+                commands = self._commands(state, obj, pass_, quality)
             if pass_ == "color" and obj.layer != "overlay":
                 clear = [c for c in commands if c[0] == "surface"
                          and (c[1]["opacity"] < 0.999 or c[1]["material"] == "glass")]  # fmt: skip
@@ -751,7 +1209,7 @@ class GLRenderer:
 
     def start_color_raw(
         self, state: SceneState, size: tuple[int, int] | None = None, *, fog: bool = True,
-        emission: bool = True, plan: FramePlan | None = None,
+        emission: bool = True, plan: FramePlan | None = None, quality: str = "full",
     ) -> PendingRead:  # fmt: skip
         """Draw the color pass and start copying both targets off the card, without
         waiting: ``collect()`` on the result gives what ``color_and_emission_raw`` gives.
@@ -759,40 +1217,45 @@ class GLRenderer:
         is being built. Every started read must be collected (or ``release``d).
         A draft (``render.presets.DRAFT``) passes ``fog=False`` (no depth fog on lit
         surfaces) and ``emission=False`` (the emission target is not read: no bloom uses
-        it); ``plan`` is this state's ``frame_plan``, so its objects are not drawn twice."""
+        it); ``plan`` is this state's ``frame_plan``, so its objects are not drawn twice.
+        ``quality``: ``"full"`` or ``"interactive"`` (a hint objects may read while a person
+        drags: fewer arrows, strided point sets; ``_Collector``)."""
         size = size or (state.width, state.height)
-        if plan is not None and (plan.state is not state or plan.size != size):
-            raise ValueError("this frame plan was made for another state or size")
+        _check_quality(quality)
+        if plan is not None and (plan.state is not state or plan.size != size
+                                 or plan.quality != quality):  # fmt: skip
+            raise ValueError("this frame plan was made for another state, size or quality")
         return self._render(state, "color", size, raw="async", fog=fog, emission=emission,
-                            plan=plan)  # fmt: skip
+                            plan=plan, quality=quality)  # fmt: skip
 
     def frame_plan(self, state: SceneState, size: tuple[int, int] | None = None, *,
-                   fog: bool = True) -> FramePlan:  # fmt: skip
+                   fog: bool = True, quality: str = "full") -> FramePlan:  # fmt: skip
         """Record what the color pass will draw for ``state`` at ``size`` (each object's draw
         calls) and a digest of everything that drawing depends on: the calls, the draw
         order, each object's layer, opacity, flash and camera, the light, the background,
-        the theme's stroke hue, the size and ``fog``. Two plans with the same ``key`` draw
-        the same picture, so a render may repeat the first frame instead of drawing the
+        the theme's stroke hue, the size, ``fog`` and ``quality``. Two plans with the same
+        ``key`` draw the same picture, so a render may repeat the first frame instead of the
         second (``render.job``'s de-duplication). Kernel pictures (``field``) are keyed the
         way the renderer caches them: by the object's type, parameters, roles and style,
         its quad, and the background, not by the pixels themselves. Needs no GL."""
         from phasor.render.framekey import digest
 
         size = size or (state.width, state.height)
+        _check_quality(quality)
         commands: dict[int, list] = {}
         parts: list[Any] = [size, bool(fog), tuple(state.background), state.light,
-                            _stroke_hue(state, "color")]  # fmt: skip
+                            _stroke_hue(state, "color"), quality]  # fmt: skip
         for order, obj in enumerate(state.draw_order()):
             if obj.params.opacity <= 0:
                 continue
-            cmds = self._commands(state, obj, "color")
+            cmds = self._commands(state, obj, "color", quality)
             commands[order] = cmds
             keyed = [(kind, {k: v for k, v in c.items() if k != "pixels"}) for kind, c in cmds]
             fields = any(kind == "field" for kind, _ in cmds)
             parts.append((order, obj.id, obj.type, obj.layer, float(obj.params.opacity),
                           float(obj.params.flash), state.camera_for(obj), keyed,
                           (obj.params, obj.roles, obj.style) if fields else None))  # fmt: skip
-        return FramePlan(state, size, digest(*parts), commands)
+        return FramePlan(state, size, digest(*parts), commands, quality)
 
     def _finish_read(self, packs: list, size, read: bool,
                      targets: int = 2) -> list[bytes] | None:  # fmt: skip
@@ -859,6 +1322,12 @@ class FramePlan:
     size: tuple[int, int]
     key: bytes
     commands: dict[int, list]
+    quality: str = "full"
+
+
+def _check_quality(quality: str) -> None:
+    if quality not in QUALITIES:
+        raise ValueError(f"quality is one of {', '.join(QUALITIES)}, not {quality!r}")
 
 
 @functools.cache

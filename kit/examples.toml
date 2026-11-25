@@ -162,6 +162,16 @@ kind = "physics"
 tier = "technique"
 teaches = "A 2D flow with a slider: a Variable on a Control, separatrices (Manifold), a probe with its label, a disk of initial conditions shrinking"
 
+[examples.rossler_section]
+kind = "physics"
+tier = "technique"
+teaches = "Chaos measured: a Poincare section filling in, two probes a millionth apart parting, their log distance against the largest Lyapunov exponent, a time-series strip (the Explorer's analysis pack)"
+
+[examples.period_doubling]
+kind = "physics"
+tier = "technique"
+teaches = "A bifurcation diagram of a flow: the Rossler system's period-doubling cascade over c (a logistic-like picture), and a cycle that closes after two loops"
+
 [examples.game_tree]
 kind = "basics"
 tier = "technique"

@@ -530,6 +530,11 @@ class Engine:
     def duration(self) -> float:
         return self._snap.compiled.duration
 
+    @property
+    def theme(self) -> Any:
+        """The resolved theme the document renders with (its look applied)."""
+        return self._snap.compiled.theme
+
     def lint(
         self,
         step: float = lint_rules.DEFAULT_STEP,
@@ -1117,26 +1122,31 @@ class Engine:
         """Object ids under an output-pixel point, topmost first."""
         return inspector.hit_test(self.state_at(t), self.pass_runner(), x, y)
 
-    def still(self, t: float, size: tuple[int, int] | None = None):
+    def still(self, t: float, size: tuple[int, int] | None = None, *, quality: str = "full"):
         """Preview still: (h, w, 3) uint8 sRGB, the same look as the final render.
-        Needs OpenGL (tier A or B)."""
+        Needs OpenGL (tier A or B). ``quality``: as for ``frame``."""
         from phasor.render.output import encode_srgb8
 
-        return encode_srgb8(self.frame(t, size))
+        return encode_srgb8(self.frame(t, size, quality=quality))
 
     def frame(self, t: float, size: tuple[int, int] | None = None, *, output: str = "linear",
-              effects: Any = None, plan: Any = None):  # fmt: skip
+              effects: Any = None, plan: Any = None, quality: str = "full"):  # fmt: skip
         """The finished picture at ``t`` in linear light: color pass, bloom, tone map.
         (h, w, 4) float32, row 0 = top. ``still`` and ``phasor render`` both use this.
         ``output="srgb8"``: the (h, w, 3) sRGB bytes instead, encoded on the card.
         ``effects`` (``render.presets.Effects``, default ``FULL``): ``DRAFT`` leaves out the
         bloom, the lens and the depth fog (a draft render). ``plan``: this frame's
         ``pass_runner().frame_plan(state_at(t), size)``, already recorded (``render.job``
-        records one to tell whether the frame repeats the last), so it is not drawn twice."""
-        return self._finished([t], size, output, effects, [plan] if plan is not None else None)
+        records one to tell whether the frame repeats the last), so it is not drawn twice.
+        ``quality="interactive"``: a render hint for a live view while the mouse is down (an
+        arrow field thinned to a budget, point sets strided; the document is not changed);
+        drawing at a smaller ``size`` meanwhile is the caller's choice. Redraw at ``"full"``
+        once the input stops."""
+        return self._finished([t], size, output, effects, [plan] if plan is not None else None,
+                              quality)  # fmt: skip
 
     def _finished(self, times: list[float], size, output: str, effects: Any = None,
-                  plans: list[Any] | None = None):  # fmt: skip
+                  plans: list[Any] | None = None, quality: str = "full"):  # fmt: skip
         """The average light of the color pass at ``times`` (one time: the frame itself),
         bloomed, tone-mapped and encoded once. Each sample goes to the card once as float16
         and is widened and added there in float32, in a fixed order (GPU_SPEED.md step 2);
@@ -1159,7 +1169,8 @@ class Engine:
         plans = plans or [None] * len(times)
         pending = [
             runner.start_color_raw(p.state if p is not None else self.state_at(ts), size,
-                                   fog=effects.fog, emission=effects.bloom, plan=p)
+                                   fog=effects.fog, emission=effects.bloom, plan=p,
+                                   quality=quality)
             for ts, p in zip(times, plans, strict=True)
         ]  # fmt: skip
         try:

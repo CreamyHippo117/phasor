@@ -65,7 +65,7 @@ _SECTION = {
 }
 LUT_SIZE = 256
 # Keys added after themes were written elsewhere: a theme without them takes these.
-_TABLE_DEFAULTS = {"lint": {"flow_work": 5e7, "flow_arrows": 4000.0}}
+_TABLE_DEFAULTS = {"lint": {"flow_work": 5e7, "flow_arrows": 4000.0, "batch_repairs": 0.0}}
 
 
 _TABLES = {
@@ -91,6 +91,7 @@ _TABLES = {
         "tick_gap",
         "flow_work",
         "flow_arrows",
+        "batch_repairs",
         "narration_drift",
     ),
     "life": (
