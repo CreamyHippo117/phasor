@@ -29,7 +29,8 @@ compounding. If this file and SPEC.md disagree, stop and ask.
   16-19 wait for 15 to pass its gate; 20
   last. Windows, CUDA and macOS untested: **`pc_tasks/09_pc_checks_after_14_15.md`** lists what
   the owner's PC must run.
-- Render speed: `GPU_SPEED.md` (steps 1-4 done, workers included); resume at its "Next
+- Render speed: `GPU_SPEED.md` (steps 1-4 done, workers included; 9a-9c done, 9c untested on
+  CUDA: `pc_tasks/11_heat_kernel.md`; step 10 is a survey, not built); resume at its "Next
   session"; measure with wall clock before and after each step.
 - One milestone per branch. No work on milestone N+1 until N's exit demo and tests pass.
 - Before declaring a milestone done, run the `phasor-milestone-gate` skill.

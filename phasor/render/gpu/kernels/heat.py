@@ -267,7 +267,8 @@ class Recipe:
     def rgb(self, s: np.ndarray, v: np.ndarray, background) -> np.ndarray:
         """The colour (ph, pw, 3) of ``s`` (ph, pw); ``v`` (ph,): the rows' height 0..1."""
         if self.colour == "lut":
-            return lut_colour(np.asarray(self.lut), "linear" if self.blend else "nearest")(s)
+            table = np.asarray(self.lut)[:, :3]
+            return lut_colour(table, "linear" if self.blend else "nearest")(s)
         if self.colour == "wheel":
             wheel = lut_colour(np.asarray(self.lut, dtype=np.float64)[:, :3], "wrap")
             if self.hue_of == "height":
