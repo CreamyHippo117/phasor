@@ -250,12 +250,24 @@ def shown_keys(c: Compiled, plan: Plan, times: tuple[float, ...]) -> tuple[bool,
     hidden (an expression or another object reads it), or its opacity is an expression
     (which may rise between two keys)."""
     ids = sorted(plan.moving)
-    n = len(times)
     if not ids:
-        return (False,) * n
+        return (False,) * len(times)
     if _always_needed(c, ids):
-        return (True,) * n
+        return (True,) * len(times)
+    return shown_times(c, ids, times)
+
+
+def shown_times(c: Compiled, ids, times: tuple[float, ...]) -> tuple[bool, ...]:
+    """Which of ``times`` any of ``ids`` is shown at (opacity x dim above 0), or is the key
+    on either side of such a time (a flash between two keys still counts). True everywhere
+    when an opacity or dim is an expression, which may rise between two keys: what cannot
+    be proved hidden is shown. The placer (``shown_keys``) and the camera solver (whose
+    ``avoid_occlusion`` rests while its object is hidden) both ask this."""
+    n = len(times)
     nodes = [(c.nodes.get(f"{i}.opacity"), c.nodes.get(f"{i}.dim")) for i in ids]
+    if any(x is not None and not isinstance(x, Const | ResolvedTrack)
+           for pair in nodes for x in pair):  # fmt: skip
+        return (True,) * n
 
     def value(node, t: float) -> float:
         if node is None:
@@ -267,11 +279,6 @@ def shown_keys(c: Compiled, plan: Plan, times: tuple[float, ...]) -> tuple[bool,
 
 
 def _always_needed(c: Compiled, ids: list[str]) -> bool:
-    for i in ids:
-        for name in ("opacity", "dim"):
-            node = c.nodes.get(f"{i}.{name}")
-            if node is not None and not isinstance(node, Const | ResolvedTrack):
-                return True
     named = set(ids)
     written = {f"{i}.{p}" for i in ids for p in (MOVE_PARAM, *LEADER_PARAMS)}
     for path, node in c.nodes.items():
@@ -538,7 +545,9 @@ def bake(c: Compiled, plan: Plan, oracle: OcclusionOracle | None = None,
     if plan.goals:
         from phasor.layout import camera as camera_solver
 
-        sol = camera_solver.solve(c, plan, times, lambda st, i: hidden_share(st, i, oracle))
+        watched = sorted({i for _, g in plan.goals if g.kind == "avoid_occlusion" for i in g.ids})
+        sol = camera_solver.solve(c, plan, times, lambda st, i: hidden_share(st, i, oracle),
+                                  {i: shown_times(c, [i], times) for i in watched})  # fmt: skip
         solved_camera, cam_issues = sol.values, sol.issues
     camera_keys = {k: {p: v[k] for p, v in solved_camera.items()} for k in range(len(times))}
     placed_ids = frozenset(plan.placed)
@@ -854,5 +863,5 @@ def boxes_pre_center(pre: SceneState, object_id: str) -> tuple[float, float]:
 
 
 __all__ = ["AnalyticOracle", "Bake", "Box", "OcclusionOracle", "Resume", "Track", "bake",
-           "baked_state", "key_times", "layout_unchanged_until", "shown_keys",
+           "baked_state", "key_times", "layout_unchanged_until", "shown_keys", "shown_times",
            "unchanged_until"]  # fmt: skip

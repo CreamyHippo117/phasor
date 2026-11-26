@@ -1931,6 +1931,13 @@ assert sheet["on_screen_fraction"] == 1.0 and sheet["semantic"]["sheets"] == 2
   until its first motion: a `focus_pull` or `orbit` at a marker starts from wherever the
   solver had the camera (an orbit turns by its angle from there; a pull glides in), so the
   goals hold before it and nothing jumps when it starts.
+- `avoid_occlusion(a)` rests while `a` is hidden (opacity x dim 0): no depth buffers, no
+  `unsolved`, and the camera goes where the other goals want it. It eases into a view that
+  shows `a` over a lead-in before `a` appears (at least the theme's `[motion]
+  camera_lead`, 3 s; longer for a bigger swing, which stays under `camera_speed`, 2
+  degrees a second) and back out after `a` goes. Where there is no room for that (`a`
+  appears soon after the start, or is hidden only briefly), it does not rest. An opacity
+  written as an expression counts as shown throughout.
 - A label (`near` rule) lives at its anchor's depth, nudged toward the camera, and is moved
   only sideways; it avoids only what is **in front** of it, so it may sit on a surface
   behind it. Lint: `occluded_label` when something in front hides it; `visible_in_3d(a)`
