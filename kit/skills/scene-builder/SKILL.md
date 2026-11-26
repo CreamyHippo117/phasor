@@ -34,7 +34,9 @@ These come from the plan and are not yours to trade away for convenience:
 - **A hold extends the idea; it never replays it.** See the next section.
 - **No hard cuts**: each animation becomes the next the way the plan says.
 - **What color encodes**, and the same meaning for a hue throughout.
-- **Little text**: only the labels and equations the plan names.
+- **Little prose, enough math.** No sentences on screen, but the mathematics being taught
+  is shown: the plan's equations and labels are the least you put up, not the most. See
+  "The math on screen" below.
 
 ## Filling a hold: extensions, not replays
 
@@ -73,6 +75,51 @@ the report: a shorter hold is better than a replay.
 The small motion that keeps a resting frame alive (life, a slow drift) is not a stretch
 and does not count as content; it only keeps the picture from freezing between them.
 
+## The math on screen
+
+A beautiful picture with no mathematics beside it is a screensaver. The viewer should be
+able to pause any frame and say which mathematical object they are looking at and what is
+changing in it. Add what the plan leaves out for this, and name each addition in the
+report; it is part of building faithfully, not re-planning.
+
+- **The formula being drawn**, typeset (`Equation`, `Text` with `$...$`), for as long as
+  the picture is that formula: `z^2 + c` beside a Julia set, `x' = Ax` beside a flow.
+- **The number that turns, live.** When a stretch turns a parameter, show its value as it
+  moves (`sweep(path, value, show=True)`, or a `Counter`), so the viewer can tie what
+  they see to a value. When the stretch ends, the number stays as the case's name.
+- **Labels on what the picture is about**: the zeros, the fixed point, the axis, the
+  eigenvector, the case's name. A label is `x.label` with `label(x) near x`.
+- **One color, one meaning, in the picture and in the math.** Give a term of the
+  equation the color role of the thing it names (`Equation(colors=...)`), so the viewer
+  sees which part of the formula is which part of the picture.
+- **The step, not only the result.** When the animation shows why, show the line of
+  mathematics that goes with it, and change it with `transform` as the picture changes,
+  rather than replacing it with a new one.
+
+**When the picture is breathtaking.** Decide per stretch, not per scene:
+
+- **Breathtaking and nothing more to read in it** (a lift that shows the whole): give it
+  the full frame, no math, and keep it short.
+- **Room beside it** (the picture is calm or leaves a dark band): the formula and the live
+  number sit there the whole time.
+- **Breathtaking and it carries the idea**: never shrink it and never cover the part being
+  studied. Share time, not space:
+  1. let it run alone first, full frame, so the viewer sees it before being told;
+  2. put the math *on* the picture where it can be: a label riding the object (`λ^n` on
+     a hand), a term in the same hue as the thing it names;
+  3. at the moment that carries the idea (the hands line up, the set connects), slow the
+     motion, dim what is not needed (`dim_others`), write the line of math into the dark
+     part, hold, then take it away and let the picture run on;
+  4. bring the formula back when the picture settles at the end of the stretch, so the
+     math names what was just seen.
+
+Keep it legible and out of the way: few objects of math at once (a formula, a value, a
+label or two), at the theme's sizes, placed by layout at the edge of the stage, never
+over the part of the picture being studied. Math comes in after the viewer has seen the
+thing it names (write it in, do not switch it on), and leaves when its object leaves. A
+long silent stretch keeps its formula and its live number; they are what makes the
+silence readable.
+
 ## The steps
 
 1. **Read the plan and list the work.** One line per animation: what fills the stage, how
@@ -97,7 +144,10 @@ and does not count as content; it only keeps the picture from freezing between t
    found where it starts. For timing, take the plan's holds and silences; put a
    `[[marker]]` at each change and anchor each motion to its marker with a verb. Where the
    plan gives words to say, use its gist as placeholder narration: the person will record
-   their own.
+   their own. Keep the plan's two layers: each narrated meaning has its equation on
+   screen, written in as the voice reaches it (a verb on that marker), and the voice says
+   what the equation means rather than reading it out. If the plan narrates a meaning
+   with no equation, add the equation and say so in the report.
 5. **Check:** lint with `--aesthetic` and `--strict`. Fix every error. Fix each warning,
    unless it warns about something the plan asks for on purpose (a frame filled edge to
    edge, the whole color wheel where hue is structure); then leave it and name it in the
@@ -113,6 +163,9 @@ and does not count as content; it only keeps the picture from freezing between t
      into an extension.
    - Silent test: from the frames alone, would the viewer work out what the plan says
      they should?
+   - Math test: pick any frame. Can you read off it which formula is drawn, which number
+     is changing and what its value is, and what the labelled features are? If not, add
+     the formula, the readout or the label.
    - Does it become the next animation without a cut?
    - Is every color doing what the plan says it encodes?
 
@@ -121,5 +174,5 @@ and does not count as content; it only keeps the picture from freezing between t
 7. **Preview:** render `--preset preview` to `out/NAME.mp4`.
 8. **Report** in a few lines: each animation as built against the plan (as planned,
    nearly, or not possible), the extensions you added to fill a hold and any hold you
-   ended early, the files (plan, script, storyboard, video), what went to
+   ended early, the math you put on screen beyond what the plan named, the files (plan, script, storyboard, video), what went to
    `WISHLIST.md`, warnings left on purpose, and anything in the plan you would question.
