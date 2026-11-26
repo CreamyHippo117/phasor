@@ -2012,6 +2012,59 @@ traced, a signal going in and out, the removed band fading). Numerics are in
 `phasor/domains/filters_math.py` (Butterworth by the bilinear transform with the cutoff
 pre-warped; checked against `scipy.signal`).
 
+**Modes as turning hands (`filt.PhasorField`).** A filter's impulse response is a sum of modes,
+h[n] = sum_k r_k lambda_k^n. `filt.PhasorField(poles=, residues=, tick=, ...)` draws each pole
+lambda_k = rho_k e^{i theta_k} as a hand r_k lambda_k^n that turns theta_k radians and shrinks
+by rho_k every tick; `tick` is fractional, so animate it (`tick=expr("30 * t")`) and the hands
+turn smoothly. `poles` and `residues` are (re, im) pairs (`residues` empty: all 1);
+`filt.polar(rho, theta)` makes the pairs from radii and angles. Each hand takes the hue of the
+angle it points at (the `colormap` role, the phase wheel; `hue` turns it). Seats: `layout`
+`spiral` (sunflower, the default), `grid` or `line`, `spacing` apart round `pos`; `order="angle"`
+seats the slowest hand first (the middle of the spiral), `"index"` keeps the given order.
+`scale` is world units per unit of |r| (0: the longest hand 0.45 of the spacing); `decay`
+`length` (rho^n shortens the hand), `glow` (it fades) or `none`; `rings` is the opacity of each
+hand's |r| circle.
+
+**Exact motion blur.** A fast hand strobes in sharp frames. Set `frame_ticks` to the ticks per
+frame (the tick rate over the frame rate, `30 / 60` above at the default 60 fps) and `shutter`
+(share of a frame, 0.5 film standard): each hand that turns far in a shutter is drawn as the
+exact time average of the moving stroke over the shutter, centred on `tick`. The light at radius
+r is the share of the shutter the stroke covers it (the stroke's width convolved with the swept
+arc, over the arc), so it falls as 1/r once the arc is wider than the stroke, integrates to the
+sharp hand's light (it is only spread), and the colour at each angle is the hand's colour when
+it pointed there. A fast hand becomes a faint fan, a very fast one a disc; a hand whose tip
+moves under half a stroke width in the shutter is drawn sharp, unchanged. It is pure in `t`:
+nothing reads the renderer's frame rate, so a render at another rate (the `preview` preset is
+30 fps) needs `frame_ticks` to match. With the render's own blur on (the `final` preset averages
+4 samples over a 0.5 shutter), set `shutter` to 0.5 / 4: the four sub-sweeps then tile the
+shutter exactly. Overlapping turns (more than a full turn in one shutter) blend rather than add,
+a little dimmer than exact near the seat. Semantics: `count`, `fastest` (index) and
+`fastest_deg_per_tick`, `max_turn_per_frame_deg`, `blurred` / `blurred_count` (smeared hands),
+`aliased` / `aliased_count` (more than half a turn a frame: the wagon wheel), `stable` and
+`sum` (the field's sum, h[n] when the poles and residues are a filter's). Hand angle and length
+are the maths, so life only breathes its glow.
+
+```python
+import math
+
+from phasor import Scene, expr, filt
+
+poles = filt.polar([0.99, 0.97, 0.95], [0.05, 1.0, 3.0])  # slow, medium, fast
+s = Scene("modes", passes=None)
+s.add(filt.PhasorField(id="modes", poles=poles, tick=expr("30 * t"), frame_ticks=30 / 60))
+sem = s.engine.inspect(1.0, id="modes")["objects"][0]["semantic"]
+assert sem["count"] == 3 and sem["fastest"] == 2
+assert sem["blurred"] == [1, 2] and sem["aliased"] == []  # the slow hand stays sharp
+assert abs(sem["max_turn_per_frame_deg"] - math.degrees(3.0 * 0.5)) < 1e-3
+z = complex(*sem["sum"])  # 0.99^30 e^{1.5 i} + 0.97^30 e^{30 i} + 0.95^30 e^{90 i}
+hands = [(0.99, 0.05), (0.97, 1.0), (0.95, 3.0)]
+assert abs(z - sum(r**30 * complex(math.cos(30 * a), math.sin(30 * a)) for r, a in hands)) < 1e-8
+```
+
+Example: `examples/reverb_modes.py` (64 modes of a reverb on a sunflower spiral, the high ones
+dying first, the fast ones smeared). The geometry (`mode_hands`, `seat_offsets`, `phase_hue`,
+`sweep_exposure`, `swept_hand`) is in `phasor/domains/filters_math.py`.
+
 **Spectrogram of any signal.** `fourier.Spectrogram` shows the short-time spectrum of one of
 three sources: a `.wav` file next to the scene (`wav="voice.wav"`, mixed down to mono; its length
 and sample rate are the file's own; the AI may name only files in its folder), a formula in `t`
