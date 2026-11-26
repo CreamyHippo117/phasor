@@ -38,6 +38,7 @@
 
 ## Object types (use these names in add_object)
 
+- `aliasing`: flash, frequencies, amplitudes, phases, signal, fs, start, duration, reconstruct, reveal, spectrum, wheel, wheel_samples, fmax, pos, extent
 - `arrow`: flash, start, end
 - `axes`: flash, dims, x_range, y_range, z_range, pos, scale, tick, labels
 - `callout`: flash, target, shape, pad, progress

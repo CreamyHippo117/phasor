@@ -315,6 +315,13 @@ hue_along = 1.0
 [defaults.winding.style]
 glow = "strong"
 
+# sampling and aliasing (ANIMATIONS.md S5): the true wave and its alias in two hues, the samples as beacons
+[defaults.aliasing.params]
+dim = 0.9  # a little see-through, like the other prism types
+
+[defaults.aliasing.style]
+glow = "strong"
+
 [defaults.directivity.style]
 glow = "strong"
 

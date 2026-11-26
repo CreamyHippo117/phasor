@@ -925,7 +925,8 @@ circles; `phase` animates the tip), `PartialSum(kind="square"|"sawtooth"|"triang
 (the Gibbs overshoot is in the semantics), `Spectrum(frequencies=, amplitudes=, window=)` (bars
 per bin; `leakage` in the semantics), `Spectrogram(...)` (any signal, backdrop; below). The maths is
 `phasor.domains.fourier_math`: `epicycle_coefficients`, `series_partial_sum`, `window`,
-`spectrum`, `leakage`, `spectrogram`, `dominant_frequency`, `sampled`, `convolve`.
+`spectrum`, `leakage`, `spectrogram`, `dominant_frequency`, `sampled`, `convolve`, and the
+sampling maths of `Aliasing` (below).
 
 `fourier.Winding` draws a sum of real sine tones wound clockwise at `freq` (Hz). Its
 centroid is the mean of the wound samples, equal to the complex DFT divided by the sample
@@ -947,6 +948,40 @@ s.at("scan").sweep("wind.freq", 8.0, show=False)
 ```
 
 See `examples/fourier_winding.py` for a two-tone sweep.
+
+`fourier.Aliasing` is sampling and aliasing (the wagon wheel): a sum of tones
+`a sin(2 pi f t + phase)` (`frequencies`, `amplitudes`, `phases` in radians) or a formula in
+`t` (`signal`), sampled at `fs` Hz over `start .. start + duration` seconds. The samples are
+white stems with beacons; the true signal is one hue (`color`), and the slowest wave through
+the samples another (`alias`): for tones each one folded into [0, fs/2], its phase reflected
+when it folds from the upper half (`reconstruct="alias"`), or the band-limited sinc
+reconstruction from the samples (`"sinc"`, always for a formula). Under the wave, for tones,
+`spectrum` shows the true lines, their aliases, the Nyquist mark `fs/2` and an arc from each
+folded line to its alias (`fmax` fixes the axis while `fs` is swept), and `wheel` shows the
+strongest tone's phasor at its last `wheel_samples` samples: the inner spiral is the turn it
+makes between two samples, the outer arc the short turn the eye sees. `reveal` (0..1) takes
+the samples left to right. Semantics give `fs`, `nyquist`, `samples`, `frequencies`,
+`alias_frequencies`, `reversed` (the alias runs backwards), `turns_per_sample` and
+`aliased`; features give the `samples` and `alias_at_samples` as world points. The maths is
+in `fourier_math`: `alias_tone`, `fold` (the signed frequency, in [-fs/2, fs/2)),
+`alias_signal`, `sample_times`, `sinc_reconstruct`.
+
+```python
+from phasor import Scene, fourier
+from phasor.domains import fourier_math as fm
+
+s = Scene("aliasing_demo", look="prism", passes=None)
+s.add(fourier.Aliasing(id="wheel", frequencies=(5.0,), fs=14.0, fmax=16.0))
+s.marker("slow", 0.5)
+s.marker("end", 6.0)
+s.at("slow").morph("wheel.fs", 4.2, until="end")  # past 2f: the alias appears, backwards
+sem = s.engine.inspect(4.0, id="wheel")["objects"][0]["semantic"]
+assert sem["aliased"] and sem["nyquist"] == sem["fs"] / 2
+assert fm.alias_tone(7.0, 10.0, 1.0, 0.3)[:2] == (3.0, 1.0)  # 7 Hz at 10 Hz looks like 3 Hz
+assert fm.fold(7.0, 10.0) == -3.0  # ... running backwards
+```
+
+See `examples/aliasing.py` for the sweep that slows the alias, stops it and turns it round.
 
 **`linalg`**: `TransformGrid(matrix=((a, b), (c, d)))` (2x2: the grid, the unit square whose
 area is the determinant, the images of the basis vectors; 3x3: the unit cube), `EigenLines`,
