@@ -40,8 +40,8 @@ Script side (verbs, so the person, the AI and the app write the same thing):
 
 ```python
 s.bed("audio/drift.ogg", start="intro", end="outro", gain=-18, fade=2.0)
-s.cue("pole_appears", "chime", gain=-12)          # built-in sound
-s.cue("zoom", "audio/whoosh.wav", offset=-0.15)   # lands just before the word
+s.cue("pole_appears", "chime", gain=-12)  # built-in sound
+s.cue("zoom", "audio/whoosh.wav", offset=-0.15)  # lands just before the word
 ```
 
 ### Mixing nicely: what "merge" means in numbers
