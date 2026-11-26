@@ -23,3 +23,6 @@ examples. Add a dated line whenever they say something about taste.
   the next.
 - 2026-11-26: a long hold milks extensions of the same idea (the next case, the parameter
   going further, a deeper level, another view), never a replay of the exact same visual.
+- 2026-11-26: show more math, to teach: the formula being drawn, the number that turns with
+  its live value, labels on what matters. Little prose still, but this replaces "not much
+  equations" of 2026-11-25.
