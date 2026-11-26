@@ -16,9 +16,9 @@ from phasor.core.files import relative_path
 from phasor.core.ids import is_valid_id, is_valid_name, parent_of, split_path
 from phasor.core.values import normalize
 
-SCHEMA_VERSION = 8  # 2: `constraints` (M2); 3: `retired_ids`; 4: `narration`, `Segment.verb` (M4);
+SCHEMA_VERSION = 9  # 2: `constraints` (M2); 3: `retired_ids`; 4: `narration`, `Segment.verb` (M4);
 # 5: `meta.life`, `meta.seed`, `meta.look` (M7); 6: `controls` (M12); 7: `meta.palette`;
-# 8: `meta.modules`, `ObjectSpec.always` (M15, ADR 0005)
+# 8: `meta.modules`, `ObjectSpec.always` (M15, ADR 0005); 9: `sound` (SOUND.md)
 OVERRIDES_VERSION = 1
 
 
@@ -214,8 +214,61 @@ class Control(Model):
         return self.path if self.component is None else f"{self.path}[{self.component}]"
 
 
+# The sound effects phasor makes itself (time/synth.py); any other cue names a file.
+BUILTIN_SOUNDS = ("chime", "pop", "swell", "tick", "whoosh")
+
+
+def _check_cue_sound(value: str) -> str:
+    """A built-in sound's name (``chime``), or a sound file in the scene's folder."""
+    if isinstance(value, str) and "." not in value and "/" not in value and "\\" not in value:
+        if value not in BUILTIN_SOUNDS:
+            raise ValueError(f"no built-in sound {value!r}; built-ins are {list(BUILTIN_SOUNDS)}, "
+                             "or name a file such as 'audio/whoosh.wav'")  # fmt: skip
+        return value
+    return relative_path(value)
+
+
+class Bed(Model):
+    """Music or ambience under a stretch of the scene (SOUND.md): ``file`` in the scene's
+    folder from ``start`` to ``end`` (None: the scene's end), looped or played once, faded
+    in and out, and dipped (``duck``) while the narration speaks. ``gain`` is dB on top of
+    the theme's ``[sound] bed`` level; fades of None take the theme's ``fade``."""
+
+    id: str
+    file: Annotated[str, PlainValidator(relative_path)]
+    start: TimeRef = 0.0
+    end: TimeRef | None = None
+    loop: bool = True
+    gain: float = 0.0
+    fade_in: float | None = Field(None, ge=0)
+    fade_out: float | None = Field(None, ge=0)
+    duck: bool = True
+
+
+class Cue(Model):
+    """A one-shot sound effect ``at`` a time, normally a marker plus an offset (SOUND.md):
+    a built-in sound (``BUILTIN_SOUNDS``) or a file in the scene's folder. ``gain`` is dB on
+    top of the theme's ``[sound] cue`` level; ``pan`` runs from -1 (left) to 1 (right)."""
+
+    id: str
+    sound: Annotated[str, PlainValidator(_check_cue_sound)]
+    at: TimeRef
+    gain: float = 0.0
+    pan: float = Field(0.0, ge=-1.0, le=1.0)
+
+
+class Sound(Model):
+    """Everything heard besides the narration: beds under it and cues over it."""
+
+    beds: tuple[Bed, ...] = ()
+    cues: tuple[Cue, ...] = ()
+
+    def item(self, item_id: str) -> Bed | Cue | None:
+        return next((x for x in (*self.beds, *self.cues) if x.id == item_id), None)
+
+
 class Document(Model):
-    schema_version: Literal[8] = SCHEMA_VERSION
+    schema_version: Literal[9] = SCHEMA_VERSION
     meta: Meta
     objects: tuple[ObjectSpec, ...] = ()
     constraints: tuple[ConstraintSpec, ...] = ()
@@ -223,6 +276,7 @@ class Document(Model):
     # Ids of removed objects. They may never be used again (SPEC contract 2).
     retired_ids: tuple[str, ...] = ()
     narration: Narration | None = None
+    sound: Sound = Field(default_factory=Sound)  # beds and cues (SOUND.md)
     cameras: tuple[CameraSpec, ...] = (CameraSpec(id="camera"),)
     timeline: Timeline = Field(default_factory=Timeline)
 
@@ -263,6 +317,12 @@ class Document(Model):
                 if self.timeline.markers.get(name) != t:
                     raise ValueError(f"narration marker {name!r} at {t:g} s is missing from, or "
                                      "different in, timeline.markers")  # fmt: skip
+        sound_ids = [x.id for x in (*self.sound.beds, *self.sound.cues)]
+        for x in sound_ids:
+            if not is_valid_id(x) or "." in x:
+                raise ValueError(f"invalid sound id {x!r}: must match [a-z][a-z0-9_]*")
+            if x in seen or sound_ids.count(x) > 1:
+                raise ValueError(f"duplicate id {x!r}: beds, cues and objects need their own ids")
         back = sorted(seen & set(self.retired_ids))
         if back:
             raise ValueError(f"id {back[0]!r} was retired when its object was removed; ids are "

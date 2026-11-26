@@ -15,10 +15,12 @@ from phasor.core.ids import split_path
 from phasor.core.issues import DocumentError, Issue
 from phasor.core.objects import get_type
 from phasor.core.schema import (
+    Bed,
     CameraSpec,
     ConstraintSpec,
     ConstValue,
     Control,
+    Cue,
     Document,
     ExprSpec,
     Meta,
@@ -139,6 +141,27 @@ class RemoveControl(Model):
     component: int | None = None
 
 
+class SetBed(Model):
+    """Add a bed (music or ambience under the narration), or replace the bed with its id."""
+
+    op: Literal["set_bed"] = "set_bed"
+    bed: Bed
+
+
+class SetCue(Model):
+    """Add a cue (a one-shot sound effect), or replace the cue with its id."""
+
+    op: Literal["set_cue"] = "set_cue"
+    cue: Cue
+
+
+class RemoveSound(Model):
+    """Remove the bed or cue ``id``."""
+
+    op: Literal["remove_sound"] = "remove_sound"
+    id: str
+
+
 Op = Annotated[
     AddObject
     | RemoveObject
@@ -155,7 +178,10 @@ Op = Annotated[
     | SetCamera
     | RemoveConstraint
     | AddControl
-    | RemoveControl,
+    | RemoveControl
+    | SetBed
+    | SetCue
+    | RemoveSound,
     Field(discriminator="op"),
 ]
 
@@ -345,6 +371,31 @@ def _apply_op(doc: Document, op: Any) -> Document:
             return doc.model_copy(
                 update={"controls": tuple(c for c in doc.controls if c.key != key)}
             )
+        case SetBed():
+            beds = doc.sound.beds
+            kept = [b for b in beds if b.id != op.bed.id]
+            at = next((i for i, b in enumerate(beds) if b.id == op.bed.id), len(kept))
+            kept.insert(at, op.bed)  # a replaced bed keeps its place
+            return doc.model_copy(
+                update={"sound": doc.sound.model_copy(update={"beds": tuple(kept)})}
+            )
+        case SetCue():
+            cues = doc.sound.cues
+            kept = [c for c in cues if c.id != op.cue.id]
+            at = next((i for i, c in enumerate(cues) if c.id == op.cue.id), len(kept))
+            kept.insert(at, op.cue)
+            return doc.model_copy(
+                update={"sound": doc.sound.model_copy(update={"cues": tuple(kept)})}
+            )
+        case RemoveSound():
+            snd = doc.sound
+            if snd.item(op.id) is None:
+                ids = [x.id for x in (*snd.beds, *snd.cues)]
+                raise _fail("unknown_id", f"no bed or cue {op.id!r}; there are {ids}", ids=(op.id,))
+            beds = tuple(b for b in snd.beds if b.id != op.id)
+            cues = tuple(c for c in snd.cues if c.id != op.id)
+            snd = snd.model_copy(update={"beds": beds, "cues": cues})
+            return doc.model_copy(update={"sound": snd})
         case RemoveConstraint():
             rule = normalize_rule(op.rule)
             if all(c.rule != rule for c in doc.constraints):
@@ -448,6 +499,9 @@ __all__ = [
     "RemoveControl",
     "RemoveMarker",
     "RemoveObject",
+    "RemoveSound",
+    "SetBed",
+    "SetCue",
     "SetMarker",
     "SetMeta",
     "SetNarration",

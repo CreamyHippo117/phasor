@@ -104,6 +104,7 @@ class _Snapshot:
         self.bake: Bake | None = None
         self.lint: dict[float, tuple[Issue, ...]] = {}
         self.aesthetic: tuple[Issue, ...] | None = None
+        self.mix: tuple[tuple, Any] | None = None  # (file versions, time/sound.py Mix)
         self.states: OrderedDict[float, SceneState] = OrderedDict()
         self.snapshots: OrderedDict[float, dict[str, Any]] = OrderedDict()
 
@@ -423,21 +424,44 @@ class Engine:
 
     def _aesthetic(self, snap: _Snapshot) -> tuple[Issue, ...]:
         if snap.aesthetic is None:
-            snap.aesthetic = tuple(aesthetic_rules.rules(
+            snap.aesthetic = (*aesthetic_rules.rules(
                 snap.compiled,
                 snap.plan,
                 lambda t: self._state(snap, t),
                 lambda t: self._snapshot_of(snap, t),
                 self.pass_runner(),
-            ))  # fmt: skip
+            ), *aesthetic_rules.sound_rules(snap.compiled, self._mix(snap)))  # fmt: skip
         return snap.aesthetic
 
     def audio_track(self):
         """The scene's sound as one stereo int16 track, shape (n, 2), covering the scene, and
-        its sample rate; None when nothing makes a sound (``time/sound.py``)."""
-        from phasor.time.sound import mixdown
+        its sample rate; None when nothing makes a sound (``time/sound.py``, SOUND.md)."""
+        from phasor.time.sound import master, to_int16
 
-        return mixdown(self.document.narration, self.base_dir, self.duration)
+        m = self.sound_mix()
+        if m is None or not m.lanes:
+            return None
+        ceiling = self._snap.compiled.theme.sound["ceiling"]
+        return to_int16(master(m.bus(), m.rate, ceiling)), m.rate
+
+    def sound_mix(self):
+        """The scene's sound lane by lane, before the master limiter (``time/sound.Mix``):
+        the narration set to the theme's level, beds ducked under it, cues placed on their
+        markers. Cached per document version and per version of the files it reads."""
+        return self._mix(self._snap)
+
+    def _mix(self, snap: _Snapshot):
+        from phasor.time.sound import build, file_versions
+
+        c = snap.compiled
+        doc = c.doc
+        key = file_versions(doc.narration, doc.sound, self.base_dir)
+        if snap.mix is None or snap.mix[0] != key:
+            levels, resolve = c.theme.sound, c.time_map.resolve
+            m = build(doc.narration, doc.sound, self.base_dir, c.duration, levels=levels,
+                      resolve=resolve, seed=doc.meta.seed)  # fmt: skip
+            snap.mix = (key, m)
+        return snap.mix[1]
 
     def _lint(self, snap: _Snapshot, step: float) -> tuple[Issue, ...]:
         if step not in snap.lint:
@@ -452,7 +476,9 @@ class Engine:
             snap.lint[step] = (*snap.orphans, *self._bake(snap).issues,
                                *lint_rules.control_rules(snap.compiled),
                                *lint_rules.file_rules(snap.compiled),
-                               *lint_rules.type_rules(snap.compiled), *visual)  # fmt: skip
+                               *lint_rules.type_rules(snap.compiled),
+                               *lint_rules.sound_rules(snap.compiled, self._mix(snap)),
+                               *visual)  # fmt: skip
         return snap.lint[step]
 
     def _oracle(self) -> PassOracle | None:

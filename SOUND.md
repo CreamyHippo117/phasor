@@ -2,7 +2,7 @@
 
 Working doc, like `APP_PLAN.md`. Asked for by the owner on 2026-11-26: "a sound bed: sound
 effects merged nicely with background music, most likely ambient, under the narration, and
-all of it editable in the desktop app". Status: **approved by the owner 2026-11-26; step 1 built 2026-11-26** (see "Progress"). It comes after `BEAUTY.md`; the
+all of it editable in the desktop app". Status: **approved by the owner 2026-11-26; steps 1-3 built 2026-11-26** (see "Progress"). It comes after `BEAUTY.md`; the
 owner's answers are at the end of this doc.
 
 ## What exists to build on
@@ -154,6 +154,25 @@ before `BEAUTY.md` is done, and not without the owner's go-ahead.
   K-weighting coefficients, true peak between samples, the limiter, placement, rates,
   determinism, reading, a stereo mux through PyAV).
 
+- **Steps 2 and 3, done 2026-11-26.** Schema 9: `Document.sound` holds `beds` and `cues`
+  (`core/schema.py` `Bed`, `Cue`, `Sound`; `migrate` 8 to 9 adds an empty one). Ids are
+  unique among beds, cues and objects; a cue or bed on a missing marker is `unknown_marker`.
+  Patch ops `set_bed`, `set_cue` (add, or replace in place) and `remove_sound`. Script:
+  `s.bed(file, start, end, loop, gain, fade, duck)` and `s.cue(marker, sound, offset, gain,
+  pan)` (`scene.py`); `core/pycode.py` writes them back. The theme's `[sound]` table sets
+  the levels (`voice` -16 LUFS, `bed` -18, `cue` -10, `duck` 8 dB, `attack` 0.3 s,
+  `release` 0.8 s, `fade` 2 s, `ceiling` -1 dBFS). `time/sound.py` `build` makes the lanes
+  (`Mix`), `Engine.sound_mix()` caches them per document version and per version of the
+  files read; `Engine.audio_track()` is their sum through the limiter. Lint
+  (`inspect/lint.py` `sound_rules`): `missing_file`, `bad_sound`, `bed_masks_voice` (with a
+  certain fix), `audio_clip`; strict `cue_unanchored`; aesthetic `cue_on_word`
+  (`inspect/aesthetic.py`). Built-in effects (`time/synth.py`): `chime`, `pop`, `swell`,
+  `tick`, `whoosh`, each a pure function of (name, cue id, seed). Docs: `docs/ai/API.md`
+  "Sound". Example: `examples/sound_bed.py` with `examples/assets/drift.wav` (a 4 s
+  seamless drone made for it). Tests: `tests/test_sound_bed.py`, both lint modes. Checked
+  by rendering the example with espeak-ng: stereo 48 kHz AAC, -16.1 LUFS integrated and
+  -1.9 dBTP by ffmpeg's own `ebur128` meter. Not listened to by a person.
+
 ### Deviations
 
 - **Bus rate.** Planned as "48 kHz throughout". As built, the bus runs at the sources' common
@@ -164,6 +183,19 @@ before `BEAUTY.md` is done, and not without the owner's go-ahead.
   averaged over the same span. It ramps smoothly and never lets a sample through. True peak
   is measured (`true_peak`) but not limited, so it can sit a fraction of a dB above -1. A mix
   under the ceiling passes through untouched.
+- **Levels.** A cue's level is its loudest 400 ms (momentary loudness), since an effect
+  is too short for integrated loudness. There is no final loudness trim on the sum: the
+  voice is set to the target, and the rest sits under it. Without narration, beds play at
+  the voice level (`[sound] voice`) instead of 18 dB under a voice that is not there.
+- **Ducking** follows each sentence from its first word to its last, not every word: a
+  bed that pumped between words would be worse.
+- **`cue_on_word`** is an aesthetic rule (`lint(aesthetic=True)`), and fires only for a cue
+  less than `[lint] cue_loud` (6) dB under the voice. Cues on markers land on words by
+  design, so firing on every cue near a word would fire on every anchored cue.
+- **No loudness lanes in the storyboard yet**: planned in step 2, moved to step 5 (the AI's
+  picture of the sound), since nothing before then draws them.
+- **Two more lint thresholds**: `[lint] cue_loud` and `cue_word` (plus `sound_masking`,
+  `sound_clip`).
 - **Exit test.** A narration-only scene keeps its samples bit for bit in both channels
   *when the voice peaks under -1 dBFS*; a louder voice is now limited where before it was
   clipped at full scale.

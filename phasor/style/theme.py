@@ -75,6 +75,10 @@ _TABLES = {
         "margin",
         "stroke_mix",
         "impure",
+        "sound_masking",
+        "sound_clip",
+        "cue_word",
+        "cue_loud",
     ),
     "life": (
         "glow",
@@ -89,6 +93,7 @@ _TABLES = {
     ),
     "bloom": ("threshold", "strength", "levels", "exposure", "knee"),
     "narration": ("words_per_second", "lead", "gap", "pause_per_change", "pause_max"),
+    "sound": ("voice", "bed", "cue", "duck", "attack", "release", "fade", "ceiling"),
     "camera": (
         "drift",
         "drift_period",
@@ -156,6 +161,7 @@ class Theme:
     lint: dict[str, float] = field(default_factory=dict)  # linter thresholds
     bloom: dict[str, float] = field(default_factory=dict)  # final-look glow settings
     narration: dict[str, float] = field(default_factory=dict)  # speaking rate, pacing
+    sound: dict[str, float] = field(default_factory=dict)  # levels, ducking (time/sound.py)
     camera: dict[str, float] = field(default_factory=dict)  # 3D drift and solver defaults
     light: dict[str, float] = field(default_factory=dict)  # three-point rig and depth fog
     life: dict[str, float] = field(default_factory=dict)  # living motion (see core/life.py)

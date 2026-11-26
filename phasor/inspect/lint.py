@@ -34,6 +34,7 @@ from phasor.core.color import contrast_ratio, over
 from phasor.core.constraints import LABEL_SUFFIX
 from phasor.core.ids import parent_of
 from phasor.core.issues import Issue
+from phasor.core.schema import MarkerRef
 from phasor.core.state import SceneState
 from phasor.inspect.passes import PassRunner, inspect_size
 from phasor.layout.geometry import footprint, view_of
@@ -291,6 +292,77 @@ def file_rules(c: Compiled) -> list[Issue]:
     return out
 
 
+def sound_rules(c: Compiled, m: Any) -> list[Issue]:
+    """The sound's problems (SOUND.md), from ``m``, the scene's ``time/sound.Mix``:
+
+    - ``missing_file`` / ``bad_sound``: a bed or cue names a file that is not in the scene's
+      folder, or one that cannot be read; it stays silent.
+    - ``bed_masks_voice``: while the narration speaks, a bed is less than ``[lint]
+      sound_masking`` dB under the voice. Fix (certain): lower the bed by the excess.
+    - ``audio_clip``: the mix before the master limiter peaks more than ``[lint] sound_clip``
+      dB over full scale; the limiter then works hard and the sound pumps."""
+    from phasor.core.schema import Bed
+    from phasor.time import sound as snd
+
+    if m is None:
+        return []
+    th = c.theme.lint
+    out = []
+    for item_id, why in m.problems:
+        item = c.doc.sound.item(item_id)
+        missing = why.startswith("no file")
+        t = 0.0  # markers are checked when the document compiles, so they resolve here
+        if item is not None:
+            t = c.time_map.resolve(item.start if isinstance(item, Bed) else item.at)
+        out.append(Issue(
+            "missing_file" if missing else "bad_sound", f"{item_id}: {why}", severity="warning",
+            ids=(item_id,), path=f"sound.{item_id}", times=(t,),
+            fix_hint="put the file next to the scene" if missing else "convert it to WAV",
+        ))  # fmt: skip
+    if not m.lanes:
+        return out
+    rate = m.rate
+    voice = [x for x in m.lanes if x.kind == "voice"]
+    if voice and m.speech:
+        vbus = snd.mix([snd.Placed(x.start, x.samples, rate) for x in voice], m.duration)[0]
+        for lane in (x for x in m.lanes if x.kind == "bed"):
+            hits = []
+            for a, b in m.speech:
+                i, j = round(a * rate), round(b * rate)
+                k0 = i - round(lane.start * rate)
+                seg = lane.samples[max(k0, 0) : max(k0 + j - i, 0)]
+                lv, lb = snd.loudness(vbus[i:j], rate), snd.loudness(seg, rate)
+                if np.isfinite(lv) and np.isfinite(lb) and lb > lv - th["sound_masking"]:
+                    hits.append((round(a, 4), lb - (lv - th["sound_masking"])))
+            bed = c.doc.sound.item(lane.id)
+            if hits and bed is not None:
+                excess = max(e for _, e in hits)
+                lower = float(np.ceil(excess * 2.0) / 2.0)
+                fixed = bed.model_copy(update={"gain": round(bed.gain - lower, 2)})
+                times = [t for t, _ in hits]
+                out.append(Issue(
+                    "bed_masks_voice", f"{lane.id}: {excess:.1f} dB too loud under the voice "
+                    f"{_when(times)}", severity="warning", ids=(lane.id,),
+                    path=f"sound.{lane.id}.gain", times=tuple(times),
+                    fix_hint=f"lower {lane.id}'s gain by {lower:g} dB",
+                    fix=({"op": "set_bed", "bed": fixed.model_dump(mode="json")},),
+                ))  # fmt: skip
+    bus = m.bus()
+    peak = np.abs(bus).max(axis=1)
+    top = float(peak.max()) if len(peak) else 0.0
+    if top > 0 and 20.0 * np.log10(top) > th["sound_clip"]:
+        over = np.flatnonzero(peak > snd.db_to_gain(th["sound_clip"])) / rate
+        times = sorted({round(float(t), 1) for t in over})
+        loudest = sorted({x.id for x in m.lanes if x.kind != "voice"})
+        out.append(Issue(
+            "audio_clip", f"the mix peaks {20.0 * np.log10(top):.1f} dB over full scale "
+            f"{_when(times)}; the limiter has to squash it", severity="warning",
+            ids=tuple(loudest), times=tuple(times),
+            fix_hint="lower the beds' or cues' gain there",
+        ))  # fmt: skip
+    return out
+
+
 def type_rules(c: Compiled) -> list[Issue]:
     """``missing_type``: the document names code (``meta.modules``, ADR 0005) for a type or an
     updater that is not here: the module is missing, was refused (scripts may not run here)
@@ -362,18 +434,34 @@ def strict_rules(c: Compiled) -> list[Issue]:
         for seg in segs:
             if seg.verb is None:
                 raw.setdefault(path.rpartition(".")[0], []).append(c.time_map.resolve(seg.t0))
-    return [
-        Issue(
-            "raw_motion",
-            f"{object_id!r} moves with raw to() transitions {_when(sorted(ts))}",
-            "warning",
-            (object_id,),
-            times=tuple(sorted(ts)),
-            fix_hint="use a verb (reveal, trace, morph, settle, focus_pull, ...) so the "
-            "theme sets timing and easing",
-        )
-        for object_id, ts in sorted(raw.items())
-    ] + updater_rules(c)
+    return (
+        [
+            Issue(
+                "raw_motion",
+                f"{object_id!r} moves with raw to() transitions {_when(sorted(ts))}",
+                "warning",
+                (object_id,),
+                times=tuple(sorted(ts)),
+                fix_hint="use a verb (reveal, trace, morph, settle, focus_pull, ...) so the "
+                "theme sets timing and easing",
+            )
+            for object_id, ts in sorted(raw.items())
+        ]
+        + [
+            Issue(
+                "cue_unanchored",
+                f"cue {cue.id!r} is at {float(cue.at):g} s, not at a marker",
+                "warning",
+                (cue.id,),
+                path=f"sound.{cue.id}.at",
+                times=(float(cue.at),),
+                fix_hint="anchor it to a marker (s.cue('marker', ...)) so it follows the voice",
+            )
+            for cue in c.doc.sound.cues
+            if not isinstance(cue.at, MarkerRef)
+        ]
+        + updater_rules(c)
+    )
 
 
 def clutter(c: Compiled) -> list[Issue]:

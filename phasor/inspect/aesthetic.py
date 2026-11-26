@@ -15,6 +15,8 @@ ordinary linter stays about problems, these are about taste. Every threshold is 
 | motion_rhythm   | unrelated objects start different motions within the same short window  |
 | margin          | content crowds the outer safe margin of the frame                       |
 | stroke_mix      | more stroke weights on screen than the theme allows                     |
+| cue_on_word     | a sound effect peaks on a spoken word and is loud enough to cover it    |
+|                 | (``sound_rules``, from the scene's mix)                                 |
 
 A "beat" is a marker (or, with no markers, an evenly spaced sample). A fix is offered only
 where it is certain to help: a margin rule, one stroke weight, one glow notch down.
@@ -318,3 +320,37 @@ def motion_rhythm(c: Compiled) -> list[Issue]:
         )
         for (a, b), ts in sorted(pairs.items())
     ]
+
+
+def sound_rules(c: Compiled, m: Any) -> list[Issue]:
+    """``cue_on_word``: a cue's loudest moment lands within ``[lint] cue_word`` seconds of a
+    word's start while the cue is less than ``[lint] cue_loud`` dB under the voice, so it
+    covers the word. ``m`` is the scene's ``time/sound.Mix``. A judgement, so no fix: move
+    the cue (``offset``) or lower it."""
+    from phasor.time import sound as snd
+
+    n = c.doc.narration
+    if m is None or n is None or not m.lanes:
+        return []
+    th = c.theme.lint
+    voice = [x for x in m.lanes if x.kind == "voice"]
+    if not voice:
+        return []
+    vbus = snd.mix([snd.Placed(x.start, x.samples, m.rate) for x in voice], m.duration)[0]
+    lv = snd.loudness(vbus, m.rate)
+    words = np.array([b.start + w.start for b in n.blocks for w in b.words])
+    if not np.isfinite(lv) or not len(words):
+        return []
+    out = []
+    for lane in (x for x in m.lanes if x.kind == "cue"):
+        peak = lane.start + float(np.abs(lane.samples).max(axis=1).argmax()) / m.rate
+        near = float(np.abs(words - peak).min())
+        level = snd.momentary_max(lane.samples, m.rate)
+        if near <= th["cue_word"] and level > lv - th["cue_loud"]:
+            out.append(Issue(
+                "cue_on_word", f"{lane.id} peaks on a word at {peak:.2f} s, only "
+                f"{lv - level:.1f} dB under the voice", "warning", (lane.id,),
+                path=f"sound.{lane.id}", times=(round(peak, 4),),
+                fix_hint="lower its gain, or move it off the word with offset",
+            ))  # fmt: skip
+    return out

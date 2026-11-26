@@ -263,6 +263,17 @@ def compile_document(
             duration = max(duration, t1)
         nodes[path] = ResolvedTrack(node.value, tuple(resolved))
 
+    for item in (*doc.sound.beds, *doc.sound.cues):  # sound anchored to markers (SOUND.md)
+        times = (item.at,) if hasattr(item, "at") else (item.start, item.end)
+        for ref in times:
+            if ref is None:
+                continue
+            try:
+                time_map.resolve(ref)
+            except KeyError as e:
+                add(Issue("unknown_marker", f"{item.id}: no marker {e.args[0]!r}",
+                          ids=(item.id,), path=f"sound.{item.id}"))  # fmt: skip
+
     if any(o.always for o in doc.objects) and not issues:
         _attach_updaters(doc, nodes, objects, placeholders, modules, missing, add)
 

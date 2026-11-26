@@ -257,6 +257,48 @@ assert s4.engine.lint(strict=True) == []
   `WhisperX()` or `TimingsFile()`.
 - `phasor render` muxes the narration into the video.
 
+## Sound: beds and cues under the narration
+
+```python
+import tempfile
+from pathlib import Path
+
+import numpy as np
+
+from phasor import Scene
+from phasor.time.narration import write_wav
+
+folder = Path(tempfile.mkdtemp())  # stands in for your scene's folder
+t = np.arange(44100 * 4) / 44100
+write_wav(folder / "drift.wav", (3000 * np.sin(2 * np.pi * 110 * t)).astype(np.int16), 44100)
+
+s5 = Scene("with sound", passes=None, base_dir=folder)
+s5.narrate("A pole appears [[pole_appears]]. Then it moves [[pole_moves]].", voice="estimate")
+s5.bed("drift.wav", fade=2.0)  # under the whole scene, looped
+s5.cue("pole_appears", "chime")  # a built-in effect on the marker
+s5.cue("pole_moves", "whoosh", offset=-0.2)  # lands just before the word
+assert [b.id for b in s5.engine.document.sound.beds] == ["drift"]
+assert s5.engine.lint(strict=True) == []
+track, rate = s5.engine.audio_track()  # stereo int16; `phasor render` muxes it
+assert track.shape[1] == 2
+```
+
+- **Beds** (`s.bed(file, start=0, end=None, loop=True, gain=0, fade=None, duck=True)`):
+  your own music or ambience, a file in the scene's folder (WAV; OGG, FLAC and MP3 with
+  `uv sync --extra sound`). `start`/`end` take markers like `s.at`; `end=None` is the
+  scene's end. Several beds may overlap; give each an `id` (default: the file's name).
+- **Cues** (`s.cue(marker, sound, offset=0, gain=0, pan=0)`): one-shot effects. Built-ins,
+  made by phasor (no files, no licences): `chime`, `pop`, `swell`, `tick`, `whoosh`. Or a
+  file. Anchor every cue to a marker (`lint(strict=True)` reports `cue_unanchored`): when
+  the narration is re-recorded, the cue moves with the word.
+- **Levels come from the theme** (`[sound]`): the voice is set to -16 LUFS, beds sit 18 dB
+  and cues 10 dB under it, and beds dip 8 dB while a sentence is spoken (ramping over
+  `attack`/`release`). Without narration a bed plays at the voice level. `gain` is dB on
+  top. Do not set levels by ear in code; change the theme's `[sound]` table or `gain`.
+- A master limiter holds peaks at -1 dBFS. `engine.sound_mix()` gives each lane (voice
+  blocks, beds, cues) before it, with the level the mixer chose (`gain_db`).
+- The patch ops are `set_bed`, `set_cue` (add, or replace by id) and `remove_sound`.
+
 ## Animate with verbs
 
 | Verb | Does |
@@ -416,6 +458,8 @@ lint_added, lint_resolved)`. Each error has `code`, `message`, `ids`, `path`, `f
 | `add_constraint` | `rule`, `priority` (`required`/`strong`/`medium`/`weak`, default `strong`) |
 | `set_narration` | `narration` (from `phasor.voice.narrate`) or `null`; replaces the markers it owns |
 | `remove_constraint` | `rule` |
+| `set_bed` / `set_cue` | `bed: {id, file, start, end, loop, gain, fade_in, fade_out, duck}` / `cue: {id, sound, at, gain, pan}`; adds, or replaces the one with that id |
+| `remove_sound` | `id` (a bed or a cue) |
 
 On a scene built by a script, `set_param`, `set_style` and `add_constraint` are stored as
 tweaks in `name.overrides.json` and survive re-running the script; other ops are refused
@@ -492,7 +536,12 @@ Each issue has `code`, `severity`, `message`, `ids`, `times`, `fix_hint`, and `f
 | `unsolved` | error | a constraint or guard does not hold |
 | `raw_motion` | warning, strict only | a transition written with raw `to()` instead of a verb |
 | `orphan_override` | error | a tweak whose object is gone |
-| `missing_file` | warning | a file an object reads (a room's `.obj`) is not in the scene's folder; it draws nothing |
+| `missing_file` | warning | a file an object reads (a room's `.obj`), a bed or a cue names is not in the scene's folder; it draws nothing, or stays silent |
+| `bad_sound` | warning | a bed's or cue's file cannot be read (another format: convert it to WAV, or `--extra sound`) |
+| `bed_masks_voice` | warning | while the narration speaks, a bed is less than `[lint] sound_masking` dB under it; the fix lowers its `gain` |
+| `audio_clip` | warning | the mix before the limiter peaks more than `[lint] sound_clip` dB over full scale |
+| `cue_unanchored` | warning, strict only | a cue at a time in seconds instead of a marker |
+| `cue_on_word` | warning, aesthetic only | a cue peaks on a word and is loud enough (`[lint] cue_loud`) to cover it |
 
 `engine.autofix()` applies every `fix` the linter offers (add `near` for a child label that
 overlaps, `on_screen` for something cut by the frame), lints again, and returns

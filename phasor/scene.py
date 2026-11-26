@@ -15,6 +15,7 @@ from __future__ import annotations
 import contextlib
 import inspect
 import os
+import re
 import runpy
 import sys
 from pathlib import Path
@@ -28,14 +29,18 @@ from phasor.core.patch import (
     AddControl,
     AddObject,
     AddSegment,
+    SetBed,
     SetCamera,
+    SetCue,
     SetMarker,
     SetMeta,
     SetNarration,
     SetParam,
 )
 from phasor.core.schema import (
+    Bed,
     Control,
+    Cue,
     Document,
     ExprSpec,
     MarkerRef,
@@ -49,6 +54,20 @@ from phasor.time import verbs as _verbs
 from phasor.time.narration import block_of, repace
 
 TimeArg = float | tuple[str, float] | str  # seconds, ("marker", offset) or "marker"
+
+
+def _time(t: TimeArg) -> float | MarkerRef:
+    if isinstance(t, str):
+        return MarkerRef(marker=t)
+    if isinstance(t, tuple):
+        return MarkerRef(marker=t[0], offset=float(t[1]))
+    return float(t)
+
+
+def _sound_id(name: str) -> str:
+    """An id named after a sound (``audio/Drift Loop.ogg`` -> ``drift_loop``)."""
+    stem = re.sub(r"[^a-z0-9]+", "_", Path(name).stem.lower()).strip("_")
+    return stem if stem[:1].isalpha() else f"sound_{stem}" if stem else "sound"
 
 
 def expr(source: str) -> ExprSpec:
@@ -306,6 +325,41 @@ class Scene:
         theme = self.engine._snap.compiled.theme
         self._apply(SetNarration(narration=narrate(script, voice, folder, theme)))
 
+    def bed(self, file: str, *, start: TimeArg = 0.0, end: TimeArg | None = None,
+            loop: bool = True, gain: float = 0.0, fade: float | None = None,
+            fade_in: float | None = None, fade_out: float | None = None, duck: bool = True,
+            id: str | None = None) -> str:  # fmt: skip
+        """Music or ambience under the scene (SOUND.md): ``file`` (WAV; OGG, FLAC or MP3 with
+        the ``sound`` extra) in the scene's folder, from ``start`` to ``end`` (markers, or
+        ``None`` for the scene's end), looped unless ``loop=False``. The theme sets its level
+        under the voice (``gain`` is dB on top) and dips it while the narration speaks
+        (``duck=False`` keeps it steady). ``fade`` sets both fades in seconds. Calling it
+        again with the same id replaces the bed. Returns the bed's id."""
+        bed = Bed(id=id or _sound_id(file), file=file, start=_time(start),
+                  end=None if end is None else _time(end), loop=loop, gain=gain,
+                  fade_in=fade if fade_in is None else fade_in,
+                  fade_out=fade if fade_out is None else fade_out, duck=duck)  # fmt: skip
+        self._apply(SetBed(bed=bed))
+        return bed.id
+
+    def cue(self, at: TimeArg, sound: str, *, offset: float = 0.0, gain: float = 0.0,
+            pan: float = 0.0, id: str | None = None) -> str:  # fmt: skip
+        """A sound effect at a marker (SOUND.md): ``s.cue("pole_appears", "chime")``.
+        ``sound`` is a built-in (``chime``, ``pop``, ``swell``, ``tick``, ``whoosh``) or a
+        file in the scene's folder. ``offset`` moves it (negative: earlier, so a whoosh lands
+        on the word); ``gain`` is dB on top of the theme's cue level; ``pan`` -1 left to 1
+        right. Re-recording the narration moves the marker, and the cue with it. The id
+        defaults to sound and marker (``chime_pole_appears``). Returns the cue's id."""
+        when = _time(at)
+        if offset:
+            when = (MarkerRef(marker=when.marker, offset=when.offset + offset)
+                    if isinstance(when, MarkerRef) else when + offset)  # fmt: skip
+        marker = when.marker if isinstance(when, MarkerRef) else f"at_{round(when * 1000)}ms"
+        cue = Cue(id=id or f"{_sound_id(sound)}_{_sound_id(marker)}", sound=sound, at=when,
+                  gain=gain, pan=pan)  # fmt: skip
+        self._apply(SetCue(cue=cue))
+        return cue.id
+
     def pace(self) -> None:
         """Give each sentence breathing room in proportion to how much it changes on screen:
         after a sentence whose transitions touch N objects, wait N x ``pause_per_change``
@@ -332,12 +386,7 @@ class Scene:
         ``("go", 0.5)``: the marker plus an offset): for spans that start and end at
         different markers. Prefer a verb or ``s.at(...).to(...)`` when one marker is enough."""
 
-        def ref(t):
-            if isinstance(t, str):
-                return MarkerRef(marker=t)
-            if isinstance(t, tuple):
-                return MarkerRef(marker=t[0], offset=float(t[1]))
-            return float(t)
+        ref = _time
 
         self._apply(
             AddSegment(path=path, segment=Segment(t0=ref(t0), t1=ref(t1), to=to, ease=ease))
