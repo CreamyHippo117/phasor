@@ -1,0 +1,550 @@
+---
+name: scene-plan-mixed
+description: EXPERIMENTAL sibling of /scene-plan, kept only to compare the two. Plans a teaching video where the experience leads and voice and on-screen maths step in only where the experience cannot get the viewer there; beautiful voiceless scenes are kept whole, and the explaining goes before or after them. Use only when the person types /scene-plan-mixed; for any other request to plan a video, use /scene-plan.
+argument-hint: "<the idea or topic, in a sentence or a paragraph>"
+---
+
+# /scene-plan-mixed: from an idea to a plan, experience first
+
+The idea: $ARGUMENTS
+
+**This is an experiment.** It is `/scene-plan` with one change of principle, kept beside it
+so the person can run both on the same ideas and keep whichever plans better. Everything
+not named below is the same as `/scene-plan`. The differences:
+
+- **The experience leads.** Each beat is first asked to get the viewer to its conclusion
+  with the picture alone. Only where it cannot do maths on screen and then voice step in,
+  as little as closes the gap (the ladder, in the house rules).
+- **Wonder beats and teaching beats.** A wonder beat is there to be breathtaking and to
+  make the viewer want the answer; it is never interrupted to explain itself. The
+  explaining happens in teaching beats, before or after it.
+- **Beauty is protected in the judging.** Needing a line of maths is not a fault;
+  interrupting a wonder beat is. A breathtaking path cannot lose to a merely competent
+  one on averages, and gets one repair before it can be cut.
+- **The 3Blue1Brown toolkit** (rediscovery, deriving on screen, the viewer's doubt,
+  admitting what is glossed over) is for teaching beats that need it.
+
+At the end, say in one line that this plan came from `/scene-plan-mixed`, so the person
+can compare it with a `/scene-plan` plan for the same idea.
+
+This skill is about taste. It writes no scene code. It answers two questions, in this
+order: how is this idea best taught, and how is that made beautiful? The result is a plan
+the person approves; `/scene-builder` codes it afterwards.
+
+`TASTE.md` is the person's taste and outranks everything here. Read it first. The house
+rules below are a summary of it as of 2026-11-25; where they differ, `TASTE.md` is right.
+
+## House rules
+
+- **The aim is teaching things beautifully.** Beauty comes mostly from the mathematics
+  shown well, not from decoration.
+- **One animation owns the stage.** It fills the frame on midnight black, alone, and keeps
+  the stage for as long as it needs: through iterations, new cases, a parameter turning.
+- **The experience leads you to the conclusion.** Aim for as much of the video as
+  possible to be experienced rather than explained. For each beat, climb only as far up
+  this ladder as the beat needs, and write down which rung it reached and why:
+  1. **The picture alone.** The viewer works it out with no voice and no maths.
+  2. **The picture and maths on screen.** A formula, a live number or a label closes the
+     gap; the silence survives.
+  3. **Voice**, as little as closes what is left.
+  How much voice and maths a video ends up with is an outcome of the beats, not a target:
+  an idea that is a chain of reasoning (what a Fourier transform is) will climb often; an
+  idea that is first a sensation (what reverb is) will rarely leave rung 1.
+- **Wonder beats are kept whole.** A wonder beat exists to be breathtaking and to make the
+  viewer want the answer. It is never interrupted to explain itself: no voice and no
+  maths during it. What it needs is said before it (what to watch for) or after it (now
+  that you have seen it). It is judged on beauty and on pull, never on what it explains.
+- **A scene may teach less.** Better a video that teaches most of an idea and leaves the
+  viewer amazed than one that teaches all of it and leaves them informed. If a beautiful
+  scene cannot carry the whole mechanism, let it carry one handle and leave the rest to a
+  teaching beat, or to wonder.
+- **Never rush.** A long hold is not a fault.
+- **A hold extends the idea; it never replays it.** Each stretch of a hold shows something
+  new: the next case, the parameter going further, another parameter, a deeper level,
+  another view, the edge case. The same motion again, or a sweep out and back, is a replay.
+- **Quality, not quantity.** As many animations as the best story needs (ten or three). None
+  added to fill time, none dropped to save it.
+- **Come back to the same picture** and test it on new cases, instead of a new picture for
+  each point.
+- **Open with a question** or a picture the viewer wants explained; never a title or a
+  definition. **Let the viewer predict** before each reveal.
+- **Usually not concrete before abstract.** Ask which route the person wants (step 4).
+- **Little prose, enough math. No hard cuts.** No sentences on screen, but the mathematics
+  being taught is: the formula drawn, the number that turns with its live value, labels on
+  what matters. A pretty picture the viewer cannot name is not teaching.
+- **Never shrink an idea to fit the tool.** If the best animation is one phasor cannot make
+  yet, keep it in the plan, list it under "Wanted additions", and add a line to
+  `WISHLIST.md`. The person adds these to phasor; a plan weakened in advance hides what is
+  missing.
+
+The reference is the YouTube channel 2swap; see "The reference" at the end.
+
+## The steps
+
+Work files go in `plans/NAME.mixed.work/` (NAME is a short file name for the idea); the plan
+itself is `plans/NAME.mixed.md`. Have subagents write their output to files and return only a
+two-line summary, so your own context stays free for judging.
+
+Step 2 and 3 are meant to be expensive: dozens of subagent runs. That is the point. A plan
+can only be as good as the ideas it was chosen from, and the first ideas anyone has are the
+ones every existing video already uses. Say in one line at the start that this is a long,
+heavy run, then do it in full; do not shorten it to save effort. If you have no way to
+spawn subagents, play each lens yourself, one at a time, writing each one's file before
+starting the next and without rereading the earlier ones until the merge.
+
+### 1. Consult
+
+Ask in one message, each with your suggested answer; skip what the idea already answers:
+
+1. **Viewer**: who is this for, and what do they already know?
+2. **Length and feel**: roughly how long; calm, eerie, playful or grand?
+
+If the person does not answer, use your suggestions and say so in the plan.
+
+Do not ask where the video should end, and do not decide it yourself. Point B, what the
+viewer understands or feels at the end, is the most important thing the brainstorm finds:
+fixed now, it would steer every lens toward one conclusion before any of them had looked.
+If the person's idea already names a destination, pass it to the brainstormers as one
+possible ending among those they are to find, not as the target. The same holds for the
+duality hunter's ending cards (step 2): candidates for point B, never the target.
+
+### 2. Map
+
+From a point A (an opening question) to a point B (what the viewer is left with) there are
+thousands of paths: different questions, destinations, pictures, stories, animations and
+orders. Neither end is given. See a great many before choosing.
+
+**Cast about ten brainstormers** from the three families below: the idea's home fields,
+the craft lenses, and at least three mathematical lenses that seem to have nothing to do
+with the topic. The surprising picture usually comes from an outsider (billiards seen by a
+hyperbolic geometer). Write the cast and why to `cast.md`.
+
+Mathematical lenses: each asks "what is this, seen from my field?"
+
+| Lens | Asks | Can split into |
+| --- | --- | --- |
+| Geometer | What shape or space is this? | Euclidean, hyperbolic, projective, differential |
+| Algebraist | What is the structure; what is preserved? | groups and symmetry, representations, rings and polynomials |
+| Linear algebraist | Which transformation is this; what are its special directions? | eigen-pictures, decompositions, high dimensions |
+| Topologist | What survives stretching; what is glued to what? | surfaces, knots, coverings and unfoldings |
+| Dynamicist | What happens when it repeats or flows? | orbits, phase space, chaos and bifurcation |
+| Analyst | What happens in the limit, or at tiny scales? | approximation, Fourier, complex analysis |
+| Combinatorialist | What is the space of all states, drawn as a graph? | counting, graphs, games and puzzles |
+| Probabilist | What does a random one look like? | random walks, typical against extreme |
+| Number theorist | Where do the integers or primes hide in this? | |
+| Physicist | What machine does this; what is conserved? | mechanics, waves, optics |
+| Computer scientist | What computes this? | |
+| Duality hunter | What other object is secretly the same as this one? | always cast; its own brief below |
+
+Story lenses: skeptic (why would anyone doubt it), newcomer (what looks strange),
+puzzle-setter (what game leads here), misconception collector (what people wrongly
+believe), archivist (earlier ideas about the concept: how it was first pictured, older
+approaches, forgotten constructions; a source of ideas, not a history lesson for the video).
+
+Craft lenses: cinematographer (the unforgettable shot; how each picture moves, holds and
+becomes the next; here it works from imagination and has not read phasor's verbs, which
+come in step 7), musician (what can be heard), phasor expert (what phasor already draws
+beautifully; reads `kit/docs/API.md` and `kit/examples/INDEX.md`), 2swap student (what
+would 2swap do with this).
+
+**Round one.** Spawn the whole cast in one turn so they run in parallel and cannot see each
+other. A brainstormer knows only its brief, so each brief carries: the idea, the viewer,
+the feel, its lens and question, the house rules above, and these instructions:
+
+- Fill a mind map with these branches: opening questions, destinations (what could the
+  viewer understand or feel at the end that they did not at the start), central pictures,
+  ways of seeing each insight, cases to test it on, connections to other mathematics and
+  to the physical world, things that can be heard, transitions, endings.
+- Quantity, no judging. At least 8 opening questions, 8 central pictures, 5 destinations
+  (the obvious takeaway first, then the ones past it) and 4 in every
+  other branch. Write the obvious ones down, then keep going past them.
+- For every picture say how it fills the frame, how it moves, and what could change in it
+  to keep it worth watching for a minute or more (which parameter turns, which cases run
+  through it). List these as different things, not one thing repeated: a picture whose
+  only way to last a minute is to loop cannot hold a stage, and neither can one that is
+  finished in five seconds.
+- For every picture, say also what a viewer could understand from it with no voice and no
+  maths at all, and whether it is a wonder picture (its job is to amaze and to make the
+  viewer want), a teaching picture, or both.
+- Do not ask whether phasor can draw it. (The phasor expert is the exception: it says what
+  phasor draws well now.)
+- Write to `plans/NAME.mixed.work/round1/LENS.md`.
+
+**The duality hunter** is always in round one, and its brief is different. The other
+lenses diverge; this one converges. The strongest endings are often two things the viewer
+met separately turning out to be one thing ("the 2 in 2D is the same 2 as distance
+growing like the square root of time"), and that ending only lands if both halves were
+planted earlier. Found at the start, it can tell the paths what to plant; found at the
+end, it can only use what happens to be there.
+
+Its brief carries the idea, the viewer, the feel and the house rules. It also reads, if
+this folder has them, the cards in `ideas/` from `/scene-brainstorm` (`LEDGER.md`,
+`DEAD.md`, `VERDICTS.md`; a dead card is often the other half of an identity),
+`TASTE.md`, and `kit/examples/INDEX.md` (which pictures the viewer may already know). It
+sees no other lens's work. It returns **zero to three ending cards**, each with:
+
+- **The two things:** what the viewer meets early as A, and later as B.
+- **The map:** why they are the same, in one or two sentences, checkable like any claim.
+- **The morph:** the animation that turns A into B on screen. No morph, no card: an
+  identity you cannot animate is an analogy.
+- **What to plant:** what the video must show early, and in what disguise, so the reveal
+  is not given away.
+- **The last line:** what the viewer leaves with.
+
+**"Nothing" is a complete answer, and often the right one.** Say so in the brief, in
+these words. A forced reveal is worse than none. "No identity here; this video should end
+on its payoff" is advice to the paths, not a failure, and the hunter is not judged by how
+many cards it returns. Vague kinship ("both are about symmetry", "both are projections")
+is not an identity. Output to `plans/NAME.mixed.work/round1/duality.md`.
+
+**Merge and cross.** One agent reads all of round one and writes `map.md`: the branches
+with repeats removed, each idea tagged with its lens, then a section of crossings (one
+lens's motion on another's shape). It also names the two or three most fertile lenses,
+and marks the fifteen or so strongest ideas of any kind for the weavers.
+
+Before the duality hunter's cards enter the map, a fresh agent tries to kill each one: is
+the map true (check it numerically where it can be checked), does the morph exist, and
+would the viewer feel the two halves are one rather than be told so? Cards that survive go
+into `map.md` under destinations as **ending cards**, marked as such; the rest are dropped
+with one line of why. All of them dying is a normal result.
+
+**Round two.** Spawn, in parallel: the sub-lenses of the fertile lenses (third column of
+the table), plus two fresh brainstormers. Each gets `map.md` and asks: what is missing,
+what is the opposite of the obvious choice, what does this look like at another scale, in
+another dimension, run backwards? Their additions go into `map.md`.
+
+Aim, across both rounds, for at least 40 opening questions, 40 central pictures and 20 in
+every other branch. If the map is short of that, run another round with new lenses.
+
+**Weave.** The lenses find connections; weavers find interconnections: two ideas from
+different lenses carried by one object. (A video on differential equations drew pendulums
+to show the geometry, then let the viewer hear how a stable pendulum sounds beside an
+unstable one: the pendulum that is seen is the one that is heard.) Spawn three or four
+weavers in parallel. Each gets the marked ideas from `map.md` and one way of pairing, so
+they do not all find the same thing:
+
+- across senses: a picture with a sound, a motion with a rhythm;
+- across fields: one lens's object doing another lens's job;
+- across scales or states: the small with the whole, a still shape with a process.
+
+A weave is real when the second idea is a consequence of the first inside the same object,
+so that removing either weakens the other. Two good ideas placed side by side are a staple,
+not a weave; leave those out. "None worth it" is an allowed answer, and no video is obliged
+to use a weave. Weaves go in `weaves.md`, each with what the viewer would see and hear.
+
+**Paths.** Two or three agents each join branches of the map into whole paths, a short
+paragraph each, deliberately unlike one another (different openings, different
+destinations, different central pictures, different orders). Each path names its own
+point A and point B in its first line; the twenty should not all end in the same place. They read `weaves.md` too: a weave often makes the
+best return to the central picture (the same object, now heard, or now seen from the other
+field). A path may end on an ending card; if it does, it plants both halves early, in the
+disguise the card names. Some paths should end on an ending card and some should not, so
+the prune can weigh the two. Each path marks its beats as wonder or teaching. At least a
+few paths should choose their point B so that their key beats need only rung 1: instead of
+adding explanation to a beautiful picture, ask what that picture can make the viewer
+understand on its own, and end there. At least 20 in all, in `paths.md`.
+
+### 3. Prune
+
+Brainstormers never judge; use fresh agents. Four tests:
+
+- **Beauty**: would a still from it be worth looking at with the sound off? Judged on the
+  pictures alone: maths or voice placed beside or around a picture never lowers its
+  beauty score.
+- **Reach**: does the viewer arrive at point B? For each teaching beat: with the rungs it
+  claims, does the viewer get there, and is each rung the least that works (maths doing
+  what the picture could have done is a fault; maths that still does not get them there
+  is a fault; needing maths is not)? Wonder beats are not judged on what they explain,
+  only on pull: does the next question now feel urgent?
+- **Cohesiveness**: is it one picture and one thread from A to B, each beat growing out of
+  the last?
+- **Immersion**: does the viewer stay inside it, with nothing that breaks the spell (a
+  hard cut, a crowded frame, a change of look, and above all any explanation inside a
+  wonder beat)? The cost of maths is counted once, under Reach, not again here: a formula
+  written into a dimmed frame at its key moment, as `TASTE.md` describes, is not a wall
+  of symbols.
+
+Tell every judge in its brief that these four are scored separately and that no property
+is to be counted under two tests.
+
+1. **20 to 5.** Four judges, one per test, plus a simulated viewer at the level from step
+   1, each score every path and give one line on its weakest point. Keep the five best
+   that are still unlike one another, with one protected slot: the most beautiful path
+   that is not weak on Reach, Cohesiveness or Immersion keeps a place among the five
+   whatever its average.
+2. **Repair before cutting.** A path in the top quarter for Beauty that fails Reach gets
+   one round with a teacher agent before it can be cut. The teacher may add the least
+   rung that closes the gap, move explanation out of a wonder beat to before or after
+   it, or narrow point B to what the pictures can deliver. The judges score the repaired
+   path; that version is the one that lives or dies. A beautiful path the viewer still
+   cannot follow after its repair is cut: beauty is protected, not exempt.
+3. **Develop the five.** One agent per path writes it out animation by animation, marking
+   each as wonder or teaching and each teaching beat's rung. Weaknesses hidden in a
+   paragraph show here.
+
+### 4. Ask the person which route
+
+Show the five in two or three lines each, starting each with its point A and point B, with
+your recommendation and why. Ask which route they want, or which parts to mix. This is
+where the person chooses where the video ends and how it teaches: it comes now, not
+earlier, so the choices are real ones found for this idea. If they say "you choose",
+choose.
+
+### 5. Choose and attack
+
+- **5 to 1.** Judge again with the person's answer in hand. A path strong on three tests
+  and weak on one loses to a path good on all four, with one exception: a path that is
+  breathtaking does not lose to a merely competent one on averages; judge whether its
+  weak test can be repaired as in "Repair before cutting". Parts of losing paths may be
+  grafted on only if cohesiveness survives, and never into a wonder beat.
+- **Attack the winner.** One agent argues as hard as it can that the winner is the wrong
+  choice and proposes a better one. Its replacement must be at least as beautiful; "too
+  much maths" or "too little explained" alone does not win, since the ladder answers both.
+  If it is right, go back to "20 to 5".
+
+### 6. Teacher
+
+Now make the chosen path teach as well as it can, without spending its magic:
+
+- **Mark every beat** as wonder or teaching. Wonder beats get no voice and no maths during
+  them; give each its setup (what to watch for) before it and, if needed, its explanation
+  after it.
+- **Climb the ladder for each teaching beat**: the picture alone, then maths on screen,
+  then voice, stopping at the first rung that gets the viewer there. Record the rung and
+  the reason. If a beat needs rung 3 for a long stretch, ask whether a different picture
+  would let it stop at rung 1 before accepting the words.
+- **For teaching beats that do need rungs 2 and 3**, reach for these:
+  - **Rediscovery**: what would the viewer try first, and why does it fail? Let the right
+    idea feel forced, not handed down.
+  - **Derive on screen**: a line is written, a term moves, cancels or expands, and the
+    viewer sees where each piece came from (`transform` between formulas).
+  - **The viewer's doubt**: name the objection the viewer is having ("but why should the
+    echoes line up?") and answer it, instead of lecturing past it.
+  - **Admit what is glossed over**, in a sentence, where it matters.
+
+- **The central picture is the idea**, not a decoration of it.
+- **Let the picture argue.** The viewer sees that something is true instead of being told.
+  (To show two operations are the same, run them side by side on identical objects and let
+  them move identically.)
+- **Say, show, say.** For each stretch: a short setup in words (what to watch for), then
+  the animation alone, long enough to be understood without help, then words again only if
+  something still needs saying. In a wonder beat the "show" is never interrupted.
+- **Two layers, voice and equation.** Narration says what is happening *and* what it means
+  mathematically, in words ("every N samples the hands line up: that is the echo"). The
+  equation on screen is the exact statement of that meaning, and it stays up so the eye
+  can come back to it. They never duplicate each other: the voice explains what the
+  equation means, never reads it out symbol by symbol, and a narrated meaning still gets
+  its equation. When what happens and what it means are obviously the same thing (the
+  hands lining up *is* the echo), say it once, in one sentence, and let the equation
+  carry the rest.
+- **Write the silent test** for each animation: what should the viewer work out from it
+  with no voice? For a teaching beat this is rung 1 of its ladder; for a wonder beat it is
+  what it makes the viewer want. If the answer is "nothing", the animation or the setup is
+  wrong.
+- **Name what is hard**: the one step where people get lost. Give it the most time.
+- **Plan the returns**: cases that run through the same animation, each changing one thing.
+  The last should surprise.
+- **Fill every hold with extensions.** For each hold, list its stretches in order, each
+  with what it shows that the ones before did not, enough of them to carry the hold's
+  whole length. If the list is too short for the hold, find more of the idea or shorten
+  the hold; never leave the builder time it can only fill by replaying.
+- **Place the predictions**: points where the picture holds before answering.
+- **Earn every symbol, then use it.** A word or equation appears only after the viewer has
+  seen the thing it names, and then it stays while that thing is on stage. For each
+  animation, list the mathematics on screen: the formula, the number that turns (shown
+  live), the labelled features, and the line of working that goes with each "why".
+- **End on the picture, changed**: the opening picture again, now understood. If the path
+  ends on an ending card, the ending is its morph: check that both halves are planted,
+  that neither gives the reveal away, and that the morph runs on screen, not in words.
+- **Stay true.** A simplification may leave things out; it may not say something false.
+  Note what was left out.
+
+### 7. Cinematographer
+
+One agent owns everything the eye gets: the stage, color, motion, the camera, the verbs,
+the transitions and the text. It may not change what is taught, only how it looks, and it
+works on the Teacher's draft, so every choice lands on a hold, a silent stretch or a word
+the Teacher already placed. Where a visual choice would make an animation fail its silent
+test, the teaching wins.
+
+**Stage.** Midnight black. One animation, full frame: the mathematics reaches the edges,
+not a small figure in the middle of a slide. It keeps the stage; do not cut away and come
+back. Variation comes from inside it. Full, bright color is welcome when the mathematics
+is that full (a domain coloring, a tiling).
+
+**Color.** Hue is structure: assign color by something mathematical (phase, position in a
+lattice, which tile, time along a path), and then the whole wheel is welcome. Where color
+encodes no quantity, use two or three hues, each with a meaning that holds for the whole
+video, and write the meanings down. Choose the palette from the feel of the subject.
+
+**Motion.** Draw things on rather than switching them on; how a thing appears should show
+how it is made. Slow is the default. During a hold something is always changing a little.
+With the voice, each motion belongs to a word; without it, motion follows the music. One
+animation becomes the next: an object carries over, morphs, or the camera travels through.
+
+**The big moves** are how an animation renews itself while keeping the stage, mostly in
+the silent stretches:
+
+- **One number turns.** The camera is still, one anchor stays fixed, and a single
+  parameter changes slowly so the whole picture reorganises around the anchor. The
+  workhorse.
+- **Sweep.** The camera travels steadily across or around a structure too large or too rich
+  for one frame, so the viewer discovers it piece by piece. "Look how much is here."
+- **Lift.** The camera pulls up and away from a detail the viewer has been studying until
+  the whole is in view, and the detail turns out to be one part of a larger pattern. "What
+  you just understood is everywhere." Its reverse, the descent, goes from the whole into
+  one part.
+- **Passage.** The camera goes into or through the object until its color fills the frame,
+  and comes out in the next animation.
+
+Each must show something the viewer could not see before it began, start and end at rest,
+end on a composed frame that then holds, and bring into view only things already alive.
+
+**Text and math.** Little prose: one large plain label naming what is happening is often
+all the words a frame needs. The mathematics is another matter: place the Teacher's
+formulas, live values and labels so they are readable without covering what is being
+studied (at the edge of the stage, at the theme's sizes), and give each term of a
+formula the color of the thing it names, so formula and picture read as one. A formula
+changes with `transform` as the picture changes, and leaves when its object leaves.
+When a picture is breathtaking and also carries the idea, share time, not space: it runs
+alone and full frame first, then at its key moment the motion slows, what is not needed
+dims, and the line of math is written into the dark part, held, and taken away. Pure
+spectacle with nothing more to read gets the frame with no math. A wonder beat gets the
+frame with no text and no math for its whole length; the math belongs to the teaching
+beats around it.
+
+**Verbs.** Only now, with the path chosen and drawn in imagination, read phasor's verbs
+and camera moves in `kit/docs/API.md` (the list grows; read it each time, do not work from
+memory). The order matters: ideas formed with the tool list in view shrink to fit it.
+
+- Give each motion in the plan the verb that does it best.
+- Then read the list once more for inspiration: is there a verb that would show this
+  object in a way nobody imagined? Verbs are welcome anywhere, and especially in the long
+  holds and in a pause on a great idea, where a well-placed verb keeps the picture alive
+  while the viewer thinks.
+- Every verb must either reveal something or keep the picture alive. One that does neither
+  is decoration; leave it out.
+- Mark on each animation where each verb lands (which moment of the hold, which word), so
+  Sound can meet it.
+- A motion the plan wants that no verb or animation can do stays in the plan as imagined
+  and goes under "Wanted additions": what it should do, and where the plan uses it. Do not
+  swap it for a weaker motion that exists.
+
+### 8. Sound
+
+Mark cues on the animation list; do not compose. Work on the Cinematographer's draft: an
+accent belongs where a verb lands.
+
+- **Music** carries the silent stretches, so it matters as much as the voice: one ambient
+  bed, sitting back under the voice and coming forward when the voice stops.
+- **Sounded mathematics**: where the subject has a natural sound, note it as MIDI (a
+  frequency, a rhythm, a pitch that rises with a value, a note for each element or return).
+- **Accents**: a soft sound on a reveal, a landing, a collision. Few, quiet, the same sound
+  for the same kind of event.
+- **Silence**: a short quiet before the payoff.
+
+### 9. Editor
+
+A fresh agent reads the plan as the viewer from step 1 and answers each; fix what fails:
+
+1. Do the first ten seconds make me want the answer?
+2. Do I reach this path's point B, and feel it? Is it a destination worth a whole video?
+3. With the voice off, how much would I still understand? If little, the animations are
+   illustrating the words instead of teaching.
+4. Is the voice explaining something the animation already shows? Cut the words.
+5. Does every animation earn its place and fit with the others? Cut any that fills time;
+   restore any cut to save it.
+6. Is any animation taken off the stage before it has finished its work?
+7. Is any animation small, or sharing the frame?
+8. Does anything break the spell?
+9. Does each color still mean what it meant at the start?
+10. Is anything said that is not true?
+11. Held next to the reference clips below, where does this fall short?
+12. Was any idea weakened to fit phasor? Restore it and list it under "Wanted additions".
+13. Is any verb there only as decoration? Cut it.
+14. If the plan uses a weave, do the two ideas truly live in one object, or were they
+    stapled together?
+15. In any hold, did I watch the same thing twice? Each stretch must show something new;
+    replace a replay with an extension of the idea, or shorten the hold.
+16. Pausing on any frame, could I write down the mathematics from the screen alone (what
+    formula, which number, what value)? If not, the plan is showing too little math.
+17. If the video ends on two things turning out to be one, had I met both earlier, did
+    the morph show me, and was the reveal a surprise? If the reveal is forced, end on the
+    payoff instead.
+18. Was any wonder beat interrupted to explain itself? Move the explanation before or
+    after it.
+19. Did any teaching beat climb higher on the ladder than it needed? Could a different
+    picture have let it stop lower?
+20. Was anything explained that would have been better left as wonder?
+21. Was a breathtaking path traded for a safer one anywhere along the way? Say where, and
+    whether the trade was worth it.
+
+If the Editor finds the path itself weak, go back to the map; do not patch.
+
+### 10. Hand back
+
+Write `plans/NAME.mixed.md` (so it sits beside a `/scene-plan` plan for the same idea) in
+this shape, then show it to the person and stop. Do not start
+`/scene-builder` until they approve.
+
+```markdown
+# NAME: the title
+
+**Point A:** the opening question
+**Point B:** what the viewer understands or feels at the end
+**Ending:** the ending card used (the two things, the morph, where each is planted), or
+"none: ends on the payoff"
+**Viewer:** ...   **Length and feel:** ...
+
+## The path
+Three or four sentences.
+Runners-up: the two best paths that lost, one line each, and why.
+
+## Look
+The central picture. What color encodes. The music bed.
+
+## Animations
+### 1. What fills the stage
+- **Kind:** wonder or teaching; for teaching, the rung reached (picture, + maths, + voice)
+  and why the rung below was not enough
+- **While it holds:** its stretches, in order (iterations, cases, parameters, big moves),
+  each with roughly how long, what it shows that the earlier ones did not, the verb for
+  each motion and where it lands. Enough stretches for the whole hold; no replays
+- **On screen:** the formula, the live value, the labels, the line of working, and when
+  each comes in and leaves
+- **Say before:** brief; the gist, for the person to put in their own words: what is
+  happening and what it means mathematically (one sentence when they are the same), and
+  which on-screen equation states that meaning
+- **Silent stretch:** how long, and what the viewer should work out alone
+- **Say after:** if anything
+- **Sound:** ...
+- **Becomes the next by:** ...
+
+## Left out
+What was simplified away.
+
+## Wanted additions
+Each animation or verb the plan wants that phasor does not have yet: what it should do,
+which animation uses it, and the closest thing that exists today.
+```
+
+Add each wanted addition to `WISHLIST.md` as its own line too. Keep `map.md` and
+`weaves.md`; a later video on a nearby idea can start from them. In your reply give the
+path in a few sentences, the list of animations by title, the wanted additions, and the
+file.
+
+## The reference: 2swap
+
+What the person admires, in their words: an animation takes the whole stage and keeps it;
+he often does not talk for half the video; he explains briefly, lets the animation do the
+talking, and sometimes explains more afterwards. Two clips they named (described from
+their account and still frames):
+
+- **"don't flip, algebra inside", 6:55 to 7:10.** The video opens on a full-frame color
+  field before any explanation. Two identical rainbow lattices sit side by side, labelled
+  only "×i ×j" and "×ij": the sameness is seen, not stated. Within seconds the lattice
+  gives way to color filling the frame as the chapter changes.
+- **"i'm so bad at billiards that i ended up in the hyperbolic plane", 5:00 to 5:40.** One
+  green polygon stays fixed at the centre while the whole tiling around it changes shape
+  continuously; every tile its own color, finer and finer detail in the gaps; no text; one
+  picture, slowly changing, held for about 40 seconds.
