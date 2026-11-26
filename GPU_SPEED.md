@@ -487,7 +487,7 @@ The path of one kernel-drawn object, **once per motion-blur sample** (4 a moving
 | --- | --- | --- | --- |
 | 1. kernel | the field on the card | 1-10 ms | fine |
 | 2. host maths | colouring, averaging, culling, root finding in NumPy | 80-760 ms a sample | 9a, 9b, 9c done; 9d (roots) open |
-| 3. card -> host -> card | `gpu.render` stitches tiles on the host, so a kernel's result is copied down and, for a second kernel, back up | fractal: 133 MB each way a sample (the 4x supersampled escape field) | **10a** |
+| 3. card -> host -> card | `gpu.render` stitches tiles on the host, so a kernel's result is copied down and, for a second kernel, back up | fractal: 33 MB each way a sample (the escape field at 2x2 supersampling) | **10a** |
 | 4. card -> host | the finished float32 pixels (33 MB at 1080p) | a few ms + | **10b** |
 | 5. float32 -> float16 | `CopyBridge.upload`, one CPU core, also when the field did not change | 23 ms a field here (measured alone) | **10b** |
 | 6. host -> GL texture | 16 MB | ~3 ms | 10b; step 5's interop removes it |
