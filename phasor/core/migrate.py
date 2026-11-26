@@ -60,9 +60,9 @@ def _v7_to_v8(raw: dict[str, Any]) -> dict[str, Any]:
 
 
 def _v8_to_v9(raw: dict[str, Any]) -> dict[str, Any]:
-    """Version 9 added ``sounds`` (notes and sound files on the soundtrack). Older documents
-    are silent apart from their narration."""
-    raw.setdefault("sounds", [])
+    """Version 9 added the ``sound`` section (beds and cues beside the narration, SOUND.md).
+    Older documents have no sound apart from their narration."""
+    raw.setdefault("sound", {"beds": [], "cues": []})
     return raw
 
 

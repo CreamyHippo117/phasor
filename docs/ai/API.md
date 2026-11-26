@@ -255,59 +255,90 @@ assert s4.engine.lint(strict=True) == []
   are cached in `<title>.narration/` beside the script. Your own recordings:
   `phasor.voice.from_recordings(script, wavs, aligner, base_dir, theme)` with
   `WhisperX()` or `TimingsFile()`.
-- `phasor render` muxes the narration into the video, with any sounds (next section).
+- `phasor render` muxes the narration into the video, with any beds and cues (next section).
 
-## Sound: notes and sound files on the soundtrack
+## Sound: a bed under the narration, cues on the markers
 
 ```python
 import tempfile
 from pathlib import Path
 
 import numpy as np
+import soundfile
 
 from phasor import Dot, Scene
-from phasor.time.narration import write_wav
 
-folder = Path(tempfile.mkdtemp())  # the scene's folder: sound files live here
-write_wav(folder / "knock.wav", (8000 * np.hanning(480)).astype(np.int16), 48000)
+folder = Path(tempfile.mkdtemp())  # the scene's folder: its audio files live here
+t = np.arange(4 * 24000) / 24000
+pad = 0.3 * np.sin(2 * np.pi * 110 * t) * (0.7 + 0.3 * np.sin(2 * np.pi * 0.5 * t))
+soundfile.write(folder / "pad.ogg", np.stack([pad, pad], axis=1), 24000)  # any rate, any format
 
 s5 = Scene("chime", passes=None, base_dir=folder)
 s5.add(Dot(id="bell", pos=(0, 0), r=0.3))
 s5.narrate("The bell rings [[ring]] and then someone knocks [[knock]] twice.", voice="estimate")
 s5.at("ring").flash("bell")
-s5.note(69, at="ring", amp=0.3, dur=0.8, voice="bell")  # A4 = 440 Hz, on the word
-s5.note(76, at=("ring", 0.25), amp=0.2, voice="pluck")  # E5, a quarter second later
-s5.sound("knock.wav", at="knock", gain=0.8)  # a WAV from the folder
-s5.sound("knock.wav", at=("knock", 0.3), gain=0.8, id="knock_again")
-ids = [x.id for x in s5.engine.document.sounds]
-assert ids == ["note_a4_ring", "note_e5_ring", "sound_knock_knock", "knock_again"]
+s5.bed("pad.ogg", fade=1.0)  # the whole scene, looped, 18 dB under the voice, ducked in speech
+s5.cue("ring", "chime", gain=-12)  # a built-in, 12 dB under the voice
+s5.cue("knock", "tone", offset=-0.1, midi=57, voice="pluck", pan=-0.4)  # just before the word
+s5.cue(("knock", 0.3), "pop", id="knock_again")
+assert [c.id for c in s5.engine.document.sound.cues] == [
+    "cue_chime_ring",
+    "cue_tone_knock",
+    "knock_again",
+]
 
-samples, rate = s5.engine.audio_track()  # mono int16: narration (if recorded) + sounds
-ring = s5.engine.document.timeline.markers["ring"]
-assert rate == 48000 and samples[round(ring * rate)] == 0  # every note starts at 0 ...
-assert np.abs(samples).max() <= 0.9 * 32768  # ... and the mix never passes -1 dBFS
+samples, rate = s5.engine.audio_track()  # stereo int16, 48 kHz: voice + bed + cues
+assert samples.shape[1] == 2 and rate == 48000
+report = s5.engine.sound_report()  # what it sounds like, in numbers
+bed = next(lane for lane in report["lanes"] if lane["id"] == "bed_pad")
+assert bed["duck_db"][0] < -7  # dipped 8 dB while the sentence is spoken
+assert report["true_peak_dbtp"] <= -0.9  # the limiter's ceiling, -1 dBTP
+assert not [i for i in s5.engine.lint(strict=True) if i.code == "cue_unanchored"]
 ```
 
-- `s.note(midi, at, amp=0.3, dur=0.5, voice="sine", id=None)`: a dry synthesized note.
-  `midi` 69 is A4 (440 Hz; fractions are microtones). `amp` is its peak (share of full
-  scale), `dur` its whole length (5 ms attack and 30 ms release inside it). Voices: `sine`,
-  `soft` (a few steady harmonics), `pluck` (harmonics that die away), `bell` (inharmonic).
-  No randomness: the same document always gives the same samples.
-- `s.sound(path, at, gain=1.0, id=None)`: a 16-bit PCM WAV inside the scene's folder (any
-  rate; it is resampled to the mix's). Missing: lint `missing_file`; not 16-bit PCM:
-  `bad_sound_file`; longer than the scene: `sound_cut` (a file does not lengthen the scene;
-  a note does, to its end). Each stays silent or is cut; the render never fails on it.
-- `at` is seconds, a marker, or `("marker", offset)`, like every motion: re-narrate and the
-  sounds move with the words. Ids are `note_<pitch>_<marker>` / `sound_<file>_<marker>`
-  unless you give one; they share the id space with objects and are never reused.
-- The mix (`Engine.audio_track`, and so `phasor render` and every video preset) places an
-  event at sample `round(t * rate)`; the rate is the narration's, or 48 kHz. The narration
-  is never changed: where it plus the sounds would pass -1 dBFS (or the voice's own level,
-  if louder), only the sounds are turned down, with a 10 ms look-ahead ramp, so nothing clips.
-- Patch ops: `add_sound` / `set_sound` (`sound: {kind: "note", id, at, midi, amp, dur, voice}`
-  or `{kind: "file", id, at, path, gain}`; `set_sound` replaces the one with that id) and
-  `remove_sound` (`id`). The editor's timeline lists them in `Engine.timeline()["sounds"]`;
-  the editor itself plays no audio (render a `draft` to hear it).
+The document's `sound` section holds **beds** (music or ambience under a stretch of the
+scene) and **cues** (one-shot sounds on markers); the **voice** is the narration. Files are
+any format `soundfile` reads (WAV, FLAC, OGG, MP3) and live in the scene's folder.
+
+- `s.cue(at, sound, offset=0.0, gain=None, pan=0.0, midi=None, dur=None, voice=None, id=None)`:
+  `at` is a marker (or `("marker", offset)`; raw seconds work but `lint(strict=True)` says
+  `cue_unanchored`). `sound` is a built-in or a file. Built-ins are synthesized from the cue's
+  id and the scene's seed (no downloads, the same samples every time): `tick` (a click),
+  `chime` (a small bell; `midi`, default 84), `whoosh` (a rising noise sweep, loudest at 70 %
+  of `dur`, default 0.6 s: start it `0.7 * dur` and a little before the word), `pop` (a
+  short drop into `midi`, default 76), `swell` (a chord and breath growing for `dur`,
+  default 2 s, to its end; `midi` 60), `tone` (a dry note: `midi` 69 = A4 = 440 Hz,
+  fractions are microtones, `dur` 0.5, `voice` `sine`, `soft`, `pluck` or `bell`). A
+  built-in holds the scene open until it ends; a file cue only to its start (`sound_cut`
+  says when it is cut).
+- `s.bed(path, start=None, end=None, gain=None, fade=2.0, fade_in=None, fade_out=None,
+  loop=True, id=None)`: from marker `start` to marker `end` (None: the scene's start, end),
+  looped unless `loop=False`. Fades are equal-power, so two beds whose fades overlap
+  crossfade. A bed does not lengthen the scene.
+- `gain` is **loudness in LU relative to the voice**, not a peak: the theme's `[sound]`
+  sets the voice to `target` (-16 LUFS), beds to `bed` (-18: 18 under) and cues to `cue`
+  (-10), measured by ITU BS.1770 (a bed by its integrated loudness, a cue by its loudest
+  400 ms). While the narration speaks, beds dip by `duck` (8 dB), starting `attack` before
+  the first word and recovering over `release` after the last.
+- The mix (`Engine.audio_track()`, so `phasor render` and every preset): stereo, 48 kHz,
+  then a final trim to `target` and a soft-knee limiter at `ceiling` (-1 dBTP). A
+  narration-only scene is its narration, untouched (copied to both channels). With
+  estimated timing (no recorded voice yet) nothing is trimmed, so the lanes sit where they
+  will under the voice.
+- `Engine.sound_report()` (MCP `sound_report`): loudness per lane per spoken block, how far
+  each bed sits under the voice there (`under_voice_lu`) and how deep it ducks (`duck_db`),
+  the trim and the true peak, and the sound lint. A storyboard of a scene with sound has the
+  loudness lanes drawn under its stills (`Engine.sound_lanes()`).
+- Lint: `missing_file`, `bad_sound_file` (cannot be decoded), `sound_cut`,
+  `bed_masks_voice` (a bed within `[sound] masking` dB of the voice while it speaks; the fix
+  lowers the bed), `cue_on_word` (a cue's peak within `word_gap` of a word of four letters
+  or more: move it into a pause or just before), `audio_clip` (the mix over full scale by
+  `clip` dB before the limiter: cues piling up), `cue_unanchored` (strict).
+- Patch ops: `add_bed` / `set_bed` (`bed: {id, path, start, end, loop, gain, fade_in,
+  fade_out}`), `add_cue` / `set_cue` (`cue: {id, at, sound, gain, pan, midi, dur, voice}`;
+  `set_*` replaces the one with that id) and `remove_sound` (`id`, a bed or a cue, retired
+  like a removed object's). The editor's timeline lists them in `Engine.timeline()["beds"]`
+  and `["cues"]`; the editor itself plays no audio yet (render a `draft` to hear it).
 
 ## Animate with verbs
 
@@ -497,8 +528,9 @@ lint_added, lint_resolved)`. Each error has `code`, `message`, `ids`, `path`, `f
 | `add_constraint` | `rule`, `priority` (`required`/`strong`/`medium`/`weak`, default `strong`) |
 | `set_narration` | `narration` (from `phasor.voice.narrate`) or `null`; replaces the markers it owns |
 | `remove_constraint` | `rule` |
-| `add_sound` / `set_sound` | `sound`: `{kind: "note", id, at, midi, amp, dur, voice}` or `{kind: "file", id, at, path, gain}` |
-| `remove_sound` | `id` (retired like a removed object's) |
+| `add_bed` / `set_bed` | `bed`: `{id, path, start, end, loop, gain, fade_in, fade_out}` (`start`/`end` a time or null) |
+| `add_cue` / `set_cue` | `cue`: `{id, at, sound, gain, pan, midi, dur, voice}` (`sound` a built-in or a file) |
+| `remove_sound` | `id` of a bed or a cue (retired like a removed object's) |
 
 On a scene built by a script, `set_param`, `set_style` and `add_constraint` are stored as
 tweaks in `name.overrides.json` and survive re-running the script; other ops are refused

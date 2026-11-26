@@ -18,7 +18,7 @@ from phasor.core.values import normalize
 
 SCHEMA_VERSION = 9  # 2: `constraints` (M2); 3: `retired_ids`; 4: `narration`, `Segment.verb` (M4);
 # 5: `meta.life`, `meta.seed`, `meta.look` (M7); 6: `controls` (M12); 7: `meta.palette`;
-# 8: `meta.modules`, `ObjectSpec.always` (M15, ADR 0005); 9: `sounds` (notes and WAV files)
+# 8: `meta.modules`, `ObjectSpec.always` (M15, ADR 0005); 9: `sound` (beds and cues; SOUND.md)
 OVERRIDES_VERSION = 1
 
 
@@ -161,41 +161,97 @@ class Narration(Model):
         return max((b.start + b.duration for b in self.blocks), default=0.0)
 
 
-def _check_wav(path: str) -> str:
-    """A sound file the document plays: a ``.wav`` inside the scene's folder (contract 3)."""
+# Audio files a bed or a cue may play (decoded by ``soundfile``; SOUND.md).
+AUDIO_EXTENSIONS = (".wav", ".flac", ".ogg", ".oga", ".mp3", ".aif", ".aiff")
+# Synthesized effects (``time/sound.py``), so a scene needs no downloads, and which of
+# ``midi`` (pitch), ``dur`` (length) and ``voice`` (timbre) each one takes.
+BUILTIN_SOUNDS: dict[str, tuple[str, ...]] = {
+    "tick": (),
+    "chime": ("midi",),
+    "whoosh": ("dur",),
+    "pop": ("midi",),
+    "swell": ("midi", "dur"),
+    "tone": ("midi", "dur", "voice"),
+}
+
+
+def _check_audio(path: str) -> str:
+    """A sound file the document plays, inside the scene's folder (contract 3)."""
     path = relative_path(path)
-    if not path.lower().endswith(".wav"):
-        raise ValueError(f"sound {path!r} must be a .wav file (16-bit PCM)")
+    if not path.lower().endswith(AUDIO_EXTENSIONS):
+        raise ValueError(f"sound file {path!r} must be one of {', '.join(AUDIO_EXTENSIONS)}")
     return path
 
 
-class Note(Model):
-    """A synthesized note on the soundtrack (SPEC "Sound events"): a dry voice, no reverb, no
-    randomness. ``at`` is seconds or a marker (plus offset), so retiming the narration moves
-    it like any motion anchored there. ``amp`` is the note's peak as a share of full scale;
-    ``dur`` is its whole length, attack and release included."""
+def _check_cue_sound(value: str) -> str:
+    """A built-in sound's name, or an audio file in the scene's folder."""
+    if not isinstance(value, str):
+        raise ValueError("a cue's sound is a built-in's name or a file path")
+    if value in BUILTIN_SOUNDS:
+        return value
+    if "." not in value.replace("\\", "/").rsplit("/", 1)[-1]:
+        raise ValueError(f"{value!r} is not a built-in sound ({', '.join(BUILTIN_SOUNDS)}) "
+                         "and names no audio file")  # fmt: skip
+    return _check_audio(value)
 
-    kind: Literal["note"] = "note"
+
+AudioPath = Annotated[str, PlainValidator(_check_audio)]
+
+
+class Bed(Model):
+    """Music or ambience under a stretch of the scene (SOUND.md): a file from the scene's
+    folder, from ``start`` to ``end`` (each a marker, seconds, or None for the scene's start
+    and end), looped or not. ``gain`` is its loudness in LU relative to the voice (None: the
+    theme's ``[sound] bed``). Fades are equal-power, so two beds whose fades overlap
+    crossfade. Beds dip by ``[sound] duck`` dB while the narration speaks."""
+
+    id: str
+    path: AudioPath
+    start: TimeRef | None = None
+    end: TimeRef | None = None
+    loop: bool = True
+    gain: float | None = Field(None, ge=-60, le=6)
+    fade_in: float = Field(2.0, ge=0, le=60)
+    fade_out: float = Field(2.0, ge=0, le=60)
+
+
+class Cue(Model):
+    """A one-shot sound at ``at``, a marker plus offset (``lint(strict=True)`` reports a cue
+    at raw seconds as ``cue_unanchored``): a built-in (``BUILTIN_SOUNDS``) or an audio file
+    in the scene's folder. ``gain`` is its loudness in LU relative to the voice (None: the
+    theme's ``[sound] cue``), ``pan`` -1 (left) to 1 (right). ``midi``, ``dur`` and ``voice``
+    shape the built-ins that take them (None: that built-in's default)."""
+
     id: str
     at: TimeRef
-    midi: float = Field(ge=0, le=127)  # 69 is A4 = 440 Hz; fractions are microtones
-    amp: float = Field(0.3, ge=0, le=1)
-    dur: float = Field(0.5, gt=0, le=60)
-    voice: Literal["sine", "soft", "pluck", "bell"] = "sine"
+    sound: Annotated[str, PlainValidator(_check_cue_sound)]
+    gain: float | None = Field(None, ge=-60, le=6)
+    pan: float = Field(0.0, ge=-1, le=1)
+    midi: float | None = Field(None, ge=0, le=127)  # 69 is A4 = 440 Hz; fractions are microtones
+    dur: float | None = Field(None, gt=0, le=60)
+    voice: Literal["sine", "soft", "pluck", "bell"] | None = None
+
+    @model_validator(mode="after")
+    def _check_knobs(self) -> Cue:
+        takes = BUILTIN_SOUNDS.get(self.sound, ())
+        for knob in ("midi", "dur", "voice"):
+            if getattr(self, knob) is not None and knob not in takes:
+                what = f"the built-in {self.sound!r}" if self.builtin else "a sound file"
+                also = f" (it takes {', '.join(takes)})" if takes else ""
+                raise ValueError(f"cue {self.id!r}: {what} takes no {knob}{also}")
+        return self
+
+    @property
+    def builtin(self) -> bool:
+        return self.sound in BUILTIN_SOUNDS
 
 
-class SoundFile(Model):
-    """A recorded sound on the soundtrack: a 16-bit WAV inside the scene's folder, started at
-    ``at`` and scaled by ``gain``. A missing file is lint ``missing_file`` and stays silent."""
+class Sound(Model):
+    """The document's sound beside its narration (SOUND.md): beds under stretches of the
+    scene and one-shot cues. The third lane, the voice, is the narration itself."""
 
-    kind: Literal["file"] = "file"
-    id: str
-    at: TimeRef
-    path: Annotated[str, PlainValidator(_check_wav)]
-    gain: float = Field(1.0, ge=0, le=4)
-
-
-SoundSpec = Annotated[Note | SoundFile, Field(discriminator="kind")]
+    beds: tuple[Bed, ...] = ()
+    cues: tuple[Cue, ...] = ()
 
 
 class Timeline(Model):
@@ -260,8 +316,8 @@ class Document(Model):
     # Ids of removed objects. They may never be used again (SPEC contract 2).
     retired_ids: tuple[str, ...] = ()
     narration: Narration | None = None
-    # Notes and sound files mixed into the soundtrack with the narration (SPEC "Sound events").
-    sounds: tuple[SoundSpec, ...] = ()
+    # Beds and cues mixed with the narration (SPEC "Sound", SOUND.md).
+    sound: Sound = Field(default_factory=Sound)
     cameras: tuple[CameraSpec, ...] = (CameraSpec(id="camera"),)
     timeline: Timeline = Field(default_factory=Timeline)
 
@@ -274,7 +330,7 @@ class Document(Model):
             if thing.id in seen:
                 raise ValueError(f"duplicate id {thing.id!r}")
             seen.add(thing.id)
-        for sound in self.sounds:  # sounds share the id space (and its retirement) with objects
+        for sound in (*self.sound.beds, *self.sound.cues):  # one id space, one retirement
             if not is_valid_name(sound.id):
                 raise ValueError(f"invalid sound id {sound.id!r}: must match [a-z][a-z0-9_]*")
             if sound.id in seen:
@@ -320,8 +376,11 @@ class Document(Model):
     def camera(self, camera_id: str) -> CameraSpec | None:
         return next((c for c in self.cameras if c.id == camera_id), None)
 
-    def sound(self, sound_id: str) -> Note | SoundFile | None:
-        return next((s for s in self.sounds if s.id == sound_id), None)
+    def bed(self, bed_id: str) -> Bed | None:
+        return next((b for b in self.sound.beds if b.id == bed_id), None)
+
+    def cue(self, cue_id: str) -> Cue | None:
+        return next((c for c in self.sound.cues if c.id == cue_id), None)
 
 
 class Overrides(Model):

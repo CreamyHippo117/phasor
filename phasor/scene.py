@@ -25,11 +25,12 @@ from phasor.core import io
 from phasor.core.ids import file_stem
 from phasor.core.objects import ObjectBase, scene_module
 from phasor.core.patch import (
+    AddBed,
     AddConstraint,
     AddControl,
+    AddCue,
     AddObject,
     AddSegment,
-    AddSound,
     SetCamera,
     SetMarker,
     SetMeta,
@@ -37,15 +38,15 @@ from phasor.core.patch import (
     SetParam,
 )
 from phasor.core.schema import (
+    Bed,
     Control,
+    Cue,
     Document,
     ExprSpec,
     MarkerRef,
     Meta,
-    Note,
     ObjectSpec,
     Segment,
-    SoundFile,
 )
 from phasor.engine import Engine
 from phasor.style.looks import DEFAULT_THEME, default_look, load_look
@@ -62,6 +63,12 @@ def _time_ref(t: TimeArg) -> float | MarkerRef:
     if isinstance(t, tuple):
         return MarkerRef(marker=t[0], offset=float(t[1]))
     return float(t)
+
+
+def _stem(sound: str) -> str:
+    """A sound's name as an id part: ``chime``, or a file's stem (``audio/Drift 2.ogg``:
+    ``drift_2``)."""
+    return re.sub(r"[^a-z0-9_]+", "_", Path(sound).stem.lower()).strip("_") or "file"
 
 
 def expr(source: str) -> ExprSpec:
@@ -351,40 +358,60 @@ class Scene:
         seg = Segment(t0=_time_ref(t0), t1=_time_ref(t1), to=to, ease=ease)
         self._apply(AddSegment(path=path, segment=seg))
 
-    def note(self, midi: float, at: TimeArg, *, amp: float = 0.3, dur: float = 0.5,
-             voice: str = "sine", id: str | None = None) -> str:  # fmt: skip
-        """Play a synthesized note on the soundtrack: ``s.note(69, at="hit")`` is A4 (440 Hz)
-        at the marker ``hit`` (or seconds, or ``("hit", 0.25)``: the marker plus an offset).
-        ``amp`` is its peak (share of full scale), ``dur`` its whole length in seconds, and
-        ``voice`` one of ``sine``, ``soft``, ``pluck``, ``bell``: dry and deterministic.
-        Rendered videos mix it with the narration. Returns its id (``note_a4_hit`` unless
-        you give one)."""
+    def cue(self, at: TimeArg, sound: str, *, offset: float = 0.0, gain: float | None = None,
+            pan: float = 0.0, midi: float | None = None, dur: float | None = None,
+            voice: str | None = None, id: str | None = None) -> str:  # fmt: skip
+        """A one-shot sound on a marker (SOUND.md): ``s.cue("pole", "chime")``, or
+        ``s.cue("zoom", "audio/whoosh.wav", offset=-0.15)`` to land just before the word.
+        ``at`` is a marker (or ``("marker", offset)``; raw seconds work but
+        ``lint(strict=True)`` reports them as ``cue_unanchored``). ``sound`` is a built-in
+        (``tick``, ``chime``, ``whoosh``, ``pop``, ``swell``, ``tone``) or an audio file in
+        the scene's folder. ``gain`` is its loudness in LU relative to the voice (default:
+        the theme's ``[sound] cue``, -10), ``pan`` -1 to 1. ``midi`` tunes ``chime``, ``pop``,
+        ``swell`` and ``tone``; ``dur`` sets the length of ``tone``, ``swell`` and
+        ``whoosh``; ``voice`` is ``tone``'s timbre (``sine``, ``soft``, ``pluck``, ``bell``).
+        Returns its id (``cue_<sound>_<marker>`` unless you give one)."""
         when = _time_ref(at)
-        from phasor.time.sound import note_name
+        if offset:
+            when = (MarkerRef(marker=when.marker, offset=when.offset + offset)
+                    if isinstance(when, MarkerRef) else when + offset)  # fmt: skip
+        cid = id or self._sound_id(f"cue_{_stem(sound)}", when)
+        self._apply(AddCue(cue=Cue(id=cid, at=when, sound=sound, gain=gain, pan=pan, midi=midi,
+                                   dur=dur, voice=voice)))  # fmt: skip
+        return cid
 
-        sid = id or self._sound_id(f"note_{note_name(midi)}", when)
-        spec = Note(id=sid, at=when, midi=midi, amp=amp, dur=dur, voice=voice)
-        self._apply(AddSound(sound=spec))
-        return sid
+    def bed(self, path: str, *, start: TimeArg | None = None, end: TimeArg | None = None,
+            gain: float | None = None, fade: float = 2.0, fade_in: float | None = None,
+            fade_out: float | None = None, loop: bool = True,
+            id: str | None = None) -> str:  # fmt: skip
+        """Music or ambience under the scene (SOUND.md): ``s.bed("audio/drift.ogg",
+        start="intro", end="outro", gain=-18, fade=2.0)``. ``start`` and ``end`` are markers
+        (or seconds; None: the scene's start and end). The file (WAV, FLAC, OGG, MP3) lives
+        in the scene's folder and loops unless ``loop=False``. ``gain`` is its loudness in
+        LU relative to the voice (default: the theme's ``[sound] bed``, -18); while the
+        narration speaks it dips by ``[sound] duck`` dB. ``fade`` sets both equal-power
+        fades (or ``fade_in``/``fade_out``); overlapping beds crossfade. Returns its id
+        (``bed_<file>`` unless you give one)."""
+        bid = id or self._sound_id(f"bed_{_stem(path)}", None)
+        bed = Bed(id=bid, path=path, start=None if start is None else _time_ref(start),
+                  end=None if end is None else _time_ref(end), loop=loop, gain=gain,
+                  fade_in=fade if fade_in is None else fade_in,
+                  fade_out=fade if fade_out is None else fade_out)  # fmt: skip
+        self._apply(AddBed(bed=bed))
+        return bid
 
-    def sound(self, path: str, at: TimeArg, *, gain: float = 1.0, id: str | None = None) -> str:
-        """Play a 16-bit WAV file from the scene's folder on the soundtrack, from ``at``
-        (seconds, a marker, or ``("marker", offset)``), scaled by ``gain``. A missing file is
-        lint ``missing_file`` and stays silent. Returns its id (``sound_<file>_<marker>``)."""
-        when = _time_ref(at)
-        stem = re.sub(r"[^a-z0-9_]+", "_", Path(path).stem.lower()).strip("_") or "file"
-        sid = id or self._sound_id(f"sound_{stem}", when)
-        self._apply(AddSound(sound=SoundFile(id=sid, at=when, path=path, gain=gain)))
-        return sid
-
-    def _sound_id(self, stem: str, when: float | MarkerRef) -> str:
-        """``<stem>_<marker>`` (or ``_<ms>ms`` for seconds), unique among the scene's ids and
-        never one that was retired; a repeat gets ``_2``, ``_3``, ..."""
+    def _sound_id(self, stem: str, when: float | MarkerRef | None) -> str:
+        """``<stem>_<marker>`` (``_<ms>ms`` for seconds, ``<stem>`` alone without a time),
+        unique among the scene's ids and never one that was retired; a repeat gets ``_2``..."""
         doc = self.engine.document
-        base = f"{stem}_{when.marker}" if isinstance(when, MarkerRef) else (
-            f"{stem}_{abs(round(when * 1000))}ms")  # fmt: skip
+        if when is None:
+            base = stem
+        elif isinstance(when, MarkerRef):
+            base = f"{stem}_{when.marker}"
+        else:
+            base = f"{stem}_{abs(round(when * 1000))}ms"
         taken = {*(o.id for o in doc.objects), *(c.id for c in doc.cameras),
-                 *(x.id for x in doc.sounds), *doc.retired_ids}  # fmt: skip
+                 *(x.id for x in (*doc.sound.beds, *doc.sound.cues)), *doc.retired_ids}  # fmt: skip
         k, sid = 1, base
         while sid in taken:
             k += 1

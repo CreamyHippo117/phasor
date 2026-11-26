@@ -60,6 +60,9 @@ EXAMPLES = sorted(p.stem for p in (ROOT / "examples").glob("*.py")
 # Slow to build (minutes for riemann_sqrt's labels through an orbit): checked by their own
 # tests, and here only for lint.
 SLOW = {"deep_zoom", "residue_theorem", "riemann_sqrt"}
+# Narrated: the generated script does not reproduce narration (its audio belongs to the
+# voice), so what is anchored to its markers cannot be rebuilt from the code alone.
+NARRATED = {"sound_bed"}
 
 
 def _one(name: str, camera: str, passes="auto"):
@@ -183,7 +186,7 @@ def test_every_example_survives_save_and_load(name, tmp_path):
         assert json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
 
 
-@pytest.mark.parametrize("name", _examples())
+@pytest.mark.parametrize("name", [n for n in _examples() if n.values[0] not in NARRATED])
 def test_every_example_round_trips_through_its_python_code(name, tmp_path):
     """The Code tab's promise: the generated script rebuilds the same document."""
     import shutil

@@ -133,7 +133,8 @@ def render_file(
     return {
         "path": str(out), "size": size, "fps": fps, "frames": count, "encoder": writer.encoder,
         "narration": bool(sound and engine.document.narration is not None),
-        "sounds": len(engine.document.sounds) if sound else 0, "audio": bool(sound),
+        "sounds": (len(engine.document.sound.beds) + len(engine.document.sound.cues)
+                   if sound else 0), "audio": bool(sound),
         "warnings": warnings,
         "motion_blur": shutter > 0 and blur_samples > 1, "field_scale": field_scale,
     }  # fmt: skip
