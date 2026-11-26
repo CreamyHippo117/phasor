@@ -2,10 +2,10 @@
 
 ``document_to_python(doc)`` writes a script that, run, builds the same scene: objects with
 their parameters, style roles and tags, the camera, markers, animations (as ``at(...).to``),
-constraints, controls and sound (beds and cues). An object of a type defined in the scene's folder, or with
-updaters, is written as the document's own ``add_object`` op (ADR 0005). Narration blocks
-are not reproduced (their audio belongs to the voice module): a comment says so. Running the
-result and diffing it with the document gives no differences except narration
+constraints, controls and sound (beds and cues). An object of a type defined in the scene's
+folder, or with updaters, is written as the document's own ``add_object`` op (ADR 0005).
+Narration blocks are not reproduced (their audio belongs to the voice module): a comment says
+so. Running the result and diffing it with the document gives no differences except narration
 (``tests/test_pycode.py``).
 """
 

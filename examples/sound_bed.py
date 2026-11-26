@@ -15,7 +15,9 @@ s = Scene("sound_bed", look="prism")
 s.add(Dot(id="pole", pos=(-1.5, 0.0, 0.0), r=0.18))
 s.narrate(
     "Here is a pole [[pole_appears]].\n"
-    "Watch it move [[pole_moves]] across the plane.",
+    "[[pause 1.0]]\n"
+    "Watch it move [[pole_moves]] across the plane.\n"
+    "And there it comes to rest [[settled]].",
     voice="auto",  # espeak-ng when installed; otherwise timing only, and no voice to duck under
 )
 s.at("pole_appears").bloom_in("pole")
@@ -23,6 +25,7 @@ s.at("pole_moves").settle("pole.pos", (1.5, 0.0, 0.0))
 s.bed("assets/drift.wav", fade=1.5)
 s.cue("pole_appears", "chime")
 s.cue("pole_moves", "whoosh", offset=-0.25)
+s.cue("settled", "pop")
 s.pace()
 
 if __name__ == "__main__":

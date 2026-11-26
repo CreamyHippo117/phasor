@@ -13,6 +13,7 @@ import functools
 import math
 
 import numpy as np
+from numpy.random import Generator
 
 from phasor.core.rng import rng
 from phasor.core.schema import BUILTIN_SOUNDS
@@ -53,7 +54,7 @@ def _fade(x: np.ndarray, fade_in: float, fade_out: float) -> np.ndarray:
     return x
 
 
-def _tick(g: np.random.Generator) -> np.ndarray:
+def _tick(g: Generator) -> np.ndarray:
     """A small wooden tick: a short bright tone with a breath of noise, 40 ms."""
     t = _t(0.04)
     f = 2400.0 * (1.0 + 0.02 * g.standard_normal())
@@ -62,7 +63,7 @@ def _tick(g: np.random.Generator) -> np.ndarray:
     return tone + noise
 
 
-def _pop(g: np.random.Generator) -> np.ndarray:
+def _pop(g: Generator) -> np.ndarray:
     """A soft pop: a tone falling from about 700 Hz to 180 Hz, 90 ms."""
     t = _t(0.09)
     f0 = 700.0 * (1.0 + 0.03 * g.standard_normal())
@@ -71,7 +72,7 @@ def _pop(g: np.random.Generator) -> np.ndarray:
     return np.sin(phase) * np.exp(-t / 0.025)
 
 
-def _chime(g: np.random.Generator) -> np.ndarray:
+def _chime(g: Generator) -> np.ndarray:
     """A small glass bell: inharmonic partials over 880 Hz, each dying away, 1.8 s."""
     t = _t(1.8)
     base = 880.0 * (1.0 + 0.002 * g.standard_normal())
@@ -84,7 +85,7 @@ def _chime(g: np.random.Generator) -> np.ndarray:
     return out * attack
 
 
-def _band_noise(g: np.random.Generator, seconds: float, lo: float, hi: float,
+def _band_noise(g: Generator, seconds: float, lo: float, hi: float,
                 block: float = 0.01) -> np.ndarray:  # fmt: skip
     """Noise through a band-pass whose centre glides from ``lo`` to ``hi`` Hz (log scale),
     filtered block by block with the filter's state carried over."""
@@ -105,7 +106,7 @@ def _band_noise(g: np.random.Generator, seconds: float, lo: float, hi: float,
     return out
 
 
-def _whoosh(g: np.random.Generator) -> np.ndarray:
+def _whoosh(g: Generator) -> np.ndarray:
     """Air rushing past: band noise gliding up, swelling and fading, 0.7 s."""
     seconds = 0.7
     x = _band_noise(g, seconds, 300.0, 2600.0)
@@ -113,7 +114,7 @@ def _whoosh(g: np.random.Generator) -> np.ndarray:
     return x * np.sin(np.pi * t) ** 2
 
 
-def _swell(g: np.random.Generator) -> np.ndarray:
+def _swell(g: Generator) -> np.ndarray:
     """A rising swell: a soft fifth and low noise growing, then let go, 1.6 s."""
     seconds = 1.6
     t = _t(seconds)

@@ -338,14 +338,14 @@ def sound_rules(c: Compiled, m: Any) -> list[Issue]:
             if hits and bed is not None:
                 excess = max(e for _, e in hits)
                 lower = float(np.ceil(excess * 2.0) / 2.0)
-                fixed = bed.model_copy(update={"gain": round(bed.gain - lower, 2)})
+                fixed = {**bed.model_dump(mode="json"), "gain": round(bed.gain - lower, 2)}
                 times = [t for t, _ in hits]
                 out.append(Issue(
                     "bed_masks_voice", f"{lane.id}: {excess:.1f} dB too loud under the voice "
                     f"{_when(times)}", severity="warning", ids=(lane.id,),
                     path=f"sound.{lane.id}.gain", times=tuple(times),
                     fix_hint=f"lower {lane.id}'s gain by {lower:g} dB",
-                    fix=({"op": "set_bed", "bed": fixed.model_dump(mode="json")},),
+                    fix=({"op": "set_bed", "bed": fixed},),
                 ))  # fmt: skip
     bus = m.bus()
     peak = np.abs(bus).max(axis=1)
