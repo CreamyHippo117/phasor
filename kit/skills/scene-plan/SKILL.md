@@ -71,7 +71,8 @@ Do not ask where the video should end, and do not decide it yourself. Point B, w
 viewer understands or feels at the end, is the most important thing the brainstorm finds:
 fixed now, it would steer every lens toward one conclusion before any of them had looked.
 If the person's idea already names a destination, pass it to the brainstormers as one
-possible ending among those they are to find, not as the target.
+possible ending among those they are to find, not as the target. The same holds for the
+duality hunter's ending cards (step 2): candidates for point B, never the target.
 
 ### 2. Map
 
@@ -99,7 +100,7 @@ Mathematical lenses: each asks "what is this, seen from my field?"
 | Number theorist | Where do the integers or primes hide in this? | |
 | Physicist | What machine does this; what is conserved? | mechanics, waves, optics |
 | Computer scientist | What computes this? | |
-| Duality hunter | What other object is secretly the same as this one? | |
+| Duality hunter | What other object is secretly the same as this one? | always cast; its own brief below |
 
 Story lenses: skeptic (why would anyone doubt it), newcomer (what looks strange),
 puzzle-setter (what game leads here), misconception collector (what people wrongly
@@ -132,10 +133,43 @@ the feel, its lens and question, the house rules above, and these instructions:
   phasor draws well now.)
 - Write to `plans/NAME.work/round1/LENS.md`.
 
+**The duality hunter** is always in round one, and its brief is different. The other
+lenses diverge; this one converges. The strongest endings are often two things the viewer
+met separately turning out to be one thing ("the 2 in 2D is the same 2 as distance
+growing like the square root of time"), and that ending only lands if both halves were
+planted earlier. Found at the start, it can tell the paths what to plant; found at the
+end, it can only use what happens to be there.
+
+Its brief carries the idea, the viewer, the feel and the house rules. It also reads, if
+this folder has them, the cards in `ideas/` from `/scene-brainstorm` (`LEDGER.md`,
+`DEAD.md`, `VERDICTS.md`; a dead card is often the other half of an identity),
+`TASTE.md`, and `kit/examples/INDEX.md` (which pictures the viewer may already know). It
+sees no other lens's work. It returns **zero to three ending cards**, each with:
+
+- **The two things:** what the viewer meets early as A, and later as B.
+- **The map:** why they are the same, in one or two sentences, checkable like any claim.
+- **The morph:** the animation that turns A into B on screen. No morph, no card: an
+  identity you cannot animate is an analogy.
+- **What to plant:** what the video must show early, and in what disguise, so the reveal
+  is not given away.
+- **The last line:** what the viewer leaves with.
+
+**"Nothing" is a complete answer, and often the right one.** Say so in the brief, in
+these words. A forced reveal is worse than none. "No identity here; this video should end
+on its payoff" is advice to the paths, not a failure, and the hunter is not judged by how
+many cards it returns. Vague kinship ("both are about symmetry", "both are projections")
+is not an identity. Output to `plans/NAME.work/round1/duality.md`.
+
 **Merge and cross.** One agent reads all of round one and writes `map.md`: the branches
 with repeats removed, each idea tagged with its lens, then a section of crossings (one
 lens's motion on another's shape). It also names the two or three most fertile lenses,
 and marks the fifteen or so strongest ideas of any kind for the weavers.
+
+Before the duality hunter's cards enter the map, a fresh agent tries to kill each one: is
+the map true (check it numerically where it can be checked), does the morph exist, and
+would the viewer feel the two halves are one rather than be told so? Cards that survive go
+into `map.md` under destinations as **ending cards**, marked as such; the rest are dropped
+with one line of why. All of them dying is a normal result.
 
 **Round two.** Spawn, in parallel: the sub-lenses of the fertile lenses (third column of
 the table), plus two fresh brainstormers. Each gets `map.md` and asks: what is missing,
@@ -166,7 +200,9 @@ paragraph each, deliberately unlike one another (different openings, different
 destinations, different central pictures, different orders). Each path names its own
 point A and point B in its first line; the twenty should not all end in the same place. They read `weaves.md` too: a weave often makes the
 best return to the central picture (the same object, now heard, or now seen from the other
-field). At least 20 in all, in `paths.md`.
+field). A path may end on an ending card; if it does, it plants both halves early, in the
+disguise the card names. Some paths should end on an ending card and some should not, so
+the prune can weigh the two. At least 20 in all, in `paths.md`.
 
 ### 3. Prune
 
@@ -235,7 +271,9 @@ Now make the chosen path teach as well as it can:
   seen the thing it names, and then it stays while that thing is on stage. For each
   animation, list the mathematics on screen: the formula, the number that turns (shown
   live), the labelled features, and the line of working that goes with each "why".
-- **End on the picture, changed**: the opening picture again, now understood.
+- **End on the picture, changed**: the opening picture again, now understood. If the path
+  ends on an ending card, the ending is its morph: check that both halves are planted,
+  that neither gives the reveal away, and that the morph runs on screen, not in words.
 - **Stay true.** A simplification may leave things out; it may not say something false.
   Note what was left out.
 
@@ -346,6 +384,9 @@ A fresh agent reads the plan as the viewer from step 1 and answers each; fix wha
     replace a replay with an extension of the idea, or shorten the hold.
 16. Pausing on any frame, could I write down the mathematics from the screen alone (what
     formula, which number, what value)? If not, the plan is showing too little math.
+17. If the video ends on two things turning out to be one, had I met both earlier, did
+    the morph show me, and was the reveal a surprise? If the reveal is forced, end on the
+    payoff instead.
 
 If the Editor finds the path itself weak, go back to the map; do not patch.
 
@@ -359,6 +400,8 @@ Write `plans/NAME.md` in this shape, then show it to the person and stop. Do not
 
 **Point A:** the opening question
 **Point B:** what the viewer understands or feels at the end
+**Ending:** the ending card used (the two things, the morph, where each is planted), or
+"none: ends on the payoff"
 **Viewer:** ...   **Length and feel:** ...
 
 ## The path

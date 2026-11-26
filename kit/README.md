@@ -16,6 +16,7 @@ yours (`TASTE.md`, `WISHLIST.md`, `scenes/`, `plans/`, other MCP servers in `.mc
 | `TASTE.md` | `TASTE.md` (yours) | the person's taste; imported into every session; the AI adds to it |
 | `WISHLIST.md` | `WISHLIST.md` (yours) | what scenes needed that phasor could not do |
 | `skills/scene-plan/SKILL.md` | `.claude/skills/scene-plan/` | the `/scene-plan` command: an idea becomes a plan for a beautiful teaching video (wide brainstorm with many subagents, pruned to one path); writes `plans/NAME.md`, no code |
+| `skills/scene-plan-mixed/SKILL.md` | `.claude/skills/scene-plan-mixed/` | an experiment beside `/scene-plan`, run only when typed: the experience leads, and voice and on-screen maths step in only where it cannot get the viewer there; wonder beats are kept whole; writes `plans/NAME.mixed.md`, so the two plans for one idea can be compared |
 | `skills/scene-builder/SKILL.md` | `.claude/skills/scene-builder/` | the `/scene-builder` command: codes an approved plan as faithfully as phasor allows; script, checks, storyboard, preview; what phasor cannot do goes to `WISHLIST.md` |
 | `examples.toml` | `kit/examples/<kind>/`, `kit/examples/INDEX.md` | every example sorted by kind and tier |
 
