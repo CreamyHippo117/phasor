@@ -289,7 +289,7 @@ VERBS = (
 
 def _motion(theme: str, data: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
-    for key in ("stagger", "dim_level", "orbit_swing"):
+    for key in ("stagger", "dim_level", "orbit_swing", "camera_lead", "camera_speed"):
         if key not in data:
             raise ThemeError(f"theme {theme!r} is missing [motion] {key}")
         out[key] = float(data[key])

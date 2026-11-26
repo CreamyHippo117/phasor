@@ -892,3 +892,162 @@ def test_which_edits_the_layout_cannot_see():
     # Never shown: nothing it does reaches the layout.
     never = _late(None, more=[Dot(id="ghost", pos=(1, 1, 1), r=0.2, opacity=0.0)])
     assert _until(never, lambda s: s.set("ghost.r", 0.4)) == float("inf")
+
+
+# ---------------------------------------------------------------- avoid_occlusion rests while hidden
+# Owner, 2026-11-26: an avoid_occlusion goal protects nothing while its object is hidden
+# (opacity x dim = 0), as long as the camera stays smooth. Before, the solver kept the view
+# clear (and drew depth buffers for it) all the time. "Before" below is the solver with
+# the goal never resting (no ``shown`` given to ``camera.solve``): the old code path exactly.
+
+
+def _ringed(passes, kind):
+    """A ring of posts around what the camera must see past them, while it orbits: "fade"
+    (the gem appears at 12 s), "stagger" (gems at 11 and 15 s), "return" (the gem goes at
+    3 s and comes back at 17 s), "blink" (it goes at 8 s and is back at 13 s: too soon to
+    swing away and back), "always" (the gem is shown throughout)."""
+    import math
+
+    s = Scene(f"ringed_{kind}", passes=passes)
+    s.use_camera("orbit", azimuth=-40, drift=0)
+    gems = ["a", "b"] if kind == "stagger" else ["gem"]
+    for k, g in enumerate(gems):
+        s.add(Dot(id=g, pos=(0.7 * k, 0.3 * k, 0), r=0.2))
+    posts = [f"post{k}" for k in range(8)]
+    for k, p in enumerate(posts):
+        a = 2 * math.pi * k / 8
+        s.add(Dot(id=p, pos=(2.2 * math.cos(a), 2.2 * math.sin(a), 0.5), r=0.6))
+    s.marker("spin", 0.5)
+    s.marker("end", 22.0)
+    s.at("spin").orbit(120, until="end")
+    if kind == "fade":
+        s.at(12.0).reveal("gem")
+    elif kind == "stagger":
+        s.at(11.0).reveal("b")
+        s.at(15.0).reveal("a")
+    elif kind in ("return", "blink"):
+        s.at(3.0 if kind == "return" else 8.0).exit("gem")
+        s.at(17.0 if kind == "return" else 13.0).reveal("gem")
+    s.constrain(f"camera keep_visible({', '.join(posts)}) and "
+                f"camera avoid_occlusion({', '.join(gems)})")  # fmt: skip
+    return s
+
+
+def _bake_both(passes, kind, monkeypatch):
+    """(engine now, engine with the goal never resting, hidden-share times of each), both
+    baked."""
+    from phasor.layout import bake as bake_mod
+    from phasor.layout import camera
+
+    built = _ringed(passes, kind).engine
+    times: list[float] = []
+    orig = bake_mod.hidden_share
+
+    def measured(state, object_id, oracle):
+        times.append(state.t)
+        return orig(state, object_id, oracle)
+
+    monkeypatch.setattr(bake_mod, "hidden_share", measured)
+    lay = Engine(built.document, passes=built._passes)
+    assert lay.layout is not None  # baked now, while hidden_share is counted
+    now = list(times)
+    times.clear()
+    solve = camera.solve
+    monkeypatch.setattr(camera, "solve", lambda c, plan, times, hidden, shown: solve(
+        c, plan, times, hidden))  # fmt: skip
+    before = Engine(built.document, passes=built._passes)
+    assert before.layout is not None
+    return lay, before, now, list(times)
+
+
+def _on_screen(e, fps=30.0):
+    """What the viewer sees move: (sample times, speed, acceleration) of the fastest of
+    every object's center on screen (NDC, the frame is 2 wide), as rendered."""
+    ts = np.arange(0.0, e.layout.camera_times[-1] + 1e-9, 1.0 / fps)
+    pts = []
+    for t in ts:
+        st = e.state_at(t)
+        pts.append([st.camera.project([o.impl.world_bounds(st).center])[0][:2]
+                    for o in st.objects])  # fmt: skip
+    p = np.array(pts)
+    vel = np.linalg.norm(np.diff(p, axis=0), axis=2).max(axis=1) * fps
+    acc = np.linalg.norm(np.diff(p, 2, axis=0), axis=2).max(axis=1) * fps * fps
+    return ts[1:-1], vel[1:], acc
+
+
+def _motion(layout, fps=60.0):
+    """Per solved camera parameter, sampled as rendered (``Bake.camera_at``) at ``fps``:
+    (sample times, speed, acceleration). Elevation in degrees, distance in e-folds (a
+    zoom), target in world units."""
+    ts = np.arange(0.0, layout.camera_times[-1] + 1e-9, 1.0 / fps)
+    out = {}
+    for path in layout.camera:
+        v = np.array([np.atleast_1d(layout.camera_at(t)[path]) for t in ts], dtype=float)
+        if path.endswith("distance"):
+            v = np.log(v)
+        vel = np.linalg.norm(np.diff(v, axis=0), axis=1) * fps
+        acc = np.linalg.norm(np.diff(v, 2, axis=0), axis=1) * fps * fps
+        out[path.rpartition(".")[2]] = (ts[1:-1], vel[1:], acc)
+    return out
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_avoid_occlusion_measures_nothing_while_its_object_is_hidden(passes, monkeypatch):
+    e, before, now, then = _bake_both(passes, "fade", monkeypatch)
+    assert not e.layout.issues and not before.layout.issues
+    # Nothing until the lead-in before the gem appears at 12 s (the solver makes it at
+    # least camera_lead long, longer for a bigger swing), then every key it is shown at.
+    assert now and 4.0 < min(now) < 12.0 - 3.0
+    assert {round(t, 6) for t in now} >= {round(t, 6) for t in e.layout.camera_times if t > 12}
+    assert min(then) == 0.0
+    assert e.layout.renders < 0.6 * before.layout.renders
+
+
+def test_an_object_shown_throughout_is_protected_as_before(monkeypatch):
+    e, before, _, _ = _bake_both(None, "always", monkeypatch)
+    assert e.layout.camera == before.layout.camera and e.layout.issues == before.layout.issues
+    assert e.layout.renders == before.layout.renders
+
+
+@pytest.mark.parametrize("passes", MODES)
+@pytest.mark.parametrize("kind", ["return", "blink"])
+def test_no_swing_away_and_back_for_nothing(passes, kind, monkeypatch):
+    """Hidden for less time than swinging away and back would take ("blink"), or than the
+    camera would then spend free ("return": 14 s hidden, but the swing out and in needs
+    more), the object stays protected: the camera does what it always did, and only the
+    checks while it is hidden are left out."""
+    e, before, _, _ = _bake_both(passes, kind, monkeypatch)
+    assert e.layout.camera == before.layout.camera and not e.layout.issues
+    assert e.layout.renders < before.layout.renders
+
+
+@pytest.mark.parametrize("passes", MODES)
+@pytest.mark.parametrize("kind", ["fade", "stagger"])
+def test_the_camera_stays_smooth_when_avoid_occlusion_rests(passes, kind, monkeypatch):
+    from phasor.style.theme import load_theme
+
+    e, before, _, _ = _bake_both(passes, kind, monkeypatch)
+    lay, old_lay = e.layout, before.layout
+    assert not lay.issues and not old_lay.issues  # where it protects, the goal still holds
+    assert lay.renders < 0.7 * old_lay.renders
+    # Fade rests: the camera is free until its lead-in. Stagger hardly does: the swing for
+    # the first gem would need longer than the 11 s before it, so that gem is protected
+    # from the start, and the camera does about what it always did.
+    gap = max(float(np.abs(np.array(lay.camera[k], float) - np.array(old_lay.camera[k], float)).max())
+              for k in lay.camera)  # fmt: skip
+    assert (gap > 1.0) == (kind == "fade")
+    new, old = _motion(lay), _motion(old_lay)
+    for name in new:
+        # C1 as before: no velocity jump of a camera parameter much larger than the old
+        # path's largest (fade, 2026-11-26: elevation 46 -> 17 deg/s^2, distance 0.69 ->
+        # 0.66 e-folds/s^2, target 1.21 -> 1.45 units/s^2, at the reveal's end, on P).
+        assert new[name][2].max() <= 1.25 * old[name][2].max(), name
+    # What the viewer sees: no object on screen accelerates or moves faster than before.
+    s_new, s_old = _on_screen(e), _on_screen(before)
+    assert s_new[2].max() <= 1.05 * s_old[2].max()
+    assert s_new[1].max() <= 1.1 * s_old[1].max()
+    # The swing into a protecting view stays near camera_speed (the free and protected
+    # paths add their own motion to it).
+    cap = load_theme("midnight_glow").motion["camera_speed"]
+    _, vel, _ = new["elevation"]
+    assert vel.max() <= max(1.25 * cap, old["elevation"][1].max())

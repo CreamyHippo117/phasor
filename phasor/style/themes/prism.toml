@@ -176,6 +176,8 @@ float_period = 9.0
 stagger = 0.12
 dim_level = 0.25
 orbit_swing = 35.0   # degrees the camera swings during orbit_reveal
+camera_lead = 3.0   # seconds (at least) the camera takes to swing to protect an appearing object
+camera_speed = 2.0  # degrees per second that swing stays under (longer lead for a bigger swing)
 transform_arc = 0.9   # line heights a part arcs by when transform moves it past other parts
 
 [motion.reveal]
