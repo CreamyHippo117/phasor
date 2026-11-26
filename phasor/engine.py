@@ -463,12 +463,15 @@ class Engine:
         return snap.aesthetic
 
     def audio_track(self):
-        """The narration as one mono int16 track covering the scene, and its sample rate;
-        None when there is no recorded or synthesized audio."""
+        """The soundtrack as one mono int16 track covering the scene, and its sample rate:
+        the narration's recorded or synthesized audio with the document's sounds (notes and
+        WAV files, ``time/sound.py``) mixed in. None when there is nothing to hear."""
         from phasor.time.narration import mix_track
+        from phasor.time.sound import soundtrack
 
         n = self.document.narration
-        return None if n is None else mix_track(n, self.base_dir, self.duration)
+        voice = None if n is None else mix_track(n, self.base_dir, self.duration)
+        return soundtrack(self._snap.compiled.sounds, self.base_dir, self.duration, voice)
 
     def _lint(self, snap: _Snapshot, step: float) -> tuple[Issue, ...]:
         if step not in snap.lint:
@@ -485,6 +488,7 @@ class Engine:
                                *lint_rules.bake_rules(snap.compiled, snap.plan, baked),
                                *lint_rules.control_rules(snap.compiled),
                                *lint_rules.file_rules(snap.compiled),
+                               *lint_rules.sound_rules(snap.compiled),
                                *lint_rules.type_rules(snap.compiled), *visual)  # fmt: skip
         return snap.lint[step]
 
@@ -828,8 +832,8 @@ class Engine:
 
     def timeline(self) -> dict[str, Any]:
         """What a timeline panel shows: the duration, the markers, for every animated
-        parameter its spans in resolved seconds (``{"d.pos": [[1.0, 2.0], ...]}``) and the
-        spoken narration blocks (text, start, duration, audio file)."""
+        parameter its spans in resolved seconds (``{"d.pos": [[1.0, 2.0], ...]}``), the spoken
+        narration blocks (text, start, duration, audio file) and the sound events."""
         c = self._snap.compiled
         lanes = {
             path: [[seg.t0, seg.t1] for seg in node.segments]
@@ -840,7 +844,11 @@ class Engine:
         nar = self._snap.compiled.doc.narration
         blocks = [{"text": b.text, "start": b.start, "duration": b.duration, "audio": b.audio}
                   for b in (nar.blocks if nar else ()) if b.text]  # fmt: skip
-        return {"duration": c.duration, "markers": markers, "lanes": lanes, "narration": blocks}
+        sounds = [{"id": p.id, "kind": p.spec.kind, "t": p.t,
+                   "label": getattr(p.spec, "path", None) or f"midi {p.spec.midi:g}"}
+                  for p in c.sounds]  # fmt: skip
+        return {"duration": c.duration, "markers": markers, "lanes": lanes, "narration": blocks,
+                "sounds": sounds}  # fmt: skip
 
     def is_moving(self, t0: float, t1: float) -> bool:
         """Whether anything animated by the document runs between ``t0`` and ``t1``: a

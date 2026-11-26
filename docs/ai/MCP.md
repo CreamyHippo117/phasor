@@ -31,6 +31,7 @@ a variant and compare.
 | `scene_edit` | apply a patch (below); returns `ok`, `errors`, and the lint issues it added or fixed |
 | `animate` | a choreography verb at a marker or time: `reveal`, `exit`, `trace`, `bloom_in`, `dim_others`, `undim`, `focus_pull`, `morph`, `settle`, `write`, `travel`, `flash`, `wiggle`, `circumscribe` (`value` "circle" or "box"), `transform` and `become` (`targets` [from, to]), `sweep` (`path`, `value`), `unfold` (`targets` [room, ray], `value` flips, default 5), and in 3D `orbit` (`value` degrees, `until` a marker) and `orbit_reveal` |
 | `narrate` | set the script and voice; markers appear in `markers` |
+| `sound` | a note (`midi`, 69 = A4; `amp`, `dur`, `voice` sine/soft/pluck/bell) or a WAV in the folder (`path`, `gain`) on the soundtrack at a marker (`at`, `offset`); renders mix it with the narration |
 | `inspect` | what is on screen at `t`: `brief` (a line each), `standard`, `full` |
 | `lint` | visual problems; `fix: true` applies the certain fixes |
 | `review` | the whole self-review round in one call |
@@ -176,6 +177,22 @@ to a marker with a verb. Do not animate by raw seconds in a narrated scene (lint
 {"tool": "narrate", "script": "Here are the poles. [[poles]] Draw a loop around the first. [[loop]] The result is two pi.", "voice": "estimate"}
 {"tool": "animate", "verb": "reveal", "at": "poles", "targets": ["pole_i"]}
 {"tool": "animate", "verb": "trace", "at": "loop", "targets": ["loop"]}
+```
+
+Sounds are timed the same way: `sound` puts a dry synthesized note (or a WAV from the scene's
+folder) on a marker, so it moves with the voice. Retime one with `set_sound`, take it off with
+`remove_sound` (its id is retired):
+
+```json calls
+{"tool": "sound", "at": "poles", "midi": 69, "amp": 0.3, "dur": 0.6, "voice": "bell"}
+{"tool": "sound", "at": "loop", "offset": 0.2, "midi": 76, "voice": "pluck", "id": "loop_ping"}
+```
+
+```json patch
+[
+  {"op": "set_sound", "sound": {"kind": "note", "id": "loop_ping", "at": {"marker": "loop", "offset": 0.4}, "midi": 79, "voice": "pluck"}},
+  {"op": "remove_sound", "id": "note_a4_poles"}
+]
 ```
 
 `animate` returns `start` and `end`: pass `offset: end - start` to start the next step when

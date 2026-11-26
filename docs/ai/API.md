@@ -255,7 +255,59 @@ assert s4.engine.lint(strict=True) == []
   are cached in `<title>.narration/` beside the script. Your own recordings:
   `phasor.voice.from_recordings(script, wavs, aligner, base_dir, theme)` with
   `WhisperX()` or `TimingsFile()`.
-- `phasor render` muxes the narration into the video.
+- `phasor render` muxes the narration into the video, with any sounds (next section).
+
+## Sound: notes and sound files on the soundtrack
+
+```python
+import tempfile
+from pathlib import Path
+
+import numpy as np
+
+from phasor import Dot, Scene
+from phasor.time.narration import write_wav
+
+folder = Path(tempfile.mkdtemp())  # the scene's folder: sound files live here
+write_wav(folder / "knock.wav", (8000 * np.hanning(480)).astype(np.int16), 48000)
+
+s5 = Scene("chime", passes=None, base_dir=folder)
+s5.add(Dot(id="bell", pos=(0, 0), r=0.3))
+s5.narrate("The bell rings [[ring]] and then someone knocks [[knock]] twice.", voice="estimate")
+s5.at("ring").flash("bell")
+s5.note(69, at="ring", amp=0.3, dur=0.8, voice="bell")  # A4 = 440 Hz, on the word
+s5.note(76, at=("ring", 0.25), amp=0.2, voice="pluck")  # E5, a quarter second later
+s5.sound("knock.wav", at="knock", gain=0.8)  # a WAV from the folder
+s5.sound("knock.wav", at=("knock", 0.3), gain=0.8, id="knock_again")
+ids = [x.id for x in s5.engine.document.sounds]
+assert ids == ["note_a4_ring", "note_e5_ring", "sound_knock_knock", "knock_again"]
+
+samples, rate = s5.engine.audio_track()  # mono int16: narration (if recorded) + sounds
+ring = s5.engine.document.timeline.markers["ring"]
+assert rate == 48000 and samples[round(ring * rate)] == 0  # every note starts at 0 ...
+assert np.abs(samples).max() <= 0.9 * 32768  # ... and the mix never passes -1 dBFS
+```
+
+- `s.note(midi, at, amp=0.3, dur=0.5, voice="sine", id=None)`: a dry synthesized note.
+  `midi` 69 is A4 (440 Hz; fractions are microtones). `amp` is its peak (share of full
+  scale), `dur` its whole length (5 ms attack and 30 ms release inside it). Voices: `sine`,
+  `soft` (a few steady harmonics), `pluck` (harmonics that die away), `bell` (inharmonic).
+  No randomness: the same document always gives the same samples.
+- `s.sound(path, at, gain=1.0, id=None)`: a 16-bit PCM WAV inside the scene's folder (any
+  rate; it is resampled to the mix's). Missing: lint `missing_file`; not 16-bit PCM:
+  `bad_sound_file`; longer than the scene: `sound_cut` (a file does not lengthen the scene;
+  a note does, to its end). Each stays silent or is cut; the render never fails on it.
+- `at` is seconds, a marker, or `("marker", offset)`, like every motion: re-narrate and the
+  sounds move with the words. Ids are `note_<pitch>_<marker>` / `sound_<file>_<marker>`
+  unless you give one; they share the id space with objects and are never reused.
+- The mix (`Engine.audio_track`, and so `phasor render` and every video preset) places an
+  event at sample `round(t * rate)`; the rate is the narration's, or 48 kHz. The narration
+  is never changed: where it plus the sounds would pass -1 dBFS (or the voice's own level,
+  if louder), only the sounds are turned down, with a 10 ms look-ahead ramp, so nothing clips.
+- Patch ops: `add_sound` / `set_sound` (`sound: {kind: "note", id, at, midi, amp, dur, voice}`
+  or `{kind: "file", id, at, path, gain}`; `set_sound` replaces the one with that id) and
+  `remove_sound` (`id`). The editor's timeline lists them in `Engine.timeline()["sounds"]`;
+  the editor itself plays no audio (render a `draft` to hear it).
 
 ## Animate with verbs
 
@@ -445,6 +497,8 @@ lint_added, lint_resolved)`. Each error has `code`, `message`, `ids`, `path`, `f
 | `add_constraint` | `rule`, `priority` (`required`/`strong`/`medium`/`weak`, default `strong`) |
 | `set_narration` | `narration` (from `phasor.voice.narrate`) or `null`; replaces the markers it owns |
 | `remove_constraint` | `rule` |
+| `add_sound` / `set_sound` | `sound`: `{kind: "note", id, at, midi, amp, dur, voice}` or `{kind: "file", id, at, path, gain}` |
+| `remove_sound` | `id` (retired like a removed object's) |
 
 On a scene built by a script, `set_param`, `set_style` and `add_constraint` are stored as
 tweaks in `name.overrides.json` and survive re-running the script; other ops are refused

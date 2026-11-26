@@ -15,6 +15,7 @@ from __future__ import annotations
 import contextlib
 import inspect
 import os
+import re
 import runpy
 import sys
 from pathlib import Path
@@ -28,6 +29,7 @@ from phasor.core.patch import (
     AddControl,
     AddObject,
     AddSegment,
+    AddSound,
     SetCamera,
     SetMarker,
     SetMeta,
@@ -40,8 +42,10 @@ from phasor.core.schema import (
     ExprSpec,
     MarkerRef,
     Meta,
+    Note,
     ObjectSpec,
     Segment,
+    SoundFile,
 )
 from phasor.engine import Engine
 from phasor.style.looks import DEFAULT_THEME, default_look, load_look
@@ -49,6 +53,15 @@ from phasor.time import verbs as _verbs
 from phasor.time.narration import block_of, repace
 
 TimeArg = float | tuple[str, float] | str  # seconds, ("marker", offset) or "marker"
+
+
+def _time_ref(t: TimeArg) -> float | MarkerRef:
+    """Seconds, ``"marker"`` or ``("marker", offset)`` as the document stores a time."""
+    if isinstance(t, str):
+        return MarkerRef(marker=t)
+    if isinstance(t, tuple):
+        return MarkerRef(marker=t[0], offset=float(t[1]))
+    return float(t)
 
 
 def expr(source: str) -> ExprSpec:
@@ -332,17 +345,48 @@ class Scene:
         """A raw transition between two times, each seconds or a marker (``"go"`` or
         ``("go", 0.5)``: the marker plus an offset): for spans that start and end at
         different markers. Prefer a verb or ``s.at(...).to(...)`` when one marker is enough."""
+        seg = Segment(t0=_time_ref(t0), t1=_time_ref(t1), to=to, ease=ease)
+        self._apply(AddSegment(path=path, segment=seg))
 
-        def ref(t):
-            if isinstance(t, str):
-                return MarkerRef(marker=t)
-            if isinstance(t, tuple):
-                return MarkerRef(marker=t[0], offset=float(t[1]))
-            return float(t)
+    def note(self, midi: float, at: TimeArg, *, amp: float = 0.3, dur: float = 0.5,
+             voice: str = "sine", id: str | None = None) -> str:  # fmt: skip
+        """Play a synthesized note on the soundtrack: ``s.note(69, at="hit")`` is A4 (440 Hz)
+        at the marker ``hit`` (or seconds, or ``("hit", 0.25)``: the marker plus an offset).
+        ``amp`` is its peak (share of full scale), ``dur`` its whole length in seconds, and
+        ``voice`` one of ``sine``, ``soft``, ``pluck``, ``bell``: dry and deterministic.
+        Rendered videos mix it with the narration. Returns its id (``note_a4_hit`` unless
+        you give one)."""
+        when = _time_ref(at)
+        from phasor.time.sound import note_name
 
-        self._apply(
-            AddSegment(path=path, segment=Segment(t0=ref(t0), t1=ref(t1), to=to, ease=ease))
-        )
+        sid = id or self._sound_id(f"note_{note_name(midi)}", when)
+        spec = Note(id=sid, at=when, midi=midi, amp=amp, dur=dur, voice=voice)
+        self._apply(AddSound(sound=spec))
+        return sid
+
+    def sound(self, path: str, at: TimeArg, *, gain: float = 1.0, id: str | None = None) -> str:
+        """Play a 16-bit WAV file from the scene's folder on the soundtrack, from ``at``
+        (seconds, a marker, or ``("marker", offset)``), scaled by ``gain``. A missing file is
+        lint ``missing_file`` and stays silent. Returns its id (``sound_<file>_<marker>``)."""
+        when = _time_ref(at)
+        stem = re.sub(r"[^a-z0-9_]+", "_", Path(path).stem.lower()).strip("_") or "file"
+        sid = id or self._sound_id(f"sound_{stem}", when)
+        self._apply(AddSound(sound=SoundFile(id=sid, at=when, path=path, gain=gain)))
+        return sid
+
+    def _sound_id(self, stem: str, when: float | MarkerRef) -> str:
+        """``<stem>_<marker>`` (or ``_<ms>ms`` for seconds), unique among the scene's ids and
+        never one that was retired; a repeat gets ``_2``, ``_3``, ..."""
+        doc = self.engine.document
+        base = f"{stem}_{when.marker}" if isinstance(when, MarkerRef) else (
+            f"{stem}_{abs(round(when * 1000))}ms")  # fmt: skip
+        taken = {*(o.id for o in doc.objects), *(c.id for c in doc.cameras),
+                 *(x.id for x in doc.sounds), *doc.retired_ids}  # fmt: skip
+        k, sid = 1, base
+        while sid in taken:
+            k += 1
+            sid = f"{base}_{k}"
+        return sid
 
     def marker(self, name: str, t: float) -> None:
         """Place a narration marker at ``t`` seconds."""

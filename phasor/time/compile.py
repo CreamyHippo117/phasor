@@ -34,6 +34,7 @@ from phasor.core.values import normalize, positive, same_shape
 from phasor.style.theme import PALETTES, Theme, ThemeError, load_theme
 from phasor.time.easing import EASINGS, LOG, ease_named
 from phasor.time.expr import CompiledExpr, ExprError, compile_expr
+from phasor.time.sound import PlacedSound
 from phasor.time.tracks import ResolvedSegment, ResolvedTrack, TimeMap
 from phasor.time.updaters import MEMO, Updater, UpdaterOut
 
@@ -74,6 +75,8 @@ class Compiled:
     base_dir: str = ""
     # (object id, why) for each object whose code is not available (lint missing_type).
     missing: tuple[tuple[str, str], ...] = ()
+    # The document's sound events with their start in seconds (time/sound.py).
+    sounds: tuple[PlacedSound, ...] = ()
 
 
 @functools.cache
@@ -271,6 +274,23 @@ def compile_document(
             duration = max(duration, t1)
         nodes[path] = ResolvedTrack(node.value, tuple(resolved))
 
+    placed: list[PlacedSound] = []
+    for snd in doc.sounds:
+        try:
+            t0 = time_map.resolve(snd.at)
+        except KeyError as e:
+            add(Issue("unknown_marker", f"sound {snd.id!r}: no marker {e.args[0]!r}",
+                      ids=(snd.id,), path=f"{snd.id}.at"))  # fmt: skip
+            continue
+        if t0 < 0:
+            add(Issue("bad_sound", f"sound {snd.id!r} starts at {t0:g} s, before the scene",
+                      ids=(snd.id,), path=f"{snd.id}.at"))  # fmt: skip
+            continue
+        placed.append(PlacedSound(snd.id, t0, snd))
+        # A note holds the scene open until it ends; a file only to its start (its length is
+        # in the file, which compiling does not read: lint ``sound_cut`` says if it is cut).
+        duration = max(duration, t0 + getattr(snd, "dur", 0.0))
+
     if any(o.always for o in doc.objects) and not issues:
         _attach_updaters(doc, nodes, objects, placeholders, modules, missing, add)
 
@@ -292,7 +312,7 @@ def compile_document(
     if doc.meta.duration is not None:
         duration = doc.meta.duration
     compiled = Compiled(doc, theme, time_map, MappingProxyType(nodes), order, tuple(objects),
-                        duration, str(base_dir), tuple(missing))  # fmt: skip
+                        duration, str(base_dir), tuple(missing), tuple(placed))  # fmt: skip
     evaluate(compiled, 0.0)  # surfaces type errors from expressions before anything is saved
     return compiled
 

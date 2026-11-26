@@ -28,6 +28,7 @@ from phasor.core.schema import (
     Overrides,
     ParamSpec,
     Segment,
+    SoundSpec,
 )
 
 
@@ -139,6 +140,27 @@ class RemoveControl(Model):
     component: int | None = None
 
 
+class AddSound(Model):
+    """Put a note or a sound file on the soundtrack (``sound.kind``: ``note`` or ``file``)."""
+
+    op: Literal["add_sound"] = "add_sound"
+    sound: SoundSpec
+
+
+class SetSound(Model):
+    """Replace the sound with the same id (to retime or retune it; ids are never reused)."""
+
+    op: Literal["set_sound"] = "set_sound"
+    sound: SoundSpec
+
+
+class RemoveSound(Model):
+    """Take a sound off the soundtrack. Its id is retired like a removed object's."""
+
+    op: Literal["remove_sound"] = "remove_sound"
+    id: str
+
+
 Op = Annotated[
     AddObject
     | RemoveObject
@@ -155,7 +177,10 @@ Op = Annotated[
     | SetCamera
     | RemoveConstraint
     | AddControl
-    | RemoveControl,
+    | RemoveControl
+    | AddSound
+    | SetSound
+    | RemoveSound,
     Field(discriminator="op"),
 ]
 
@@ -345,6 +370,25 @@ def _apply_op(doc: Document, op: Any) -> Document:
             return doc.model_copy(
                 update={"controls": tuple(c for c in doc.controls if c.key != key)}
             )
+        case AddSound():
+            if op.sound.id in doc.retired_ids:
+                raise _fail("id_retired", f"id {op.sound.id!r} belonged to something removed; "
+                            "ids are never reused", ids=(op.sound.id,),
+                            fix_hint="give the sound a new id that says what it is")  # fmt: skip
+            return doc.model_copy(update={"sounds": (*doc.sounds, op.sound)})
+        case SetSound():
+            if doc.sound(op.sound.id) is None:
+                raise _fail("unknown_id", f"no sound {op.sound.id!r}; sounds are "
+                            f"{[x.id for x in doc.sounds]}", ids=(op.sound.id,))  # fmt: skip
+            sounds = tuple(op.sound if x.id == op.sound.id else x for x in doc.sounds)
+            return doc.model_copy(update={"sounds": sounds})
+        case RemoveSound():
+            if doc.sound(op.id) is None:
+                raise _fail("unknown_id", f"no sound {op.id!r}", ids=(op.id,))
+            return doc.model_copy(update={
+                "sounds": tuple(x for x in doc.sounds if x.id != op.id),
+                "retired_ids": tuple(sorted({*doc.retired_ids, op.id})),
+            })  # fmt: skip
         case RemoveConstraint():
             rule = normalize_rule(op.rule)
             if all(c.rule != rule for c in doc.constraints):
@@ -440,6 +484,7 @@ __all__ = [
     "AddControl",
     "AddObject",
     "AddSegment",
+    "AddSound",
     "ClearTrack",
     "ExprSpec",
     "Op",
@@ -448,10 +493,12 @@ __all__ = [
     "RemoveControl",
     "RemoveMarker",
     "RemoveObject",
+    "RemoveSound",
     "SetMarker",
     "SetMeta",
     "SetNarration",
     "SetParam",
+    "SetSound",
     "SetStyle",
     "SetTags",
     "apply_ops",

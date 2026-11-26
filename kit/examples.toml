@@ -37,6 +37,11 @@ kind = "complex"
 tier = "technique"
 teaches = "A narrated short: [[markers]] in the narration, every motion anchored to a marker with a verb"
 
+[examples.sound_harmonics]
+kind = "fourier_linalg"
+tier = "technique"
+teaches = "Sound events: s.note puts a dry synthesized note on a marker (and s.sound a WAV), so the soundtrack moves with the narration"
+
 [examples.residues]
 kind = "complex"
 tier = "technique"
