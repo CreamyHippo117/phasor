@@ -359,16 +359,21 @@ def build(
     rate = bus_rate([*voice, *(Placed(0, x, r) for _, x, r, _ in (*beds, *cues))])
     lv = levels or {}
     lanes: list[Lane] = []
-    voice_db = 0.0
     if voice:
         clips = [Placed(c.start, resample(_stereo(c.samples), c.rate, rate), rate) for c in voice]
+        gains = [0.0] * len(clips)
         if levels is not None:  # measured as it will be heard: at the bus rate
-            measured = loudness(mix(clips, 0.0)[0], rate)
-            voice_db = lv["voice"] - measured if math.isfinite(measured) else 0.0
-        g = np.float32(db_to_gain(voice_db))
-        for k, c in enumerate(clips):
-            s = c.samples if voice_db == 0 else c.samples * g
-            lanes.append(Lane(f"voice.{k}", "voice", c.start, s, voice_db))
+            # Each clip to the voice level on its own, so takes recorded louder or softer
+            # come out even; a clip too short to measure takes the level of them all.
+            whole = loudness(mix(clips, 0.0)[0], rate)
+            voice_db = lv["voice"] - whole if math.isfinite(whole) else 0.0
+            pad = np.zeros((round(0.4 * rate), 2), np.float32)
+            for k, c in enumerate(clips):  # measured in silence, as it sits in the mix
+                own = loudness(np.concatenate([pad, c.samples, pad]), rate)
+                gains[k] = lv["voice"] - own if math.isfinite(own) else voice_db
+        for k, (c, db) in enumerate(zip(clips, gains, strict=True)):
+            s = c.samples if db == 0 else c.samples * np.float32(db_to_gain(db))
+            lanes.append(Lane(f"voice.{k}", "voice", c.start, s, db))
     speech = _speech(narration) if voice else ()
     ref = lv.get("voice", 0.0)
     for bed, x, r, measured in beds:

@@ -309,6 +309,16 @@ class Engine:
         return Engine(self._snap.base, overrides=self._snap.overrides, passes=self._passes,
                       base_dir=self.base_dir, allow_scripts=self.allow_scripts)  # fmt: skip
 
+    def as_document(self) -> Engine:
+        """A new engine on a plain-document copy of this scene: the document as it stands
+        (a script's scene with its tweaks applied), no longer marked as built by a script,
+        with a fresh history. Every op works on it; the script it came from is untouched
+        (contract 2 holds: the script's own tweaks file is not involved)."""
+        raw = self.document.model_dump(mode="json")
+        raw["meta"]["source"] = "document"
+        return Engine(Document.model_validate(raw), passes=self._passes,
+                      base_dir=self.base_dir, allow_scripts=self.allow_scripts)  # fmt: skip
+
     # ------------------------------------------------------------ files
 
     @classmethod

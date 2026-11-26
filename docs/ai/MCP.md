@@ -28,6 +28,7 @@ a variant and compare.
 | --- | --- |
 | `scene_new`, `scene_open`, `scene_save` | start, load or save `name.phasor.json` (inside the workspace folder only) |
 | `scene_palette` | the colors run along strokes: `spectrum` (the prism rainbow), `moonlight`, `gold`, `glacier`, `borealis`, `rose`, or none; in the prism looks every glowing curve takes them |
+| `scene_copy` | an editable copy of a script's scene (`<name>_edit.phasor.json` beside it), opened in its place; the script is never changed. Needed before sound, voice or narration edits on a script's scene |
 | `scene_edit` | apply a patch (below); returns `ok`, `errors`, and the lint issues it added or fixed |
 | `animate` | a choreography verb at a marker or time: `reveal`, `exit`, `trace`, `bloom_in`, `dim_others`, `undim`, `focus_pull`, `morph`, `settle`, `write`, `travel`, `flash`, `wiggle`, `circumscribe` (`value` "circle" or "box"), `transform` and `become` (`targets` [from, to]), `sweep` (`path`, `value`), `unfold` (`targets` [room, ray], `value` flips, default 5), and in 3D `orbit` (`value` degrees, `until` a marker) and `orbit_reveal` |
 | `narrate` | set the script and voice; markers appear in `markers` |
@@ -35,6 +36,7 @@ a variant and compare.
 | `lint` | visual problems; `fix: true` applies the certain fixes |
 | `review` | the whole self-review round in one call |
 | `storyboard` | keyframe picture with each object's box and id drawn on it |
+| `voice_add` | a recording of the person's voice (a file in the scene's folder) into the narration at a time or marker; levelled to the voice level, music ducks under it |
 | `sound_master` | master the sound: turn down a bed covering the voice, a mix that would clip, a cue loud on a word; check again (3 rounds at most, each undoable) |
 | `sound` | hear the scene with numbers: each lane's level and loudness (LUFS), the voice against the beds in every sentence, the mix's loudness and peak, sound lint; with a picture of loudness over time |
 | `hit_test`, `resolve` | what is at a pixel; which object ids "the label of the pole" means |
@@ -206,7 +208,12 @@ voice should stay well over the beds, 12 dB or more) and the issues
 master it, call `sound_master`, then `sound` again: it only turns things down, so a bed you
 want louder is a `gain` you set yourself.
 
-Placing narration: `narrate` sets the whole script. To move one sentence, send
+The person's own voice: `voice_add` with a recording in the scene's folder (`audio/...`),
+`at` a time or a marker, and `text` (what it says). Each take is levelled on its own. A
+marker on a word of it goes into that block's `markers` (via `set_narration`), so it moves
+with the take.
+
+Placing narration: `narrate` sets the whole script (a synthetic voice). To move one sentence, send
 `set_narration` with that block's `start` changed (keep it between its neighbours); every
 cue and motion anchored to its markers moves with it.
 

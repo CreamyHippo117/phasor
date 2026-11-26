@@ -693,8 +693,17 @@ class SoundPanel(QWidget):
         self.effect.addItems([*BUILTIN_SOUNDS, "a file..."])
         add_cue = QPushButton("Add effect at playhead")
         add_cue.clicked.connect(lambda: self.add_effect())
-        narrate = QPushButton("Narrate...")
+        narrate = QPushButton("Narrate (synthetic)...")
+        narrate.setToolTip("Type the script and let a synthetic voice speak it")
         narrate.clicked.connect(lambda: self.narrate())
+        self.voice_button = QPushButton("Add voice...")
+        self.voice_button.setToolTip("A recording of your voice, at the playhead: levelled "
+                                     "to the voice level, music ducks under it")  # fmt: skip
+        self.voice_button.clicked.connect(lambda: self.add_voice())
+        mark = QPushButton("Marker at playhead")
+        mark.setToolTip("Name a moment (a word in your recording) to tie motion and effects "
+                        "to; inside a recording it moves with it")  # fmt: skip
+        mark.clicked.connect(lambda: self.add_marker())
         self.master_button = QPushButton("Master")
         self.master_button.setToolTip("Turn down whatever covers the voice or clips, then "
                                       "check again (each round can be undone)")  # fmt: skip
@@ -716,7 +725,11 @@ class SoundPanel(QWidget):
         lay.addWidget(self.issues)
         lay.addWidget(self.table, 1)
         row = QHBoxLayout()
+        row.addWidget(self.voice_button)
         row.addWidget(self.music)
+        lay.addLayout(row)
+        row = QHBoxLayout()
+        row.addWidget(mark)
         row.addWidget(narrate)
         lay.addLayout(row)
         row = QHBoxLayout()
@@ -738,10 +751,10 @@ class SoundPanel(QWidget):
             self.status.setText(str(e))
             return
         if d.get("scripted"):
-            self.status.setText("This scene is built by a script: add sound there, e.g. "
-                                "s.bed('music.ogg') and s.cue('marker', 'chime').")  # fmt: skip
+            self.status.setText("This scene is built by a script. Your first sound edit "
+                                "makes an editable copy beside it; the script stays.")  # fmt: skip
         elif d.get("silent"):
-            self.status.setText("No sound yet: add music, an effect or the narration.")
+            self.status.setText("No sound yet: add your voice, music or an effect.")
         else:
             mix = d.get("mix") or {}
             margins = [m for m in (s["margin"] for s in d["sentences"]) if m is not None]
@@ -788,7 +801,50 @@ class SoundPanel(QWidget):
                     lambda _=False, i=lane["id"]: self.changed.emit(self.ed.remove_sound(i))
                 )
                 self.table.setCellWidget(r, 5, drop)
-        self.master_button.setEnabled(not d.get("silent") and not d.get("scripted"))
+        self._voice_rows()
+        self.master_button.setEnabled(not d.get("silent"))
+
+    def _voice_rows(self) -> None:
+        """One row per recorded or spoken sentence, under the lanes: what it says, where,
+        and a button to take it out."""
+        n = self.ed.engine.document.narration
+        for k, b in enumerate(n.blocks if n else ()):
+            if not b.text:
+                continue
+            r = self.table.rowCount()
+            self.table.insertRow(r)
+            item = QTableWidgetItem(f"  {b.text}")
+            item.setToolTip(f"{b.audio or 'no audio'}, {b.start:g} s, {b.duration:g} s long")
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            self.table.setItem(r, 0, item)
+            at = QTableWidgetItem(f"{b.start:.1f}s")
+            at.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            self.table.setItem(r, 1, at)
+            drop = QPushButton("x")
+            drop.setToolTip("take this sentence out")
+            drop.clicked.connect(lambda _=False, i=k: self.changed.emit(self.ed.remove_sentence(i)))
+            self.table.setCellWidget(r, 5, drop)
+
+    def add_voice(self, path: str | None = None, text: str | None = None) -> None:
+        path = path or self._pick_file("A recording of your voice")
+        if not path:
+            return
+        if text is None:
+            from PySide6.QtWidgets import QInputDialog
+
+            text, ok = QInputDialog.getText(self, "Voice", "What it says (optional):")
+            if not ok:
+                return
+        self.changed.emit(self.ed.add_voice(path, text=text))
+
+    def add_marker(self, name: str | None = None) -> None:
+        if name is None:
+            from PySide6.QtWidgets import QInputDialog
+
+            name, ok = QInputDialog.getText(self, "Marker", "Name (letters, digits, _):")
+            if not ok or not name:
+                return
+        self.changed.emit(self.ed.add_marker(name.strip()))
 
     def _gain(self, item_id: str, value: float) -> None:
         if abs(value - self.ed.engine.document.sound.item(item_id).gain) > 1e-9:
@@ -1132,6 +1188,10 @@ class EditorWindow(QMainWindow):
             self.statusBar().showMessage(f"Saved {result['saved']}", 4000)
 
     def refresh_all(self) -> None:
+        if self.ed.copied and self.ed.copied != getattr(self, "_copy_told", None):
+            self._copy_told = self.ed.copied
+            self.statusBar().showMessage(f"Editing a copy: {self.ed.copied} (the script is "
+                                         "unchanged)", 10000)  # fmt: skip
         self.viewport.refresh()
         self.timeline.refresh()
         self.inspector.refresh()

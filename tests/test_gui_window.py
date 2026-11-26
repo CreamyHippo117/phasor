@@ -387,3 +387,21 @@ def test_play_plays_the_sound_from_the_playhead_and_scrubbing_restarts_it(window
     win.toggle_play()  # without sound: the old timer-driven playback
     assert len(fake.played) == 2 and win._heard_from is None
     win.toggle_play()
+
+
+def test_your_voice_and_a_marker_from_the_sound_tab(window):
+    from tests.test_sound_bed import _tone
+
+    app, win, _server, root = window
+    _tone(root / "me.wav", 200, 0.8, amp=9000)
+    win.ed.set_time(1.0)
+    win.sound.add_voice(str(root / "me.wav"), text="Here it is.")
+    win.ed.set_time(1.4)
+    win.sound.add_marker("here")
+    win.tick()
+    app.processEvents()
+    (block,) = win.ed.engine.document.narration.blocks
+    assert block.text == "Here it is." and block.start == 1.0 and "here" in block.markers
+    names = [win.sound.table.item(r, 0).text() for r in range(win.sound.table.rowCount())]
+    assert "voice (voice)" in names and "  Here it is." in names
+    assert any(i["index"] == 0 for i in win.timeline.data["narration"])

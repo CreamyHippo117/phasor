@@ -234,6 +234,61 @@ class Workspace:
         self.path = target
         return {"saved": str(target), "version": e.version}
 
+    def scene_copy(self, path: str | None = None) -> dict[str, Any]:
+        """Make an editable copy of a scene built by a script: the scene as it stands
+        (script and tweaks) saved as a plain document, ``<name>_edit.phasor.json`` beside the
+        script unless ``path`` says otherwise, and opened in its place. Every op works on
+        the copy (sound, narration, new objects); the script is never changed. A plain
+        document is copied the same way (a new file to experiment on)."""
+        e = self.engine
+        base = Path(e.base_dir or self.root)
+        if path is not None:
+            target = self._inside(path)
+        else:
+            stem = (self.path.name.removesuffix(io.DOC_SUFFIX).removesuffix(".py")
+                    if self.path else file_stem(e.document.meta.title))  # fmt: skip
+            target, k = base / f"{stem}_edit{io.DOC_SUFFIX}", 2
+            while target.exists():
+                target, k = base / f"{stem}_edit_{k}{io.DOC_SUFFIX}", k + 1
+        source = self.path
+        self._engine = self._guard(e.as_document)
+        self.path = None
+        saved = self.scene_save(str(target))
+        return {**self.summary(), "copied_from": str(source) if source else None,
+                "saved": saved["saved"]}  # fmt: skip
+
+    def voice_add(self, file: str, at: float | str = 0.0, text: str = "") -> dict[str, Any]:
+        """Put a recording of your voice (a sound file in the scene's folder) into the
+        narration, starting at ``at`` (seconds, or a marker's name). It plays as the voice:
+        levelled on its own to the theme's voice level, with music ducking under it.
+        ``text`` is what it says (for the script and the timeline; the file's name when
+        empty). It may not overlap another sentence. Move it later with ``set_narration``."""
+        from phasor.core import files
+        from phasor.core.schema import NarrationBlock
+        from phasor.time import sound as snd
+        from phasor.time.narration import add_block
+
+        e = self.engine
+        if e.scripted:
+            raise ToolError("this scene is built by a script: call scene_copy first to edit a "
+                            "copy (the script stays as it is)")  # fmt: skip
+
+        def go():
+            rel = files.relative_path(file)
+            samples, rate = snd.read_audio(files.resolve(e.base_dir, rel))
+            t = e.timeline()["markers"][at] if isinstance(at, str) else float(at)
+            words = text.strip() or Path(rel).stem.replace("_", " ")
+            block = NarrationBlock(text=words, start=round(max(t, 0.0), 4),
+                                   duration=round(len(samples) / rate, 4), audio=rel)  # fmt: skip
+            narration = add_block(e.document.narration, block)
+            return self.scene_edit({"op": "set_narration",
+                                    "narration": narration.model_dump(mode="json")})  # fmt: skip
+
+        r = self._guard(go)
+        if not r["ok"]:
+            raise ToolError(r["errors"][0]["message"], r["errors"])
+        return {**r, "duration": e.duration}
+
     # ------------------------------------------------------------ editing
 
     def scene_edit(self, patch: Any) -> dict[str, Any]:
@@ -382,7 +437,8 @@ class Workspace:
         sentences."""
         e = self.engine
         if e.scripted:
-            raise ToolError("this scene is built by a script: change the narration there")
+            raise ToolError("this scene is built by a script: change the narration there, "
+                            "or call scene_copy to edit a copy (the script stays)")  # fmt: skip
         scene = Scene.of(e)
 
         def go():
@@ -530,7 +586,7 @@ class Workspace:
         e = self.engine
         if e.scripted:
             raise ToolError("this scene is built by a script: set gains there (s.bed(..., "
-                            "gain=...)); `sound` says which")  # fmt: skip
+                            "gain=...)), or call scene_copy to edit a copy")  # fmt: skip
         return self._guard(lambda: e.master_sound(rounds))
 
     def events(self, t0: float = 0.0, t1: float | None = None, problems_only: bool = True,

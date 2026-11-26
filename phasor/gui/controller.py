@@ -51,6 +51,7 @@ class Editor:
         self.muted: set[str] = set()
         self.solo: set[str] = set()
         self._listen: tuple | None = None  # (key, int16 track, rate) for listen_file
+        self.copied: str | None = None  # the editable copy a script's scene became, if any
 
     # ------------------------------------------------------------ the scene
 
@@ -621,6 +622,26 @@ class Editor:
 
     # ------------------------------------------------------------ sound (SOUND.md step 4)
 
+    def editable_copy(self) -> dict[str, Any] | None:
+        """Before an edit a script's scene cannot take (sound, voice, narration): switch to
+        an editable copy, ``<name>_edit.phasor.json`` beside the script, which stays as it
+        is. Nothing happens for a plain document. Returns what ``scene_copy`` did, or None."""
+        if not self.engine.scripted:
+            return None
+        with self.lock:
+            r = self.ws.scene_copy()
+        self.saved_version = self.version
+        self.copied = r["saved"]
+        entry = {"what": f"editing a copy: {Path(r['saved']).name} (the script is unchanged)",
+                 "version": self.version, "t": self.t}  # fmt: skip
+        self.history.append(entry)
+        self.ws.activity.append({"who": "you", **entry})
+        return r
+
+    def _sound_edit(self, patch: Any, what: str) -> dict[str, Any]:
+        self.editable_copy()
+        return self._edit(patch, what)
+
     def sound(self) -> dict[str, Any]:
         """What the Sound tab shows: every lane (voice, beds, cues) with its level and what
         the mixer chose, each sentence's margin, the mix's loudness and peak, the sound
@@ -687,7 +708,7 @@ class Editor:
         ``file`` is copied into the scene's folder first when it is elsewhere."""
         rel = self.import_sound(file)
         bed = {"id": self._sound_id(rel), "file": rel, **fields}
-        return self._edit({"op": "set_bed", "bed": bed}, f"bed {bed['id']} ({rel})")
+        return self._sound_edit({"op": "set_bed", "bed": bed}, f"bed {bed['id']} ({rel})")
 
     def _anchor(self, t: float) -> dict[str, Any] | float:
         """A time as the nearest marker plus an offset (so it follows the narration), or
@@ -712,7 +733,7 @@ class Editor:
         when = at["marker"] if isinstance(at, dict) else f"at_{round(at * 1000)}ms"
         cue = {"id": self._sound_id(f"{Path(name).stem}_{when}"), "sound": name, "at": at,
                **fields}  # fmt: skip
-        return self._edit({"op": "set_cue", "cue": cue}, f"cue {cue['id']}")
+        return self._sound_edit({"op": "set_cue", "cue": cue}, f"cue {cue['id']}")
 
     def _item(self, item_id: str) -> tuple[str, dict[str, Any]] | None:
         doc = self.engine.document
@@ -729,7 +750,9 @@ class Editor:
             return self._refused(f"no bed or cue {item_id!r}")
         kind, item = found
         what = ", ".join(f"{k}={v}" for k, v in changes.items())
-        return self._edit({"op": f"set_{kind}", kind: {**item, **changes}}, f"{item_id}: {what}")
+        return self._sound_edit(
+            {"op": f"set_{kind}", kind: {**item, **changes}}, f"{item_id}: {what}"
+        )
 
     def move_cue(self, cue_id: str, t: float) -> dict[str, Any]:
         """Drag a cue to time ``t``: it snaps to the nearest marker, keeping the distance as
@@ -751,10 +774,11 @@ class Editor:
     def remove_sound(self, item_id: str) -> dict[str, Any]:
         self.muted.discard(item_id)
         self.solo.discard(item_id)
-        return self._edit({"op": "remove_sound", "id": item_id}, f"removed {item_id}")
+        return self._sound_edit({"op": "remove_sound", "id": item_id}, f"removed {item_id}")
 
     def narrate(self, script: str, voice: str = "auto") -> dict[str, Any]:
         """Speak ``script`` (``[[marker]]`` where things should happen) as the narration."""
+        self.editable_copy()
         with self.lock:
             try:
                 r = self.ws.narrate(script, voice=voice)
@@ -774,12 +798,13 @@ class Editor:
         if n is None or not 0 <= index < len(n.blocks):
             return self._refused(f"no sentence number {index}")
         moved = move_block(n, index, start)
-        return self._edit({"op": "set_narration", "narration": moved.model_dump(mode="json")},
-                          f"sentence {index} -> {moved.blocks[index].start:.3g}s")  # fmt: skip
+        patch = {"op": "set_narration", "narration": moved.model_dump(mode="json")}
+        return self._sound_edit(patch, f"sentence {index} -> {moved.blocks[index].start:.3g}s")
 
     def master(self) -> dict[str, Any]:
         """The automatic sound engineer (``Engine.master_sound``): turns down whatever
         covers the voice or clips; each round one undo step."""
+        self.editable_copy()
         with self.lock:
             try:
                 r = self.ws.sound_master()
@@ -791,6 +816,55 @@ class Editor:
             self.history.append(entry)
             self.ws.activity.append({"who": "you", **entry})
         return {"ok": True, **r}
+
+    def add_voice(self, file: str | Path, t: float | None = None, text: str = "") -> dict[str, Any]:
+        """A recording of your voice, put into the narration at ``t`` (the playhead): copied
+        into the scene's ``audio/`` folder, levelled on its own to the voice level, and the
+        music ducks under it. ``text`` is what it says (the file's name when empty)."""
+        self.editable_copy()
+        rel = self.import_sound(file)
+        with self.lock:
+            try:
+                r = self.ws.voice_add(rel, at=self.t if t is None else float(t), text=text)
+            except ToolError as e:
+                return self._refused(str(e))
+        entry = {"what": f"voice {rel}", "version": self.version, "t": self.t}
+        self.history.append(entry)
+        self.ws.activity.append({"who": "you", **entry})
+        return r
+
+    def remove_sentence(self, index: int) -> dict[str, Any]:
+        """Take spoken sentence ``index`` (a recording, say) out of the narration."""
+        from phasor.time.narration import remove_block
+
+        n = self.engine.document.narration
+        if n is None or not 0 <= index < len(n.blocks):
+            return self._refused(f"no sentence number {index}")
+        left = remove_block(n, index)
+        patch = {"op": "set_narration",
+                 "narration": None if left is None else left.model_dump(mode="json")}  # fmt: skip
+        return self._sound_edit(patch, f"removed sentence {index}")
+
+    def add_marker(self, name: str, t: float | None = None) -> dict[str, Any]:
+        """A marker at ``t`` (the playhead), to anchor motion and effects to. Inside a spoken
+        sentence (your recording) it belongs to that sentence and moves with it; elsewhere
+        it is a marker of its own."""
+        from phasor.core.ids import is_valid_name
+        from phasor.time.narration import block_of, mark_block
+
+        t = self.t if t is None else float(t)
+        if not is_valid_name(name):
+            return self._refused(f"{name!r}: a marker name is letters, digits and _")
+        if name in self.timeline()["markers"]:
+            return self._refused(f"there is already a marker {name!r}")
+        n = self.engine.document.narration
+        k = block_of(n, t) if n is not None else None
+        if k is not None and n.blocks[k].text and t <= n.blocks[k].start + n.blocks[k].duration:
+            marked = mark_block(n, k, name, t - n.blocks[k].start)
+            patch = {"op": "set_narration", "narration": marked.model_dump(mode="json")}
+            return self._sound_edit(patch, f"marker {name} in sentence {k}")
+        return self._sound_edit({"op": "set_marker", "name": name, "t": round(max(t, 0.0), 4)},
+                                f"marker {name} at {t:.3g}s")  # fmt: skip
 
     def listen_file(self, t: float | None = None) -> Path | None:
         """A WAV of the scene's sound from ``t`` (the playhead) to the end, as the encoder

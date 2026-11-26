@@ -181,18 +181,128 @@ def test_narrating_from_the_editor(ed):
     assert ed.activity()[-1]["what"] == "narration (estimate)"
 
 
-def test_a_script_scene_says_where_sound_goes(tmp_path):
+def test_a_script_scene_becomes_an_editable_copy_and_the_script_stays(tmp_path):
     script = tmp_path / "s.py"
-    script.write_text("from phasor import Scene\ns = Scene('scripted')\ns.marker('go', 1.0)\n",
-                      encoding="utf-8")  # fmt: skip
+    code = "from phasor import Scene\ns = Scene('scripted')\ns.marker('go', 1.0)\n"
+    script.write_text(code, encoding="utf-8")
     ws = Workspace(tmp_path)
     ws.allow_scripts = True
     ws.scene_open(str(script))
     e = Editor(ws)
     assert e.sound()["scripted"]
-    r = e.add_cue("pop", marker="go")
-    assert not r["ok"] and r["errors"][0]["code"] == "scripted_scene"
-    assert not e.master()["ok"] and not e.narrate("x")["ok"]
+    r = e.add_cue("pop", marker="go")  # the first sound edit: a copy, then the edit
+    assert r["ok"] and e.copied == str(tmp_path / "s_edit.phasor.json")
+    assert not e.engine.scripted and e.engine.document.sound.cues[0].id == "pop_go"
+    assert script.read_text(encoding="utf-8") == code  # the script is untouched
+    assert not (tmp_path / "s.overrides.json").exists()  # and so are its tweaks
+    assert "editing a copy" in e.activity()[-2]["what"]
+    e.save()
+    from phasor.scene import load
+
+    again = load(tmp_path / "s_edit.phasor.json", passes=None)
+    assert again.document.sound.cues[0].id == "pop_go" and not again.scripted
+    assert e.add_bed(_tone_file(tmp_path))["ok"] and e.copied.endswith("s_edit.phasor.json")
+
+
+def _tone_file(tmp_path):
+    path = tmp_path / "hum.wav"
+    _tone(path, 110, 1.0)
+    return path
+
+
+def test_a_copy_never_overwrites_an_earlier_copy(tmp_path):
+    script = tmp_path / "s.py"
+    script.write_text("from phasor import Scene\ns = Scene('x')\n", encoding="utf-8")
+    ws = Workspace(tmp_path)
+    ws.allow_scripts = True
+    for name in ("s_edit.phasor.json", "s_edit_2.phasor.json"):
+        ws.scene_open(str(script))
+        assert ws.scene_copy()["saved"].endswith(name)
+
+
+# ---------------------------------------------------------------- your own voice
+
+
+def _take(path, seconds, amp, freq=200):
+    _tone(path, freq, seconds, amp=amp)
+    return path
+
+
+def test_your_recordings_become_the_narration_where_you_drop_them(tmp_path):
+    ws = Workspace(tmp_path / "scenes")
+    ws.scene_new("my voice")
+    e = Editor(ws)
+    loud = _take(tmp_path / "take one.wav", 1.5, 20000)
+    soft = _take(tmp_path / "take two.wav", 1.0, 2000, freq=250)
+    assert e.add_voice(loud, t=0.5, text="Here is a pole.")["ok"]
+    assert e.add_voice(soft, t=3.0)["ok"]
+    n = e.engine.document.narration
+    assert [b.text for b in n.blocks] == ["Here is a pole.", "take two"]
+    assert [b.audio for b in n.blocks] == ["audio/take one.wav", "audio/take two.wav"]
+    assert [b.start for b in n.blocks] == [0.5, 3.0] and n.blocks[1].duration == 1.0
+    assert n.voice == "recorded" and n.script == "Here is a pole.\ntake two"
+    over = e.add_voice(loud, t=3.5)  # on top of the second take
+    assert not over["ok"] and "overlap" in over["errors"][0]["message"]
+    m = e.engine.sound_mix()  # each take levelled on its own: loud and soft come out even
+    from phasor.time import sound as snd
+
+    voice = [x for x in m.lanes if x.kind == "voice"]
+    pad = np.zeros((m.rate, 2), np.float32)
+    takes = [snd.loudness(np.concatenate([pad, x.samples, pad]), m.rate) for x in voice]
+    assert takes[0] == pytest.approx(takes[1], abs=0.2)  # 20 dB apart as recorded
+    together = snd.mix([snd.Placed(x.start, x.samples, m.rate) for x in voice], m.duration)
+    assert snd.loudness(together[0], m.rate) == pytest.approx(-16.0, abs=0.3)
+
+
+def test_music_ducks_under_your_voice(tmp_path, ambient):
+    ws = Workspace(tmp_path / "scenes")
+    ws.scene_new("duck")
+    e = Editor(ws)
+    e.add_voice(_take(tmp_path / "v.wav", 1.5, 12000), t=2.0)
+    e.add_bed(ambient, fade_in=0.0, fade_out=0.0)
+    assert e.engine.sound_mix().speech == ((2.0, 3.5),)
+    assert e.sound()["sentences"][0]["margin"] > 20
+
+
+def test_a_marker_in_your_recording_moves_with_it(tmp_path):
+    ws = Workspace(tmp_path / "scenes")
+    ws.scene_new("marks")
+    e = Editor(ws)
+    e.add_voice(_take(tmp_path / "v.wav", 2.0, 12000), t=1.0)
+    assert e.add_marker("pole", t=1.6)["ok"]  # inside the take: its own marker
+    assert e.add_marker("later", t=5.0)["ok"]  # outside: a marker of its own
+    assert not e.add_marker("pole", t=2.0)["ok"] and not e.add_marker("Bad name!")["ok"]
+    e.add_cue("chime", marker="pole")
+    assert e.move_sentence(0, 2.0)["ok"]
+    tl = e.timeline()
+    assert tl["markers"]["pole"] == pytest.approx(2.6) and tl["markers"]["later"] == 5.0
+    assert tl["sound"]["cues"][0]["t"] == pytest.approx(2.6)
+
+
+def test_taking_a_recording_out(tmp_path):
+    ws = Workspace(tmp_path / "scenes")
+    ws.scene_new("out")
+    e = Editor(ws)
+    e.add_voice(_take(tmp_path / "a.wav", 1.0, 9000), t=0.0)
+    e.add_voice(_take(tmp_path / "b.wav", 1.0, 9000), t=2.0)
+    assert e.remove_sentence(0)["ok"]
+    assert [b.audio for b in e.engine.document.narration.blocks] == ["audio/b.wav"]
+    assert e.remove_sentence(0)["ok"] and e.engine.document.narration is None
+    assert not e.remove_sentence(0)["ok"]
+
+
+def test_the_ai_adds_a_recording_from_the_scene_folder(tmp_path):
+    from phasor.workspace import ToolError
+
+    ws = Workspace(tmp_path)
+    ws.scene_new("ai")
+    (ws.engine.base_dir / "audio").mkdir(parents=True)
+    _take(ws.engine.base_dir / "audio" / "intro.wav", 1.0, 9000)
+    ws.scene_edit({"op": "set_marker", "name": "start", "t": 0.5})
+    r = ws.voice_add("audio/intro.wav", at="start", text="Hello.")
+    assert r["ok"] and ws.engine.document.narration.blocks[0].start == 0.5
+    with pytest.raises(ToolError):
+        ws.voice_add("../outside.wav")
 
 
 def test_a_player_without_a_backend_stays_silent(tmp_path):

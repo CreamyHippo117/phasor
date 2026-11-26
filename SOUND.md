@@ -200,6 +200,20 @@ before `BEAUTY.md` is done, and not without the owner's go-ahead.
   the timeline, Play restarting the sound after a scrub). Untested: hearing it (no speakers
   here), Windows' `winsound` path, macOS.
 
+- **Your own voice and script scenes, done 2026-11-26** (owner: "I want the narration to be
+  my voice"; "make that allowed but as a new copy"). **Add voice** puts a recording into the
+  narration at the playhead (`Workspace.voice_add`, MCP `voice_add`;
+  `time/narration.add_block`; overlapping another sentence is refused). Each voice clip is
+  now levelled on its own to `[sound] voice`, so takes recorded louder or softer come out
+  even. **Marker at playhead** inside a recording puts the marker in that block
+  (`mark_block`), so it moves with the take; recordings can be dragged and taken out
+  (`remove_block`). A script's scene gets an editable copy on its first sound, voice or
+  narration edit (`Engine.as_document`, `Workspace.scene_copy`, MCP `scene_copy`):
+  `<name>_edit.phasor.json` beside the script, which is never changed (contract 2 as it
+  stands: the script's overrides file is not involved). Word timings for a recording are not
+  found automatically (WhisperX exists in `voice.py` for scripts, untested): place markers by
+  ear with the playhead.
+
 ### Deviations
 
 - **Bus rate.** Planned as "48 kHz throughout". As built, the bus runs at the sources' common
