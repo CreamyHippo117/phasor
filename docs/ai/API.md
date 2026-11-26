@@ -1879,6 +1879,18 @@ the timeline shows narration with its waveform, and lets you drag markers and an
 (or their ends) to retime them; the **Who changed what** dock lists your edits and an attached
 AI's; hovering shows values under the pointer. `phasor-gui` starts the editor as a program.
 
+The **Sound** tab is the scene's mixer (SOUND.md): the voice, every bed and cue with its
+loudness and gain (type dB), mute and solo (for listening only; the video always has every
+lane), **Add music** (any file: it is copied into the scene's `audio/` folder), **Add effect
+at playhead** (a built-in or a file, tied to the nearest marker), **Narrate** (the script
+with `[[markers]]` and a voice), **Master** (turns down what covers the voice or clips; each
+round undoable) and **Show levels** (loudness over time). With "Play with sound", Space plays
+the mix from the playhead and the playhead follows it. On the timeline, beds and cues have
+rows of their own: drag a cue (it snaps to the nearest marker), a bed, or a spoken sentence
+(its markers, and everything on them, move with it). An attached AI does the same through
+`scene_edit`, `narrate`, `sound` and `sound_master`. A scene built by a script gets its sound
+in the script (`s.bed`, `s.cue`); the tab says so.
+
 While it is open, `phasor mcp --attach --root <same folder>` serves the editor's own live
 scene to an AI: its edits show up in the window, the window's edits are what it inspects.
 The editor writes `<root>/.phasor/gui.json` (host, port, a token; readable only by you)

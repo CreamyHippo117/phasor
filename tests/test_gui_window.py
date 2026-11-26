@@ -287,3 +287,103 @@ def test_the_sketch_tab_turns_a_drawn_loop_into_a_traced_contour(tmp_path):
         win.timer.stop()
         server.stop()
         win.close()
+
+
+# ---------------------------------------------------------------- sound (SOUND.md step 4)
+
+
+class _FakePlayer:
+    """Stands in for the system's player: records what Play asked it to play."""
+
+    available = True
+
+    def __init__(self):
+        self.played: list[str] = []
+        self.stopped = 0
+
+    def play(self, path):
+        self.played.append(str(path))
+        return True
+
+    def stop(self):
+        self.stopped += 1
+
+
+def _press(widget, x, y, kind):
+    from PySide6.QtCore import QEvent
+
+    pos = QPointF(x, y)
+    button = Qt.MouseButton.LeftButton
+    buttons = button if kind != QEvent.Type.MouseButtonRelease else Qt.MouseButton.NoButton
+    return QMouseEvent(kind, pos, pos, button, buttons, Qt.KeyboardModifier.NoModifier)
+
+
+def test_the_sound_tab_adds_music_and_effects_and_the_timeline_moves_them(window):
+    from PySide6.QtCore import QEvent
+
+    from tests.test_sound_bed import _tone
+
+    app, win, _server, root = window
+    music = root / "picked" / "hum.wav"
+    music.parent.mkdir()
+    _tone(music, 110, 2.0, amp=6000)
+    win.sound.add_music(str(music))  # what the file dialog hands over
+    win.sound.effect.setCurrentText("chime")
+    win.ed.set_time(1.2)
+    win.sound.add_effect()
+    win.tick()
+    app.processEvents()
+    doc = win.ed.engine.document
+    assert [b.id for b in doc.sound.beds] == ["hum"] and doc.sound.cues[0].at.marker == "go"
+    rows = [win.sound.table.item(r, 0).text() for r in range(win.sound.table.rowCount())]
+    assert rows == ["hum (bed)", "chime_go (cue)"]
+    assert "LUFS" in win.sound.status.text()
+    tl = win.timeline
+    tl.resize(900, 200)
+    tl.refresh()
+    tl.grab()  # paint, so the cue's place is known
+    ((rect, _, (cue_id, _t)),) = [h for h in tl._hits if h[1] == "cue"]
+    start = rect.center()
+    tl.mousePressEvent(_press(tl, start.x(), start.y(), QEvent.Type.MouseButtonPress))
+    tl.mouseMoveEvent(_press(tl, tl._x(1.9), start.y(), QEvent.Type.MouseMove))
+    tl.mouseReleaseEvent(_press(tl, tl._x(1.9), start.y(), QEvent.Type.MouseButtonRelease))
+    cue = win.ed.engine.document.sound.item(cue_id)
+    assert cue.at.marker == "end" and cue.at.offset == pytest.approx(-0.1, abs=0.02)
+
+
+def test_gain_spin_and_master_from_the_sound_tab(window):
+    from tests.test_sound_bed import _tone
+
+    app, win, _server, root = window
+    _tone(root / "hum.wav", 110, 2.0, amp=6000)
+    win.sound.add_music(str(root / "hum.wav"))
+    win.tick()
+    app.processEvents()
+    spin = win.sound.table.cellWidget(0, 2)
+    spin.setValue(-7.0)
+    spin.editingFinished.emit()
+    assert win.ed.engine.document.sound.beds[0].gain == -7.0
+    win.sound.master_button.click()  # nothing to fix here: a clean report, nothing changed
+    assert win.ed.engine.document.sound.beds[0].gain == -7.0
+
+
+def test_play_plays_the_sound_from_the_playhead_and_scrubbing_restarts_it(window):
+    from tests.test_sound_bed import _tone
+
+    _app, win, _server, root = window
+    _tone(root / "hum.wav", 110, 2.0, amp=6000)
+    win.sound.add_music(str(root / "hum.wav"))
+    win.player = fake = _FakePlayer()
+    win.sound.listen.setEnabled(True)
+    win.sound.listen.setChecked(True)
+    win.ed.set_time(0.5)
+    win.toggle_play()
+    assert win.playing and len(fake.played) == 1 and fake.played[0].endswith("listen.wav")
+    win._scrub(1.0)  # jump while playing: the sound starts again from there
+    assert len(fake.played) == 2 and win._heard_from[1] == 1.0
+    win.toggle_play()
+    assert not win.playing and win._heard_from is None and fake.stopped >= 3
+    win.sound.listen.setChecked(False)
+    win.toggle_play()  # without sound: the old timer-driven playback
+    assert len(fake.played) == 2 and win._heard_from is None
+    win.toggle_play()

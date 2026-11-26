@@ -46,6 +46,11 @@ class Editor:
         self._frame: tuple[tuple, np.ndarray] | None = None
         self._lint: tuple[int, list[dict[str, Any]]] | None = None
         self.saved_version = self.version  # what is on disk (unsaved edits: ``dirty``)
+        # Listening switches (Sound tab): lanes left out of what Play sounds like. Never
+        # saved; the rendered video always has every lane.
+        self.muted: set[str] = set()
+        self.solo: set[str] = set()
+        self._listen: tuple | None = None  # (key, int16 track, rate) for listen_file
 
     # ------------------------------------------------------------ the scene
 
@@ -613,3 +618,208 @@ class Editor:
         ops = offered[winner]
         result = self._edit(ops, f"variant: {winner}") if ops else None
         return {"recorded": entry, "applied": bool(result and result["ok"]), "edit": result}
+
+    # ------------------------------------------------------------ sound (SOUND.md step 4)
+
+    def sound(self) -> dict[str, Any]:
+        """What the Sound tab shows: every lane (voice, beds, cues) with its level and what
+        the mixer chose, each sentence's margin, the mix's loudness and peak, the sound
+        issues, and the person's listening switches (``muted``, ``solo``). ``scripted``:
+        the scene is built by a script, so sound is added there, not here."""
+        with self.lock:
+            r = self.ws.sound(with_picture=False)
+            doc = self.engine.document
+            r["scripted"] = self.engine.scripted
+            r["beds"] = [b.model_dump(mode="json") for b in doc.sound.beds]
+            r["cues"] = [q.model_dump(mode="json") for q in doc.sound.cues]
+        r["muted"], r["solo"] = sorted(self.muted), sorted(self.solo)
+        return r
+
+    def sound_picture(self) -> str | None:
+        """A PNG of every lane's loudness over time (the AI's ``sound`` picture)."""
+        with self.lock:
+            return self.ws.sound(with_picture=True).get("image")
+
+    def toggle_mute(self, lane: str) -> None:
+        """Listening only (nothing is saved): ``voice``, a bed's or a cue's id."""
+        self.muted.symmetric_difference_update({lane})
+
+    def toggle_solo(self, lane: str) -> None:
+        self.solo.symmetric_difference_update({lane})
+
+    def import_sound(self, src: str | Path) -> str:
+        """Copy a sound file the person chose (from anywhere) into the scene's ``audio/``
+        folder, where the scene may read it (``core/files.py``), and return its path
+        relative to the scene. A file already there is used as it is."""
+        src = Path(src).resolve()
+        base = Path(self.engine.base_dir or ".").resolve()
+        if base in src.parents:
+            return src.relative_to(base).as_posix()
+        folder = base / "audio"
+        folder.mkdir(parents=True, exist_ok=True)
+        dest = folder / src.name
+        k = 1
+        while dest.exists() and dest.read_bytes() != src.read_bytes():
+            dest = folder / f"{src.stem}_{k}{src.suffix}"
+            k += 1
+        if not dest.exists():
+            import shutil
+
+            shutil.copy2(src, dest)
+        return dest.relative_to(base).as_posix()
+
+    def _sound_id(self, name: str) -> str:
+        """A fresh id named after a sound (``drift``, then ``drift_2``)."""
+        import re
+
+        stem = re.sub(r"[^a-z0-9]+", "_", Path(name).stem.lower()).strip("_") or "sound"
+        stem = stem if stem[0].isalpha() else f"sound_{stem}"
+        doc = self.engine.document
+        taken = {x.id for x in (*doc.sound.beds, *doc.sound.cues)} | self._ids()
+        taken |= set(doc.retired_ids)
+        out, k = stem, 2
+        while out in taken:
+            out, k = f"{stem}_{k}", k + 1
+        return out
+
+    def add_bed(self, file: str | Path, **fields: Any) -> dict[str, Any]:
+        """Music or ambience under the whole scene (looped, faded, ducked under the voice):
+        ``file`` is copied into the scene's folder first when it is elsewhere."""
+        rel = self.import_sound(file)
+        bed = {"id": self._sound_id(rel), "file": rel, **fields}
+        return self._edit({"op": "set_bed", "bed": bed}, f"bed {bed['id']} ({rel})")
+
+    def _anchor(self, t: float) -> dict[str, Any] | float:
+        """A time as the nearest marker plus an offset (so it follows the narration), or
+        seconds when there are no markers."""
+        markers = self.timeline()["markers"]
+        if not markers:
+            return round(max(0.0, t), 3)
+        name = min(markers, key=lambda m: abs(markers[m] - t))
+        return {"marker": name, "offset": round(t - markers[name], 3)}
+
+    def add_cue(self, sound: str, t: float | None = None, marker: str | None = None,
+                offset: float = 0.0, **fields: Any) -> dict[str, Any]:  # fmt: skip
+        """A sound effect: a built-in name or a file (copied in), at ``marker`` plus
+        ``offset``, or at time ``t`` (the playhead by default) tied to the nearest marker."""
+        from phasor.core.schema import BUILTIN_SOUNDS
+
+        name = sound if sound in BUILTIN_SOUNDS else self.import_sound(sound)
+        if marker is not None:
+            at: Any = {"marker": marker, "offset": float(offset)}
+        else:
+            at = self._anchor(self.t if t is None else t)
+        when = at["marker"] if isinstance(at, dict) else f"at_{round(at * 1000)}ms"
+        cue = {"id": self._sound_id(f"{Path(name).stem}_{when}"), "sound": name, "at": at,
+               **fields}  # fmt: skip
+        return self._edit({"op": "set_cue", "cue": cue}, f"cue {cue['id']}")
+
+    def _item(self, item_id: str) -> tuple[str, dict[str, Any]] | None:
+        doc = self.engine.document
+        for kind, items in (("bed", doc.sound.beds), ("cue", doc.sound.cues)):
+            for x in items:
+                if x.id == item_id:
+                    return kind, x.model_dump(mode="json")
+        return None
+
+    def update_sound(self, item_id: str, **changes: Any) -> dict[str, Any]:
+        """Change a bed's or cue's fields (``gain=-3``, ``loop=False``, ``pan=0.5``)."""
+        found = self._item(item_id)
+        if found is None:
+            return self._refused(f"no bed or cue {item_id!r}")
+        kind, item = found
+        what = ", ".join(f"{k}={v}" for k, v in changes.items())
+        return self._edit({"op": f"set_{kind}", kind: {**item, **changes}}, f"{item_id}: {what}")
+
+    def move_cue(self, cue_id: str, t: float) -> dict[str, Any]:
+        """Drag a cue to time ``t``: it snaps to the nearest marker, keeping the distance as
+        its offset, so it still follows the word when the narration moves."""
+        return self.update_sound(cue_id, at=self._anchor(t))
+
+    def move_bed(self, bed_id: str, start: float) -> dict[str, Any]:
+        """Slide a bed so it starts at ``start`` (its end slides with it)."""
+        found = self._item(bed_id)
+        if found is None or found[0] != "bed":
+            return self._refused(f"no bed {bed_id!r}")
+        beds = {b["id"]: b for b in self.timeline()["sound"]["beds"]}
+        dt = float(start) - beds[bed_id]["start"]
+        changes: dict[str, Any] = {"start": self._anchor(max(0.0, float(start)))}
+        if found[1]["end"] is not None:
+            changes["end"] = self._anchor(beds[bed_id]["end"] + dt)
+        return self.update_sound(bed_id, **changes)
+
+    def remove_sound(self, item_id: str) -> dict[str, Any]:
+        self.muted.discard(item_id)
+        self.solo.discard(item_id)
+        return self._edit({"op": "remove_sound", "id": item_id}, f"removed {item_id}")
+
+    def narrate(self, script: str, voice: str = "auto") -> dict[str, Any]:
+        """Speak ``script`` (``[[marker]]`` where things should happen) as the narration."""
+        with self.lock:
+            try:
+                r = self.ws.narrate(script, voice=voice)
+            except ToolError as e:
+                return self._refused(str(e))
+        entry = {"what": f"narration ({voice})", "version": self.version, "t": self.t}
+        self.history.append(entry)
+        self.ws.activity.append({"who": "you", **entry})
+        return {"ok": True, **r}
+
+    def move_sentence(self, index: int, start: float) -> dict[str, Any]:
+        """Drag spoken sentence ``index`` to start at ``start`` (kept between its neighbours);
+        its markers move, and everything anchored to them follows."""
+        from phasor.time.narration import move_block
+
+        n = self.engine.document.narration
+        if n is None or not 0 <= index < len(n.blocks):
+            return self._refused(f"no sentence number {index}")
+        moved = move_block(n, index, start)
+        return self._edit({"op": "set_narration", "narration": moved.model_dump(mode="json")},
+                          f"sentence {index} -> {moved.blocks[index].start:.3g}s")  # fmt: skip
+
+    def master(self) -> dict[str, Any]:
+        """The automatic sound engineer (``Engine.master_sound``): turns down whatever
+        covers the voice or clips; each round one undo step."""
+        with self.lock:
+            try:
+                r = self.ws.sound_master()
+            except ToolError as e:
+                return self._refused(str(e))
+        if r.get("rounds"):
+            entry = {"what": f"mastered ({len(r['rounds'])} rounds)", "version": self.version,
+                     "t": self.t}  # fmt: skip
+            self.history.append(entry)
+            self.ws.activity.append({"who": "you", **entry})
+        return {"ok": True, **r}
+
+    def listen_file(self, t: float | None = None) -> Path | None:
+        """A WAV of the scene's sound from ``t`` (the playhead) to the end, as the encoder
+        will write it, with the muted lanes left out (or only the solo ones): what Play
+        sounds like. None when the scene is silent."""
+        from phasor.time import sound as snd
+        from phasor.time.narration import write_wav
+
+        t = self.t if t is None else t
+        with self.lock:
+            m = self.engine.sound_mix()
+            ceiling = self.engine._snap.compiled.theme.sound["ceiling"]
+            key = (self.version, tuple(sorted(self.muted)), tuple(sorted(self.solo)))
+        if m is None or not m.lanes:
+            return None
+
+        def heard(lane) -> bool:
+            name = "voice" if lane.kind == "voice" else lane.id
+            return (name in self.solo) if self.solo else name not in self.muted
+
+        cached = self._listen
+        if cached is None or cached[0] != key:
+            lanes = [snd.Placed(x.start, x.samples, m.rate) for x in m.lanes if heard(x)]
+            bus = snd.mix(lanes, m.duration)
+            track = (snd.to_int16(snd.master(bus[0], m.rate, ceiling)) if bus
+                     else np.zeros((round(m.duration * m.rate), 2), np.int16))  # fmt: skip
+            self._listen = cached = (key, track, m.rate)
+        _, track, rate = cached
+        out = self.ws.out_dir / "listen.wav"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        write_wav(out, track[round(max(t, 0.0) * rate) :], rate)
+        return out

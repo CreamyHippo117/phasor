@@ -468,6 +468,79 @@ class Engine:
                          if i.code in lint_rules.SOUND_CODES or set(i.ids) & ids]  # fmt: skip
         return out
 
+    def master_sound(self, rounds: int = 3) -> dict[str, Any]:
+        """The sound engineer's pass (SOUND.md): fix what the sound lint finds, then look
+        again, at most ``rounds`` times, each round one undo step. It only turns gains down:
+        a bed under the voice to ``[lint] sound_masking`` dB below it, every bed and cue
+        evenly when the mix would clip, a cue loud on a word to ``[lint] cue_loud`` dB under
+        the voice. Levels the theme sets are left alone. Returns the sound before and after
+        (loudness, peak, the margin of each sentence), what each round changed and what is
+        left (``remaining``). ``{"silent": True}`` without sound."""
+        before = self.sound_report()
+        if before.get("silent"):
+            return {"silent": True}
+        history = []
+        for k in range(1, rounds + 1):
+            ops = self._master_ops()
+            if not ops:
+                break
+            r = self.apply(ops)
+            if not r.ok:
+                return {**self._master_summary(before), "rounds": history,
+                        "errors": [i.to_dict() for i in r.errors]}  # fmt: skip
+            history.append({"round": k, "applied": ops})
+        return {**self._master_summary(before), "rounds": history}
+
+    def _master_summary(self, before: dict[str, Any]) -> dict[str, Any]:
+        after = self.sound_report()
+
+        def short(r: dict[str, Any]) -> dict[str, Any]:
+            return {"mix": r.get("mix"), "margins": [s["margin"] for s in r["sentences"]],
+                    "issues": sorted({i["code"] for i in r["issues"]})}  # fmt: skip
+
+        return {"before": short(before), "after": short(after), "remaining": after["issues"]}
+
+    def _master_ops(self) -> list[dict[str, Any]]:
+        """One round of certain gain changes (see ``master_sound``), one op per bed or cue."""
+        from phasor.time import sound as snd
+
+        m = self.sound_mix()
+        if m is None or not m.lanes:
+            return []
+        c = self._snap.compiled
+        th = c.theme.lint
+        down: dict[str, float] = {}  # bed or cue id -> dB to take off
+        issues = [*lint_rules.sound_rules(c, m), *aesthetic_rules.sound_rules(c, m)]
+        sound = self.document.sound
+        for i in issues:
+            if i.code == "bed_masks_voice":
+                for op in i.fix:
+                    item = sound.item(op["bed"]["id"])
+                    down[item.id] = max(down.get(item.id, 0.0), item.gain - op["bed"]["gain"])
+            elif i.code == "audio_clip":
+                peak = 20.0 * np.log10(max(float(np.abs(m.bus()).max()), 1e-12))
+                cut = float(np.ceil((peak - th["sound_clip"]) * 2.0) / 2.0) + 0.5
+                for x in (*sound.beds, *sound.cues):
+                    down[x.id] = max(down.get(x.id, 0.0), cut)
+        voice = [x for x in m.lanes if x.kind == "voice"]
+        if voice and any(i.code == "cue_on_word" for i in issues):
+            vbus = snd.mix([snd.Placed(x.start, x.samples, m.rate) for x in voice], m.duration)
+            lv = snd.loudness(vbus[0], m.rate)
+            for i in issues:
+                if i.code == "cue_on_word":
+                    level = snd.momentary_max(m.lane(i.ids[0]).samples, m.rate)
+                    cut = float(np.ceil((level - (lv - th["cue_loud"])) * 2.0) / 2.0) + 0.5
+                    down[i.ids[0]] = max(down.get(i.ids[0], 0.0), cut)
+        ops = []
+        for item_id, cut in down.items():
+            item = sound.item(item_id)
+            if item is None or cut <= 0:
+                continue
+            kind = "bed" if item in sound.beds else "cue"
+            lowered = {**item.model_dump(mode="json"), "gain": round(item.gain - cut, 1)}
+            ops.append({"op": f"set_{kind}", kind: lowered})
+        return ops
+
     def sound_mix(self):
         """The scene's sound lane by lane, before the master limiter (``time/sound.Mix``):
         the narration set to the theme's level, beds ducked under it, cues placed on their
@@ -812,7 +885,8 @@ class Engine:
     def timeline(self) -> dict[str, Any]:
         """What a timeline panel shows: the duration, the markers, for every animated
         parameter its spans in resolved seconds (``{"d.pos": [[1.0, 2.0], ...]}``) and the
-        spoken narration blocks (text, start, duration, audio file)."""
+        spoken narration blocks (text, start, duration, audio file, ``index`` among all
+        blocks) and the sound: beds (id, start, end) and cues (id, time, sound), in seconds."""
         c = self._snap.compiled
         lanes = {
             path: [[seg.t0, seg.t1] for seg in node.segments]
@@ -821,9 +895,18 @@ class Engine:
         }
         markers = dict(sorted(c.time_map.markers.items(), key=lambda kv: kv[1]))
         nar = self._snap.compiled.doc.narration
-        blocks = [{"text": b.text, "start": b.start, "duration": b.duration, "audio": b.audio}
-                  for b in (nar.blocks if nar else ()) if b.text]  # fmt: skip
-        return {"duration": c.duration, "markers": markers, "lanes": lanes, "narration": blocks}
+        blocks = [{"text": b.text, "start": b.start, "duration": b.duration, "audio": b.audio,
+                   "index": k}
+                  for k, b in enumerate(nar.blocks if nar else ()) if b.text]  # fmt: skip
+        snd, at = c.doc.sound, c.time_map.resolve
+        sound = {
+            "beds": [{"id": b.id, "start": at(b.start), "gain": b.gain,
+                      "end": c.duration if b.end is None else at(b.end)} for b in snd.beds],
+            "cues": [{"id": q.id, "t": at(q.at), "sound": q.sound, "gain": q.gain}
+                     for q in snd.cues],
+        }  # fmt: skip
+        return {"duration": c.duration, "markers": markers, "lanes": lanes, "narration": blocks,
+                "sound": sound}  # fmt: skip
 
     def is_moving(self, t0: float, t1: float) -> bool:
         """Whether anything animated by the document runs between ``t0`` and ``t1``: a

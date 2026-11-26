@@ -31,8 +31,8 @@ compounding. If this file and SPEC.md disagree, stop and ask.
   the owner's PC must run.
 - Sound bed (owner, 2026-11-26): music, ambience and effects under the narration, editable in
   the app: `SOUND.md`, approved 2026-11-26, started on the owner's go
-  ("continue building", 2026-11-26); steps 1-3 and 5 (bus, beds, cues, ducking, built-in
-  effects, the `sound` tool) done; step 4 (the app) waits for `APP_PLAN.md` phase 2.
+  ("continue building", 2026-11-26); all five steps done (bus, beds, cues, ducking,
+  built-in effects, `sound`/`sound_master` tools, the editor's Sound tab and timeline rows).
 - Render speed: `GPU_SPEED.md` (steps 1-4 done, workers included); resume at its "Next
   session"; measure with wall clock before and after each step.
 - One milestone per branch. No work on milestone N+1 until N's exit demo and tests pass.

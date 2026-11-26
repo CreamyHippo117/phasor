@@ -2,8 +2,8 @@
 
 Working doc, like `APP_PLAN.md`. Asked for by the owner on 2026-11-26: "a sound bed: sound
 effects merged nicely with background music, most likely ambient, under the narration, and
-all of it editable in the desktop app". Status: **approved by the owner 2026-11-26; steps 1-3 and 5 built 2026-11-26; step 4 (the
-app) waits for `APP_PLAN.md` phase 2** (see "Progress"). It comes after `BEAUTY.md`; the
+all of it editable in the desktop app". Status: **approved by the owner 2026-11-26; all five steps built 2026-11-26** (step 4 in
+today's editor window, on the owner's ask; see "Progress"). It comes after `BEAUTY.md`; the
 owner's answers are at the end of this doc.
 
 ## What exists to build on
@@ -180,8 +180,25 @@ before `BEAUTY.md` is done, and not without the owner's go-ahead.
   tool `sound` (`Workspace.sound`), which adds a picture of the lanes' loudness over time
   (`render/soundview.py`, matplotlib's Agg canvas). Docs: `docs/ai/MCP.md` "Sound", the
   skill, `llms.txt`. Test: `tests/test_sound_bed.py` (the tool without the protocol).
-- **Step 4, not started.** It needs the code-first window (`APP_PLAN.md` phase 2), which is
-  not built.
+- **Step 4, done 2026-11-26, in today's editor window** (owner: "I have preview and all the
+  related stuff, and then I can add the soundtrack, the narration where I want, the effects,
+  or prompt the AI; same MCP integration"). The **Sound** tab (`gui/window.py`
+  `SoundPanel`): each lane's loudness and gain, mute and solo (listening only), Add music
+  (copied into the scene's `audio/` folder), Add effect at the playhead (tied to the nearest
+  marker), Narrate (a dialog: script and voice), Master, Show levels, Play with sound. The
+  timeline has a row per bed and one for the cues; beds, cues and spoken sentences drag
+  (`move_bed`, `move_cue` snapping to the nearest marker, `move_sentence` kept between its
+  neighbours, `time/narration.move_block`). Mastering is `Engine.master_sound()` (rounds of
+  certain gain cuts: a bed covering the voice, a clipping mix, a loud cue on a word) and the
+  MCP tool `sound_master`; the AI attached with `phasor mcp --attach` uses it, `sound`,
+  `scene_edit` and `narrate` on the same live scene. Playback (`gui/audio.py`) needs no
+  audio library: `winsound` on Windows, `afplay` on macOS, `paplay`/`aplay`/`ffplay` on
+  Linux play a WAV of the mix from the playhead (`Editor.listen_file`, the encoder's own
+  samples); the playhead follows the clock while it plays. Opening an example now copies
+  the examples' `assets/` folder too (pictures, meshes, the example's music). Tests:
+  `tests/test_gui_sound.py` (logic), `tests/test_gui_window.py` (the tab, a cue dragged on
+  the timeline, Play restarting the sound after a scrub). Untested: hearing it (no speakers
+  here), Windows' `winsound` path, macOS.
 
 ### Deviations
 
@@ -204,6 +221,11 @@ before `BEAUTY.md` is done, and not without the owner's go-ahead.
   design, so firing on every cue near a word would fire on every anchored cue.
 - **The loudness picture is its own image** (the `sound` tool), not lanes under the
   storyboard: the storyboard is a grid of frames with no shared time axis to hang them on.
+- **Step 4 in today's window, not the code-first one.** Planned after `APP_PLAN.md`
+  phase 2; built now on the owner's ask. A scene built by a script still takes its sound in
+  the script: the tab says so, since script scenes accept only tweaks (contract 2).
+- **Playback through the system's player**, not a Qt or audio library: PySide6-Essentials
+  has no QtMultimedia, and the system's player needs no new dependency.
 - **Two more lint thresholds**: `[lint] cue_loud` and `cue_word` (plus `sound_masking`,
   `sound_clip`).
 - **Exit test.** A narration-only scene keeps its samples bit for bit in both channels

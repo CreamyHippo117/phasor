@@ -186,6 +186,20 @@ def repace(narration: Narration, extra: Sequence[float], gap: float, lead: float
     return Narration(script=narration.script, voice=narration.voice, blocks=tuple(out))
 
 
+def move_block(narration: Narration, k: int, start: float) -> Narration:
+    """Block ``k`` moved to start at ``start`` seconds, kept between its neighbours (it may
+    not overlap the sentence before or after). Its words and markers move with it, and so
+    does everything anchored to those markers. ``IndexError`` for a block that is not there."""
+    blocks = narration.blocks
+    b = blocks[k]
+    lo = blocks[k - 1].start + blocks[k - 1].duration if k > 0 else 0.0
+    hi = blocks[k + 1].start - b.duration if k + 1 < len(blocks) else float("inf")
+    t = round(min(max(float(start), lo), max(hi, lo)), 4)
+    moved = NarrationBlock.model_validate({**b.model_dump(), "start": t})
+    out = (*blocks[:k], moved, *blocks[k + 1 :])
+    return Narration(script=narration.script, voice=narration.voice, blocks=out)
+
+
 def block_of(narration: Narration, t: float) -> int | None:
     """Index of the block that is playing, or last played, at time ``t``."""
     k = None
@@ -210,9 +224,11 @@ def read_wav(path: str | Path) -> tuple[np.ndarray, int]:
 
 
 def write_wav(path: str | Path, samples: np.ndarray, rate: int) -> None:
+    """16-bit WAV: ``samples`` shape (n,) mono or (n, channels)."""
     Path(path).parent.mkdir(parents=True, exist_ok=True)
+    samples = np.asarray(samples)
     with wave.open(str(path), "wb") as w:
-        w.setnchannels(1)
+        w.setnchannels(1 if samples.ndim == 1 else samples.shape[1])
         w.setsampwidth(2)
         w.setframerate(rate)
         w.writeframes(np.asarray(samples, dtype=np.int16).tobytes())

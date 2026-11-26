@@ -35,6 +35,7 @@ a variant and compare.
 | `lint` | visual problems; `fix: true` applies the certain fixes |
 | `review` | the whole self-review round in one call |
 | `storyboard` | keyframe picture with each object's box and id drawn on it |
+| `sound_master` | master the sound: turn down a bed covering the voice, a mix that would clip, a cue loud on a word; check again (3 rounds at most, each undoable) |
 | `sound` | hear the scene with numbers: each lane's level and loudness (LUFS), the voice against the beds in every sentence, the mix's loudness and peak, sound lint; with a picture of loudness over time |
 | `hit_test`, `resolve` | what is at a pixel; which object ids "the label of the pole" means |
 | `events`, `when_hidden`, `free_space_near` | 3D: when things get hidden or leave the frame (with fixes), spans an object is hidden, empty places next to an object |
@@ -201,7 +202,13 @@ theme sets every level; change `gain` (dB) only when `sound` says a lane is wron
 
 You cannot hear, so call `sound` after changing any: read each sentence's `margin` (the
 voice should stay well over the beds, 12 dB or more) and the issues
-(`bed_masks_voice` comes with a fix; `audio_clip`, `cue_on_word`, `missing_file`).
+(`bed_masks_voice` comes with a fix; `audio_clip`, `cue_on_word`, `missing_file`). Asked to
+master it, call `sound_master`, then `sound` again: it only turns things down, so a bed you
+want louder is a `gain` you set yourself.
+
+Placing narration: `narrate` sets the whole script. To move one sentence, send
+`set_narration` with that block's `start` changed (keep it between its neighbours); every
+cue and motion anchored to its markers moves with it.
 
 ## What comes back from `review`
 

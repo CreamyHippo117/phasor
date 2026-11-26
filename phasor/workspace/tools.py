@@ -523,6 +523,16 @@ class Workspace:
                                      out, title=f"{e.document.meta.title}: sound"))  # fmt: skip
         return r
 
+    def sound_master(self, rounds: int = 3) -> dict[str, Any]:
+        """Master the sound: turn down what the sound check finds (a bed covering the voice,
+        a mix that would clip, a cue loud on a word), check again, at most ``rounds`` times.
+        Each round is one undo step. Returns before and after, what changed, what is left."""
+        e = self.engine
+        if e.scripted:
+            raise ToolError("this scene is built by a script: set gains there (s.bed(..., "
+                            "gain=...)); `sound` says which")  # fmt: skip
+        return self._guard(lambda: e.master_sound(rounds))
+
     def events(self, t0: float = 0.0, t1: float | None = None, problems_only: bool = True,
                hz: float = 10.0) -> dict[str, Any]:  # fmt: skip
         """The event log: when things get hidden, leave or enter the frame, change region or
