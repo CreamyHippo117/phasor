@@ -31,3 +31,6 @@ examples. Add a dated line whenever they say something about taste.
   time, not space: it runs alone first, then at its key moment it slows, dims, and the
   math is written in, held and taken away (example: `reverb_la`'s hands as the n-th roots
   of unity, the reverb as a DFT).
+- 2026-11-26: narration explains what is happening and what it means mathematically (one
+  sentence when those are obviously the same); equations on screen still come in as the
+  exact statement of that meaning. The voice explains an equation, never reads it out.

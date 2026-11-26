@@ -144,7 +144,10 @@ silence readable.
    found where it starts. For timing, take the plan's holds and silences; put a
    `[[marker]]` at each change and anchor each motion to its marker with a verb. Where the
    plan gives words to say, use its gist as placeholder narration: the person will record
-   their own.
+   their own. Keep the plan's two layers: each narrated meaning has its equation on
+   screen, written in as the voice reaches it (a verb on that marker), and the voice says
+   what the equation means rather than reading it out. If the plan narrates a meaning
+   with no equation, add the equation and say so in the report.
 5. **Check:** lint with `--aesthetic` and `--strict`. Fix every error. Fix each warning,
    unless it warns about something the plan asks for on purpose (a frame filled edge to
    edge, the whole color wheel where hue is structure); then leave it and name it in the

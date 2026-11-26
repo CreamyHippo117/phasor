@@ -213,6 +213,14 @@ Now make the chosen path teach as well as it can:
 - **Say, show, say.** For each stretch: a short setup in words (what to watch for), then
   the animation alone, long enough to be understood without help, then words again only if
   something still needs saying.
+- **Two layers, voice and equation.** Narration says what is happening *and* what it means
+  mathematically, in words ("every N samples the hands line up: that is the echo"). The
+  equation on screen is the exact statement of that meaning, and it stays up so the eye
+  can come back to it. They never duplicate each other: the voice explains what the
+  equation means, never reads it out symbol by symbol, and a narrated meaning still gets
+  its equation. When what happens and what it means are obviously the same thing (the
+  hands lining up *is* the echo), say it once, in one sentence, and let the equation
+  carry the rest.
 - **Write the silent test** for each animation: what should the viewer work out from it
   with no voice? If the answer is "nothing", the animation or the setup is wrong.
 - **Name what is hard**: the one step where people get lost. Give it the most time.
@@ -367,7 +375,9 @@ The central picture. What color encodes. The music bed.
   each motion and where it lands. Enough stretches for the whole hold; no replays
 - **On screen:** the formula, the live value, the labels, the line of working, and when
   each comes in and leaves
-- **Say before:** brief; the gist, for the person to put in their own words
+- **Say before:** brief; the gist, for the person to put in their own words: what is
+  happening and what it means mathematically (one sentence when they are the same), and
+  which on-screen equation states that meaning
 - **Silent stretch:** how long, and what the viewer should work out alone
 - **Say after:** if anything
 - **Sound:** ...
