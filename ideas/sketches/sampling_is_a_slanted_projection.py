@@ -1,4 +1,4 @@
-"""Throwaway still for the idea card `sampling_is_a_slanted_projection` (idea-scout).
+"""Throwaway still for the idea card `sampling_is_a_slanted_projection` (scene-brainstorm).
 
 Left: the plane of (how much slow wave, how much fast wave). Every signal on one diagonal has
 the same samples. Sampling slides a point down its diagonal to the slow axis (the slanted

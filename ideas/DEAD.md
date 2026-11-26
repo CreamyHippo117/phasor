@@ -1,6 +1,6 @@
 # Dead ideas
 
-Written by the `idea-scout` skill. Read before every run so the same dead end is not tried
+Written by the `scene-brainstorm` skill. Read before every run so the same dead end is not tried
 twice. One line per killed card:
 
 `date | topic | lens | slug | killed by (door, true, picture, fresh, payoff, record, no picture) | why`

@@ -1,4 +1,4 @@
-"""Throwaway still for the idea card `walk_is_a_two_dimensional_paint_budget` (idea-scout).
+"""Throwaway still for the idea card `walk_is_a_two_dimensional_paint_budget` (scene-brainstorm).
 
 Top: a random walk on the plane, started at the centre and stopped when it first leaves a
 disc. Each dot is a grid site; its brightness is the expected number of visits to it. The
