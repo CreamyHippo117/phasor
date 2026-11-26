@@ -62,6 +62,15 @@ def diff_documents(a: Document, b: Document) -> dict[str, Any]:
     for p in sorted(at.keys() & bt.keys()):
         if at[p] != bt[p]:
             out.append({"kind": "track_changed", "path": p, "from": len(at[p]), "to": len(bt[p])})
+    asnd, bsnd = {x.id: x for x in a.sounds}, {x.id: x for x in b.sounds}
+    for i in sorted(bsnd.keys() - asnd.keys()):
+        out.append({"kind": "sound_added", "id": i, "sound": bsnd[i].kind})
+    for i in sorted(asnd.keys() - bsnd.keys()):
+        out.append({"kind": "sound_removed", "id": i, "sound": asnd[i].kind})
+    for i in sorted(asnd.keys() & bsnd.keys()):
+        if asnd[i] != bsnd[i]:
+            out.append({"kind": "sound_changed", "id": i, "from": _plain(asnd[i]),
+                        "to": _plain(bsnd[i])})  # fmt: skip
     ac = {c.rule: c.priority for c in a.constraints}
     bc = {c.rule: c.priority for c in b.constraints}
     for rule in sorted(bc.keys() - ac.keys()):

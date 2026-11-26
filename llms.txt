@@ -15,6 +15,7 @@
 - `redo`: Re-apply the edit that undo reverted.
 - `animate`: Animate with a choreography verb starting at a marker (or seconds). Timing comes from the theme. Returns when it starts and ends so the next step can follow it. `orbit` swings the 3D camera `value` degrees (default 360), until marker `until` if given; `morph` too runs until `until` if given. `transform` and `become` take `targets=[from, to]`; `sweep` takes `path` and `value`; `circumscribe` takes one target and `value` "circle" or "box"; `unfold` takes `targets=[room, ray]` and `value` flips (default 5).
 - `narrate`: Set the narration. `[[name]]` puts a marker at the next word. Every animation anchored to a marker follows the voice. `pace` adds breathing room after busy sentences.
+- `sound`: Put a sound on the soundtrack at a marker (or seconds) plus `offset`: a note (`midi`, 69 = A4 = 440 Hz; `amp` its peak 0-1, `dur` seconds, `voice` sine, soft, pluck or bell) or a 16-bit WAV in the scene's folder (`path`, `gain`). Rendered videos mix it with the narration. Returns its id and start; retime it with scene_edit `set_sound`, take it off with `remove_sound`.
 - `checkpoint`: Remember the current document under `name` (to compare or return to later).
 - `restore`: Go back to a checkpoint, as one step (undo brings you back again).
 - `diff`: What changed from version `a` to version `b` ('current', 'saved' or a checkpoint).

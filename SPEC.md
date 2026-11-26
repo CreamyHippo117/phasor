@@ -116,6 +116,7 @@ A scene is one document that Python, the AI and the GUI all edit. Python scripts
 - `objects`: each with `id`, `type`, parameters, style, tags, layer. The parent is the id's dotted prefix (`res.pole_i` belongs to `res`), so it cannot disagree with the id.
 - `constraints`: layout rules (see Layout section).
 - `timeline`: state tracks, transitions and narration markers.
+- `sounds`: notes and sound files on the soundtrack (see "Sound events"; schema version 9).
 - `cameras`: 2D/3D cameras and their tracks.
 - `assets`: audio, images, sketches, fonts.
 
@@ -173,6 +174,33 @@ Only that pole contributes [[residue_glow]].
 - Evaluation is pure: `scene.state_at(t)` computes everything from the tracks. No hidden mutation.
 - Spans can be anchored to markers, to the end of what was just started (`s.at("loop_draw").trace("loop").then()`), or to absolute times.
 - Built-in easing library plus physical springs (`back`, `spring`). No custom easing functions: a document must mean the same on every machine.
+
+**Sound events**
+
+As built (2026-11-25). Besides the narration, the soundtrack holds the document's `sounds`:
+`Note` (`kind: "note"`: `midi`, `amp` = peak as a share of full scale, `dur` = whole length,
+`voice` one of `sine`, `soft`, `pluck`, `bell`) and `SoundFile` (`kind: "file"`: `path` to a
+16-bit PCM WAV inside the scene's folder, `gain`). Each has an `id` (same id space as objects;
+retired on removal, never reused) and `at`, seconds or a marker plus offset, resolved through
+the TimeMap like a track, so re-narrating moves it. Scripts write `s.note(midi, at, ...)` and
+`s.sound(path, at, ...)`; patches `add_sound`, `set_sound`, `remove_sound`; the MCP tool is
+`sound`. `phasor/time/sound.py` synthesizes and mixes (pure NumPy/SciPy):
+
+- An event starts at sample `round(t * rate)`; the rate is the narration's when it has audio,
+  else 48 kHz. Files at another rate are resampled (polyphase). Files are read at mix time,
+  so an edited file is heard at once.
+- Notes are dry and deterministic: a fixed sum of sines per voice under a linear 5 ms attack
+  and 30 ms release inside `dur`, scaled so the peak is exactly `amp`; no randomness.
+- Headroom: the narration is never altered. Where narration plus sounds would pass -1 dBFS
+  (or the narration's own level, if higher) only the sounds are turned down, by a gain built
+  from a running minimum then a running mean over 2 x 10 ms, which provably never exceeds
+  the safe gain at any sample: no clipping and no clicks. Below the ceiling the mix is the
+  plain sum.
+- A note lengthens the scene to its end; a file only to its start (its length is in the file):
+  lint `sound_cut` reports a file that runs past the end, `missing_file` a file that is not
+  there, `bad_sound_file` one that is not 16-bit PCM. Each stays silent or is cut.
+- Rendered videos (every preset, so previews too) carry the mix; the editor window plays no
+  audio and lists the events in `Engine.timeline()["sounds"]`.
 
 **Pacing helpers**
 
@@ -354,7 +382,7 @@ CUDA does the math, OpenGL draws the picture, and one narrow bridge connects the
 **Encoding**
 
 - `render/encode.py` probes at startup, in order: PyAV with `h264_nvenc`/`hevc_nvenc`, a system `ffmpeg.exe` fed raw frames over a pipe, then PyAV `libx264`. H.264 comes first because it plays everywhere (owner, 2026-11-20); `h264_nvenc` runs at constant quality (cq 19), `libx264` at crf 16. A probe must encode real frames: PyAV wheels list NVENC codecs even on machines without an NVIDIA GPU.
-- Audio is muxed in the same step from the narration blocks.
+- Audio is muxed in the same step from the narration blocks and the sound events ("Sound events").
 
 **Hardware tiers**
 

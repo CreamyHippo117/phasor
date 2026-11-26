@@ -16,9 +16,9 @@ from phasor.core.files import relative_path
 from phasor.core.ids import is_valid_id, is_valid_name, parent_of, split_path
 from phasor.core.values import normalize
 
-SCHEMA_VERSION = 8  # 2: `constraints` (M2); 3: `retired_ids`; 4: `narration`, `Segment.verb` (M4);
+SCHEMA_VERSION = 9  # 2: `constraints` (M2); 3: `retired_ids`; 4: `narration`, `Segment.verb` (M4);
 # 5: `meta.life`, `meta.seed`, `meta.look` (M7); 6: `controls` (M12); 7: `meta.palette`;
-# 8: `meta.modules`, `ObjectSpec.always` (M15, ADR 0005)
+# 8: `meta.modules`, `ObjectSpec.always` (M15, ADR 0005); 9: `sounds` (notes and WAV files)
 OVERRIDES_VERSION = 1
 
 
@@ -161,6 +161,43 @@ class Narration(Model):
         return max((b.start + b.duration for b in self.blocks), default=0.0)
 
 
+def _check_wav(path: str) -> str:
+    """A sound file the document plays: a ``.wav`` inside the scene's folder (contract 3)."""
+    path = relative_path(path)
+    if not path.lower().endswith(".wav"):
+        raise ValueError(f"sound {path!r} must be a .wav file (16-bit PCM)")
+    return path
+
+
+class Note(Model):
+    """A synthesized note on the soundtrack (SPEC "Sound events"): a dry voice, no reverb, no
+    randomness. ``at`` is seconds or a marker (plus offset), so retiming the narration moves
+    it like any motion anchored there. ``amp`` is the note's peak as a share of full scale;
+    ``dur`` is its whole length, attack and release included."""
+
+    kind: Literal["note"] = "note"
+    id: str
+    at: TimeRef
+    midi: float = Field(ge=0, le=127)  # 69 is A4 = 440 Hz; fractions are microtones
+    amp: float = Field(0.3, ge=0, le=1)
+    dur: float = Field(0.5, gt=0, le=60)
+    voice: Literal["sine", "soft", "pluck", "bell"] = "sine"
+
+
+class SoundFile(Model):
+    """A recorded sound on the soundtrack: a 16-bit WAV inside the scene's folder, started at
+    ``at`` and scaled by ``gain``. A missing file is lint ``missing_file`` and stays silent."""
+
+    kind: Literal["file"] = "file"
+    id: str
+    at: TimeRef
+    path: Annotated[str, PlainValidator(_check_wav)]
+    gain: float = Field(1.0, ge=0, le=4)
+
+
+SoundSpec = Annotated[Note | SoundFile, Field(discriminator="kind")]
+
+
 class Timeline(Model):
     markers: dict[str, float] = Field(default_factory=dict)  # the TimeMap (contract 3)
     tracks: dict[str, tuple[Segment, ...]] = Field(default_factory=dict)  # "<id>.<param>" -> segs
@@ -215,7 +252,7 @@ class Control(Model):
 
 
 class Document(Model):
-    schema_version: Literal[8] = SCHEMA_VERSION
+    schema_version: Literal[9] = SCHEMA_VERSION
     meta: Meta
     objects: tuple[ObjectSpec, ...] = ()
     constraints: tuple[ConstraintSpec, ...] = ()
@@ -223,6 +260,8 @@ class Document(Model):
     # Ids of removed objects. They may never be used again (SPEC contract 2).
     retired_ids: tuple[str, ...] = ()
     narration: Narration | None = None
+    # Notes and sound files mixed into the soundtrack with the narration (SPEC "Sound events").
+    sounds: tuple[SoundSpec, ...] = ()
     cameras: tuple[CameraSpec, ...] = (CameraSpec(id="camera"),)
     timeline: Timeline = Field(default_factory=Timeline)
 
@@ -235,6 +274,12 @@ class Document(Model):
             if thing.id in seen:
                 raise ValueError(f"duplicate id {thing.id!r}")
             seen.add(thing.id)
+        for sound in self.sounds:  # sounds share the id space (and its retirement) with objects
+            if not is_valid_name(sound.id):
+                raise ValueError(f"invalid sound id {sound.id!r}: must match [a-z][a-z0-9_]*")
+            if sound.id in seen:
+                raise ValueError(f"duplicate id {sound.id!r}")
+            seen.add(sound.id)
         object_ids = {o.id for o in self.objects}
         modules = set(self.meta.modules)
         for o in self.objects:
@@ -274,6 +319,9 @@ class Document(Model):
 
     def camera(self, camera_id: str) -> CameraSpec | None:
         return next((c for c in self.cameras if c.id == camera_id), None)
+
+    def sound(self, sound_id: str) -> Note | SoundFile | None:
+        return next((s for s in self.sounds if s.id == sound_id), None)
 
 
 class Overrides(Model):

@@ -2,8 +2,9 @@
 
 ``document_to_python(doc)`` writes a script that, run, builds the same scene: objects with
 their parameters, style roles and tags, the camera, markers, animations (as ``at(...).to``),
-constraints and controls. An object of a type defined in the scene's folder, or with
-updaters, is written as the document's own ``add_object`` op (ADR 0005). Narration blocks
+constraints, controls and sounds (``s.note``, ``s.sound``). An object of a type defined in
+the scene's folder, or with updaters, is written as the document's own ``add_object`` op
+(ADR 0005). Narration blocks
 are not reproduced (their audio belongs to the voice module): a comment says so. Running the
 result and diffing it with the document gives no differences except narration
 (``tests/test_pycode.py``).
@@ -145,6 +146,13 @@ def document_to_python(doc: Document) -> str:
             else:
                 lines.append(f"s.segment({path!r}, {_ref(seg.t0)}, {_ref(seg.t1)}, {_lit(seg.to)}, "
                              f"ease={seg.ease!r})")  # fmt: skip
+    for snd in doc.sounds:
+        at = _ref(snd.at) if isinstance(snd.at, MarkerRef) else repr(float(snd.at))
+        if snd.kind == "note":
+            lines.append(f"s.note({snd.midi!r}, {at}, amp={snd.amp!r}, dur={snd.dur!r}, "
+                         f"voice={snd.voice!r}, id={snd.id!r})")  # fmt: skip
+        else:
+            lines.append(f"s.sound({snd.path!r}, {at}, gain={snd.gain!r}, id={snd.id!r})")
     for c in doc.constraints:
         lines.append(f"s.constrain({c.rule!r}, priority={c.priority!r})")
     for c in doc.controls:

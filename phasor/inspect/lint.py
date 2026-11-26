@@ -13,7 +13,9 @@ returns one issue per problem with the times it was seen. Rules in this mileston
 | clutter   | warning  | too many objects changing at once in one block                 |
 | unsolved  | error    | a constraint that does not hold (from the bake, or a guard)    |
 | occluded_label | warning | 3D: a label partly hidden by something in front of it      |
-| missing_file | warning | a file an object reads (a mesh) is not in the scene's folder    |
+| missing_file | warning | a file an object reads (a mesh) or a sound plays is not there  |
+| bad_sound_file | warning | a sound file that is not a 16-bit PCM WAV (it stays silent)  |
+| sound_cut | warning | a sound file that runs past the end of the scene                    |
 
 Under a perspective camera ``overlap`` only compares labels with labels and points with
 points: a label in front of a surface is fine, and one behind it is ``occluded_label``.
@@ -288,6 +290,38 @@ def file_rules(c: Compiled) -> list[Issue]:
                     severity="warning", ids=(o.id,), path=path, times=(0.0,),
                     fix_hint=f"put {value!r} next to the scene, or set {path} to a file that is",
                 ))  # fmt: skip
+    return out
+
+
+def sound_rules(c: Compiled) -> list[Issue]:
+    """Sound files (``Document.sounds``, time/sound.py): ``missing_file`` when the file is not
+    in the scene's folder, ``bad_sound_file`` when it is not a 16-bit PCM WAV, ``sound_cut``
+    when it plays past the end of the scene. Each stays silent (or is cut), never fails."""
+    from phasor.core import files
+    from phasor.core.schema import SoundFile
+    from phasor.time.sound import file_seconds
+
+    out = []
+    for p in c.sounds:
+        spec = p.spec
+        if not isinstance(spec, SoundFile):
+            continue
+        where = dict(severity="warning", ids=(p.id,), path=f"{p.id}.path", times=(p.t,))
+        if not files.exists(c.base_dir, spec.path):
+            out.append(Issue("missing_file", f"sound {p.id!r}: no file {spec.path!r} in the "
+                             "scene's folder", fix_hint=f"put {spec.path!r} next to the scene, "
+                             "or point the sound at a file that is", **where))  # fmt: skip
+            continue
+        length = file_seconds(c.base_dir, spec)
+        if length is None:
+            out.append(Issue("bad_sound_file", f"sound {p.id!r}: {spec.path!r} is not a 16-bit "
+                             "PCM WAV, so it is silent", fix_hint="convert it, e.g. ffmpeg -i "
+                             "in.wav -c:a pcm_s16le out.wav", **where))  # fmt: skip
+        elif p.t + length > c.duration + 1e-6:
+            end = p.t + length
+            out.append(Issue("sound_cut", f"sound {p.id!r} plays until {end:.3f} s but the scene "
+                             f"ends at {c.duration:.3f} s", fix_hint="set meta.duration to "
+                             f"{end:.3f} (or later), or start it earlier", **where))  # fmt: skip
     return out
 
 

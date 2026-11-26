@@ -140,6 +140,7 @@ class Workspace:
             "markers": dict(sorted(d.timeline.markers.items(), key=lambda kv: kv[1])),
             "constraints": [f"{c.rule} ({c.priority})" for c in d.constraints],
             "narration": d.narration.script if d.narration else None,
+            "sounds": [x.id for x in d.sounds],
             "checkpoints": e.checkpoints(),
         }
 
@@ -266,6 +267,12 @@ class Workspace:
                         self._inside(files.resolve(e.base_dir, raw))
                     except ValueError as err:  # outside the scene's folder
                         raise ToolError(str(err)) from None
+        for snd in e.document.sounds:
+            if snd.kind == "file":
+                try:
+                    self._inside(files.resolve(e.base_dir, snd.path))
+                except ValueError as err:
+                    raise ToolError(str(err)) from None
 
     def _with_defaults(self, patch: Any) -> Any:
         """The patch as a list of ops, with ``preset`` and the scene's look resolved in every
@@ -396,6 +403,40 @@ class Workspace:
             "duration": e.duration,
             "voice": e.document.narration.voice if e.document.narration else None,
         }
+
+    def sound(
+        self, at: str | float, midi: float | None = None, path: str | None = None,
+        offset: float = 0.0, amp: float = 0.3, dur: float = 0.5, voice: str = "sine",
+        gain: float = 1.0, id: str | None = None,
+    ) -> dict[str, Any]:  # fmt: skip
+        """Put a sound on the soundtrack at a marker (or seconds) plus ``offset``: a note
+        (``midi``, 69 = A4 = 440 Hz; ``amp`` its peak 0-1, ``dur`` seconds, ``voice`` sine,
+        soft, pluck or bell) or a 16-bit WAV in the scene's folder (``path``, ``gain``).
+        Rendered videos mix it with the narration. Returns its id and start; retime it with
+        scene_edit ``set_sound``, take it off with ``remove_sound``."""
+        e = self.engine
+        if e.scripted:
+            raise ToolError("this scene is built by a script: add sounds there (s.note, s.sound)")
+        if (midi is None) == (path is None):
+            raise ToolError("give either midi (a note) or path (a .wav file), not both")
+        when: Any = (at, offset) if isinstance(at, str) else float(at) + offset
+        scene = Scene.of(e)
+
+        def go():
+            if midi is not None:
+                return scene.note(midi, when, amp=amp, dur=dur, voice=voice, id=id)
+            sid = scene.sound(path, when, gain=gain, id=id)
+            try:
+                self._files_inside()
+            except ToolError:
+                e.undo()  # the sound named a file outside the folder: take it back
+                raise
+            return sid
+
+        sid = self._guard(go)
+        placed = next(p for p in e._snap.compiled.sounds if p.id == sid)
+        return {"id": sid, "t": placed.t, "sounds": [x.id for x in e.document.sounds],
+                "duration": e.duration, "version": e.version}  # fmt: skip
 
     # ------------------------------------------------------------ checkpoints
 
