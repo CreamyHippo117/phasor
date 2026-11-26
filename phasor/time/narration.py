@@ -216,31 +216,3 @@ def write_wav(path: str | Path, samples: np.ndarray, rate: int) -> None:
         w.setsampwidth(2)
         w.setframerate(rate)
         w.writeframes(np.asarray(samples, dtype=np.int16).tobytes())
-
-
-def mix_track(
-    narration: Narration, base_dir: str | Path, duration: float
-) -> tuple[np.ndarray, int] | None:
-    """The whole narration as one mono int16 track ``duration`` seconds long, each block's
-    audio placed at its start. None when no block has audio (estimated timing)."""
-    root = Path(base_dir).resolve()
-    clips = []
-    for b in narration.blocks:
-        if not b.audio:
-            continue
-        path = (root / b.audio).resolve()
-        if root not in path.parents:  # a document must not read files outside its folder
-            raise ValueError(f"narration audio {b.audio!r} is outside the scene's folder")
-        clips.append((b.start, read_wav(path)))
-    if not clips:
-        return None
-    rates = {rate for _, (_, rate) in clips}
-    if len(rates) != 1:
-        raise ValueError(f"narration clips have different sample rates: {sorted(rates)}")
-    rate = rates.pop()
-    end = max(duration, max(t + len(s) / rate for t, (s, _) in clips))
-    track = np.zeros(int(np.ceil(end * rate)), dtype=np.int32)
-    for t, (samples, _) in clips:
-        i = round(t * rate)
-        track[i : i + len(samples)] += samples
-    return np.clip(track, -32768, 32767).astype(np.int16), rate

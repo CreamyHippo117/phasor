@@ -2,7 +2,7 @@
 
 Working doc, like `APP_PLAN.md`. Asked for by the owner on 2026-11-26: "a sound bed: sound
 effects merged nicely with background music, most likely ambient, under the narration, and
-all of it editable in the desktop app". Status: **approved by the owner 2026-11-26, not started**. It comes after `BEAUTY.md`; the
+all of it editable in the desktop app". Status: **approved by the owner 2026-11-26; step 1 built 2026-11-26** (see "Progress"). It comes after `BEAUTY.md`; the
 owner's answers are at the end of this doc.
 
 ## What exists to build on
@@ -141,6 +141,32 @@ updated in the same commit, as CLAUDE.md requires.
 
 Steps 1-3 need nothing from the app; step 4 waits for `APP_PLAN.md` phase 2. None starts
 before `BEAUTY.md` is done, and not without the owner's go-ahead.
+
+## Progress
+
+- **Step 1, done 2026-11-26.** `time/sound.py`: stereo float32 bus (`Placed`, `mix`), polyphase
+  resampling, BS.1770-4 integrated loudness with R128 gating, 4x-oversampled true peak, the
+  master limiter (`master`), `mixdown` for the engine. `Engine.audio_track()` returns stereo
+  int16 and `render/encode.py` `mux_audio` writes stereo. `time/narration.py` `mix_track` is
+  gone: the narration is now the voice lane. Reading: WAV of any width through SciPy;
+  OGG/FLAC/MP3 through `soundfile`, a new `sound` extra (in CI, and in `all`).
+  Tests: `tests/test_sound.py` (EBU Tech 3341 cases 1-4 at 48 and 44.1 kHz, the standard's
+  K-weighting coefficients, true peak between samples, the limiter, placement, rates,
+  determinism, reading, a stereo mux through PyAV).
+
+### Deviations
+
+- **Bus rate.** Planned as "48 kHz throughout". As built, the bus runs at the sources' common
+  rate and falls back to 48 kHz only when they differ. Why: a narration-only scene then keeps
+  its exact samples (espeak's 22.05 kHz is not resampled), which is the step's exit test.
+- **The limiter.** Planned as "soft-knee at -1 dBTP". As built, a look-ahead limiter on
+  sample peaks at -1 dBFS: the gain needed is held 50 ms either side of each sample, then
+  averaged over the same span. It ramps smoothly and never lets a sample through. True peak
+  is measured (`true_peak`) but not limited, so it can sit a fraction of a dB above -1. A mix
+  under the ceiling passes through untouched.
+- **Exit test.** A narration-only scene keeps its samples bit for bit in both channels
+  *when the voice peaks under -1 dBFS*; a louder voice is now limited where before it was
+  clipped at full scale.
 
 ## Later (not in this plan)
 

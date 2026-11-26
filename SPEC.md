@@ -354,7 +354,7 @@ CUDA does the math, OpenGL draws the picture, and one narrow bridge connects the
 **Encoding**
 
 - `render/encode.py` probes at startup, in order: PyAV with `h264_nvenc`/`hevc_nvenc`, a system `ffmpeg.exe` fed raw frames over a pipe, then PyAV `libx264`. H.264 comes first because it plays everywhere (owner, 2026-11-20); `h264_nvenc` runs at constant quality (cq 19), `libx264` at crf 16. A probe must encode real frames: PyAV wheels list NVENC codecs even on machines without an NVIDIA GPU.
-- Audio is muxed in the same step from the narration blocks.
+- Audio is muxed in the same step from the narration blocks. As built (2026-11-26, `SOUND.md` step 1): every source is mixed on one stereo float bus (`time/sound.py`), at the sources' common sample rate or 48 kHz when they differ, held under -1 dBFS by a look-ahead limiter that leaves quieter mixes untouched, and muxed as stereo; `time/sound.py` also measures BS.1770 loudness (LUFS) and true peak.
 
 **Hardware tiers**
 

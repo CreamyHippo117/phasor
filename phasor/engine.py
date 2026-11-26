@@ -433,12 +433,11 @@ class Engine:
         return snap.aesthetic
 
     def audio_track(self):
-        """The narration as one mono int16 track covering the scene, and its sample rate;
-        None when there is no recorded or synthesized audio."""
-        from phasor.time.narration import mix_track
+        """The scene's sound as one stereo int16 track, shape (n, 2), covering the scene, and
+        its sample rate; None when nothing makes a sound (``time/sound.py``)."""
+        from phasor.time.sound import mixdown
 
-        n = self.document.narration
-        return None if n is None else mix_track(n, self.base_dir, self.duration)
+        return mixdown(self.document.narration, self.base_dir, self.duration)
 
     def _lint(self, snap: _Snapshot, step: float) -> tuple[Issue, ...]:
         if step not in snap.lint:
