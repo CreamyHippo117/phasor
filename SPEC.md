@@ -188,7 +188,7 @@ This is the part that lets an AI work with its eyes open: it states intent as co
 - Relations: `above`, `below`, `left_of`, `right_of`, `near`, `align_x`, `align_y`, `inside`, `outside`, `tangent_to`, `attach_to`. `outside` leaves by whichever side needs the least movement; `tangent_to` touches that side's edge of the target's screen box (boxes, not true curve tangency); `a attach_to b at top` puts `a` beside a named spot of `b` (a screen-box spot, or one of its feature points such as an arrow's `tip`). `outside`, `tangent_to` and `attach_to` arrived in Milestone 8.
 - A rule reads `subject relation target [gap n]`; the subject is what moves. `label(x)` is the child object `x.label`. Clauses join with `and`.
 - Guards: `no_overlap(a, b, ...)`, `on_screen(a, margin)`, `visible_in_3d(a)` (not occluded, Milestone 6), `min_size_px(a, n)`, `readable(a)` (contrast vs background). `on_screen` moves the object when it can; the others are checked by the linter and reported as `unsolved` when broken.
-- Solved at every key time (markers, transition ends, a 10 Hz grid) with priorities `required`, `strong` (default), `medium`, `weak`, and a report of any constraint it could not satisfy.
+- Solved at every key time (markers, transition ends, a 10 Hz grid) where something it places is shown, and the key either side (while everything it places is hidden it does not run; after an edit that changes only motion from some time on, the keys before it are kept; a verb bakes only as far as where it starts), with priorities `required`, `strong` (default), `medium`, `weak`, and a report of any constraint it could not satisfy.
 - A baked position is stored on screen relative to its anchor, so labels stay glued to moving anchors between key times. A label that changes slot jumps; eased moves come from choreography verbs.
 - 3D labels: billboard toward camera, auto-nudge out of occlusion, optional leader lines.
 
@@ -212,6 +212,7 @@ This is the part that lets an AI work with its eyes open: it states intent as co
 | clutter | Too many simultaneous changes in one block |
 | tiny | Objects smaller than N px |
 | unsolved | Constraints the solver could not satisfy |
+| slow\_layout | A layout bake that draws more occlusion buffers than the theme allows |
 
 - `occluded_label` arrived with 3D (Milestone 6); `z_fight` is still to come. In 2D a covered label is an `overlap`; under a perspective camera `overlap` compares only labels with labels and points with points, and a label behind something is `occluded_label`.
 - Issues carry the times they were seen and, where the linter is sure, a `fix` (patch ops). `Engine.autofix()` and `phasor lint --fix` apply them.

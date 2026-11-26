@@ -126,6 +126,7 @@ text_min = 0.02      # text lower than this share of the frame height
 clutter = 4          # more objects than this changing at once in one block
 crowded = 0.05       # a placed label still covered by more than this share is "unsolved"
 occluded = 0.9       # 3D: a label less visible than this is "occluded_label"
+bake_renders = 3000  # slow_layout: occlusion buffers the layout bake may render (one per 10 Hz key while a label is shown)
 
 # Aesthetic rules (lint(aesthetic=True)); the taste knobs.
 hues = 7             # color_restraint: saturated flat-paint hues (hue along a curve or in a colormap is not counted)

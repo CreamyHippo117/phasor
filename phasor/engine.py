@@ -10,6 +10,8 @@ none can be created the inspector runs in analytic mode (tier C).
 
 from __future__ import annotations
 
+import dataclasses
+import weakref
 from collections import OrderedDict
 from collections.abc import Callable
 from pathlib import Path
@@ -29,7 +31,7 @@ from phasor.inspect import lint as lint_rules
 from phasor.inspect import variants as variant_ops
 from phasor.inspect.oracle import PassOracle
 from phasor.inspect.passes import PassRunner
-from phasor.layout.bake import Bake, bake, baked_state
+from phasor.layout.bake import Bake, bake, baked_state, key_times
 from phasor.layout.plan import Plan, compile_plan
 from phasor.time.compile import Compiled, compile_document
 from phasor.time.expr import CompiledExpr
@@ -102,6 +104,10 @@ class _Snapshot:
         self.plan: Plan = compile_plan(self.compiled)
         self.orphans: tuple[Issue, ...] = tuple(orphans)
         self.bake: Bake | None = None
+        self.partial: Bake | None = None  # the bake up to some time (``Engine._state_upto``)
+        # The snapshot this one was edited from: its bake is reused up to the edit (weak, so
+        # history beyond the undo limit is still freed).
+        self.prior: weakref.ref[_Snapshot] | None = None
         self.lint: dict[float, tuple[Issue, ...]] = {}
         self.aesthetic: tuple[Issue, ...] | None = None
         self.states: OrderedDict[float, SceneState] = OrderedDict()
@@ -291,7 +297,7 @@ class Engine:
         return {
             "document": io.dumps(self._snap.base),
             "overrides": io.dumps(self._snap.overrides),
-            "bake": self._bake(self._snap),
+            "bake": dataclasses.replace(self._bake(self._snap), resume=None),
             "fingerprint": self.fingerprint(),
             "base_dir": str(self.base_dir),
             # The scene's own code (ADR 0005) runs in a worker when it could run here: the
@@ -474,7 +480,9 @@ class Engine:
                 self.pass_runner(),
                 step=step,
             )
-            snap.lint[step] = (*snap.orphans, *self._bake(snap).issues,
+            baked = self._bake(snap)
+            snap.lint[step] = (*snap.orphans, *baked.issues,
+                               *lint_rules.bake_rules(snap.compiled, snap.plan, baked),
                                *lint_rules.control_rules(snap.compiled),
                                *lint_rules.file_rules(snap.compiled),
                                *lint_rules.type_rules(snap.compiled), *visual)  # fmt: skip
@@ -486,8 +494,41 @@ class Engine:
 
     def _bake(self, snap: _Snapshot) -> Bake:
         if snap.bake is None:
-            snap.bake = bake(snap.compiled, snap.plan, self._oracle())
+            # The nearest earlier snapshot that was baked: what the edits since then cannot
+            # have changed is kept (``layout.bake.unchanged_until``).
+            snap.bake = bake(snap.compiled, snap.plan, self._oracle(), self._donor(snap))
+            snap.partial = None
         return snap.bake
+
+    @staticmethod
+    def _donor(snap: _Snapshot) -> tuple[Compiled, Plan, Bake] | None:
+        """The most of a bake this snapshot or the ones it was edited from already has."""
+        at: _Snapshot | None = snap
+        while at is not None:
+            done = at.bake or at.partial
+            if done is not None:
+                return at.compiled, at.plan, done
+            at = at.prior() if at.prior is not None else None
+        return None
+
+    def _state_upto(self, t: float) -> SceneState:
+        """``state_at(t)``, baking only as far as ``t`` needs (the next baked key after it).
+        The same scene ``state_at`` gives; for verbs, which read the scene where they start:
+        a script's verbs walk forward through a long scene without baking all of it each
+        time. Not cached in ``states``."""
+        snap = self._snap
+        if snap.bake is not None or snap.plan.goals:
+            return self.state_at(t)
+        t = float(t)
+        part = snap.partial
+        covers = part is not None and part.resume is not None and (
+            (bool(part.times) and part.times[-1] > t)  # it ran past t
+            or len(part.resume.keyed) == len(key_times(snap.compiled))  # it ran to the end
+        )  # fmt: skip
+        if not covers:
+            snap.partial = bake(snap.compiled, snap.plan, self._oracle(), self._donor(snap),
+                                upto=t)  # fmt: skip
+        return baked_state(snap.compiled, snap.partial, t)
 
     @property
     def layout(self) -> Bake:
@@ -539,6 +580,7 @@ class Engine:
                 new = _build(base, overrides, str(self.base_dir), self.allow_scripts)
         except DocumentError as e:
             return PatchResult(False, self._version, errors=tuple(e.issues))
+        new.prior = weakref.ref(old)
         if self._undo:  # keep evaluated caches only for the current and previous step
             self._undo[-1].states.clear()
             self._undo[-1].snapshots.clear()
