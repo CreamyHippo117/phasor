@@ -316,7 +316,8 @@ Each figure is one run, so treat the exact ratio loosely.
 ## Step 9. Kernel-drawn objects: stop doing their pixels on the CPU (2026-11-23, plan)
 
 Plan written on the PC (RTX 4070 Ti) at `b579d7e`; approved by the owner the same day. No new
-dependency. **9a and 9b are done** (results at the end of each); 9c and 9d are next.
+dependency. **9a and 9b are done** (results at the end of each); **9c is built** (untested
+on CUDA); 9d is next.
 
 ### Where a frame goes now
 
@@ -416,6 +417,39 @@ kernels against current behaviour. Tests: `test_heat_kernels_match_shade_values`
 option combination the presets use; all prism heat goldens (`prism_heat`, `prism_drum_3d`,
 `interference`, `room_acoustics`, spectrogram) unchanged; finals within 1 code value.
 
+**Done 2026-11-25, as one kernel; untested on CUDA** (built on a Linux box with no GPU; the
+card's checks are `pc_tasks/11_heat_kernel.md`). `heat_shade`
+(`render/gpu/kernels/heat.py`) does the sampling, the colour, the isolines, the weight and
+the fade in one pass, so nothing is stored between them: a pixel's neighbours (for the
+isolines) are sampled again, or read from the image another kernel made. A type says how a
+value becomes level, colour and weight with a `heatmap.Recipe` (the choices the five types
+use; a function cannot run on the card). The maths moved from `domains/heatmap.py` into the
+kernel's module as its reference, unchanged. `colour_at` is the recipe's `hue_of="height"`
+(the spectrogram); no type keeps the host path, which stays for a scene's own types
+(`heat_pixels` with plain functions).
+
+The kernel works in double and in the reference's order of operations, with the pixel
+coordinates computed as `heat_pixels` always did. On this box the compiled kernel (CPU
+backend, g++ 13) drew all 48 heat-map fields of the examples (prism_heat, heat_dihedral,
+interference, room_acoustics, prism_spectrogram; 5.8 M values) with **the same bits** as the
+NumPy code; the reference path is the same bits by construction
+(`tests/test_heat_kernel.py`: each type's old colouring written out and compared). On the
+card `tanh`, `exp` and `pow` are not libm's, so expect the last bits to differ there.
+
+`ac.Interference` and `ac.PhasedArray` run `wave_field` per tile and hand the result to
+`heat_shade` where it is (`heatmap.field_pixels`): the field no longer comes to the host.
+
+Measured here (4 cores, no GPU): one 1920x1080 prism heat map (smooth, 8 isolines) 778 ms
+in NumPy -> 178 ms in the kernel on 4 threads (680 ms on one: five bicubic samples a pixel).
+On the card: to measure. Double arithmetic is slow on consumer cards; if `phasor bench`
+shows `heat_shade` above about 20 ms, a float32 variant is the next trim, and since it
+would change pictures, for previews only (owner, 2026-11-26).
+
+**Finals on the card must not change visibly.** On the card `tanh`, `exp` and `hypot` are
+not libm's (double, last bits), so the float32 pixels may differ on rare values. By the
+owner's rule (2026-11-26) `final` and `4k` frames must stay within 1 code value of before
+(`pc_tasks/11_heat_kernel.md`, section 2); expected to hold easily.
+
 ### 9d. Polynomial roots on the card (expected: point_cloud 3043 -> ~150 ms draw while `twist` moves)
 
 A batched Aberth-Ehrlich kernel, one thread per polynomial (degree <= 24), in place of
@@ -445,14 +479,72 @@ measurement decides whether `scene.default_workers()` should change (`pc_tasks/c
   another 4x, but it changes how a moving field blurs (a picture change): only with the
   owner's say-so, and as an opt-in per type.
 
+## Step 10. Everything between a kernel and the finished frame (survey, 2026-11-25)
+
+Asked by the owner: the card does its part of a frame in 1-2 ms, so what else makes a frame
+slow, beyond heat maps? Sources: the saved CUDA frame benches in `benchmarks/` (RTX 4070
+Ti), a cProfile of three `final` frames of eight examples on a Linux box with no GPU (so
+its times are not the card's; it shows *which* code runs), and reading the path. **Nothing
+below is built; items marked "card" cannot be measured or tested without it.**
+
+The path of one kernel-drawn object, **once per motion-blur sample** (4 a moving frame):
+
+| stage | what happens | cost | status |
+| --- | --- | --- | --- |
+| 1. kernel | the field on the card | 1-10 ms | fine |
+| 2. host maths | colouring, averaging, culling, root finding in NumPy | 80-760 ms a sample | 9a, 9b, 9c done; 9d (roots) open |
+| 3. card -> host -> card | `gpu.render` stitches tiles on the host, so a kernel's result is copied down and, for a second kernel, back up | fractal: 33 MB each way a sample (the escape field at 2x2 supersampling) | **10a** |
+| 4. card -> host | the finished float32 pixels (33 MB at 1080p) | a few ms + | **10b** |
+| 5. float32 -> float16 | `CopyBridge.upload`, one CPU core, also when the field did not change | 23 ms a field here (measured alone) | **10b** |
+| 6. host -> GL texture | 16 MB | ~3 ms | 10b; step 5's interop removes it |
+| 7. GL draw | | < 1 ms | fine |
+| 8. readback, blur sum, post, sRGB, encode | shared by every scene | ~45 ms a frame | steps 1-4 done; step 5 next |
+
+What is left after 9c, by scene (draw, ms/frame on the card, from the benches above):
+prism_fractal ~200 (likely stages 3-5: to profile on the card), buddhabrot ~490 (the splat of 8 M points, 4 times),
+point_cloud ~3000 while `twist` moves (9d), bifurcation ~360 (host colours and cull: its
+points are made per view), prism_domain ~40 (stages 4-5), room_3d ~105 and room_acoustics'
+lines (stroke building: `strokes.polylines` 1600 calls a frame; step 3b/3c).
+
+- **10a. Chained kernels stay on the card.** `gpu.render(..., device=True)`: with one tile
+  (every 1080p picture) return the kernel's array where it is; `cx._escape_field` passes it
+  straight to `palette`/`fractal_glow`. Bit-identical (the same kernels, no arithmetic
+  moved). Card.
+- **10b. The field goes to GL as float16 made on the card.** Pixel functions may return a
+  device array; `bridge` narrows and flips it there (`astype`, a call NumPy and CuPy share)
+  and brings 16 MB to the host instead of 33; the renderer's field cache keeps the float16
+  rows, so an unchanged field is not converted again. Changes what `ctx.field`'s `pixels`
+  may return (`core/objects.py` says NumPy): the owner's OK, and a test that CuPy's
+  float32 -> float16 rounds as NumPy's does (to nearest even). Card.
+- **10c. One field per frame, not per blur sample.** It changes pictures (a moving field
+  would blur differently, which can be seen), so by the owner's rule (2026-11-26) it is
+  for previews only.
+  Neither preview preset has motion blur (`BLUR`: one sample a frame), so today it would
+  gain nothing there: **not built**. It becomes worth building only if a preview gets
+  motion blur.
+- **10d. Strokes.** Step 3b/3c (one draw per object, the command cache) for scenes made of
+  lines; nothing new.
+- **10e. Without a card.** `gpu.box_mean`'s float64 mean of the supersampled tile is the top
+  line of prism_domain and prism_fractal on the CPU backend (250 and 950 ms a frame here):
+  a box-mean kernel would run it on every core. Not the owner's machine.
+
+Order suggested: 10a and 10b together on the PC (small, bit-identical, every field type
+gains), then 9d. 9d replaces `eigvals` by another algorithm, so its roots differ in the
+last bits: its finals must stay within 1 code value of the `eigvals` pictures (owner's
+rule, 2026-11-26), else it is for previews only.
+
 ## Rules for the whole plan
 
 - One step per commit series; a step is done when its tests pass, the full suite passes
   (`uv run pytest`), the `gpu` tests pass on the RTX 4070 Ti, and the bench shows the gain.
 - Every new kernel: NumPy reference first, then `CASES`, the emulator and the card.
-- A speed-up may not change pictures. Steps 1-2 may differ by at most 1 code value (float
-  rounding); steps 3, 4 and step 5's interop must be bit-identical; step 5's encoder
-  switch is held to codec tolerance (PSNR > 45 dB at cq 19).
+- **Owner, 2026-11-26: in `final` and `4k` a speed-up may change a picture only where the
+  eye cannot see it**: every 8-bit value within 1 code value of before
+  (`pc_tasks/pin_frames.py --compare`, on the card too). A change the eye could see (a
+  field blurring differently, half-resolution fields) is for previews only (`draft`,
+  `preview`: a table in `render/job.py`, like `FIELD_SCALE`), or is not done. Steps 1-2
+  (within 1 code value) meet it and stay. Step 5's encoder switch is held to codec
+  tolerance (PSNR > 45 dB at cq 19).
 - Record each step's bench numbers in the table below, with the commit.
 
 ## Next session (written 2026-11-22, after step 4)
@@ -515,7 +607,7 @@ Open items:
 | 4 | parallel workers | x3 wall time | full final render of motion_gallery 61.5 -> 33.8 s (4 workers, CLI), packaged app 50.6 -> 24.0 s; prism_primes 34.8 -> 23.7 s; steady 70.6 -> 23.2 ms/frame | done 2026-11-22 (ADR 0003 option A; default 4 workers: 6 and 8 were no faster) |
 | 5 | GL-CUDA interop, GPU encoder | small | | measure first; new dependency needs approval |
 | 6 | simulations on the card | those scenes only | room_acoustics: simulation 0.1 ms, draw 320 ms (2026-11-23) | not needed for room_acoustics; its cost is the heat map (step 9c) |
-| 9 | kernel-drawn objects on the card | draw 300-3000 -> 30-150 ms | 9a: prism_fractal 1371 -> 241, prism_domain 330 -> 60 ms/frame; 9b: buddhabrot 3077 -> 525 ms/frame; finals bit-identical (pin_frames on six examples) | approved 2026-11-23; 9a, 9b done; 9c, 9d next |
+| 9 | kernel-drawn objects on the card | draw 300-3000 -> 30-150 ms | 9a: prism_fractal 1371 -> 241, prism_domain 330 -> 60 ms/frame; 9b: buddhabrot 3077 -> 525 ms/frame; finals bit-identical (pin_frames on six examples) | approved 2026-11-23; 9a, 9b done; 9c built 2026-11-25 (same bits on the CPU backend; untested on CUDA: `pc_tasks/11_heat_kernel.md`); 9d next; then step 10 |
 
 Target after steps 0-4: motion_gallery from 571 ms to roughly 120 ms per frame, then about
 3x more from workers; the showcase from 71 minutes to roughly 5-8.

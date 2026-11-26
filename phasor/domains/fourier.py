@@ -28,7 +28,7 @@ from phasor.core.objects import Bounds, DrawContext, ObjectBase, ParamsBase, Pas
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
 from phasor.domains import fourier_math as fm
-from phasor.domains.heatmap import PRISM, HeatParams, heat_pixels, lut_colour, wheel_colour
+from phasor.domains.heatmap import PRISM, HeatParams, Recipe, heat_pixels, wheel_recipe
 from phasor.domains.strokes import circle, disc, hue_colors, polyline, with_alpha
 
 
@@ -616,18 +616,15 @@ class Spectrogram(ObjectBase):
         lut = ramp(me.style["colormap"], np.float32)  # strongest = brightest (ocean is cyclic)
         corner, right, up = self._rect(p)
         glow = float(me.style.get("glow", 1.0))
-        paint = lut_colour(lut, "linear" if p.smooth else "nearest")
-        wheel = wheel_colour(me.style["colormap"], p)
-
-        def up_hue(v, u, h):  # prism: the hue of the frequency (its place up the panel)
-            return np.broadcast_to(wheel(h)[:, None], (*v.shape, 3))
-
+        # the signal is the square root of the magnitude: level, weight and (plain) colour
+        how = {"transform": "sqrt", "weight": "value" if glow > 1 else None}
+        if p.hue_cycles > 0:  # prism: the hue of the frequency (its place up the panel)
+            recipe = wheel_recipe(me.style["colormap"], p, hue_of="height", **how)
+        else:
+            recipe = Recipe(lut=lut, blend=p.smooth, **how)
         pixels = heat_pixels(
-            mag.T, p.size, lambda v: paint(np.sqrt(np.clip(v, 0, 1))), cells=True,
-            how="smooth" if p.smooth else "nearest", level=lambda v: np.sqrt(np.clip(v, 0, 1)),
-            weight=(lambda v: np.sqrt(np.clip(v, 0, 1))) if glow > 1 else None,
+            mag.T, p.size, recipe, cells=True, how="smooth" if p.smooth else "nearest",
             background=state.background, **p.drawing(),
-            colour_at=up_hue if p.hue_cycles > 0 else None,
         )  # fmt: skip
         ctx.field(corner, right, up, pixels=pixels, opacity=p.opacity, glow=glow)
         if p.playhead >= 0 and pass_ == "color":

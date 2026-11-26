@@ -38,7 +38,7 @@ from phasor.core.state import SceneState
 from phasor.core.values import Vec3
 from phasor.domains import ac_math
 from phasor.domains.geometry_math import sample_ramp
-from phasor.domains.heatmap import PRISM, HeatParams, heat_pixels, wheel_colour
+from phasor.domains.heatmap import PRISM, HeatParams, Recipe, heat_pixels, wheel_recipe
 from phasor.domains.strokes import circle, disc, lut_colors, polyline, polylines, with_alpha
 
 MAX_SHOWN = 800  # image sources drawn at most
@@ -688,23 +688,19 @@ class PressureSlice(ObjectBase):
         p = me.params
         corner, right, up = self._rect(state)
         slab = self._slab(state)
-        pos, neg = np.asarray(me.style["positive"][:3]), np.asarray(me.style["negative"][:3])
-        bg = np.asarray(state.background[:3])
-
-        def colour(val: np.ndarray) -> np.ndarray:
-            level = np.tanh(p.gain * 8.0 * val)  # -1..1
-            tint = np.where(level[..., None] >= 0, pos, neg)
-            return bg + (tint - bg) * np.abs(level)[..., None]
-
         glow = float(me.style.get("glow", 1.0))
-        level = lambda v: 0.5 + 0.5 * np.tanh(p.gain * 8.0 * v)  # noqa: E731
+        # the signal is tanh(gain * pressure), -1..1; its level 0.5 + 0.5 s; plain: each
+        # sign's colour out of the background by |s|
+        how = {"transform": "tanh", "gain": p.gain * 8.0, "level": "signed",
+               "weight": "abs" if glow > 1 else None}  # fmt: skip
         if p.hue_cycles > 0:  # prism: the hue of the level, brightness from the weight
-            wheel = wheel_colour(me.style["colormap"], p)
-            colour = lambda v: wheel(level(v))  # noqa: E731
+            recipe = wheel_recipe(me.style["colormap"], p, **how)
+        else:
+            recipe = Recipe(colour="sign", positive=me.style["positive"][:3],
+                            negative=me.style["negative"][:3], mix=True, **how)  # fmt: skip
         pixels = heat_pixels(
-            slab, (p.size[0], p.size[1]), colour, cells=True,
-            how="smooth" if p.smooth else "linear", level=level,
-            weight=(lambda v: np.abs(np.tanh(p.gain * 8.0 * v))) if glow > 1 else None,
+            slab, (p.size[0], p.size[1]), recipe, cells=True,
+            how="smooth" if p.smooth else "linear",
             background=state.background, **p.drawing(),
         )  # fmt: skip
         ctx.field(corner, right, up, pixels=pixels, opacity=p.opacity, glow=glow)
