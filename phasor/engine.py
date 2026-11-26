@@ -340,6 +340,16 @@ class Engine:
         other.script, other.script_sha = self.script, self.script_sha
         return other
 
+    def as_document(self) -> Engine:
+        """A new engine on a plain-document copy of this scene: the document as it stands
+        (a script's scene with its tweaks applied), no longer marked as built by a script,
+        with a fresh history. Every op works on it; the script it came from is untouched
+        (contract 2 holds: the script's own tweaks file is not involved)."""
+        raw = self.document.model_dump(mode="json")
+        raw["meta"]["source"] = "document"
+        return Engine(Document.model_validate(raw), passes=self._passes,
+                      base_dir=self.base_dir, allow_scripts=self.allow_scripts)  # fmt: skip
+
     # ------------------------------------------------------------ files
 
     @classmethod
@@ -479,6 +489,94 @@ class Engine:
         made (each lane's loudness, the ducking, the trim, the peaks). Cached per document
         version and re-made when a file it reads changes."""
         return self._mix(self._snap)
+
+    def master_sound(self, rounds: int = 3) -> dict[str, Any]:
+        """The sound engineer's pass (SOUND.md): fix what the sound lint finds, look again,
+        at most ``rounds`` times, each round one undo step. A bed under the voice takes the
+        lint's own fix (its gain lowered); a mix that would clip turns every bed and cue
+        down evenly; a cue that peaks on a stressed word moves just before it (its offset).
+        Returns the loudness, peak and issues before and after, what each round changed,
+        and what is left (``remaining``). ``{"silent": True}`` with no beds or cues."""
+        if not (self.document.sound.beds or self.document.sound.cues):
+            return {"silent": True}
+        before = self.sound_report()
+        history = []
+        for k in range(1, rounds + 1):
+            ops = self._master_ops()
+            if not ops:
+                break
+            r = self.apply(ops)
+            if not r.ok:
+                return {**self._master_summary(before), "rounds": history,
+                        "errors": [i.to_dict() for i in r.errors]}  # fmt: skip
+            history.append({"round": k, "applied": ops})
+        return {**self._master_summary(before), "rounds": history}
+
+    def _master_summary(self, before: dict[str, Any]) -> dict[str, Any]:
+        after = self.sound_report()
+
+        def short(r: dict[str, Any]) -> dict[str, Any]:
+            return {"loudness": r.get("loudness"), "true_peak_dbtp": r.get("true_peak_dbtp"),
+                    "issues": sorted({i["code"] for i in r["issues"]})}  # fmt: skip
+
+        return {"before": short(before), "after": short(after), "remaining": after["issues"]}
+
+    def _master_ops(self) -> list[dict[str, Any]]:
+        """One round of certain changes (see ``master_sound``), one op per bed or cue."""
+        from phasor.core.schema import MarkerRef
+        from phasor.time.sound import stressed_onsets
+
+        snap = self._snap
+        m = self._mix(snap)
+        if m is None or not m.mixed:
+            return []
+        c = snap.compiled
+        level = c.theme.sound
+        issues = lint_rules.sound_rules(c, lambda: m)
+        snd = self.document.sound
+        changed: dict[str, dict[str, Any]] = {}  # id -> the bed or cue as it will be
+
+        def item(sid: str) -> dict[str, Any]:
+            if sid not in changed:
+                found = next(x for x in (*snd.beds, *snd.cues) if x.id == sid)
+                changed[sid] = found.model_dump(mode="json")
+            return changed[sid]
+
+        for i in issues:
+            if i.code == "bed_masks_voice":
+                for op in i.fix:
+                    item(op["bed"]["id"])["gain"] = op["bed"]["gain"]
+            elif i.code == "audio_clip":
+                cut = round(m.pre_peak_db - level["clip"] + 0.5, 1)
+                for x in (*snd.beds, *snd.cues):
+                    kind = "bed" if x in snd.beds else "cue"
+                    now = item(x.id)["gain"]
+                    base = now if now is not None else level[kind]
+                    item(x.id)["gain"] = max(-60.0, round(base - cut, 1))
+        onsets = stressed_onsets(c.doc.narration)
+        for i in issues:
+            if i.code != "cue_on_word":
+                continue
+            lane = m.lane(i.ids[0])
+            if lane is None or lane.peak_t is None:
+                continue
+            words = [t for t, _ in onsets if abs(t - lane.peak_t) <= level["word_gap"]]
+            if not words:
+                continue
+            word = min(words, key=lambda t: abs(t - lane.peak_t))
+            shift = (word - level["word_gap"] - 0.05) - lane.peak_t  # peak just before it
+            cue = item(i.ids[0])
+            at = cue["at"]
+            if isinstance(at, dict):
+                ref = MarkerRef.model_validate(at)
+                cue["at"] = {"marker": ref.marker, "offset": round(ref.offset + shift, 3)}
+            else:
+                cue["at"] = round(max(0.0, float(at) + shift), 3)
+        ops = []
+        for sid, new in changed.items():
+            kind = "bed" if any(b.id == sid for b in snd.beds) else "cue"
+            ops.append({"op": f"set_{kind}", kind: new})
+        return ops
 
     def sound_report(self) -> dict[str, Any]:
         """What the mix sounds like, in numbers (SOUND.md "For the AI"): loudness per lane
@@ -904,8 +1002,9 @@ class Engine:
         }
         markers = dict(sorted(c.time_map.markers.items(), key=lambda kv: kv[1]))
         nar = self._snap.compiled.doc.narration
-        blocks = [{"text": b.text, "start": b.start, "duration": b.duration, "audio": b.audio}
-                  for b in (nar.blocks if nar else ()) if b.text]  # fmt: skip
+        blocks = [{"text": b.text, "start": b.start, "duration": b.duration, "audio": b.audio,
+                   "index": k}  # its place among all blocks, pauses too (to drag it)
+                  for k, b in enumerate(nar.blocks if nar else ()) if b.text]  # fmt: skip
         beds = [{"id": p.id, "path": p.bed.path, "start": p.t0, "end": p.t1} for p in c.beds]
         cues = [{"id": p.id, "sound": p.cue.sound, "t": p.t} for p in c.cues]
         return {"duration": c.duration, "markers": markers, "lanes": lanes, "narration": blocks,

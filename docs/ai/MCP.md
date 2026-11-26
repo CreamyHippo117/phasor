@@ -28,11 +28,14 @@ a variant and compare.
 | --- | --- |
 | `scene_new`, `scene_open`, `scene_save` | start, load or save `name.phasor.json` (inside the workspace folder only) |
 | `scene_palette` | the colors run along strokes: `spectrum` (the prism rainbow), `moonlight`, `gold`, `glacier`, `borealis`, `rose`, or none; in the prism looks every glowing curve takes them |
+| `scene_copy` | an editable copy of a script's scene (`<name>_edit.phasor.json` beside it), opened in its place; the script is never changed. Do it before sound, voice or narration edits on a script's scene |
 | `scene_edit` | apply a patch (below); returns `ok`, `errors`, and the lint issues it added or fixed |
 | `animate` | a choreography verb at a marker or time: `reveal`, `exit`, `trace`, `bloom_in`, `dim_others`, `undim`, `focus_pull`, `morph`, `settle`, `write`, `travel`, `flash`, `wiggle`, `circumscribe` (`value` "circle" or "box"), `transform` and `become` (`targets` [from, to]), `sweep` (`path`, `value`), `unfold` (`targets` [room, ray], `value` flips, default 5), and in 3D `orbit` (`value` degrees, `until` a marker) and `orbit_reveal` |
-| `narrate` | set the script and voice; markers appear in `markers` |
+| `narrate` | set the script and voice (synthetic); markers appear in `markers` |
+| `voice_add` | a recording of the person's voice (an audio file in the folder) into the narration at a time or marker, with `text` (what it says); music ducks under it. Move it with `set_narration` |
 | `cue` | a one-shot sound on a marker (`at`, `offset`): a built-in (`tick`, `chime`, `whoosh`, `pop`, `swell`, `tone`) or an audio file in the folder; `gain` (LU relative to the voice), `pan`, `midi`, `dur`, `voice` (tone: sine/soft/pluck/bell) |
 | `bed` | music or ambience (an audio file in the folder) under the scene from marker `start` to `end`, looped, with fades; it dips while the narration speaks |
+| `sound_master` | master the sound: lower a bed covering the voice, turn a clipping mix down evenly, move a cue off a stressed word; check again (3 rounds at most, each undoable) |
 | `sound_report` | the mix in numbers (you cannot hear it): loudness per lane per narration block, how far each bed sits under the voice, ducking, trim, true peak, sound lint |
 | `inspect` | what is on screen at `t`: `brief` (a line each), `standard`, `full` |
 | `lint` | visual problems; `fix: true` applies the certain fixes |

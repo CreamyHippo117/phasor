@@ -236,6 +236,29 @@ class Workspace:
         self.path = target
         return {"saved": str(target), "version": e.version}
 
+    def scene_copy(self, path: str | None = None) -> dict[str, Any]:
+        """Make an editable copy of a scene built by a script: the scene as it stands
+        (script and tweaks) saved as a plain document, ``<name>_edit.phasor.json`` beside the
+        script unless ``path`` says otherwise, and opened in its place. Every op works on
+        the copy (sound, narration, new objects); the script is never changed. A plain
+        document is copied the same way (a new file to experiment on)."""
+        e = self.engine
+        base = Path(e.base_dir or self.root)
+        if path is not None:
+            target = self._inside(path)
+        else:
+            stem = (self.path.name.removesuffix(io.DOC_SUFFIX).removesuffix(".py")
+                    if self.path else file_stem(e.document.meta.title))  # fmt: skip
+            target, k = base / f"{stem}_edit{io.DOC_SUFFIX}", 2
+            while target.exists():
+                target, k = base / f"{stem}_edit_{k}{io.DOC_SUFFIX}", k + 1
+        source = self.path
+        self._engine = self._guard(e.as_document)
+        self.path = None
+        saved = self.scene_save(str(target))
+        return {**self.summary(), "copied_from": str(source) if source else None,
+                "saved": saved["saved"]}  # fmt: skip
+
     # ------------------------------------------------------------ editing
 
     def scene_edit(self, patch: Any) -> dict[str, Any]:
@@ -420,7 +443,8 @@ class Workspace:
         ``remove_sound``."""
         e = self.engine
         if e.scripted:
-            raise ToolError("this scene is built by a script: add cues there (s.cue)")
+            raise ToolError("this scene is built by a script: add cues there (s.cue), or call "
+                            "scene_copy to edit a copy")  # fmt: skip
         scene = Scene.of(e)
 
         def go():
@@ -449,7 +473,8 @@ class Workspace:
         the narration speaks. Returns its id; change it with scene_edit ``set_bed``."""
         e = self.engine
         if e.scripted:
-            raise ToolError("this scene is built by a script: add beds there (s.bed)")
+            raise ToolError("this scene is built by a script: add beds there (s.bed), or call "
+                            "scene_copy to edit a copy")  # fmt: skip
         scene = Scene.of(e)
 
         def go():
@@ -464,6 +489,52 @@ class Workspace:
         bid = self._guard(go)
         placed = next(b for b in e.timeline()["beds"] if b["id"] == bid)
         return {**placed, "beds": [b.id for b in e.document.sound.beds], "version": e.version}
+
+    def sound_master(self, rounds: int = 3) -> dict[str, Any]:
+        """Master the sound: fix what the sound check finds (a bed covering the voice is
+        turned down, a mix that would clip is turned down evenly, a cue peaking on a stressed
+        word moves just before it), check again, at most ``rounds`` times. Each round is one
+        undo step. Returns before and after, what changed, and what is left."""
+        e = self.engine
+        if e.scripted:
+            raise ToolError("this scene is built by a script: call scene_copy first to edit "
+                            "a copy (the script stays as it is)")  # fmt: skip
+        return self._guard(lambda: e.master_sound(rounds))
+
+    def voice_add(self, file: str, at: float | str = 0.0, text: str = "") -> dict[str, Any]:
+        """Put a recording of the person's voice (an audio file in the scene's folder) into
+        the narration, starting at ``at`` (seconds, or a marker's name). It plays as the
+        voice: music ducks under it. ``text`` is what it says (for the script and the
+        timeline; the file's name when empty). It may not overlap another sentence; move it
+        later with ``set_narration``."""
+        from phasor.core import files
+        from phasor.core.schema import NarrationBlock
+        from phasor.time.narration import add_block
+        from phasor.time.sound import file_seconds
+
+        e = self.engine
+        if e.scripted:
+            raise ToolError("this scene is built by a script: call scene_copy first to edit "
+                            "a copy (the script stays as it is)")  # fmt: skip
+
+        def go():
+            rel = files.relative_path(file)
+            files.resolve(e.base_dir, rel)  # inside the scene's folder, or ValueError
+            seconds = file_seconds(e.base_dir, rel)
+            if seconds is None:
+                raise ValueError(f"{rel!r} is not audio in the scene's folder that can be read")
+            t = e.timeline()["markers"][at] if isinstance(at, str) else float(at)
+            words = text.strip() or Path(rel).stem.replace("_", " ")
+            block = NarrationBlock(text=words, start=round(max(t, 0.0), 4),
+                                   duration=round(seconds, 4), audio=rel)  # fmt: skip
+            narration = add_block(e.document.narration, block)
+            return self.scene_edit({"op": "set_narration",
+                                    "narration": narration.model_dump(mode="json")})  # fmt: skip
+
+        r = self._guard(go)
+        if not r["ok"]:
+            raise ToolError(r["errors"][0]["message"], r["errors"])
+        return {**r, "duration": e.duration}
 
     def sound_report(self) -> dict[str, Any]:
         """What the soundtrack sounds like, in numbers (you cannot hear it): loudness in

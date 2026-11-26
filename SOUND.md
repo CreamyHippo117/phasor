@@ -3,9 +3,10 @@
 Working doc, like `APP_PLAN.md`. Asked for by the owner on 2026-11-26: "a sound bed: sound
 effects merged nicely with background music, most likely ambient, under the narration, and
 all of it editable in the desktop app". Status: **approved by the owner 2026-11-26; started on the
-owner's word the same day. Steps 1-3 and step 5's `sound_report` are built (2026-11-26);
-step 4 (the app) waits for `APP_PLAN.md` phase 2**, and step 5's `llms.txt`/docs are done with
-the tools. The owner's answers are at the end of this doc; what was built differently is under
+owner's word the same day. All five steps are built (2026-11-26): steps 1-3 and
+`sound_report` first; then step 4 in today's editor window on the owner's ask, with
+mastering, the owner's own voice and editable copies of script scenes (see "Step 4, as
+built").** The owner's answers are at the end of this doc; what was built differently is under
 "Deviations".
 
 ## What exists to build on
@@ -161,6 +162,49 @@ before `BEAUTY.md` is done, and not without the owner's go-ahead.
 4. **Sounds:** beds are the owner's own imported ambient files (licensing is theirs); no
    built-in beds. Effects are built in (synthesized).
 5. **Stereo:** yes.
+
+## Step 4, as built (2026-11-26)
+
+The owner asked for it in today's window: "I have preview and all the related stuff and then
+I can add the soundtrack I want and maybe the AI masters it for me. I add the narration
+where I want, the extra sound effects or prompt AI to do so. Same MCP integration." Then:
+"I want the narration to be my voice. I want to add in my sound tracks and my voice tracks",
+and for scenes built by scripts: "make that allowed but as a new copy".
+
+- **The Sound tab** (`gui/window.py` `SoundPanel`, logic in `gui/controller.py`): each lane's
+  loudness and its level relative to the voice (typed in LU), mute and solo (listening
+  only), Add voice, Marker at playhead, Add music (any file, copied into the scene's
+  `audio/` folder), Add effect at playhead (tied to the nearest marker), Narrate
+  (synthetic), Master, Show levels (the storyboard's loudness lanes), Play with sound.
+- **The timeline** has a row per bed and one for the cues. Beds, cues and spoken sentences
+  drag (`move_bed`, `move_cue` snapping to the nearest marker, `move_sentence` kept between
+  its neighbours: `time/narration.move_block`).
+- **Your own voice**: `Workspace.voice_add` (MCP `voice_add`) puts a recording into the
+  narration at a time or marker (`time/narration.add_block`; overlapping another sentence is
+  refused). A marker added inside a recording belongs to it (`mark_block`) and moves with
+  it; recordings drag and can be taken out (`remove_block`). Word timings are not found
+  automatically: place markers by ear with the playhead.
+- **Mastering**: `Engine.master_sound()` (MCP `sound_master`), rounds of certain changes:
+  the `bed_masks_voice` fix, every bed and cue turned down evenly when the mix would clip
+  (`audio_clip`), a cue that peaks on a stressed word moved just before it (`cue_on_word`'s
+  own hint). Each round is one undo step.
+- **Script scenes**: the first sound, voice or narration edit makes an editable copy,
+  `<name>_edit.phasor.json` beside the script (`Engine.as_document`, `Workspace.scene_copy`,
+  MCP `scene_copy`); the script and its overrides file are never touched, so contract 2
+  stands as written.
+- **Playback** (`gui/audio.py`) needs no audio library: `winsound` on Windows, `afplay` on
+  macOS, `paplay`/`aplay`/`ffplay` on Linux play a WAV of the mix from the playhead
+  (`Editor.listen_file`: the encoder's own track; with lanes muted or soloed, the mix made
+  again without them). The playhead follows the clock while it plays.
+- **Also**: opening an example copies the examples' `assets/` folder; `core/pycode.py` writes
+  the narration back as its own `set_narration` op, so narrated scenes survive the round
+  trip (`sound_bed` is back in that test).
+- **Tests**: `tests/test_gui_sound.py`, the sound tests in `tests/test_gui_window.py`.
+  Untested: hearing it (no speakers in the build environment), Windows' `winsound`, macOS.
+- **Built twice, kept once**: a second session built steps 1-3 and 5 in parallel
+  (PR CreamyHippo117/phasor#27); the design merged first (this document's) was kept, and
+  that PR's editor, mastering, voice and copy work was moved onto it. Its per-take voice
+  levelling was not carried over: a narration is levelled as one track, as here.
 
 ## Deviations (as built, 2026-11-26)
 

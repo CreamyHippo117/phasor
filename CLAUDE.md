@@ -30,9 +30,9 @@ compounding. If this file and SPEC.md disagree, stop and ask.
   last. Windows, CUDA and macOS untested: **`pc_tasks/09_pc_checks_after_14_15.md`** lists what
   the owner's PC must run.
 - Sound bed (owner, 2026-11-26): music, ambience and effects under the narration, editable in
-  the app: `SOUND.md`, approved and started 2026-11-26 (owner). Steps 1-3 and `sound_report`
-  built (schema 9 `sound` section: beds and cues); step 4 (the app) waits for `APP_PLAN.md`
-  phase 2.
+  the app: `SOUND.md`, approved and started 2026-11-26 (owner). All five steps built (schema 9
+  `sound` section: beds and cues; the editor's Sound tab, timeline rows, playback, mastering,
+  the owner's own voice takes; a script's scene is edited as a copy, `scene_copy`).
 - Render speed: `GPU_SPEED.md` (steps 1-4 done, workers included; 9a-9c done, 9c untested on
   CUDA: `pc_tasks/11_heat_kernel.md`; step 10 is a survey, not built); resume at its "Next
   session"; measure with wall clock before and after each step. In `final` and `4k` a
