@@ -39,9 +39,17 @@ from phasor.core.values import Vec3
 from phasor.domains import ac_math
 from phasor.domains.geometry_math import sample_ramp
 from phasor.domains.heatmap import PRISM, HeatParams, heat_pixels, wheel_colour
-from phasor.domains.strokes import circle, disc, lut_colors, polyline, polylines, with_alpha
+from phasor.domains.strokes import (
+    circle,
+    disc,
+    flash_points,
+    lut_colors,
+    polyline,
+    polylines,
+    with_alpha,
+)
 
-MAX_SHOWN = 800  # image sources drawn at most
+SHOWN_FEATURES = 1000  # image sources listed in ``features`` at most (the lowest orders)
 CHECKPOINT_EVERY = 50  # FDTD steps between cached checkpoints
 
 
@@ -428,7 +436,11 @@ class Doppler(ObjectBase):
 @register
 class ImageSources(ObjectBase):
     """Ghost speakers behind the walls: the image-source method made visible. Brightness
-    falls with each reflection."""
+    falls with each reflection (the gain of ``material`` or ``absorption``). ``order`` goes
+    up to ``ac_math.MAX_ORDER`` (113, about 2 million images); at most ``max_points`` of them
+    are drawn, the fewest reflections first. They are the same points as a
+    ``sweep.SweepLattice`` with ``rule="mirror_box"`` (which makes them flash as a sphere of
+    time sweeps them), drawn the same way, as steady glowing points."""
 
     type: ClassVar[str] = "image_sources"
     Style: ClassVar = {"color": ("emphasis", "muted"), "glow": ("glow", "none")}
@@ -436,10 +448,11 @@ class ImageSources(ObjectBase):
     class Params(ParamsBase):
         size: Vec3 = (8.0, 5.0, 3.0)
         source: Vec3 = (2.0, 2.5, 1.5)
-        order: int = Field(1, ge=0, le=6)
+        order: int = Field(1, ge=0, le=ac_math.MAX_ORDER)
         material: str = "plaster"
         absorption: float = -1.0
         r: float = Field(0.09, gt=0)
+        max_points: int = Field(60_000, ge=1, le=ac_math.MAX_IMAGES)
 
         @field_validator("size")
         @classmethod
@@ -455,22 +468,26 @@ class ImageSources(ObjectBase):
         return Bounds.of_points(im["pos"], pad=self.me(state).params.r)
 
     def features(self, state: SceneState) -> dict[str, np.ndarray]:
-        return {"points": self._images(state)["pos"][1:], "source": self._images(state)["pos"][:1]}
+        pos = self._images(state)["pos"]
+        return {"points": pos[1 : 1 + SHOWN_FEATURES], "source": pos[:1]}
 
     def semantics(self, state: SceneState) -> dict[str, Any]:
         im = self._images(state)
         p = self.me(state).params
-        return {"kind": "image_sources", "backdrop": True, "count": int(len(im["pos"]) - 1),
-                "order": p.order, "weakest_gain": round(float(im["gain"].min()), 4)}  # fmt: skip
+        count = int(len(im["pos"]) - 1)
+        return {"kind": "image_sources", "backdrop": True, "count": count, "order": p.order,
+                "shown": min(count, p.max_points),
+                "weakest_gain": round(float(im["gain"].min()), 4)}  # fmt: skip
 
     def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
         me = self.me(state)
-        cam = state.camera_for(me)
+        p = me.params
         im = self._images(state)
-        base = me.style["color"]
-        for pos, gain in list(zip(im["pos"][1:], im["gain"][1:], strict=True))[:MAX_SHOWN]:
-            faded = with_alpha(base, me.params.opacity * float(gain))
-            disc(ctx, cam, pos, me.params.r, color=faded, glow=me.style["glow"])
+        pos, gain = im["pos"][1 : 1 + p.max_points], im["gain"][1 : 1 + p.max_points]
+        colors = np.tile(np.asarray(me.style["color"], dtype=np.float64), (len(pos), 1))
+        colors[:, 3] *= gain
+        flash_points(ctx, state.camera_for(me), pos, p.r, colors=colors,
+                     glow=float(me.style["glow"]), opacity=p.opacity, segments=16)  # fmt: skip
 
 
 @functools.lru_cache(maxsize=32)
