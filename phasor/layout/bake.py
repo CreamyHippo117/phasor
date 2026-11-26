@@ -14,9 +14,11 @@ keeps its gap while the camera zooms.
 
 The bake is a pure function of (compiled document, occlusion oracle): the same inputs give
 the same tracks, and it is cached per document version by the Engine. After an edit that
-only changes motion from some time on (a verb, a new segment), the Engine hands the previous
-bake in: the keys before that time cannot change (``unchanged_until``), so they are kept and
-the loop resumes from there, with the placer's memory as it was.
+only changes motion from some time on (a verb, a new segment), or parameters of an object
+the layout cannot see until some key, the Engine hands the previous bake in: the keys
+before that time cannot change (``layout_unchanged_until``), so they are kept and the loop
+resumes from there, with the placer's memory as it was. Not with camera goals: the camera
+solver is global (``layout/camera.py``).
 """
 
 from __future__ import annotations
@@ -43,6 +45,7 @@ from phasor.layout.geometry import (
     frame,
     is_backdrop,
     occludes,
+    pixel_mask,
     screen_box,
     view_of,
 )
@@ -311,11 +314,15 @@ def _same_segment(a: ResolvedSegment, b: ResolvedSegment) -> bool:
     return a.t0 == b.t0 and a.t1 == b.t1 and a.ease is b.ease and _same(a.to, b.to)
 
 
-def _without_tracks(doc) -> dict:
+def _without_tracks(doc, unseen=()) -> dict:
     """The document as plain data with its tracks left out, for comparing two versions
-    (a dump, not a copy: documents are only rebuilt by patches, contract 1)."""
+    (a dump, not a copy: documents are only rebuilt by patches, contract 1). The params
+    of the ``unseen`` objects are left out too (``layout_unchanged_until``)."""
     data = doc.model_dump(mode="json")
     data["timeline"]["tracks"] = {}
+    for o in data["objects"]:
+        if o["id"] in unseen:
+            o["params"] = {}
     return data
 
 
@@ -330,19 +337,37 @@ def unchanged_until(old: Compiled, new: Compiled) -> float:
     that starts after ``t``. Expressions read values at the same ``t`` only, simulations
     run from parameters at ``t``, and life is a function of (id, seed, t), so the whole
     scene at ``t`` is the same (contract 3)."""
-    if old is new:
-        return math.inf
+    return _until(old, new, {})
+
+
+def _comparable(old: Compiled, new: Compiled) -> bool:
     a, b = old.doc, new.doc
     if a.meta.modules or b.meta.modules or old.missing or new.missing:
+        return False
+    return old.base_dir == new.base_dir and old.nodes.keys() == new.nodes.keys() and (
+        old.time_map.markers == new.time_map.markers)  # fmt: skip
+
+
+def _until(old: Compiled, new: Compiled, unseen: dict[str, float]) -> float:
+    """``unchanged_until``, where a parameter of an ``unseen`` object (id -> a time before
+    which the layout cannot see it) may also differ before that time."""
+    if old is new:
+        return math.inf
+    if not _comparable(old, new):
         return 0.0
-    if old.base_dir != new.base_dir or old.nodes.keys() != new.nodes.keys():
-        return 0.0
-    if _without_tracks(a) != _without_tracks(b) or old.time_map.markers != new.time_map.markers:
+    if _without_tracks(old.doc, unseen) != _without_tracks(new.doc, unseen):
         return 0.0
     until = math.inf
     for path, x in new.nodes.items():
         y = old.nodes[path]
-        if x is y or (not isinstance(x, ResolvedTrack) and not isinstance(y, ResolvedTrack)):
+        if x is y:
+            continue
+        owner = path.rpartition(".")[0]
+        if owner in unseen:  # nothing reads it, and its visibility is the same (checked)
+            if not _same_node(x, y):
+                until = min(until, unseen[owner])
+            continue
+        if not isinstance(x, ResolvedTrack) and not isinstance(y, ResolvedTrack):
             continue  # same document text: the same constant or expression
         tx, ty = (ResolvedTrack(n.value, ()) if isinstance(n, Const) else n for n in (x, y))
         if not isinstance(tx, ResolvedTrack) or not isinstance(ty, ResolvedTrack):
@@ -356,6 +381,122 @@ def unchanged_until(old: Compiled, new: Compiled) -> float:
     return until
 
 
+def _same_node(x, y) -> bool:
+    """Whether two nodes surely give the same value at every t (False: maybe not)."""
+    if isinstance(x, Const) and isinstance(y, Const):
+        return _same(x.value, y.value)
+    if isinstance(x, ResolvedTrack) and isinstance(y, ResolvedTrack):
+        return _same(x.initial, y.initial) and len(x.segments) == len(y.segments) and all(
+            _same_segment(a, b) for a, b in zip(x.segments, y.segments, strict=True))  # fmt: skip
+    return False
+
+
+VISIBILITY = ("opacity", "dim", "z_index")  # what decides whether, and in what order, it draws
+
+
+def layout_unchanged_until(old: Compiled, new: Compiled, plan: Plan,
+                           times: tuple[float, ...]) -> float:  # fmt: skip
+    """A time before which the layout bake's keys (``times``) are the same for the two
+    documents: ``unchanged_until``, or later when the edit also changed parameters of an
+    object the layout cannot see before some key.
+
+    The placer, at a key, reads the objects its rules name (their boxes, spots and
+    depths), the occlusion buffer, and the other labels shown. An object reaches none of
+    those while its opacity x dim is 0: the buffers draw only objects at least half
+    opaque (``occludes``), other labels count only when shown, and its place in the draw
+    order (which sets every object's depth bias) depends on its ``z_index`` and document
+    index only. So a parameter of such an object may change, at any time, without
+    changing a key at which it is hidden, as long as nothing else can see the change:
+
+    - no rule names it, it is not the camera, and the scene has no composite (whose
+      ``build`` reads the whole scene);
+    - no other object's expression or updater reads its parameters, and no other object
+      names it (a ring around it);
+    - its opacity, dim and z_index are the same constants or tracks in both documents, and
+      plain (not an expression, which may rise between keys); the rest of its entry
+      (type, style, tags, layer, updaters) is the same.
+
+    The keys before the first one at which it is shown in either document are then the
+    same; the earliest such time over all edited objects (and motion edits) is returned.
+    """
+    if old is new:
+        return math.inf
+    if not _comparable(old, new) or plan.goals:
+        return 0.0
+    a = {o.id: o for o in old.doc.objects}
+    b = {o.id: o for o in new.doc.objects}
+    if a.keys() != b.keys():
+        return 0.0
+    edited = {i for i in b if a[i] != b[i]}  # its entry (params) or its tracks differ
+    edited |= {p.rpartition(".")[0] for p, x in new.nodes.items()
+               if (isinstance(x, ResolvedTrack) or isinstance(old.nodes[p], ResolvedTrack))
+               and not _same_node(x, old.nodes[p])} & b.keys()  # fmt: skip
+    unseen = {}
+    for i in sorted(edited):
+        h = _hidden_until(old, new, plan, a[i], b[i], times)
+        if h > 0:
+            unseen[i] = h
+    return _until(old, new, unseen)
+
+
+def _hidden_until(old: Compiled, new: Compiled, plan: Plan, spec_a, spec_b,
+                  times: tuple[float, ...]) -> float:  # fmt: skip
+    """The first of ``times`` at which the object is shown, when the layout cannot see it
+    before (see ``layout_unchanged_until``); 0 when that cannot be shown."""
+    i = spec_b.id
+    named = {x for r in plan.rules for cl in r.clauses for x in cl.ids}
+    if i in named or i == new.doc.timeline.camera or i == old.doc.timeline.camera:
+        return 0.0
+    ea, eb = (spec.model_dump(mode="json") for spec in (spec_a, spec_b))
+    for e in (ea, eb):
+        e["params"] = {k: v for k, v in e["params"].items() if k in VISIBILITY}
+    if ea != eb:
+        return 0.0
+    for c in (old, new):
+        if any(callable(getattr(o.impl, "build", None)) for o in c.objects):
+            return 0.0  # a composite builds its parts from the whole scene
+        for path, node in c.nodes.items():
+            if path.rpartition(".")[0] != i and any(
+                    d.rpartition(".")[0] == i for d in getattr(node, "deps", ())):  # fmt: skip
+                return 0.0
+        for o in c.doc.objects:
+            if o.id != i and _names(o.params, i):
+                return 0.0
+        for path, segs in c.doc.timeline.tracks.items():
+            if path.rpartition(".")[0] != i and any(_names(s.model_dump(), i) for s in segs):
+                return 0.0
+    nodes = []
+    for name in VISIBILITY:
+        x, y = new.nodes.get(f"{i}.{name}"), old.nodes.get(f"{i}.{name}")
+        if (x is None) != (y is None):
+            return 0.0
+        if x is None:
+            continue
+        if not isinstance(x, Const | ResolvedTrack) or not _same_node(x, y):
+            return 0.0
+        if name != "z_index":
+            nodes.append(x)
+
+    def value(node, t: float) -> float:
+        return float(node.value_at(t) if isinstance(node, ResolvedTrack) else node.value)
+
+    for t in times:
+        if math.prod(value(n, t) for n in nodes) != 0:  # shown (or NaN: maybe)
+            return t
+    return math.inf
+
+
+def _names(value, object_id: str) -> bool:
+    """Whether a parameter value (or anything inside it) is the object's id."""
+    if isinstance(value, str):
+        return value == object_id
+    if isinstance(value, dict):
+        return any(_names(v, object_id) for v in value.values())
+    if isinstance(value, list | tuple):
+        return any(_names(v, object_id) for v in value)
+    return False
+
+
 def _resume_point(prior, c: Compiled, plan: Plan, times, needed, kind: str):
     """(baked keys to keep, time to resume from) from the bake of an earlier document, or
     None when nothing of it can be kept."""
@@ -363,7 +504,7 @@ def _resume_point(prior, c: Compiled, plan: Plan, times, needed, kind: str):
     r = old.resume
     if r is None or old.occlusion != kind or plan.goals or old_plan != plan:
         return None
-    until = unchanged_until(old_c, c)
+    until = layout_unchanged_until(old_c, c, plan, times)
     for k, (ta, tb) in enumerate(itertools.zip_longest(r.keyed, times)):
         if ta is None or tb is None or ta != tb or r.needed[k] != needed[k]:
             until = min(until, *(x for x in (ta, tb) if x is not None))
@@ -616,20 +757,27 @@ def bake(c: Compiled, plan: Plan, oracle: OcclusionOracle | None = None,
 def hidden_share(state: SceneState, object_id: str, oracle: OcclusionOracle) -> float:
     """Share of an object hidden by what is in front of it (the camera solver's stage 2):
     pixels in its projected bounding disc (half radius) whose nearest surface, leaving out
-    the object itself and all labels, is clearly nearer than the object."""
+    the object itself and all labels, is clearly nearer than the object.
+
+    No buffer is rendered when the answer is known without one: the object is behind the
+    camera (1), or nothing else in the scene occludes at all (0: the buffer, which holds
+    only occluding objects, would be empty)."""
     obj = state[object_id]
     cam = state.camera_for(obj)
     b = obj.impl.world_bounds(state)
-    labels_ = {o.id for o in state.objects if o.impl.semantics(state).get("kind") == "label"}
-    depth = oracle.depth(state, frozenset({object_id} | labels_))
-    h, w = depth.shape
     d = float(cam.depth(b.center)[0])
-    if d <= 0:
+    if d <= 0:  # behind the camera: no buffer needed to say so
         return 1.0
+    labels_ = {o.id for o in state.objects if o.impl.semantics(state).get("kind") == "label"}
+    skip = frozenset({object_id} | labels_)
+    if not any(occludes(o) for o in state.objects if o.id not in skip):
+        return 0.0  # nothing left that hides anything: the buffer would be empty (inf)
+    depth = oracle.depth(state, skip)
+    h, w = depth.shape
     ((px, py),) = cam.to_screen([b.center], w, h)
     r = max(0.5 * b.radius / (cam.units_per_height(b.center)) * h, 1.5)
-    yy, xx = np.mgrid[0:h, 0:w] + 0.5
-    disc = (xx - px) ** 2 + (yy - py) ** 2 <= r * r
+    disc = pixel_mask((h, w), (px - r, px + r, py - r, py + r),
+                      lambda xx, yy: (xx - px) ** 2 + (yy - py) ** 2 <= r * r)  # fmt: skip
     if not disc.any():
         return 0.0
     return float((depth[disc] < d * (1 - 2 * DEPTH_SLACK)).mean())
@@ -706,4 +854,5 @@ def boxes_pre_center(pre: SceneState, object_id: str) -> tuple[float, float]:
 
 
 __all__ = ["AnalyticOracle", "Bake", "Box", "OcclusionOracle", "Resume", "Track", "bake",
-           "baked_state", "key_times", "shown_keys", "unchanged_until"]  # fmt: skip
+           "baked_state", "key_times", "layout_unchanged_until", "shown_keys",
+           "unchanged_until"]  # fmt: skip

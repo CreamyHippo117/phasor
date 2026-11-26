@@ -17,7 +17,15 @@ solver's until its first motion starts; that motion then starts from the solved 
   cubic (PCHIP, so it never overshoots), sampled into the bake's key times, and checked
   again at every one of them. What still fails becomes an ``unsolved`` issue with times.
 
-Pure: depends on (compiled document, plan, oracle), like the rest of the bake.
+Pure: depends on (compiled document, plan, oracle), like the rest of the bake. Each
+(time, camera, object) is measured on the depth buffer once (``_Seen``).
+
+Global, not per key: the scale of the search (``_Vars``: where the target may go, how far
+the camera may be) comes from every goal object at every solve time, each solve is pulled
+toward the continuation of the ones before, and the refine rounds run over the whole
+timeline until nothing fails anywhere. An edit at any time can change the camera at every
+time (a new segment adds solve times, which moves the mean of the spheres in its last
+bits), so a bake with camera goals is never resumed from an earlier one.
 """
 
 from __future__ import annotations
@@ -379,6 +387,7 @@ def solve(
     chosen = plan.camera_free + plan.camera_handoff
     vars_ = _Vars(chosen, center, radius, (th["min_elevation"], th["max_elevation"]))
     hand = _Handoff(c, plan)
+    seen = None if hidden is None else _Seen(c, chosen, hidden)
     prior = vars_.encode(OrbitCameraParams(**{**_defaults(), "target": tuple(vars_.center)}))
     angles = np.array([n in ("azimuth", "elevation") for n in vars_.names], dtype=float)
 
@@ -411,8 +420,8 @@ def solve(
                          for s0 in _starts(x, vars_.names)), key=lambda r: r.fun)  # fmt: skip
             if again.fun < best.fun:
                 x = again.x
-        if hidden is not None and occl:
-            x = _stage2(c, f, x, vars_, hand.pin, base, occl, t, hidden)
+        if seen is not None and occl:
+            x = _stage2(f, x, vars_, hand.pin, base, occl, t, seen)
         return x
 
     # Smoothness penalizes jerks, not motion: each key is pulled toward the straight-line
@@ -445,7 +454,7 @@ def solve(
             t
             for t, x in zip(times, at, strict=True)
             if t not in solved
-            and _check(c, plan, t, hand.pin(vars_.decode(x, _base(c, evaluate(c, t))), t), hidden)
+            and _check(c, plan, t, hand.pin(vars_.decode(x, _base(c, evaluate(c, t))), t), seen)
         ]
         if not bad or not vars_.names:
             break
@@ -461,7 +470,7 @@ def solve(
         for name in chosen:
             v = getattr(p, name)
             values[f"{cam_id}.{name}"].append(tuple(v) if isinstance(v, tuple) else float(v))
-        for index, why, ids in _check(c, plan, t, p, hidden):
+        for index, why, ids in _check(c, plan, t, p, seen):
             failures.setdefault((index, why), (ids, []))[1].append(t)
     issues = []
     for (index, why), (ids, ts) in sorted(failures.items()):
@@ -477,15 +486,41 @@ def solve(
     return Solution(tuple(times), {k: tuple(v) for k, v in values.items()}, tuple(issues))
 
 
-def _stage2(c, f, x, vars_, pin, base, occl, t, hidden) -> np.ndarray:
+class _Seen:
+    """The stage 2 measurement ``hidden(state, id)``, made once per (time, camera, object).
+
+    The refine rounds and the final check ask again about cameras already measured (a key
+    no round moved is checked in every round and once more at the end; a solved key is
+    measured by stage 2 and checked again). The scene at (t, camera) is a pure function of
+    the two (contract 3), so the answer is the same: it is kept, not rendered again.
+    """
+
+    def __init__(self, c: Compiled, names: tuple[str, ...],
+                 hidden: Callable[[SceneState, str], float]) -> None:  # fmt: skip
+        cam_id = c.doc.timeline.camera
+        self.c, self.hidden = c, hidden
+        self.paths = tuple((f"{cam_id}.{n}", n) for n in names)
+        self.shares: dict[tuple, float] = {}
+        self.last: tuple | None = None
+        self.state: SceneState | None = None
+
+    def __call__(self, t: float, p: OrbitCameraParams, object_id: str) -> float:
+        cam = tuple((path, getattr(p, n)) for path, n in self.paths)
+        key = (t, cam, object_id)
+        if key not in self.shares:
+            if self.last != (t, cam):
+                self.last, self.state = (t, cam), evaluate(self.c, t, dict(cam))
+            self.shares[key] = self.hidden(self.state, object_id)
+        return self.shares[key]
+
+
+def _stage2(f, x, vars_, pin, base, occl, t, seen: _Seen) -> np.ndarray:
     """Check avoid_occlusion on the depth buffer; if hidden, try nearby cameras."""
-    cam_id = c.doc.timeline.camera
 
     def shares(y) -> list[tuple[float, float]]:
         """(priority weight, hidden share) of every object an avoid_occlusion goal names."""
         p = pin(vars_.decode(y, base), t)
-        state = evaluate(c, t, {f"{cam_id}.{n}": getattr(p, n) for n in vars_.free})
-        return [(PRIORITY[r.spec.priority], hidden(state, i)) for r, g in occl for i in g.ids]
+        return [(PRIORITY[r.spec.priority], seen(t, p, i)) for r, g in occl for i in g.ids]
 
     def clear(sh) -> bool:  # the same test as ``_check``: no object hidden past HIDDEN_OK
         return all(h <= HIDDEN_OK for _, h in sh)
@@ -524,16 +559,14 @@ def _nearby(x: np.ndarray, names: list[str]) -> list[np.ndarray]:
     return out
 
 
-def _check(c, plan, t, p, hidden) -> list[tuple[int, str, tuple[str, ...]]]:
+def _check(c, plan, t, p, seen: _Seen | None) -> list[tuple[int, str, tuple[str, ...]]]:
     """Which goals fail at ``t`` with camera ``p``: (rule index, why, ids). Occlusion is
-    checked only when ``hidden`` is given."""
+    checked only when ``seen`` is given."""
     pre = evaluate(c, t)
     prob = Problem(c, plan, pre)
     cam = prob.camera(p)
     lx = 1.0 - 2.0 * prob.margin / prob.aspect
     top, bottom = prob.top - 2.0 * prob.margin, prob.bottom + 2.0 * prob.margin
-    cam_id = c.doc.timeline.camera
-    state = None
     out = []
     for rule, g in plan.goals:
         bad: list[str] = []
@@ -548,19 +581,9 @@ def _check(c, plan, t, p, hidden) -> list[tuple[int, str, tuple[str, ...]]]:
             elif g.kind == "min_size" and (behind > 0 or _size(box, prob.aspect) < g.value * 0.9):
                 bad.append(i)
                 why = f"it is smaller than {g.value:g} of the frame"
-            elif g.kind == "avoid_occlusion" and hidden is not None:
-                if state is None:
-                    state = evaluate(
-                        c,
-                        t,
-                        {
-                            f"{cam_id}.{n}": getattr(p, n)
-                            for n in plan.camera_free + plan.camera_handoff
-                        },
-                    )
-                if hidden(state, i) > HIDDEN_OK:
-                    bad.append(i)
-                    why = "it is hidden behind something in front of it"
+            elif g.kind == "avoid_occlusion" and seen is not None and seen(t, p, i) > HIDDEN_OK:
+                bad.append(i)
+                why = "it is hidden behind something in front of it"
         if bad:
             out.append((rule.index, why, tuple(bad)))
     return out

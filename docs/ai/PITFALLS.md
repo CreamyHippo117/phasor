@@ -36,11 +36,22 @@ is 10 000 depth renders, and every verb the script runs after it reads the scene
 to where the verb starts. Show the label only while it is needed (`reveal` ... `exit`):
 hidden, it costs nothing. Write the rule after the verbs that hide it (a label is shown
 until its `reveal` says otherwise, so a rule written first makes the `reveal` itself bake
-everything before it). Edits after the shown span reuse the bake; an edit before it (or a
-`set`, a new object, a new rule) bakes the shown span again. Lint `slow_layout` says when a bake is over
-the theme's `[lint] bake_renders`. A label that never moves needs no rule: give it a `pos`.
+everything before it). Edits after the shown span reuse the bake, and so does a `set` on an
+object that is hidden until after it (opacity or dim 0), that no rule names and nothing reads;
+an edit before it (or another `set`, a new object, a new rule) bakes the shown span again.
+Lint `slow_layout` says when a bake is over the theme's `[lint] bake_renders`. A label that never moves needs no rule: give it a `pos`.
 An expression that reads a placed object's `pos`, or an object that names it (a
 `circumscribe` ring), makes the bake run everywhere, hidden or not.
+
+## Camera goals make every edit of a long 3D scene bake all of it
+
+The camera solver is global: the scale of its search comes from every goal object over the
+whole timeline, and it re-checks the whole path. So a bake with `camera ...` rules is never
+reused after an edit, and every verb the script runs after such a rule bakes the whole scene,
+with a depth buffer per key and per `avoid_occlusion` object (one buffer per camera it
+tries; none while nothing else occludes). Write the camera rules after the verbs, as the
+last lines of the script, and give `avoid_occlusion` only the objects that matter. Lint
+`slow_layout` counts these buffers too.
 
 ## `overlap` on a label that sits on a big shape
 
