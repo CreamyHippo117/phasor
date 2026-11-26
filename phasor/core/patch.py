@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import Field, TypeAdapter, ValidationError
+from pydantic import Field, PlainValidator, TypeAdapter, ValidationError
 
 from phasor.core.constraints import normalize_rule, rule_ids
 from phasor.core.ids import split_path
@@ -28,6 +28,7 @@ from phasor.core.schema import (
     Overrides,
     ParamSpec,
     Segment,
+    _check_updater,
 )
 
 
@@ -62,6 +63,15 @@ class SetTags(Model):
     op: Literal["set_tags"] = "set_tags"
     id: str
     tags: tuple[str, ...]
+
+
+class SetAlways(Model):
+    """Replace an object's updaters (``"<module>:<function>"``, ADR 0005). Each module must
+    be in ``meta.modules``; a document that lists one it does not is refused as a whole."""
+
+    op: Literal["set_always"] = "set_always"
+    id: str
+    always: tuple[Annotated[str, PlainValidator(_check_updater)], ...]
 
 
 class AddSegment(Model):
@@ -145,6 +155,7 @@ Op = Annotated[
     | SetParam
     | SetStyle
     | SetTags
+    | SetAlways
     | AddSegment
     | ClearTrack
     | SetMarker
@@ -285,6 +296,8 @@ def _apply_op(doc: Document, op: Any) -> Document:
             return _replace_object(doc, op.id, style={**obj.style, op.key: op.role})
         case SetTags():
             return _replace_object(doc, op.id, tags=op.tags)
+        case SetAlways():
+            return _replace_object(doc, op.id, always=op.always)
         case AddSegment():
             segs = (*tl.tracks.get(op.path, ()), op.segment)
             return doc.model_copy(
@@ -448,6 +461,7 @@ __all__ = [
     "RemoveControl",
     "RemoveMarker",
     "RemoveObject",
+    "SetAlways",
     "SetMarker",
     "SetMeta",
     "SetNarration",

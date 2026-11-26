@@ -73,13 +73,17 @@ Status: **built; gates green on Linux (see Verification).** Untested on Windows 
    only drop `pass_`. `DomainColoring` and `Fractal` also drop `world_bounds`. SPEC's "types
    shipped in phasor's packages still carry the full set" is read as: every type has all five
    members after registration, and shipped types keep their docs, example and goldens.
-4. **Updaters must live in a file in the scene's folder** (contract 3). One defined in a
-   notebook cell or at a prompt is refused by `always`/`Scene.add`, so the updater block in
-   `docs/ai/API.md` is `no-run` (the example and the tests run the same code). **Proposal for
-   the owner** (not built): allow such updaters as session-only references
-   (`"<file>:<name>"`) that open elsewhere as `missing_type`; it would make `always` usable in
-   notebooks but makes the state depend on code the document names no file for, so it needs
-   a contract 3 change.
+4. **Updaters must live in a file in the scene's folder** (contract 3). The proposal for
+   session-only references (`"<file>:<name>"` that open elsewhere as `missing_type`) was
+   **refused by the owner** (2026-11-24): the state would depend on code the document names
+   no file for. Instead (owner's idea, ADR 0006, branch `claude/notebook-updaters`, built, for
+   review): an updater defined in a notebook cell or at a prompt is held by the `Scene`
+   builder, never by the document, and `Scene.save_copy(path)` writes its source into
+   `name.updaters.py` beside the copy, which names it (`meta.modules`, `always`, via the new
+   patch op `set_always`). Only a small subset is captured (top-level `def`; builtins,
+   importable modules and functions, plain-data constants); the rest raises
+   `UpdaterCaptureError` at `add`. A file is never overwritten. The open scene does not
+   change. `core/capture.py`, `tests/test_updater_capture.py`.
 5. **`look` reads parameters before living motion.** Life is applied after the parameter
    graph, so a label kept on a wandering dot is off by the wander; the demo tags its planet
    `exact`. Reading through life would make `look` depend on style and tags.

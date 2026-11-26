@@ -17,10 +17,11 @@ import inspect
 import os
 import runpy
 import sys
+import warnings
 from pathlib import Path
 from typing import Any
 
-from phasor.core import io
+from phasor.core import capture, files, io
 from phasor.core.ids import file_stem
 from phasor.core.objects import ObjectBase, scene_module
 from phasor.core.patch import (
@@ -28,6 +29,7 @@ from phasor.core.patch import (
     AddControl,
     AddObject,
     AddSegment,
+    SetAlways,
     SetCamera,
     SetMarker,
     SetMeta,
@@ -223,6 +225,7 @@ class Scene:
                     seed=seed, look=look, palette=palette, source="script")  # fmt: skip
         engine_kwargs.setdefault("base_dir", _caller_dir())
         self.engine = Engine(Document(meta=meta), **engine_kwargs)
+        self._held: dict[str, tuple[str | capture.Captured, ...]] = {}
 
     @classmethod
     def of(cls, engine: Engine) -> Scene:
@@ -230,6 +233,7 @@ class Scene:
         client gets the same verbs as a script)."""
         scene = cls.__new__(cls)
         scene.engine = engine
+        scene._held = {}
         look = engine.document.meta.look
         scene.look = load_look(look) if look else None
         return scene
@@ -252,7 +256,12 @@ class Scene:
         """Add an object: ``s.add(Dot(id="dot", pos=(1, 2)))``. Returns it for chaining.
         The scene's look fills in what the object leaves unset (the values are stored)."""
         base_dir = self.engine.base_dir
-        spec = obj.to_spec(base_dir)
+        # An updater defined in a notebook cell or at a prompt has no file the document could
+        # name. Its source is captured now (so a refusal comes at once, with a fix) and kept
+        # here for ``save_copy``; the document, and so the live scene, never holds it.
+        loose = [fn for fn in obj._always if capture.is_interactive(fn)]
+        taken = {id(fn): capture.capture(fn) for fn in loose}
+        spec = obj.to_spec(base_dir, leave=loose)
         if self.look is not None:
             params, style = self.look.fill(spec.type, dict(spec.params), dict(spec.style),
                                            self.engine.document.meta.palette)  # fmt: skip
@@ -266,6 +275,16 @@ class Scene:
         new = tuple(dict.fromkeys([*have, *need]))
         ops: list[Any] = [SetMeta(field="modules", value=new)] if new != have else []
         self._apply([*ops, AddObject(object=spec)])
+        if loose:
+            refs = iter(spec.always)
+            self._held[spec.id] = tuple(taken[id(fn)] if id(fn) in taken else next(refs)
+                                        for fn in obj._always)  # fmt: skip
+            warnings.warn(
+                f"{spec.id}: the updater(s) {[c.name for c in taken.values()]} were defined "
+                "interactively, so the document cannot name them: this scene does not run "
+                "them. s.save_copy('folder/name.phasor.json') writes them into a .py file "
+                "there and returns the scene that does.", capture.HeldUpdaterWarning,
+                stacklevel=2)  # fmt: skip
         return obj
 
     def use_camera(self, kind: str = "orbit", **params: Any) -> None:
@@ -352,7 +371,76 @@ class Scene:
         return At(self, when, offset)
 
     def save(self, path: str | Path) -> None:
+        if self._held:
+            raise ValueError(
+                f"updaters of {sorted(self._held)} were defined interactively and this scene "
+                "does not hold them (the document cannot name them): use "
+                "save_copy(path), which writes them into a .py file beside the document"
+            )
         self.engine.save(path)
+
+    def save_copy(self, path: str | Path) -> Scene:
+        """Save a copy of this scene to ``path`` (``folder/name.phasor.json``) in which every
+        updater defined interactively (a notebook cell, a prompt) lives in a ``.py`` file in
+        that folder, named by the document (ADR 0006); return the copy, opened. This scene
+        does not change. The module is ``name.updaters.py`` (``name.updaters2.py`` when that
+        name holds something else: a file is never overwritten, and a file with the same
+        content is reused). Files the document already names are copied along into a
+        new folder under the same rule. An updater that cannot be written raises
+        ``UpdaterCaptureError`` and nothing is written."""
+        path = Path(path)
+        folder = path.parent
+        here = {o.id for o in self.engine.document.objects}
+        held = {i: slots for i, slots in self._held.items() if i in here}
+        found = [c for slots in held.values() for c in slots if isinstance(c, capture.Captured)]
+        base = self.engine.base_dir
+        modules = tuple(self.engine.base.meta.modules)
+        writes: dict[Path, bytes] = {}  # what to put in the folder, decided before any write
+        if folder.resolve() != Path(base).resolve():
+            for rel in modules:  # code the document already names goes along
+                src = files.resolve(base, rel)
+                if src.is_file():
+                    writes[folder / files.relative_path(rel)] = src.read_bytes()
+        ops: list[Any] = []
+        if found:
+            data = capture.module_text(found).encode("utf-8")
+            name = _free_name(folder, file_stem(path.name.removesuffix(".phasor.json")), data)
+            writes[folder / name] = data
+            ops.append(SetMeta(field="modules", value=(*modules, name) if name not in modules
+                               else modules))  # fmt: skip
+            for oid, slots in held.items():
+                ops.append(SetAlways(id=oid, always=tuple(
+                    f"{name}:{c.name}" if isinstance(c, capture.Captured) else c
+                    for c in slots)))  # fmt: skip
+        for dst, content in writes.items():
+            if dst.exists() and dst.read_bytes() != content:
+                raise FileExistsError(f"{dst} exists and differs: phasor never overwrites a "
+                                      "file of yours; save into another folder")  # fmt: skip
+        # Edits go through a private engine that runs no scene code (contract 1).
+        private = Engine(self.engine.base, overrides=self.engine.overrides, passes=None,
+                         base_dir=base)  # fmt: skip
+        if ops:
+            private.apply(ops, origin="script").raise_for_errors()
+        folder.mkdir(parents=True, exist_ok=True)
+        for dst, content in writes.items():
+            if not dst.exists():
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                dst.write_bytes(content)
+        private.save(path)
+        opened = Engine.open(path, passes=self.engine._passes, allow_scripts=True)
+        return Scene.of(opened)
+
+
+def _free_name(folder: Path, stem: str, data: bytes) -> str:
+    """``stem.updaters.py``, or the next ``stem.updaters2.py``, ... that is free or already
+    holds exactly ``data``."""
+    n = 1
+    while True:
+        name = f"{stem}.updaters{'' if n == 1 else n}.py"
+        have = folder / name
+        if not have.exists() or have.read_bytes() == data:
+            return name
+        n += 1
 
 
 def load(path: str | Path, **engine_kwargs: Any) -> Engine:

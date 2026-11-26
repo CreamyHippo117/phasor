@@ -867,8 +867,11 @@ def test_an_updater_from_outside_the_scene_folder_is_refused():
     exec(compile("def lift(t, look):\n    return {'pos': (0.0, t, 0.0)}\n", "notebook.ipynb",
                  "exec"), ns)  # fmt: skip
     s = _scene()
-    with pytest.raises(ValueError, match="not defined in a file in the scene's folder"):
+    # Defined where no file holds it, with no source kept: refused at once, with the fix
+    # (a notebook's updaters are held for ``Scene.save_copy``: tests/test_updater_capture.py).
+    with pytest.raises(ValueError, match="cannot save the updater 'lift'"):
         s.add(Dot(id="d").always(ns["lift"]))
+    assert s.engine.document.object("d") is None
     with pytest.raises(ValueError, match="must be a .py file"):
         ObjectSpec(id="d", type="dot", always=("<notebook.ipynb>:lift",))
 

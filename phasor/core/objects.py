@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import functools
 import inspect
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar, Literal, Protocol, runtime_checkable
@@ -204,10 +204,12 @@ class ObjectBase:
         self._always.append(fn)
         return self
 
-    def to_spec(self, base_dir: str | Path | None = None) -> ObjectSpec:
+    def to_spec(self, base_dir: str | Path | None = None, *, leave: Sequence = ()) -> ObjectSpec:
         """The object as the document stores it. ``base_dir``: the scene's folder, which
-        names the modules its updaters live in."""
-        always = tuple(register_updater(fn, base_dir or ".") for fn in self._always)
+        names the modules its updaters live in. ``leave``: updaters not stored (the scene
+        keeps the ones defined interactively for ``Scene.save_copy``)."""
+        always = tuple(register_updater(fn, base_dir or ".") for fn in self._always
+                       if not any(fn is f for f in leave))  # fmt: skip
         return ObjectSpec(id=self.id, type=self.type, params=self._params, always=always,
                           **self._spec_fields)  # fmt: skip
 

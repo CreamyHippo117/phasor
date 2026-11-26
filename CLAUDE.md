@@ -133,7 +133,9 @@ compounding. If this file and SPEC.md disagree, stop and ask.
   edit goes through the `Workspace` under the shared lock.
 - Importers (`phasor/importers/`) run foreign scripts only on the person's request; a stand-in
   module never leaks past the import (it is removed from `sys.modules`). Interactive features
-  (`phasor/interactive.py`) work on `Engine.fork()`, never on the open scene.
+  (`phasor/interactive.py`) work on `Engine.fork()`, never on the open scene. Updaters defined
+  in a notebook or at a prompt are never in the document: `Scene.save_copy` writes them to a
+  module in the copy's folder (ADR 0006, `core/capture.py`).
 - Client commands register through the `phasor.commands` entry point; `cli` never imports a
   sibling client. Tools that return a picture use `structured_output=False`.
 - A ```json patch / ```json calls block in `docs/ai/MCP.md` runs in CI like a python block.
