@@ -35,7 +35,7 @@ for k in range(PAIRS):
         residues.append((math.cos(a), sign * math.sin(a)))
 
 s = Scene("reverb_modes", look="prism")
-s.set("camera.height", 9.6)
+s.set("camera.height", 10.4)
 s.add(filt.PhasorField(id="modes", poles=filt.polar(rho, theta), residues=tuple(residues),
                        tick=expr(f"{RATE} * t"), frame_ticks=RATE / FPS, shutter=0.5,
                        spacing=1.0, pos=(0.0, -0.25, 0.0), tags=["key"]))  # fmt: skip
