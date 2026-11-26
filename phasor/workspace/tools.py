@@ -505,6 +505,24 @@ class Workspace:
                           gallery_size=board["gallery_size"])  # fmt: skip
         return result
 
+    def sound(self, with_picture: bool = True) -> dict[str, Any]:
+        """Hear the scene with numbers (SOUND.md): each lane (voice, beds, cues) with its span,
+        the level the mixer chose (``gain_db``) and its loudness in LUFS; for each spoken
+        sentence the voice against every bed under it (``margin``: how many dB the loudest
+        bed sits under the voice); the finished mix's loudness and true peak; and the sound
+        lint issues. ``with_picture`` also draws the lanes' loudness over time (a PNG)."""
+        e = self.engine
+        r = self._guard(e.sound_report)
+        r["version"] = e.version
+        if with_picture and not r.get("silent"):
+            from phasor.render.soundview import picture
+
+            c = e._snap.compiled
+            out = self.out_dir / f"{file_stem(e.document.meta.title)}.sound.v{e.version}.png"
+            r["image"] = str(picture(e.sound_mix(), c.time_map.markers, c.theme.sound["voice"],
+                                     out, title=f"{e.document.meta.title}: sound"))  # fmt: skip
+        return r
+
     def events(self, t0: float = 0.0, t1: float | None = None, problems_only: bool = True,
                hz: float = 10.0) -> dict[str, Any]:  # fmt: skip
         """The event log: when things get hidden, leave or enter the frame, change region or

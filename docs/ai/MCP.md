@@ -35,6 +35,7 @@ a variant and compare.
 | `lint` | visual problems; `fix: true` applies the certain fixes |
 | `review` | the whole self-review round in one call |
 | `storyboard` | keyframe picture with each object's box and id drawn on it |
+| `sound` | hear the scene with numbers: each lane's level and loudness (LUFS), the voice against the beds in every sentence, the mix's loudness and peak, sound lint; with a picture of loudness over time |
 | `hit_test`, `resolve` | what is at a pixel; which object ids "the label of the pole" means |
 | `events`, `when_hidden`, `free_space_near` | 3D: when things get hidden or leave the frame (with fixes), spans an object is hidden, empty places next to an object |
 | `critique`, `polish` | the art director: a taste score, aesthetic issues with fixes and the rubric; apply the fixes (3 rounds at most) |
@@ -181,6 +182,26 @@ to a marker with a verb. Do not animate by raw seconds in a narrated scene (lint
 `animate` returns `start` and `end`: pass `offset: end - start` to start the next step when
 the first ends. A verb moves nothing for an object that has no track yet, so `reveal` an
 object you want to appear (it is hidden until then).
+
+## Sound: beds and cues
+
+Beds (music or ambience, the person's own files in the scene's folder) and cues (effects on
+markers: built-in `chime`, `pop`, `swell`, `tick`, `whoosh`, or a file) are patch ops. The
+theme sets every level; change `gain` (dB) only when `sound` says a lane is wrong.
+
+```json patch
+[
+  {"op": "set_marker", "name": "appear", "t": 1.0},
+  {"op": "set_cue", "cue": {"id": "chime_appear", "sound": "chime", "at": {"marker": "appear"}}},
+  {"op": "set_cue", "cue": {"id": "chime_appear", "sound": "chime",
+    "at": {"marker": "appear", "offset": -0.1}, "gain": -3}},
+  {"op": "remove_sound", "id": "chime_appear"}
+]
+```
+
+You cannot hear, so call `sound` after changing any: read each sentence's `margin` (the
+voice should stay well over the beds, 12 dB or more) and the issues
+(`bed_masks_voice` comes with a fix; `audio_clip`, `cue_on_word`, `missing_file`).
 
 ## What comes back from `review`
 

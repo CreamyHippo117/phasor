@@ -292,6 +292,10 @@ def file_rules(c: Compiled) -> list[Issue]:
     return out
 
 
+# Every lint code about sound (SOUND.md); ``missing_file`` is shared with objects.
+SOUND_CODES = ("bad_sound", "bed_masks_voice", "audio_clip", "cue_unanchored", "cue_on_word")
+
+
 def sound_rules(c: Compiled, m: Any) -> list[Issue]:
     """The sound's problems (SOUND.md), from ``m``, the scene's ``time/sound.Mix``:
 

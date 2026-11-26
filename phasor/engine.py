@@ -15,6 +15,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 import phasor.domains  # noqa: F401  (registers the built-in object types)
 from phasor.core import io
 from phasor.core.issues import DocumentError, Issue
@@ -443,6 +445,28 @@ class Engine:
             return None
         ceiling = self._snap.compiled.theme.sound["ceiling"]
         return to_int16(master(m.bus(), m.rate, ceiling)), m.rate
+
+    def sound_report(self) -> dict[str, Any]:
+        """The sound in numbers (``time/sound.report``): every lane's span, level and
+        loudness, each sentence's voice against the beds under it, the finished mix's
+        loudness and true peak, and the sound lint issues. ``{"silent": True}`` without
+        any sound."""
+        from phasor.time import sound as snd
+
+        m = self.sound_mix()
+        if m is None:
+            return {"silent": True}
+        out = snd.report(m, self.document.narration)
+        track = self.audio_track()
+        if track is not None:
+            x = track[0].astype(np.float32) / 32768.0
+            out["mix"] = {"loudness": snd._round(snd.loudness(x, track[1])),
+                          "true_peak": snd._round(snd.true_peak(x, track[1]))}  # fmt: skip
+        ids = {x.id for x in (*self.document.sound.beds, *self.document.sound.cues)}
+        found = [*self.lint(strict=True), *aesthetic_rules.sound_rules(self._snap.compiled, m)]
+        out["issues"] = [i.to_dict() for i in found
+                         if i.code in lint_rules.SOUND_CODES or set(i.ids) & ids]  # fmt: skip
+        return out
 
     def sound_mix(self):
         """The scene's sound lane by lane, before the master limiter (``time/sound.Mix``):

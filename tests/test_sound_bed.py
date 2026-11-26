@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -303,3 +304,33 @@ def test_a_loud_cue_on_a_word_is_a_taste_issue(tmp_path, passes):
     s.cue(("m0", 0.0), "pop", gain=12.0)
     assert "cue_on_word" in _codes(s.engine, aesthetic=True)
     assert "cue_on_word" not in _codes(s.engine)
+
+
+# ---------------------------------------------------------------- the AI's ears (step 5)
+
+
+def test_the_sound_tool_reports_levels_margins_and_draws_them(tmp_path):
+    from phasor.workspace.tools import Workspace
+
+    ws = Workspace(tmp_path)
+    ws.scene_new("snd")
+    folder = ws.engine.base_dir
+    _tone(folder / "v.wav", 220, 1.5, amp=12000)
+    _tone(folder / "bed.wav", 110, 2.0, amp=6000)
+    assert ws.sound() == {"silent": True, "version": ws.engine.version}
+    ops = [{"op": "set_narration", "narration": _narration((1.0, 5.0)).model_dump(mode="json")},
+           {"op": "set_marker", "name": "end", "t": 8.0},
+           {"op": "set_bed", "bed": {"id": "hum", "file": "bed.wav"}},
+           {"op": "set_cue", "cue": {"id": "chime_m0", "sound": "chime",
+                                     "at": {"marker": "m0"}}}]  # fmt: skip
+    assert ws.scene_edit(ops)["ok"]
+    r = ws.sound()
+    assert [x["id"] for x in r["lanes"]] == ["voice", "hum", "chime_m0"]
+    assert r["lanes"][0]["loudness"] == pytest.approx(-16.0, abs=0.3)
+    assert len(r["sentences"]) == 2 and all(s["margin"] > 20 for s in r["sentences"])
+    assert r["mix"]["true_peak"] <= -0.5 and r["issues"] == []
+    assert Path(r["image"]).is_file() and Path(r["image"]).stat().st_size > 10_000
+    assert ws.scene_edit({"op": "set_bed", "bed": {"id": "hum", "file": "bed.wav",
+                                                   "gain": 24}})["ok"]  # fmt: skip
+    r = ws.sound(with_picture=False)
+    assert "image" not in r and [i["code"] for i in r["issues"]] == ["bed_masks_voice"]

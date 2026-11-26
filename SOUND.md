@@ -2,7 +2,8 @@
 
 Working doc, like `APP_PLAN.md`. Asked for by the owner on 2026-11-26: "a sound bed: sound
 effects merged nicely with background music, most likely ambient, under the narration, and
-all of it editable in the desktop app". Status: **approved by the owner 2026-11-26; steps 1-3 built 2026-11-26** (see "Progress"). It comes after `BEAUTY.md`; the
+all of it editable in the desktop app". Status: **approved by the owner 2026-11-26; steps 1-3 and 5 built 2026-11-26; step 4 (the
+app) waits for `APP_PLAN.md` phase 2** (see "Progress"). It comes after `BEAUTY.md`; the
 owner's answers are at the end of this doc.
 
 ## What exists to build on
@@ -173,6 +174,15 @@ before `BEAUTY.md` is done, and not without the owner's go-ahead.
   by rendering the example with espeak-ng: stereo 48 kHz AAC, -16.1 LUFS integrated and
   -1.9 dBTP by ffmpeg's own `ebur128` meter. Not listened to by a person.
 
+- **Step 5, done 2026-11-26.** `Engine.sound_report()` (numbers: each lane's span, chosen
+  level and loudness; each spoken sentence's voice against every bed under it, with its
+  `margin`; the finished mix's loudness and true peak; the sound lint issues) and the MCP
+  tool `sound` (`Workspace.sound`), which adds a picture of the lanes' loudness over time
+  (`render/soundview.py`, matplotlib's Agg canvas). Docs: `docs/ai/MCP.md` "Sound", the
+  skill, `llms.txt`. Test: `tests/test_sound_bed.py` (the tool without the protocol).
+- **Step 4, not started.** It needs the code-first window (`APP_PLAN.md` phase 2), which is
+  not built.
+
 ### Deviations
 
 - **Bus rate.** Planned as "48 kHz throughout". As built, the bus runs at the sources' common
@@ -192,8 +202,8 @@ before `BEAUTY.md` is done, and not without the owner's go-ahead.
 - **`cue_on_word`** is an aesthetic rule (`lint(aesthetic=True)`), and fires only for a cue
   less than `[lint] cue_loud` (6) dB under the voice. Cues on markers land on words by
   design, so firing on every cue near a word would fire on every anchored cue.
-- **No loudness lanes in the storyboard yet**: planned in step 2, moved to step 5 (the AI's
-  picture of the sound), since nothing before then draws them.
+- **The loudness picture is its own image** (the `sound` tool), not lanes under the
+  storyboard: the storyboard is a grid of frames with no shared time axis to hang them on.
 - **Two more lint thresholds**: `[lint] cue_loud` and `cue_word` (plus `sound_masking`,
   `sound_clip`).
 - **Exit test.** A narration-only scene keeps its samples bit for bit in both channels

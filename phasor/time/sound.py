@@ -464,3 +464,49 @@ def mixdown(
         return None
     ceiling = (levels or {}).get("ceiling", CEILING_DB)
     return to_int16(master(m.bus(), m.rate, ceiling)), m.rate
+
+
+def report(m: Mix, narration: Narration | None) -> dict[str, Any]:
+    """The mix in numbers, for an AI that cannot hear it: each lane's span, chosen level and
+    loudness, and for each spoken sentence the voice's loudness against every bed under it
+    (``margin``: dB the loudest bed sits under the voice there)."""
+    rate = m.rate
+    lanes = []
+    voice = [x for x in m.lanes if x.kind == "voice"]
+    if voice:
+        bus = mix([Placed(x.start, x.samples, rate) for x in voice], m.duration)[0]
+        lanes.append({"id": "voice", "kind": "voice", "start": round(voice[0].start, 3),
+                      "end": round(max(x.start + len(x.samples) / rate for x in voice), 3),
+                      "gain_db": round(voice[0].gain_db, 2),
+                      "loudness": _round(loudness(bus, rate))})  # fmt: skip
+    else:
+        bus = None
+    for x in m.lanes:
+        if x.kind == "voice":
+            continue
+        level = loudness(x.samples, rate) if x.kind == "bed" else momentary_max(x.samples, rate)
+        lanes.append({"id": x.id, "kind": x.kind, "start": round(x.start, 3),
+                      "end": round(x.start + len(x.samples) / rate, 3),
+                      "gain_db": round(x.gain_db, 2), "loudness": _round(level)})  # fmt: skip
+    sentences = []
+    beds = [x for x in m.lanes if x.kind == "bed"]
+    texts = [b.text for b in (narration.blocks if narration else ()) if b.audio and b.text.strip()]
+    for (a, b), text in zip(m.speech, texts, strict=False):
+        i, j = round(a * rate), round(b * rate)
+        lv = loudness(bus[i:j], rate) if bus is not None else -math.inf
+        under = {}
+        for x in beds:
+            k = i - round(x.start * rate)
+            under[x.id] = _round(loudness(x.samples[max(k, 0) : max(k + j - i, 0)], rate))
+        finite = [v for v in under.values() if v is not None]
+        margin = round(lv - max(finite), 1) if finite and math.isfinite(lv) else None
+        sentences.append({"start": round(a, 3), "end": round(b, 3), "text": text[:60],
+                          "voice": _round(lv), "beds": under, "margin": margin})  # fmt: skip
+    return {"rate": rate, "duration": round(m.duration, 3), "lanes": lanes,
+            "sentences": sentences,
+            "problems": [{"id": i, "why": w} for i, w in m.problems]}  # fmt: skip
+
+
+def _round(x: float) -> float | None:
+    """LUFS for a client: one decimal, None for silence."""
+    return round(x, 1) if math.isfinite(x) else None

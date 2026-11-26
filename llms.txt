@@ -26,6 +26,7 @@
 - `polish`: Apply the critic's fixes (certain ones, then judgement suggestions), at most `rounds` (3) times; each round is undoable. Returns the score before and after and what is left for you to judge.
 - `variants`: Show alternative looks of one beat (a marker name or a time) side by side: as it is, calmer, bolder, each with its taste score. Nothing changes until you `choose`.
 - `choose`: Pick the winner of the last `variants` call. The choice is appended to `style/choices.jsonl` (your taste as data) and, with `apply`, its changes are made to the scene.
+- `sound`: Hear the scene with numbers (SOUND.md): each lane (voice, beds, cues) with its span, the level the mixer chose (`gain_db`) and its loudness in LUFS; for each spoken sentence the voice against every bed under it (`margin`: how many dB the loudest bed sits under the voice); the finished mix's loudness and true peak; and the sound lint issues. `with_picture` also draws the lanes' loudness over time (a PNG).
 - `events`: The event log: when things get hidden, leave or enter the frame, change region or gain an occluder, with the nearest marker and fix hints. `problems_only` keeps the ones a viewer would notice (a label or key object hidden or leaving the frame).
 - `when_hidden`: Time spans where `id` is on screen but less than half of it is visible.
 - `free_space_near`: Empty label-sized places around `id` at `t`, nearest first (boxes are 0-1, top-left origin): where a label or note could go.
