@@ -14,8 +14,10 @@ a weight w_i in [0, 1] per arm, an echo shown with the product of the weights of
 it uses, its position sliding out along the new arm as the weight grows. Everything is a
 pure function of its inputs.
 
-``lattice_points`` returns ``points`` (M, 3), ``arrival`` (M,) and ``values`` (M,): the form
-a general "points that flash as a surface sweeps them" object takes.
+``lattice_points`` returns ``points`` (M, 3), ``arrival`` (M,) and ``values`` (M,). The flash
+itself is shared with every lattice of lights: ``flash`` is ``sweep_math.envelope`` fed the
+echo's own arrival time (the sweep here is a hyperplane in N-D, not a surface in 3D), and the
+object draws through ``strokes.flash_points``.
 """
 
 from __future__ import annotations
@@ -24,6 +26,8 @@ import functools
 import math
 
 import numpy as np
+
+from phasor.domains import sweep_math as sm
 
 GOLDEN = (math.sqrt(5.0) - 1.0) / 2.0
 MAX_LOOPS = 32
@@ -178,9 +182,7 @@ def arm_weights(k: int, arms: float) -> np.ndarray:
     return np.clip(float(arms) - np.arange(k), 0.0, 1.0)
 
 
-def smoothstep(w):
-    w = np.clip(np.asarray(w, dtype=np.float64), 0.0, 1.0)
-    return w * w * (3.0 - 2.0 * w)
+smoothstep = sm.smoothstep  # the same ramp as the flash's attack
 
 
 def point_weights(index: np.ndarray, weights: np.ndarray) -> np.ndarray:
@@ -204,15 +206,12 @@ def project(index: np.ndarray, arms: np.ndarray, weights: np.ndarray | None = No
 
 
 def flash(tau, rise: float = 0.05, decay: float = 0.6, afterglow: float = 0.35):
-    """(light, burst) of an echo ``tau`` seconds after it arrived: nothing before; light
-    rises over ``rise`` to 1, then settles to ``afterglow`` with time constant ``decay``;
-    burst (1 at arrival, falling to 0 the same way) is the extra brightness and size of the
-    flash. Pure in tau; continuous in tau (rise 0: a step at arrival)."""
-    tau = np.asarray(tau, dtype=np.float64)
-    on = np.clip(tau / rise, 0.0, 1.0) if rise > 0 else (tau >= 0).astype(np.float64)
-    burst = np.exp(-np.maximum(tau, 0.0) / max(decay, 1e-9)) * on
-    light = on * (afterglow + (1.0 - afterglow) * burst)
-    return light, burst
+    """(light, burst) of an echo ``tau`` seconds after it arrived: ``sweep_math.envelope``
+    (the one flash every lattice of lights shares) with nothing before arrival, ``rise`` its
+    attack and ``afterglow`` its after. Light rises from 0 to 1, then settles to ``afterglow``
+    with time constant ``decay``; burst (1 at the top, falling to 0 the same way) is the
+    flash above the afterglow. Pure and continuous in tau (rise 0: a step at arrival)."""
+    return sm.envelope(tau, attack=rise, decay=max(decay, 1e-9), before=0.0, after=afterglow)
 
 
 def values(kind: str, index: np.ndarray, arrival: np.ndarray, max_time: float,

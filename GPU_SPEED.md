@@ -557,6 +557,13 @@ What was learned building it, worth keeping:
   worker's speed). Now 4-frame stretches and a queue of about two stretches
   (`scene.WORKER_CHUNK`, `WORKER_BUFFER_BYTES`).
 - **Spawn re-runs the parent's script** unless told not to: `scene._workers_skip_main`.
+- **Workers rebuild the scene from the document**, so state a scene script sets up for its
+  own types (a registry of drawings) was missing there: those objects drew nothing
+  (owner's reverb_la, 2026-11-25). A worker now runs the scene script first when the
+  scene came from one and names scene code (`scene._worker_engine`), and checks what
+  scene-local objects draw at its first frame against the parent
+  (`core.record.census`); a difference stops the render, naming the objects. Scenes
+  without code of their own skip both (no cost).
 - Two independent render processes on the RTX 4070 Ti each run at ~60 ms/frame (one alone:
   ~54): the card and driver share well; per-process CPU work is what scales.
 - The fixed cost before the first frame was large: loading motion_gallery took 11.5 s,

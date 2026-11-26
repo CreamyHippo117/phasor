@@ -34,6 +34,7 @@ REQUIRED = {
     "network": {"generator": "tree", "branching": 2, "depth": 3},
     "image": {"path": "examples/assets/sunset.png"},  # relative: tests run from the repo root
     "epicycles": {"points": [[1, 0, 0], [0, 1, 0], [-1, 0, 0], [0, -1, 0]]},
+    "phasor_field": {"poles": [[0.9, 0.3], [0.5, -0.6]], "frame_ticks": 1.0},
     "equation": {"parts": ["$e^{i\\pi}$", "$+1=0$"]},
     "line": {"points": [[0, 0, 0], [1, 1, 0]]},
     "text": {"text": "hello $x^2$"},
@@ -44,6 +45,7 @@ REQUIRED = {
     "sound_rays": {"time": 0.5},  # in a room; 0: the sound has not left
     "wavefront3d": {"time": 0.5},
     "hinged_copy": {"source": "guide", "hinges": [[[1, 0, 0], [0, 1, 0], 180.0]]},  # a copy
+    "face": {"points": [[0, 0, 0], [1, 0, 0], [0, 1, 0]]},
 }
 # Types that point at another object: the scene gets a curve called "guide" for them.
 PARTNERED = {"tracer", "callout", "hinged_copy"}
@@ -58,6 +60,9 @@ EXAMPLES = sorted(p.stem for p in (ROOT / "examples").glob("*.py")
 # Slow to build (minutes for riemann_sqrt's labels through an orbit): checked by their own
 # tests, and here only for lint.
 SLOW = {"deep_zoom", "residue_theorem", "riemann_sqrt"}
+# Narrated: the generated script does not reproduce narration (its audio belongs to the
+# voice), so what is anchored to its markers cannot be rebuilt from the code alone.
+NARRATED = {"sound_bed"}
 
 
 def _one(name: str, camera: str, passes="auto"):
@@ -181,7 +186,7 @@ def test_every_example_survives_save_and_load(name, tmp_path):
         assert json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
 
 
-@pytest.mark.parametrize("name", _examples())
+@pytest.mark.parametrize("name", [n for n in _examples() if n.values[0] not in NARRATED])
 def test_every_example_round_trips_through_its_python_code(name, tmp_path):
     """The Code tab's promise: the generated script rebuilds the same document."""
     import shutil

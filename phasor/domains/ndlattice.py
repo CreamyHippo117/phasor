@@ -24,26 +24,16 @@ import numpy as np
 from pydantic import Field, model_validator
 
 from phasor.core.objects import Bounds, DrawContext, ObjectBase, ParamsBase, Pass, register
-from phasor.core.spatial import Camera
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
 from phasor.domains import ndlattice_math as nlm
-from phasor.domains.strokes import disc_batch, lut_colors, polylines
+from phasor.domains.strokes import disc_batch, flash_points, lut_colors, polylines
 
 DEFAULT_LOOPS = 3  # loops when neither ``loops`` nor ``delays`` says
 MAX_DRAWN = 200_000  # echoes enumerated (and drawn) at most
-FLASH_BRIGHT = 1.5  # at arrival an echo is this much brighter than its steady light...
-FLASH_GROW = 1.2  # ...and this much bigger
+VIVID_BRIGHT = 1.5  # flash_style "vivid": at arrival an echo is this much brighter...
+VIVID_GROW = 1.2  # ...and this much bigger (its own look, before the shared flash)
 SHOWN_FEATURES = 200  # echoes listed in ``features`` (the earliest), for the inspector
-
-
-def glow_points(ctx: DrawContext, cam: Camera, points: np.ndarray, colors: np.ndarray,
-                radius: np.ndarray, *, glow: float) -> None:  # fmt: skip
-    """Points of light in 3D: discs facing the camera, each its own colour (alpha: its
-    light) and radius (world units). The glow role sends them to the emission target. The
-    one place ``StarLattice`` draws its echoes: a general flashing-points object can take
-    this over (see ``nlm.lattice_points``)."""
-    disc_batch(ctx, cam, points, radius, colors=colors, glow=glow)
 
 
 @register
@@ -62,9 +52,12 @@ class StarLattice(ObjectBase):
 
     ``time`` (animatable, usually ``expr("t - 1")``): an echo flashes when ``time`` reaches
     its arrival, then glows on at ``afterglow`` of its light (``decay`` seconds to settle);
-    the default lights every echo. ``lap_gain`` (0-1] dims an echo by lap_gain ** laps, the
-    loss of each trip round a loop. ``arms`` (animatable, 0 to K; default all) fades the
-    loops in one by one. Colour is the ``colormap`` at ``color_by``: ``arrival`` (time over
+    the default lights every echo. The flash is the one every lattice of lights shares
+    (``sweep_math.envelope``, drawn by ``strokes.flash_points``): a flashing echo grows by
+    ``swell`` and runs white-hot by ``white``, with a soft halo in the glow role.
+    ``lap_gain`` (0-1] dims an echo by lap_gain ** laps, the loss of each trip round a loop.
+    ``arms`` (animatable, 0 to K; default all) fades the loops in one by one. Colour is the
+    ``colormap`` at ``color_by``: ``arrival`` (time over
     ``max_time``), ``order`` (laps in all), ``arm`` (the loop it went round most) or
     ``value`` (sum n_i ``arm_values``_i, scaled to 0-1), over ``hue_span`` of the palette
     from ``hue``. ``point_size`` is a share of the frame height; ``arm_opacity`` the arms'
@@ -81,6 +74,11 @@ class StarLattice(ObjectBase):
     Presets: ClassVar = {
         "prism": {"style": {"colormap": "spectrum", "glow": "strong"}},
         "plain": {"params": {"afterglow": 0.6}, "style": {"glow": "none"}},
+        # the star's first look (2026-11-25): saturated colours, no white heat or halo
+        "vivid": {
+            "params": {"flash_style": "vivid"},
+            "style": {"colormap": "spectrum", "glow": "strong"},
+        },
     }
 
     class Params(ParamsBase):
@@ -99,6 +97,11 @@ class StarLattice(ObjectBase):
         rise: float = Field(0.05, ge=0)  # seconds an echo takes to light
         decay: float = Field(0.6, gt=0)  # seconds its flash takes to settle
         afterglow: float = Field(0.35, ge=0, le=1)  # its light after the flash
+        swell: float = Field(1.2, ge=0)  # a flashing echo grows by this share of its size
+        white: float = Field(0.6, ge=0, le=1)  # how white-hot the flash runs
+        # "shared": the flash every lattice of lights shares (white heat, halo); "vivid": the
+        # star's own, brighter and bigger in its own colour, so a packed star stays saturated
+        flash_style: Literal["shared", "vivid"] = "shared"
         lap_gain: float = Field(1.0, gt=0, le=1)  # light kept per lap round a loop
         color_by: Literal["arrival", "order", "arm", "value"] = "arrival"
         arm_values: tuple[float, ...] = ()  # color_by "value": one number per loop
@@ -152,25 +155,28 @@ class StarLattice(ObjectBase):
 
     def visible(self, state: SceneState) -> dict[str, np.ndarray]:
         """What is drawn at this state, for the echoes that show (weight and light above 0):
-        ``points`` (M, 3), ``arrival``, ``values`` (0-1), ``light`` (0-1, the alpha) and
-        ``burst`` (1 at arrival, falling to 0: the flash). Pure in the state."""
+        ``points`` (M, 3), ``arrival``, ``values`` (0-1), ``light`` (0-1, the alpha),
+        ``burst`` (1 at the top of the flash, falling to 0) and ``flash`` (the burst dimmed as
+        the light is, by arms, laps and the crowd: what is drawn). Pure in the state."""
         p = self.me(state).params
         lat = self.lattice(state)
         w = nlm.arm_weights(p.k, p.arms)
         weight = nlm.point_weights(lat["index"], w)
         light, burst = nlm.flash(p.time - lat["arrival"], p.rise, p.decay, p.afterglow)
-        light = light * weight
+        dim = weight
         if p.lap_gain < 1.0:
-            light = light * p.lap_gain ** lat["order"]
+            dim = dim * p.lap_gain ** lat["order"]
         # a crowd shares the light: past ``crowd`` echoes (counted by their weights, so the
         # share moves smoothly as arms fade in) each one is dimmed by sqrt(crowd / count),
         # so a packed star glows in its colours instead of burning white
-        light = light * min(1.0, math.sqrt(p.crowd / max(float(weight.sum()), 1e-9)))
+        dim = dim * min(1.0, math.sqrt(p.crowd / max(float(weight.sum()), 1e-9)))
+        light = light * dim
         keep = light > 0
         idx = lat["index"][keep]
         return {"points": nlm.project(idx, self._arms(p), w, p.origin),
                 "arrival": lat["arrival"][keep], "values": self._values(p, lat)[keep],
-                "light": light[keep], "burst": burst[keep]}  # fmt: skip
+                "light": light[keep], "burst": burst[keep],
+                "flash": (burst * dim)[keep]}  # fmt: skip
 
     def _tips(self, p, lat, w) -> np.ndarray:
         """(K, 3) the end of each arm: its farthest lap among the echoes, as shown."""
@@ -224,11 +230,17 @@ class StarLattice(ObjectBase):
         vis = self.visible(state)
         if len(vis["points"]):
             colors = lut_colors(lut, p.hue + p.hue_span * vis["values"])
-            colors[:, :3] *= (1.0 + FLASH_BRIGHT * vis["burst"])[:, None]
-            colors[:, 3] = vis["light"] * p.opacity
-            radius = (p.point_size * np.asarray(cam.units_per_height(vis["points"]))
-                      * (1.0 + FLASH_GROW * vis["burst"]))  # fmt: skip
-            glow_points(ctx, cam, vis["points"], colors, radius, glow=glow)
+            colors[:, 3] = vis["light"]
+            radius = p.point_size * np.asarray(cam.units_per_height(vis["points"]))
+            if p.flash_style == "vivid":
+                colors[:, :3] *= (1.0 + VIVID_BRIGHT * vis["burst"])[:, None]
+                colors[:, 3] *= p.opacity
+                disc_batch(ctx, cam, vis["points"], radius * (1.0 + VIVID_GROW * vis["burst"]),
+                           colors=colors, glow=glow)  # fmt: skip
+            else:
+                flash_points(ctx, cam, vis["points"], radius, colors=colors,
+                             flash=vis["flash"], glow=glow, opacity=p.opacity, swell=p.swell,
+                             white=p.white)  # fmt: skip
         if p.arm_opacity > 0:
             lat = self.lattice(state)
             w = nlm.arm_weights(p.k, p.arms)

@@ -31,6 +31,9 @@ a variant and compare.
 | `scene_edit` | apply a patch (below); returns `ok`, `errors`, and the lint issues it added or fixed |
 | `animate` | a choreography verb at a marker or time: `reveal`, `exit`, `trace`, `bloom_in`, `dim_others`, `undim`, `focus_pull`, `morph`, `settle`, `write`, `travel`, `flash`, `wiggle`, `circumscribe` (`value` "circle" or "box"), `transform` and `become` (`targets` [from, to]), `sweep` (`path`, `value`), `unfold` (`targets` [room, ray], `value` flips, default 5), and in 3D `orbit` (`value` degrees, `until` a marker) and `orbit_reveal` |
 | `narrate` | set the script and voice; markers appear in `markers` |
+| `cue` | a one-shot sound on a marker (`at`, `offset`): a built-in (`tick`, `chime`, `whoosh`, `pop`, `swell`, `tone`) or an audio file in the folder; `gain` (LU relative to the voice), `pan`, `midi`, `dur`, `voice` (tone: sine/soft/pluck/bell) |
+| `bed` | music or ambience (an audio file in the folder) under the scene from marker `start` to `end`, looped, with fades; it dips while the narration speaks |
+| `sound_report` | the mix in numbers (you cannot hear it): loudness per lane per narration block, how far each bed sits under the voice, ducking, trim, true peak, sound lint |
 | `inspect` | what is on screen at `t`: `brief` (a line each), `standard`, `full` |
 | `lint` | visual problems; `fix: true` applies the certain fixes |
 | `review` | the whole self-review round in one call |
@@ -176,6 +179,30 @@ to a marker with a verb. Do not animate by raw seconds in a narrated scene (lint
 {"tool": "narrate", "script": "Here are the poles. [[poles]] Draw a loop around the first. [[loop]] The result is two pi.", "voice": "estimate"}
 {"tool": "animate", "verb": "reveal", "at": "poles", "targets": ["pole_i"]}
 {"tool": "animate", "verb": "trace", "at": "loop", "targets": ["loop"]}
+```
+
+Sound is timed the same way (SOUND.md). A `cue` is a one-shot sound on a marker: a
+built-in (`tick`, `chime`, `whoosh`, `pop`, `swell`, `tone`), synthesized, or an audio file
+from the scene's folder. A `bed` is music or ambience from a file under a stretch of the
+scene; it dips while the voice speaks. Levels are loudness relative to the voice (`gain` in
+LU; defaults: cues 10 under, beds 18 under), so you never set peaks. Then read the mix with
+`sound_report` and fix what `bed_masks_voice`, `cue_on_word` or `audio_clip` report:
+
+```json calls
+{"tool": "cue", "at": "poles", "sound": "chime"}
+{"tool": "cue", "at": "loop", "sound": "whoosh", "offset": -0.5, "gain": -14}
+{"tool": "cue", "at": "loop", "sound": "tone", "offset": 0.2, "midi": 76, "voice": "pluck", "id": "loop_ping"}
+{"tool": "sound_report"}
+```
+
+Retime or re-level one with `set_cue` / `set_bed` (the whole cue or bed, by id), take one
+out with `remove_sound` (its id is retired):
+
+```json patch
+[
+  {"op": "set_cue", "cue": {"id": "loop_ping", "at": {"marker": "loop", "offset": 0.4}, "sound": "tone", "midi": 79, "voice": "pluck"}},
+  {"op": "remove_sound", "id": "cue_chime_poles"}
+]
 ```
 
 `animate` returns `start` and `end`: pass `offset: end - start` to start the next step when

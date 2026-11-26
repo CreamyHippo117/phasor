@@ -2,8 +2,11 @@
 
 Working doc, like `APP_PLAN.md`. Asked for by the owner on 2026-11-26: "a sound bed: sound
 effects merged nicely with background music, most likely ambient, under the narration, and
-all of it editable in the desktop app". Status: **approved by the owner 2026-11-26, not started**. It comes after `BEAUTY.md`; the
-owner's answers are at the end of this doc.
+all of it editable in the desktop app". Status: **approved by the owner 2026-11-26; started on the
+owner's word the same day. Steps 1-3 and step 5's `sound_report` are built (2026-11-26);
+step 4 (the app) waits for `APP_PLAN.md` phase 2**, and step 5's `llms.txt`/docs are done with
+the tools. The owner's answers are at the end of this doc; what was built differently is under
+"Deviations".
 
 ## What exists to build on
 
@@ -158,3 +161,45 @@ before `BEAUTY.md` is done, and not without the owner's go-ahead.
 4. **Sounds:** beds are the owner's own imported ambient files (licensing is theirs); no
    built-in beds. Effects are built in (synthesized).
 5. **Stereo:** yes.
+
+## Deviations (as built, 2026-11-26)
+
+- **One design.** The interim `s.note` / `s.sound` (the `sounds` list of notes and WAV files,
+  built the day before and never on the default branch) is gone: a note is a cue of the
+  built-in `tone` (`s.cue(marker, "tone", midi=69, voice="pluck", dur=0.5)`), a file is a cue
+  naming the file. Its patch ops (`add_sound`, `set_sound`) and MCP tool (`sound`) became
+  `add_bed`/`set_bed`/`add_cue`/`set_cue`/`remove_sound` and the tools `cue`, `bed`,
+  `sound_report`. Schema 9 is this design's `sound` section; there is no schema 10.
+- **Tools.** Adding beds and cues was to be script editing only (`script_edit`, APP_PLAN phase
+  3), which does not exist yet, so the MCP server has two small tools, `cue` and `bed`, for
+  scenes without a script. They can go when `script_edit` lands.
+- **A narration-only scene is untouched** (step 1's exit): the bus, the trim and the limiter
+  run only when there is a bed or a cue, and the narration then keeps its own sample rate.
+  With beds or cues everything is at 48 kHz.
+- **The trim** runs before the limiter (gain, then the ceiling), not after it, so the trim
+  can never push a peak past -1 dBTP. While the narration has no audio yet (estimated timing)
+  there is no trim: the lanes stay where they will sit under the voice, rather than the cues
+  being raised to the voice's level.
+- **A cue's level** is its loudest 400 ms (BS.1770 momentary loudness, sampled every 10 ms);
+  a bed's is its integrated loudness. Short sounds are measured as themselves followed by
+  silence.
+- **Ducking**: spans closer than `attack + release` duck as one (no pumping between
+  sentences); the ramps are smoothsteps in dB.
+- **`cue_on_word`**: the narration has no stress marks, so a "stressed word" is a word of
+  four letters or more, and the rule compares the cue's peak with that word's onset.
+- **Lint thresholds** live in `[sound]` (`masking`, `word_gap`, `clip`), as this plan says,
+  not in `[lint]` as CLAUDE.md's general rule says: they sit beside the levels they judge.
+- **`bed_masks_voice`'s fix** (lower the bed's gain) is offered on scenes without a script; on
+  a script's scene the hint names the gain to write in the script (a bed is not a tweak).
+- **Built-ins are cached in memory** (per cue id, seed and knobs), not as WAV files: a pure
+  function needs no files written into the scene's folder. `chime` takes `midi` instead of
+  following a bed's key (beds carry no key).
+- **The loudness lanes** are drawn under every storyboard of a scene with sound (step 5 asked
+  for them; step 2's exit wanted a snapshot with them).
+- **`soundfile`** is now a core dependency (it was in SPEC's stack but not in
+  `pyproject.toml`); it decodes every bed and cue file. The narration's clips are still read
+  by the 16-bit WAV reader, which keeps step 1's bit-identity.
+- **Untested**: Windows and macOS (the `soundfile` wheel bundles libsndfile there; the
+  desktop build lists it), and listening: every check is a number (loudness, true peak,
+  hashes), none is an ear. The owner should listen to `examples/sound_bed.py` rendered with
+  a real voice.
