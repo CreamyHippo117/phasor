@@ -457,10 +457,17 @@ The subject is what moves; it needs a `pos` parameter that is not an expression.
 | `no_overlap(a, b, ...)`, `min_size_px(a, n)`, `readable(a)` | checked by the linter |
 
 - `label(x)` means the object `x.label`. Numbers are in the object's layer units.
-- Layout is solved at every marker, every transition end and 10 times a second, then baked.
+- Layout is solved at every marker, every transition end and 10 times a second while
+  anything it places is shown (and at the key either side), then baked. While all of it is
+  hidden the solver does not run: a hidden label holds its first or last place.
   `engine.state_at(t)`, the inspector and the renderer all read the same bake.
-- A label changes slot only when another slot is over 20% better, and then it jumps.
-- `engine.layout` shows the bake: `times`, `slots` (per label, per key time), `issues`.
+- A label changes slot only when another slot is over 20% better, and then it jumps. Coming
+  back after being hidden it compares against the slot it last had.
+- `engine.layout` shows the bake: `times` (the key times it ran at), `slots` (per label, per
+  key time), `spans` (each run of baked keys), `renders` (occlusion buffers it drew), `issues`.
+- An edit that only changes motion from some time on (a verb, a segment) keeps the bake
+  before that time and re-bakes the rest; any other edit bakes it all again. A verb reads
+  the scene where it starts and bakes only that far. Lint `slow_layout` flags a costly bake.
 - A rule that cannot hold is a lint error `unsolved`, with the times. Nothing is dropped.
 - `visible_in_3d(a)` (not hidden by anything in front of it) is a guard checked by the linter.
 - `camera keep_visible(a)` and the other camera goals are in the 3D section.
@@ -493,6 +500,7 @@ Each issue has `code`, `severity`, `message`, `ids`, `times`, `fix_hint`, and `f
 | `raw_motion` | warning, strict only | a transition written with raw `to()` instead of a verb |
 | `orphan_override` | error | a tweak whose object is gone |
 | `missing_file` | warning | a file an object reads (a room's `.obj`) is not in the scene's folder; it draws nothing |
+| `slow_layout` | warning | the layout bake draws more occlusion buffers (depth buffers in 3D) than the theme's `[lint] bake_renders` (3000): a label shown for minutes; no `fix` |
 
 `engine.autofix()` applies every `fix` the linter offers (add `near` for a child label that
 overlaps, `on_screen` for something cut by the frame), lints again, and returns

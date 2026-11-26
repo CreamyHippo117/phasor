@@ -14,6 +14,7 @@ returns one issue per problem with the times it was seen. Rules in this mileston
 | unsolved  | error    | a constraint that does not hold (from the bake, or a guard)    |
 | occluded_label | warning | 3D: a label partly hidden by something in front of it      |
 | missing_file | warning | a file an object reads (a mesh) is not in the scene's folder    |
+| slow_layout | warning | the layout bake renders more occlusion buffers than ``bake_renders`` |
 
 Under a perspective camera ``overlap`` only compares labels with labels and points with
 points: a label in front of a surface is fine, and one behind it is ``occluded_label``.
@@ -36,6 +37,7 @@ from phasor.core.ids import parent_of
 from phasor.core.issues import Issue
 from phasor.core.state import SceneState
 from phasor.inspect.passes import PassRunner, inspect_size
+from phasor.layout.bake import Bake
 from phasor.layout.geometry import footprint, view_of
 from phasor.layout.plan import MOVE_PARAM, Plan
 from phasor.time.compile import Compiled, CompiledExpr
@@ -235,6 +237,29 @@ def _near_fix(c: Compiled, plan: Plan, label_id: str) -> tuple[dict[str, Any], .
     ):
         return ()
     return ({"op": "add_constraint", "rule": f"label({owner}) near {owner}"},)
+
+
+def bake_rules(c: Compiled, plan: Plan, baked: Bake) -> list[Issue]:
+    """``slow_layout``: the layout bake renders an occlusion buffer (a depth buffer in 3D)
+    at every 10 Hz key time while something it places is shown, and again after every edit
+    that changes what comes before that. More than the theme's ``bake_renders`` is slow on
+    any machine. Counted the same with or without OpenGL; ``times`` are where each baked
+    stretch starts. No fix: only the author knows whether the label must be there."""
+    limit = c.theme.lint["bake_renders"]
+    if baked.renders <= limit:
+        return []
+    ids = tuple(sorted(plan.moving))
+    spans = ", ".join(f"{a:g}-{b:g} s" for a, b in baked.spans[:MAX_TIMES])
+    more = f" and {len(baked.spans) - MAX_TIMES} more" if len(baked.spans) > MAX_TIMES else ""
+    goals = " and the camera goals" if plan.goals else ""
+    return [Issue(
+        "slow_layout", f"the layout bake renders {baked.renders} occlusion buffers (limit "
+        f"{limit:g}): one per key time (10 Hz) while {', '.join(map(repr, ids))} "
+        f"{'is' if len(ids) == 1 else 'are'} shown ({spans}{more}){goals}",
+        severity="warning", ids=ids, times=tuple(a for a, _ in baked.spans),
+        fix_hint="show what layout places only while it is needed (reveal ... exit), or give "
+        "it a fixed place (pos=...) instead of a rule",
+    )]  # fmt: skip
 
 
 def control_rules(c: Compiled) -> list[Issue]:

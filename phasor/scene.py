@@ -93,7 +93,8 @@ class At:
         except KeyError as e:
             raise _verbs.VerbError(f"no marker {e.args[0]!r}; markers are "
                                    f"{sorted(compiled.time_map.markers)}") from None  # fmt: skip
-        motion = getattr(_verbs.Verbs(compiled, engine.state_at(t), at), name)(*args, **kwargs)
+        state = engine._state_upto(t)  # baked only as far as t needs
+        motion = getattr(_verbs.Verbs(compiled, state, at), name)(*args, **kwargs)
         if motion.ops:
             self._scene._apply([self._scene._with_look(op) for op in motion.ops])
         self._end = max(self._end, motion.end)

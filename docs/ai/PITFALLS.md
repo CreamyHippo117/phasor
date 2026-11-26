@@ -28,6 +28,20 @@ cannot be constrained (`not_movable`).
 Lint checks markers, transition ends and every 0.5 s. A collision that lasts two frames
 between samples is missed. Put a marker where it matters, or pass a smaller `step`.
 
+## A `near` label makes a long 3D scene slow to edit
+
+The label placer draws one occlusion buffer (a depth buffer in 3D) at every 10 Hz key time
+while something it places is shown. A label left visible for the whole of a 17-minute scene
+is 10 000 depth renders, and every verb the script runs after it reads the scene and bakes
+to where the verb starts. Show the label only while it is needed (`reveal` ... `exit`):
+hidden, it costs nothing. Write the rule after the verbs that hide it (a label is shown
+until its `reveal` says otherwise, so a rule written first makes the `reveal` itself bake
+everything before it). Edits after the shown span reuse the bake; an edit before it (or a
+`set`, a new object, a new rule) bakes the shown span again. Lint `slow_layout` says when a bake is over
+the theme's `[lint] bake_renders`. A label that never moves needs no rule: give it a `pos`.
+An expression that reads a placed object's `pos`, or an object that names it (a
+`circumscribe` ring), makes the bake run everywhere, hidden or not.
+
 ## `overlap` on a label that sits on a big shape
 
 A label fully inside a shape is not an overlap; it is judged by `contrast`. A label half on

@@ -7,7 +7,7 @@ import itertools
 import numpy as np
 import pytest
 
-from phasor import Dot, Line, Scene, Text, expr
+from phasor import Dot, Engine, Line, Scene, Text, expr
 from phasor.core import io
 from phasor.core.constraints import Guard, Relation, RuleError, parse_rule, rule_ids
 from phasor.core.issues import DocumentError
@@ -522,3 +522,176 @@ def test_attach_to_uses_an_objects_own_feature_points():
     st = e.state_at(0.0)
     lab, arrow = screen_box(st, st["v.label"]), screen_box(st, st["v"])
     assert lab.x0 >= arrow.x1 - 0.2 and lab.y0 >= arrow.y1 - 0.2  # beyond the tip, up and right
+
+
+# ---------------------------------------------------------------- what the bake runs at (wishlist)
+# A label near an object shown for a few seconds of a long 3D scene used to make the bake
+# render an occlusion buffer at every key time of the whole scene, and every verb in the
+# script baked it all again.
+
+MODES = [None, pytest.param("auto", marks=pytest.mark.gl)]
+
+
+def _brief(passes, duration=20.0, show=8.0, hide=11.0, more=()):
+    from phasor import cx
+
+    s = Scene("brief", passes=passes)
+    s.use_camera("orbit", distance=9, elevation=25, azimuth=-90, drift=0)
+    s.add(cx.RiemannSurface(id="surf", radius=2.2))
+    s.add(Dot(id="x", pos=(0, 0, 0), r=0.07, tags=["key"]))
+    s.add(Text(id="x.label", text="branch point"))
+    for obj in more:
+        s.add(obj)
+    s.marker("show", show)
+    s.marker("hide", hide)
+    s.marker("end", duration)
+    s.constrain("label(x) near x")
+    s.at("show").reveal("x", "x.label")
+    s.at(show + 1).to("x.pos", (0.6, 0.4, 0.2), duration=1.5)  # it moves while shown
+    s.at("hide").exit("x", "x.label")
+    return s
+
+
+class _Counting:
+    """Counts what the layout asks of the occlusion oracle."""
+
+    def __init__(self, monkeypatch):
+        from phasor.inspect.oracle import PassOracle
+        from phasor.layout.bake import AnalyticOracle
+
+        self.n = 0
+        for cls in (AnalyticOracle, PassOracle):
+            for name in ("depth", "coverage"):
+                orig = getattr(cls, name)
+                monkeypatch.setattr(cls, name, self._wrap(orig))
+
+    def _wrap(self, orig):
+        def counted(oracle, *a, **k):
+            self.n += 1
+            return orig(oracle, *a, **k)
+
+        return counted
+
+
+def _never_skip(monkeypatch):
+    from phasor.layout import bake as bake_mod
+
+    monkeypatch.setattr(bake_mod, "shown_keys", lambda c, plan, times: (True,) * len(times))
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_the_bake_runs_only_while_something_it_places_is_shown(passes, monkeypatch):
+    built = _brief(passes).engine
+    counting = _Counting(monkeypatch)
+    e = Engine(built.document, passes=built._passes)  # baked from nothing
+    lay = e.layout
+    times = key_times(e._snap.compiled)
+    assert len(times) > 200
+    # The shown span (the label's fade starts at 8.12 s, after the dot's), to the end of
+    # the exit fade, plus the key either side of it.
+    assert lay.times[0] == pytest.approx(8.12) and lay.times[-1] < 12.0
+    assert lay.spans == ((lay.times[0], lay.times[-1]),)
+    assert lay.renders == len(lay.times) < 45
+    assert counting.n == lay.renders  # one occlusion buffer per baked key, shared by labels
+    # Hidden, the label simply holds its first or last place.
+    assert e.state_at(2.0)["x.label"].params.pos == e.state_at(lay.times[0])["x.label"].params.pos
+    assert e.state_at(15)["x.label"].params.pos == e.state_at(lay.times[-1])["x.label"].params.pos
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_placements_while_shown_are_those_a_bake_of_every_key_gives(passes, monkeypatch):
+    e = _brief(passes).engine
+    lay = e.layout
+    shown = [e.state_at(t)["x.label"].params for t in lay.times]
+    _never_skip(monkeypatch)
+    ref = _brief(passes).engine
+    assert len(ref.layout.times) == len(key_times(ref._snap.compiled)) > len(lay.times)
+    assert [ref.state_at(t)["x.label"].params for t in lay.times] == shown
+    for t in lay.times:
+        k = ref.layout.times.index(t)
+        assert ref.layout.slots["x.label"][k] == lay.slots["x.label"][lay.times.index(t)]
+
+
+def test_a_label_read_by_an_expression_is_baked_everywhere():
+    s = _brief(None, more=[Dot(id="echo", pos=expr("x.label.pos + vec(0, 0, 1)"), r=0.05)])
+    lay = s.engine.layout
+    assert lay.times == key_times(s.engine._snap.compiled)
+
+
+def test_an_opacity_written_as_an_expression_is_baked_everywhere():
+    s = _brief(None)
+    s.set("x.label.dim", expr("1 - 0.5 * sin(t) ** 2"))
+    lay = s.engine.layout
+    assert lay.times == key_times(s.engine._snap.compiled)
+
+
+def test_a_scene_whose_labels_never_show_bakes_nothing():
+    s = Scene("never", passes=None)
+    s.add(Dot(id="x", pos=(0, 0)))
+    s.add(Text(id="x.label", text="x", opacity=0.0))
+    s.marker("end", 30)
+    s.constrain("label(x) near x")
+    e = s.engine
+    assert e.layout.times == () and e.layout.renders == 0
+    assert e.state_at(3)["x.label"].params.pos == (0.0, 0.0, 0.0)  # the document's own
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_an_edit_reuses_the_bake_before_the_first_time_it_changes(passes, monkeypatch):
+    s = _brief(passes, duration=30.0, show=8.0, hide=20.0)
+    e = s.engine
+    first = e.layout
+    counting = _Counting(monkeypatch)
+    s.at(15).morph("surf.radius", 2.0)  # the verb itself reads the scene at t = 15
+    again = e.layout
+    late = [t for t in again.times if t >= 15]
+    assert counting.n == len(late) < len(again.times)
+    assert [t for t in again.times if t < 15] == [t for t in first.times if t < 15]
+    fresh = Engine(e.document, passes=e._passes)  # the same document, baked from nothing
+    assert fresh.layout == again
+    assert fresh.layout.renders == again.renders
+
+
+def test_an_edit_before_the_shown_span_bakes_it_again_and_gets_the_same(monkeypatch):
+    s = _brief(None, duration=30.0, show=8.0, hide=20.0)
+    e = s.engine
+    assert e.layout.times
+    counting = _Counting(monkeypatch)
+    s.at(3).morph("surf.radius", 2.0)
+    lay = e.layout
+    assert counting.n == len(lay.times) == lay.renders
+    assert Engine(e.document, passes=None).layout == e.layout
+
+
+def test_reuse_is_refused_when_anything_but_a_later_motion_changed():
+    from phasor.layout.bake import unchanged_until
+
+    s = _brief(None)
+    c0 = s.engine._snap.compiled
+    s.at(12).morph("surf.radius", 2.0)
+    c1 = s.engine._snap.compiled
+    assert unchanged_until(c0, c1) == pytest.approx(12.0)
+    s.set("surf.radius", 2.5)  # a base value: every time changes
+    assert unchanged_until(c1, s.engine._snap.compiled) == 0.0
+    assert unchanged_until(c1, c1) == float("inf")
+
+
+def test_a_verb_bakes_only_as_far_as_the_time_it_starts(monkeypatch):
+    """A script that writes the rule first and its verbs after: each verb reads the scene
+    where it starts, so it bakes up to there, and the next one carries on from it."""
+    s = Scene("walk", passes=None)
+    s.set("camera.height", 8)
+    s.add(Dot(id="x", pos=(0, 0), r=0.2))
+    s.add(Text(id="x.label", text="x"))
+    s.add(Dot(id="y", pos=(2, 1), r=0.2))
+    s.marker("end", 60)
+    s.constrain("label(x) near x")  # shown from the start
+    counting = _Counting(monkeypatch)
+    s.at(5).morph("y.r", 0.4)
+    assert counting.n < 60  # about 5 s of keys, not the scene's 600
+    s.at(10).morph("y.pos", (1, 1, 0))
+    assert counting.n < 120  # carried on from 5 s
+    e = s.engine
+    partial = [e._state_upto(t) for t in (0.0, 4.95, 9.0, 9.5)]
+    assert [e.state_at(t) for t in (0.0, 4.95, 9.0, 9.5)] == partial
+    assert e.layout == Engine(e.document, passes=None).layout

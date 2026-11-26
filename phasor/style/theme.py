@@ -75,6 +75,7 @@ _TABLES = {
         "margin",
         "stroke_mix",
         "impure",
+        "bake_renders",
     ),
     "life": (
         "glow",
