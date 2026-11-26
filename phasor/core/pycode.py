@@ -4,9 +4,9 @@
 their parameters, style roles and tags, the camera, markers, animations (as ``at(...).to``),
 constraints, controls and sound (beds and cues). An object of a type defined in the scene's
 folder, or with updaters, is written as the document's own ``add_object`` op (ADR 0005).
-Narration blocks are not reproduced (their audio belongs to the voice module): a comment says
-so. Running the result and diffing it with the document gives no differences except narration
-(``tests/test_pycode.py``).
+The narration is written as the document's own ``set_narration`` op too: its timing and
+markers exactly, without speaking it again. Running the result and diffing it with the
+document gives no differences (``tests/test_pycode.py``).
 """
 
 from __future__ import annotations
@@ -124,11 +124,14 @@ def document_to_python(doc: Document) -> str:
     if doc.objects:
         lines.append("")
     owned = set(doc.narration.markers()) if doc.narration else set()
+    if doc.narration is not None:
+        # The recorded narration as the document's own op: its timing and markers exactly,
+        # without speaking it again. Re-record with s.narrate(...).
+        narration = _op("set_narration", narration=doc.narration.model_dump(mode="json"))
+        lines.append(f"s.engine.apply({narration}, origin='script')")
     for name, t in doc.timeline.markers.items():
         if name not in owned:
             lines.append(f"s.marker({name!r}, {float(t)!r})")
-    if doc.narration is not None:
-        lines.append("# (narration is not reproduced here: record it with s.narrate(...))")
     for path, segs in doc.timeline.tracks.items():
         for seg in segs:
             same_anchor = (

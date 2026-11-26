@@ -127,6 +127,11 @@ kind = "basics"
 tier = "technique"
 teaches = "A picture in a scene: a PNG next to the script, placed, sized, framed and animated like any object"
 
+[examples.sound_bed]
+kind = "basics"
+tier = "technique"
+teaches = "Sound: an ambience bed under the narration (ducked while it speaks) and effects on markers; the theme sets the levels"
+
 [examples.phase_portrait]
 kind = "physics"
 tier = "technique"
