@@ -2,11 +2,11 @@
 
 ``document_to_python(doc)`` writes a script that, run, builds the same scene: objects with
 their parameters, style roles and tags, the camera, markers, animations (as ``at(...).to``),
-constraints, controls and sound (beds and cues). An object of a type defined in the scene's
-folder, or with updaters, is written as the document's own ``add_object`` op (ADR 0005).
-The narration is written as the document's own ``set_narration`` op too: its timing and
-markers exactly, without speaking it again. Running the result and diffing it with the
-document gives no differences (``tests/test_pycode.py``).
+constraints, controls, beds and cues (``s.bed``, ``s.cue``). An object of a type defined in
+the scene's folder, or with updaters, is written as the document's own ``add_object`` op
+(ADR 0005). The narration is written as the document's own ``set_narration`` op too: its
+timing and markers exactly, without speaking it again. Running the result and diffing it
+with the document gives no differences (``tests/test_pycode.py``).
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 from phasor.core.objects import is_builtin, registered_types
-from phasor.core.schema import Bed, Cue, Document, ExprSpec, MarkerRef
+from phasor.core.schema import Document, ExprSpec, MarkerRef
 
 # class module -> how the generated script reaches it
 _TOP = {"phasor.domains.basic", "phasor.domains.media", "phasor.domains.unfold"}  # Dot, Image, ...
@@ -34,6 +34,7 @@ _ALIAS = {
     "phasor.domains.filters": "filt",
     "phasor.domains.sweep": "sweep",
     "phasor.domains.ndlattice": "nd",
+    "phasor.domains.net": "net",
     "phasor.domains.waves": "ac",  # wave fields are named through ``ac``
 }
 
@@ -148,19 +149,20 @@ def document_to_python(doc: Document) -> str:
             else:
                 lines.append(f"s.segment({path!r}, {_ref(seg.t0)}, {_ref(seg.t1)}, {_lit(seg.to)}, "
                              f"ease={seg.ease!r})")  # fmt: skip
-    for b in doc.sound.beds:
-        kw = [f"id={b.id!r}", f"start={_ref(b.start)}"]
-        if b.end is not None:
-            kw.append(f"end={_ref(b.end)}")
-        for name in ("loop", "gain", "fade_in", "fade_out", "duck"):
-            value = getattr(b, name)
-            if value != Bed.model_fields[name].default:
-                kw.append(f"{name}={value!r}")
-        lines.append(f"s.bed({b.file!r}, {', '.join(kw)})")
-    for q in doc.sound.cues:
-        kw = [f"id={q.id!r}"] + [f"{n}={getattr(q, n)!r}" for n in ("gain", "pan")
-                                if getattr(q, n) != Cue.model_fields[n].default]  # fmt: skip
-        lines.append(f"s.cue({_ref(q.at)}, {q.sound!r}, {', '.join(kw)})")
+    for bed in doc.sound.beds:
+        parts = [repr(bed.path)]
+        for key in ("start", "end"):
+            ref = getattr(bed, key)
+            if ref is not None:
+                parts.append(f"{key}={_ref(ref)}")
+        parts += [f"gain={bed.gain!r}", f"fade_in={bed.fade_in!r}", f"fade_out={bed.fade_out!r}",
+                  f"loop={bed.loop!r}", f"id={bed.id!r}"]  # fmt: skip
+        lines.append(f"s.bed({', '.join(parts)})")
+    for cue in doc.sound.cues:
+        parts = [_ref(cue.at), repr(cue.sound), f"gain={cue.gain!r}"]
+        parts += [f"{k}={getattr(cue, k)!r}" for k in ("pan", "midi", "dur", "voice")
+                  if getattr(cue, k) not in (None, 0.0)]  # fmt: skip
+        lines.append(f"s.cue({', '.join(parts)}, id={cue.id!r})")
     for c in doc.constraints:
         lines.append(f"s.constrain({c.rule!r}, priority={c.priority!r})")
     for c in doc.controls:

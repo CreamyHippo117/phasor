@@ -2,9 +2,12 @@
 
 Working doc, like `APP_PLAN.md`. Asked for by the owner on 2026-11-26: "a sound bed: sound
 effects merged nicely with background music, most likely ambient, under the narration, and
-all of it editable in the desktop app". Status: **approved by the owner 2026-11-26; all five steps built 2026-11-26** (step 4 in
-today's editor window, on the owner's ask; see "Progress"). It comes after `BEAUTY.md`; the
-owner's answers are at the end of this doc.
+all of it editable in the desktop app". Status: **approved by the owner 2026-11-26; started on the
+owner's word the same day. All five steps are built (2026-11-26): steps 1-3 and
+`sound_report` first; then step 4 in today's editor window on the owner's ask, with
+mastering, the owner's own voice and editable copies of script scenes (see "Step 4, as
+built").** The owner's answers are at the end of this doc; what was built differently is under
+"Deviations".
 
 ## What exists to build on
 
@@ -143,109 +146,6 @@ updated in the same commit, as CLAUDE.md requires.
 Steps 1-3 need nothing from the app; step 4 waits for `APP_PLAN.md` phase 2. None starts
 before `BEAUTY.md` is done, and not without the owner's go-ahead.
 
-## Progress
-
-- **Step 1, done 2026-11-26.** `time/sound.py`: stereo float32 bus (`Placed`, `mix`), polyphase
-  resampling, BS.1770-4 integrated loudness with R128 gating, 4x-oversampled true peak, the
-  master limiter (`master`), `mixdown` for the engine. `Engine.audio_track()` returns stereo
-  int16 and `render/encode.py` `mux_audio` writes stereo. `time/narration.py` `mix_track` is
-  gone: the narration is now the voice lane. Reading: WAV of any width through SciPy;
-  OGG/FLAC/MP3 through `soundfile`, a new `sound` extra (in CI, and in `all`).
-  Tests: `tests/test_sound.py` (EBU Tech 3341 cases 1-4 at 48 and 44.1 kHz, the standard's
-  K-weighting coefficients, true peak between samples, the limiter, placement, rates,
-  determinism, reading, a stereo mux through PyAV).
-
-- **Steps 2 and 3, done 2026-11-26.** Schema 9: `Document.sound` holds `beds` and `cues`
-  (`core/schema.py` `Bed`, `Cue`, `Sound`; `migrate` 8 to 9 adds an empty one). Ids are
-  unique among beds, cues and objects; a cue or bed on a missing marker is `unknown_marker`.
-  Patch ops `set_bed`, `set_cue` (add, or replace in place) and `remove_sound`. Script:
-  `s.bed(file, start, end, loop, gain, fade, duck)` and `s.cue(marker, sound, offset, gain,
-  pan)` (`scene.py`); `core/pycode.py` writes them back. The theme's `[sound]` table sets
-  the levels (`voice` -16 LUFS, `bed` -18, `cue` -10, `duck` 8 dB, `attack` 0.3 s,
-  `release` 0.8 s, `fade` 2 s, `ceiling` -1 dBFS). `time/sound.py` `build` makes the lanes
-  (`Mix`), `Engine.sound_mix()` caches them per document version and per version of the
-  files read; `Engine.audio_track()` is their sum through the limiter. Lint
-  (`inspect/lint.py` `sound_rules`): `missing_file`, `bad_sound`, `bed_masks_voice` (with a
-  certain fix), `audio_clip`; strict `cue_unanchored`; aesthetic `cue_on_word`
-  (`inspect/aesthetic.py`). Built-in effects (`time/synth.py`): `chime`, `pop`, `swell`,
-  `tick`, `whoosh`, each a pure function of (name, cue id, seed). Docs: `docs/ai/API.md`
-  "Sound". Example: `examples/sound_bed.py` with `examples/assets/drift.wav` (a 4 s
-  seamless drone made for it). Tests: `tests/test_sound_bed.py`, both lint modes. Checked
-  by rendering the example with espeak-ng: stereo 48 kHz AAC, -16.1 LUFS integrated and
-  -1.9 dBTP by ffmpeg's own `ebur128` meter. Not listened to by a person.
-
-- **Step 5, done 2026-11-26.** `Engine.sound_report()` (numbers: each lane's span, chosen
-  level and loudness; each spoken sentence's voice against every bed under it, with its
-  `margin`; the finished mix's loudness and true peak; the sound lint issues) and the MCP
-  tool `sound` (`Workspace.sound`), which adds a picture of the lanes' loudness over time
-  (`render/soundview.py`, matplotlib's Agg canvas). Docs: `docs/ai/MCP.md` "Sound", the
-  skill, `llms.txt`. Test: `tests/test_sound_bed.py` (the tool without the protocol).
-- **Step 4, done 2026-11-26, in today's editor window** (owner: "I have preview and all the
-  related stuff, and then I can add the soundtrack, the narration where I want, the effects,
-  or prompt the AI; same MCP integration"). The **Sound** tab (`gui/window.py`
-  `SoundPanel`): each lane's loudness and gain, mute and solo (listening only), Add music
-  (copied into the scene's `audio/` folder), Add effect at the playhead (tied to the nearest
-  marker), Narrate (a dialog: script and voice), Master, Show levels, Play with sound. The
-  timeline has a row per bed and one for the cues; beds, cues and spoken sentences drag
-  (`move_bed`, `move_cue` snapping to the nearest marker, `move_sentence` kept between its
-  neighbours, `time/narration.move_block`). Mastering is `Engine.master_sound()` (rounds of
-  certain gain cuts: a bed covering the voice, a clipping mix, a loud cue on a word) and the
-  MCP tool `sound_master`; the AI attached with `phasor mcp --attach` uses it, `sound`,
-  `scene_edit` and `narrate` on the same live scene. Playback (`gui/audio.py`) needs no
-  audio library: `winsound` on Windows, `afplay` on macOS, `paplay`/`aplay`/`ffplay` on
-  Linux play a WAV of the mix from the playhead (`Editor.listen_file`, the encoder's own
-  samples); the playhead follows the clock while it plays. Opening an example now copies
-  the examples' `assets/` folder too (pictures, meshes, the example's music). Tests:
-  `tests/test_gui_sound.py` (logic), `tests/test_gui_window.py` (the tab, a cue dragged on
-  the timeline, Play restarting the sound after a scrub). Untested: hearing it (no speakers
-  here), Windows' `winsound` path, macOS.
-
-- **Your own voice and script scenes, done 2026-11-26** (owner: "I want the narration to be
-  my voice"; "make that allowed but as a new copy"). **Add voice** puts a recording into the
-  narration at the playhead (`Workspace.voice_add`, MCP `voice_add`;
-  `time/narration.add_block`; overlapping another sentence is refused). Each voice clip is
-  now levelled on its own to `[sound] voice`, so takes recorded louder or softer come out
-  even. **Marker at playhead** inside a recording puts the marker in that block
-  (`mark_block`), so it moves with the take; recordings can be dragged and taken out
-  (`remove_block`). A script's scene gets an editable copy on its first sound, voice or
-  narration edit (`Engine.as_document`, `Workspace.scene_copy`, MCP `scene_copy`):
-  `<name>_edit.phasor.json` beside the script, which is never changed (contract 2 as it
-  stands: the script's overrides file is not involved). Word timings for a recording are not
-  found automatically (WhisperX exists in `voice.py` for scripts, untested): place markers by
-  ear with the playhead.
-
-### Deviations
-
-- **Bus rate.** Planned as "48 kHz throughout". As built, the bus runs at the sources' common
-  rate and falls back to 48 kHz only when they differ. Why: a narration-only scene then keeps
-  its exact samples (espeak's 22.05 kHz is not resampled), which is the step's exit test.
-- **The limiter.** Planned as "soft-knee at -1 dBTP". As built, a look-ahead limiter on
-  sample peaks at -1 dBFS: the gain needed is held 50 ms either side of each sample, then
-  averaged over the same span. It ramps smoothly and never lets a sample through. True peak
-  is measured (`true_peak`) but not limited, so it can sit a fraction of a dB above -1. A mix
-  under the ceiling passes through untouched.
-- **Levels.** A cue's level is its loudest 400 ms (momentary loudness), since an effect
-  is too short for integrated loudness. There is no final loudness trim on the sum: the
-  voice is set to the target, and the rest sits under it. Without narration, beds play at
-  the voice level (`[sound] voice`) instead of 18 dB under a voice that is not there.
-- **Ducking** follows each sentence from its first word to its last, not every word: a
-  bed that pumped between words would be worse.
-- **`cue_on_word`** is an aesthetic rule (`lint(aesthetic=True)`), and fires only for a cue
-  less than `[lint] cue_loud` (6) dB under the voice. Cues on markers land on words by
-  design, so firing on every cue near a word would fire on every anchored cue.
-- **The loudness picture is its own image** (the `sound` tool), not lanes under the
-  storyboard: the storyboard is a grid of frames with no shared time axis to hang them on.
-- **Step 4 in today's window, not the code-first one.** Planned after `APP_PLAN.md`
-  phase 2; built now on the owner's ask. A scene built by a script still takes its sound in
-  the script: the tab says so, since script scenes accept only tweaks (contract 2).
-- **Playback through the system's player**, not a Qt or audio library: PySide6-Essentials
-  has no QtMultimedia, and the system's player needs no new dependency.
-- **Two more lint thresholds**: `[lint] cue_loud` and `cue_word` (plus `sound_masking`,
-  `sound_clip`).
-- **Exit test.** A narration-only scene keeps its samples bit for bit in both channels
-  *when the voice peaks under -1 dBFS*; a louder voice is now limited where before it was
-  clipped at full scale.
-
 ## Later (not in this plan)
 
 - Cues convolved with a `Room3D` impulse response (the "convolution-reverb audio export" the
@@ -262,3 +162,88 @@ before `BEAUTY.md` is done, and not without the owner's go-ahead.
 4. **Sounds:** beds are the owner's own imported ambient files (licensing is theirs); no
    built-in beds. Effects are built in (synthesized).
 5. **Stereo:** yes.
+
+## Step 4, as built (2026-11-26)
+
+The owner asked for it in today's window: "I have preview and all the related stuff and then
+I can add the soundtrack I want and maybe the AI masters it for me. I add the narration
+where I want, the extra sound effects or prompt AI to do so. Same MCP integration." Then:
+"I want the narration to be my voice. I want to add in my sound tracks and my voice tracks",
+and for scenes built by scripts: "make that allowed but as a new copy".
+
+- **The Sound tab** (`gui/window.py` `SoundPanel`, logic in `gui/controller.py`): each lane's
+  loudness and its level relative to the voice (typed in LU), mute and solo (listening
+  only), Add voice, Marker at playhead, Add music (any file, copied into the scene's
+  `audio/` folder), Add effect at playhead (tied to the nearest marker), Narrate
+  (synthetic), Master, Show levels (the storyboard's loudness lanes), Play with sound.
+- **The timeline** has a row per bed and one for the cues. Beds, cues and spoken sentences
+  drag (`move_bed`, `move_cue` snapping to the nearest marker, `move_sentence` kept between
+  its neighbours: `time/narration.move_block`).
+- **Your own voice**: `Workspace.voice_add` (MCP `voice_add`) puts a recording into the
+  narration at a time or marker (`time/narration.add_block`; overlapping another sentence is
+  refused). A marker added inside a recording belongs to it (`mark_block`) and moves with
+  it; recordings drag and can be taken out (`remove_block`). Word timings are not found
+  automatically: place markers by ear with the playhead.
+- **Mastering**: `Engine.master_sound()` (MCP `sound_master`), rounds of certain changes:
+  the `bed_masks_voice` fix, every bed and cue turned down evenly when the mix would clip
+  (`audio_clip`), a cue that peaks on a stressed word moved just before it (`cue_on_word`'s
+  own hint). Each round is one undo step.
+- **Script scenes**: the first sound, voice or narration edit makes an editable copy,
+  `<name>_edit.phasor.json` beside the script (`Engine.as_document`, `Workspace.scene_copy`,
+  MCP `scene_copy`); the script and its overrides file are never touched, so contract 2
+  stands as written.
+- **Playback** (`gui/audio.py`) needs no audio library: `winsound` on Windows, `afplay` on
+  macOS, `paplay`/`aplay`/`ffplay` on Linux play a WAV of the mix from the playhead
+  (`Editor.listen_file`: the encoder's own track; with lanes muted or soloed, the mix made
+  again without them). The playhead follows the clock while it plays.
+- **Also**: opening an example copies the examples' `assets/` folder; `core/pycode.py` writes
+  the narration back as its own `set_narration` op, so narrated scenes survive the round
+  trip (`sound_bed` is back in that test).
+- **Tests**: `tests/test_gui_sound.py`, the sound tests in `tests/test_gui_window.py`.
+  Untested: hearing it (no speakers in the build environment), Windows' `winsound`, macOS.
+- **Built twice, kept once**: a second session built steps 1-3 and 5 in parallel
+  (PR CreamyHippo117/phasor#27); the design merged first (this document's) was kept, and
+  that PR's editor, mastering, voice and copy work was moved onto it. Its per-take voice
+  levelling was not carried over: a narration is levelled as one track, as here.
+
+## Deviations (as built, 2026-11-26)
+
+- **One design.** The interim `s.note` / `s.sound` (the `sounds` list of notes and WAV files,
+  built the day before and never on the default branch) is gone: a note is a cue of the
+  built-in `tone` (`s.cue(marker, "tone", midi=69, voice="pluck", dur=0.5)`), a file is a cue
+  naming the file. Its patch ops (`add_sound`, `set_sound`) and MCP tool (`sound`) became
+  `add_bed`/`set_bed`/`add_cue`/`set_cue`/`remove_sound` and the tools `cue`, `bed`,
+  `sound_report`. Schema 9 is this design's `sound` section; there is no schema 10.
+- **Tools.** Adding beds and cues was to be script editing only (`script_edit`, APP_PLAN phase
+  3), which does not exist yet, so the MCP server has two small tools, `cue` and `bed`, for
+  scenes without a script. They can go when `script_edit` lands.
+- **A narration-only scene is untouched** (step 1's exit): the bus, the trim and the limiter
+  run only when there is a bed or a cue, and the narration then keeps its own sample rate.
+  With beds or cues everything is at 48 kHz.
+- **The trim** runs before the limiter (gain, then the ceiling), not after it, so the trim
+  can never push a peak past -1 dBTP. While the narration has no audio yet (estimated timing)
+  there is no trim: the lanes stay where they will sit under the voice, rather than the cues
+  being raised to the voice's level.
+- **A cue's level** is its loudest 400 ms (BS.1770 momentary loudness, sampled every 10 ms);
+  a bed's is its integrated loudness. Short sounds are measured as themselves followed by
+  silence.
+- **Ducking**: spans closer than `attack + release` duck as one (no pumping between
+  sentences); the ramps are smoothsteps in dB.
+- **`cue_on_word`**: the narration has no stress marks, so a "stressed word" is a word of
+  four letters or more, and the rule compares the cue's peak with that word's onset.
+- **Lint thresholds** live in `[sound]` (`masking`, `word_gap`, `clip`), as this plan says,
+  not in `[lint]` as CLAUDE.md's general rule says: they sit beside the levels they judge.
+- **`bed_masks_voice`'s fix** (lower the bed's gain) is offered on scenes without a script; on
+  a script's scene the hint names the gain to write in the script (a bed is not a tweak).
+- **Built-ins are cached in memory** (per cue id, seed and knobs), not as WAV files: a pure
+  function needs no files written into the scene's folder. `chime` takes `midi` instead of
+  following a bed's key (beds carry no key).
+- **The loudness lanes** are drawn under every storyboard of a scene with sound (step 5 asked
+  for them; step 2's exit wanted a snapshot with them).
+- **`soundfile`** is now a core dependency (it was in SPEC's stack but not in
+  `pyproject.toml`); it decodes every bed and cue file. The narration's clips are still read
+  by the 16-bit WAV reader, which keeps step 1's bit-identity.
+- **Untested**: Windows and macOS (the `soundfile` wheel bundles libsndfile there; the
+  desktop build lists it), and listening: every check is a number (loudness, true peak,
+  hashes), none is an ear. The owner should listen to `examples/sound_bed.py` rendered with
+  a real voice.

@@ -9,9 +9,12 @@
 A ``HingedCopy`` draws another object (``source``) as it would look carried through a chain
 of hinge turns (``hinges``: (point on the hinge line, its direction, degrees), first one
 first), the last turned only ``turn`` of the way: at 0 the copy lies on top of where the
-chain before it put it, at 1 it has swung right over. The ``unfold`` verb makes these
-copies for a ray bouncing in a room (``core/unfold_math.py`` has the maths); a script can
-make others (a kaleidoscope, the net of a cube) the same way.
+chain before it put it, at 1 it has swung right over. A hinge may carry a fourth entry, a
+normal: the copy is then first mirrored in the plane through the hinge's point with that
+normal (a half turn after it is the reflection in the wall: the true mirror image of a room
+that is not symmetric). The ``unfold`` verb makes these copies for a ray bouncing in a room
+(``core/unfold_math.py`` has the maths); a script can make others (a kaleidoscope, the net
+of a cube) the same way.
 
 The copy is the source drawn again, moved rigidly: the source draws itself for a camera
 moved the opposite way, and every vertex it emits is moved back, so strokes still face the
@@ -92,9 +95,11 @@ class _Moved:
 
 
 def _hinge(v):
-    _point, axis, _degrees = v
+    _point, axis, _degrees, *mirror = v
     if float(np.linalg.norm(axis)) < 1e-12:
         raise ValueError("a hinge needs a direction")
+    if mirror and float(np.linalg.norm(mirror[0])) < 1e-12:
+        raise ValueError("a hinge's mirror needs a normal")
     return v
 
 
@@ -108,8 +113,11 @@ class HingedCopy(ObjectBase):
 
     class Params(ParamsBase):
         source: str = Field(min_length=1)  # the id of the object copied (not a hinged copy)
-        # (a point on the hinge line, its direction, degrees), first turn first
-        hinges: tuple[tuple[Vec3, Vec3, float], ...] = Field(min_length=1)
+        # (a point on the hinge line, its direction, degrees), first turn first; a fourth
+        # entry, a normal, mirrors the copy first in the plane through the point
+        hinges: tuple[tuple[Vec3, Vec3, float] | tuple[Vec3, Vec3, float, Vec3], ...] = Field(
+            min_length=1
+        )
         turn: float = 1.0  # share of the last hinge's turn done, 0-1
 
         @field_validator("hinges")
@@ -165,6 +173,9 @@ class HingedCopy(ObjectBase):
             "angle": round(p.hinges[-1][2] * p.turn, 4),
             "hinge": [round(float(v), 6) for v in p.hinges[-1][0]],
         }  # fmt: skip
+        mirrors = sum(len(h) > 3 for h in p.hinges)
+        if mirrors:  # each mirror flips the copy's handedness: it lands on the true image
+            out["mirrors"] = mirrors
         src = self._source(state)
         if src is None:
             return {**out, "source_missing": p.source}

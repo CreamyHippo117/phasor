@@ -25,6 +25,9 @@ rules below are a summary of it as of 2026-11-25; where they differ, `TASTE.md` 
   a long silent stretch over ambient music, then more words only if needed. Half the video
   may have no voice.
 - **Never rush.** A long hold is not a fault.
+- **A hold extends the idea; it never replays it.** Each stretch of a hold shows something
+  new: the next case, the parameter going further, another parameter, a deeper level,
+  another view, the edge case. The same motion again, or a sweep out and back, is a replay.
 - **Quality, not quantity.** As many animations as the best story needs (ten or three). None
   added to fill time, none dropped to save it.
 - **Come back to the same picture** and test it on new cases, instead of a new picture for
@@ -32,7 +35,9 @@ rules below are a summary of it as of 2026-11-25; where they differ, `TASTE.md` 
 - **Open with a question** or a picture the viewer wants explained; never a title or a
   definition. **Let the viewer predict** before each reveal.
 - **Usually not concrete before abstract.** Ask which route the person wants (step 4).
-- **Little text on screen. No hard cuts.**
+- **Little prose, enough math. No hard cuts.** No sentences on screen, but the mathematics
+  being taught is: the formula drawn, the number that turns with its live value, labels on
+  what matters. A pretty picture the viewer cannot name is not teaching.
 - **Never shrink an idea to fit the tool.** If the best animation is one phasor cannot make
   yet, keep it in the plan, list it under "Wanted additions", and add a line to
   `WISHLIST.md`. The person adds these to phasor; a plan weakened in advance hides what is
@@ -120,7 +125,9 @@ the feel, its lens and question, the house rules above, and these instructions:
   other branch. Write the obvious ones down, then keep going past them.
 - For every picture say how it fills the frame, how it moves, and what could change in it
   to keep it worth watching for a minute or more (which parameter turns, which cases run
-  through it). A picture that is finished in five seconds cannot hold a stage.
+  through it). List these as different things, not one thing repeated: a picture whose
+  only way to last a minute is to loop cannot hold a stage, and neither can one that is
+  finished in five seconds.
 - Do not ask whether phasor can draw it. (The phasor expert is the exception: it says what
   phasor draws well now.)
 - Write to `plans/NAME.work/round1/LENS.md`.
@@ -206,14 +213,28 @@ Now make the chosen path teach as well as it can:
 - **Say, show, say.** For each stretch: a short setup in words (what to watch for), then
   the animation alone, long enough to be understood without help, then words again only if
   something still needs saying.
+- **Two layers, voice and equation.** Narration says what is happening *and* what it means
+  mathematically, in words ("every N samples the hands line up: that is the echo"). The
+  equation on screen is the exact statement of that meaning, and it stays up so the eye
+  can come back to it. They never duplicate each other: the voice explains what the
+  equation means, never reads it out symbol by symbol, and a narrated meaning still gets
+  its equation. When what happens and what it means are obviously the same thing (the
+  hands lining up *is* the echo), say it once, in one sentence, and let the equation
+  carry the rest.
 - **Write the silent test** for each animation: what should the viewer work out from it
   with no voice? If the answer is "nothing", the animation or the setup is wrong.
 - **Name what is hard**: the one step where people get lost. Give it the most time.
 - **Plan the returns**: cases that run through the same animation, each changing one thing.
   The last should surprise.
+- **Fill every hold with extensions.** For each hold, list its stretches in order, each
+  with what it shows that the ones before did not, enough of them to carry the hold's
+  whole length. If the list is too short for the hold, find more of the idea or shorten
+  the hold; never leave the builder time it can only fill by replaying.
 - **Place the predictions**: points where the picture holds before answering.
-- **Earn every symbol.** A word or equation appears only after the viewer has seen the
-  thing it names.
+- **Earn every symbol, then use it.** A word or equation appears only after the viewer has
+  seen the thing it names, and then it stays while that thing is on stage. For each
+  animation, list the mathematics on screen: the formula, the number that turns (shown
+  live), the labelled features, and the line of working that goes with each "why".
 - **End on the picture, changed**: the opening picture again, now understood.
 - **Stay true.** A simplification may leave things out; it may not say something false.
   Note what was left out.
@@ -259,8 +280,16 @@ the silent stretches:
 Each must show something the viewer could not see before it began, start and end at rest,
 end on a composed frame that then holds, and bring into view only things already alive.
 
-**Text.** Not much. One large plain label naming what is happening is often all a frame
-needs. An equation only when earned; it leaves when its work is done.
+**Text and math.** Little prose: one large plain label naming what is happening is often
+all the words a frame needs. The mathematics is another matter: place the Teacher's
+formulas, live values and labels so they are readable without covering what is being
+studied (at the edge of the stage, at the theme's sizes), and give each term of a
+formula the color of the thing it names, so formula and picture read as one. A formula
+changes with `transform` as the picture changes, and leaves when its object leaves.
+When a picture is breathtaking and also carries the idea, share time, not space: it runs
+alone and full frame first, then at its key moment the motion slows, what is not needed
+dims, and the line of math is written into the dark part, held, and taken away. Pure
+spectacle with nothing more to read gets the frame with no math.
 
 **Verbs.** Only now, with the path chosen and drawn in imagination, read phasor's verbs
 and camera moves in `kit/docs/API.md` (the list grows; read it each time, do not work from
@@ -313,6 +342,10 @@ A fresh agent reads the plan as the viewer from step 1 and answers each; fix wha
 13. Is any verb there only as decoration? Cut it.
 14. If the plan uses a weave, do the two ideas truly live in one object, or were they
     stapled together?
+15. In any hold, did I watch the same thing twice? Each stretch must show something new;
+    replace a replay with an extension of the idea, or shorten the hold.
+16. Pausing on any frame, could I write down the mathematics from the screen alone (what
+    formula, which number, what value)? If not, the plan is showing too little math.
 
 If the Editor finds the path itself weak, go back to the map; do not patch.
 
@@ -337,9 +370,14 @@ The central picture. What color encodes. The music bed.
 
 ## Animations
 ### 1. What fills the stage
-- **While it holds:** how it changes, in order (iterations, cases, parameters, big moves),
-  with the verb for each motion and where it lands
-- **Say before:** brief; the gist, for the person to put in their own words
+- **While it holds:** its stretches, in order (iterations, cases, parameters, big moves),
+  each with roughly how long, what it shows that the earlier ones did not, the verb for
+  each motion and where it lands. Enough stretches for the whole hold; no replays
+- **On screen:** the formula, the live value, the labels, the line of working, and when
+  each comes in and leaves
+- **Say before:** brief; the gist, for the person to put in their own words: what is
+  happening and what it means mathematically (one sentence when they are the same), and
+  which on-screen equation states that meaning
 - **Silent stretch:** how long, and what the viewer should work out alone
 - **Say after:** if anything
 - **Sound:** ...

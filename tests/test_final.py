@@ -34,6 +34,7 @@ REQUIRED = {
     "network": {"generator": "tree", "branching": 2, "depth": 3},
     "image": {"path": "examples/assets/sunset.png"},  # relative: tests run from the repo root
     "epicycles": {"points": [[1, 0, 0], [0, 1, 0], [-1, 0, 0], [0, -1, 0]]},
+    "phasor_field": {"poles": [[0.9, 0.3], [0.5, -0.6]], "frame_ticks": 1.0},
     "equation": {"parts": ["$e^{i\\pi}$", "$+1=0$"]},
     "line": {"points": [[0, 0, 0], [1, 1, 0]]},
     "text": {"text": "hello $x^2$"},
@@ -44,6 +45,7 @@ REQUIRED = {
     "sound_rays": {"time": 0.5},  # in a room; 0: the sound has not left
     "wavefront3d": {"time": 0.5},
     "hinged_copy": {"source": "guide", "hinges": [[[1, 0, 0], [0, 1, 0], 180.0]]},  # a copy
+    "face": {"points": [[0, 0, 0], [1, 0, 0], [0, 1, 0]]},
 }
 # Types that point at another object: the scene gets a curve called "guide" for them.
 PARTNERED = {"tracer", "callout", "hinged_copy"}

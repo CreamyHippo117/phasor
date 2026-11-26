@@ -18,9 +18,7 @@ person both edit. The `phasor` MCP tools (when connected) let you see what it re
    `<owner>.label` with a `label(x) near x` constraint. Style takes roles, never raw colors.
    Positions are world coordinates (x = Re, y = Im).
 3. For a narrated scene: narration with `[[markers]]`, and every motion anchored to a
-   marker with a verb (`reveal`, `trace`, `dim_others`, `morph`, ...). Sound, if wanted:
-   `s.bed(file)` for the person's own music or ambience, `s.cue(marker, "chime")` for
-   effects; the theme sets the levels. You cannot hear it: check with the `sound` tool.
+   marker with a verb (`reveal`, `trace`, `dim_others`, `morph`, ...).
 4. Check: `scene_open` the script (again after every edit), then `review`: lint, what is on
    screen at each marker, and a storyboard picture. Without the tools: `phasor lint SCENE
    --aesthetic`, then `phasor storyboard SCENE --marks` and read the picture. Fix each item

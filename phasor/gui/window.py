@@ -223,7 +223,7 @@ class Timeline(QWidget):
         return self._sound_y() - 20 + self.LANE * self._sound_rows()
 
     def _sound_rows(self) -> int:
-        snd = self.data.get("sound") or {}
+        snd = self.data
         return len(snd.get("beds", [])) + (1 if snd.get("cues") else 0)
 
     def _sound_y(self) -> int:
@@ -301,7 +301,7 @@ class Timeline(QWidget):
         p.end()
 
     def _paint_sound(self, p: QPainter) -> None:
-        snd = self.data.get("sound") or {}
+        snd = self.data
         y = self._sound_y()
         for bed in snd.get("beds", []):
             t0, t1 = bed["start"], bed["end"]
@@ -329,7 +329,7 @@ class Timeline(QWidget):
                                (cue["id"], t)))  # fmt: skip
 
     def _paint_sound_names(self, p: QPainter) -> None:
-        snd = self.data.get("sound") or {}
+        snd = self.data
         y = self._sound_y()
         names = [("music: " + b["id"], "#7ad7ff") for b in snd.get("beds", [])]
         if snd.get("cues"):
@@ -667,7 +667,7 @@ class SoundPanel(QWidget):
     or clips. Drag beds, cues and sentences on the timeline to move them."""
 
     changed = Signal(object)
-    COLUMNS = ("Lane", "Level", "Gain dB", "Mute", "Solo", "")
+    COLUMNS = ("Lane", "LUFS", "vs voice", "Mute", "Solo", "")
 
     def __init__(self, editor: Editor) -> None:
         super().__init__()
@@ -743,6 +743,7 @@ class SoundPanel(QWidget):
         lay.addLayout(row)
         lay.addWidget(self.picture)
         self.data: dict[str, Any] = {}
+        self.gains: dict[str, float] = {}  # what each bed's and cue's spin box was set to
 
     def refresh(self) -> None:
         try:
@@ -753,18 +754,21 @@ class SoundPanel(QWidget):
         if d.get("scripted"):
             self.status.setText("This scene is built by a script. Your first sound edit "
                                 "makes an editable copy beside it; the script stays.")  # fmt: skip
-        elif d.get("silent"):
+        elif not d.get("lanes"):
             self.status.setText("No sound yet: add your voice, music or an effect.")
         else:
-            mix = d.get("mix") or {}
-            margins = [m for m in (s["margin"] for s in d["sentences"]) if m is not None]
-            parts = [f"mix {mix.get('loudness')} LUFS, peak {mix.get('true_peak')} dBTP"]
-            if margins:
-                parts.append(f"voice over music by {min(margins):g} dB or more")
+            under = [u for x in d["lanes"] for u in x.get("under_voice_lu", []) if u is not None]
+            parts = [f"mix {d.get('loudness')} LUFS, true peak {d.get('true_peak_dbtp')} dBTP"]
+            if under:
+                parts.append(f"music at least {min(under):g} dB under the voice")
             self.status.setText("; ".join(parts))
         self.issues.setText("\n".join(i["message"] for i in d.get("issues", [])))
         self.table.setRowCount(0)
-        gains = {x["id"]: x["gain"] for x in (*d.get("beds", []), *d.get("cues", []))}
+        defaults = d.get("defaults", {})
+        gains = {x["id"]: (x["gain"] if x["gain"] is not None else defaults.get(kind, 0.0))
+                 for kind, items in (("bed", d.get("beds", [])), ("cue", d.get("cues", [])))
+                 for x in items}  # fmt: skip
+        self.gains = gains
         for lane in d.get("lanes", []):
             r = self.table.rowCount()
             self.table.insertRow(r)
@@ -776,7 +780,8 @@ class SoundPanel(QWidget):
             self.table.setItem(r, 1, level)
             if lane["id"] in gains:
                 spin = QDoubleSpinBox()
-                spin.setRange(-60.0, 30.0)
+                spin.setRange(-60.0, 6.0)
+                spin.setToolTip("loudness in LU relative to the voice")
                 spin.setSingleStep(1.0)
                 spin.setValue(gains[lane["id"]])
                 spin.editingFinished.connect(
@@ -802,7 +807,7 @@ class SoundPanel(QWidget):
                 )
                 self.table.setCellWidget(r, 5, drop)
         self._voice_rows()
-        self.master_button.setEnabled(not d.get("silent"))
+        self.master_button.setEnabled(bool(d.get("beds") or d.get("cues")))
 
     def _voice_rows(self) -> None:
         """One row per recorded or spoken sentence, under the lanes: what it says, where,
@@ -847,7 +852,7 @@ class SoundPanel(QWidget):
         self.changed.emit(self.ed.add_marker(name.strip()))
 
     def _gain(self, item_id: str, value: float) -> None:
-        if abs(value - self.ed.engine.document.sound.item(item_id).gain) > 1e-9:
+        if abs(value - self.gains.get(item_id, value)) > 1e-9:
             self.changed.emit(self.ed.update_sound(item_id, gain=round(value, 1)))
 
     def _pick_file(self, title: str) -> str | None:

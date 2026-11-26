@@ -255,9 +255,9 @@ def _nvenc_takes(codec: str, width: int, height: int) -> bool:
 
 
 def mux_audio(video: str | Path, samples: np.ndarray, rate: int) -> None:
-    """Add an int16 sound track (shape (n,) mono or (n, 2) stereo) to a finished video file,
-    in place. The video stream is copied, not re-encoded; the audio becomes AAC (MP4) or PCM
-    (MOV)."""
+    """Add an int16 soundtrack (``(n, 2)`` stereo, or ``(n,)`` mono, which is heard on both
+    channels) to a finished video file, in place. The video stream is copied, not
+    re-encoded; the audio becomes stereo AAC (MP4) or PCM (MOV)."""
     import av
 
     video = Path(video)
@@ -266,15 +266,17 @@ def mux_audio(video: str | Path, samples: np.ndarray, rate: int) -> None:
         vin = src.streams.video[0]
         vout = dst.add_stream_from_template(vin)
         codec = "pcm_s16le" if video.suffix == ".mov" else "aac"
-        pcm = np.ascontiguousarray(samples, dtype=np.int16)
-        layout = "stereo" if pcm.ndim == 2 and pcm.shape[1] == 2 else "mono"
-        aout = dst.add_stream(codec, rate=rate, layout=layout)
+        aout = dst.add_stream(codec, rate=rate, layout="stereo")
         for packet in src.demux(vin):
             if packet.dts is None:
                 continue
             packet.stream = vout
             dst.mux(packet)
-        frame = av.AudioFrame.from_ndarray(pcm.reshape(1, -1), format="s16", layout=layout)
+        pcm = np.asarray(samples, dtype=np.int16)
+        if pcm.ndim == 1:
+            pcm = np.stack([pcm, pcm], axis=1)
+        pcm = np.ascontiguousarray(pcm).reshape(1, -1)  # packed: L R L R ...
+        frame = av.AudioFrame.from_ndarray(pcm, format="s16", layout="stereo")
         frame.sample_rate = rate
         for packet in aout.encode(frame):
             dst.mux(packet)

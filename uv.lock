@@ -1622,6 +1622,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "soundfile" },
     { name = "sympy" },
 ]
 
@@ -1634,7 +1635,6 @@ all = [
     { name = "mcp" },
     { name = "moderngl" },
     { name = "pyside6-essentials" },
-    { name = "soundfile" },
 ]
 encode = [
     { name = "av", version = "18.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
@@ -1654,9 +1654,6 @@ mcp = [
 ]
 notebook = [
     { name = "ipywidgets" },
-]
-sound = [
-    { name = "soundfile" },
 ]
 
 [package.dev-dependencies]
@@ -1679,15 +1676,15 @@ requires-dist = [
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=2.0,<3" },
     { name = "moderngl", marker = "extra == 'gl'", specifier = ">=5.12" },
     { name = "numpy", specifier = ">=1.26" },
-    { name = "phasor", extras = ["gl", "gpu", "encode", "mcp", "gui", "notebook", "sound"], marker = "extra == 'all'" },
+    { name = "phasor", extras = ["gl", "gpu", "encode", "mcp", "gui", "notebook"], marker = "extra == 'all'" },
     { name = "pillow", specifier = ">=13.0.0" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "pyside6-essentials", marker = "extra == 'gui'", specifier = ">=6.7" },
     { name = "scipy", specifier = ">=1.13" },
-    { name = "soundfile", marker = "extra == 'sound'", specifier = ">=0.12" },
+    { name = "soundfile", specifier = ">=0.14.0" },
     { name = "sympy", specifier = ">=1.14.0" },
 ]
-provides-extras = ["gl", "gpu", "encode", "all", "sound", "mcp", "notebook", "gui"]
+provides-extras = ["gl", "gpu", "encode", "all", "mcp", "notebook", "gui"]
 
 [package.metadata.requires-dev]
 dev = [

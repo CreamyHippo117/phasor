@@ -36,8 +36,10 @@ undo, checkpoint, restore and diff work on those."""
 TOOL_NAMES = (
     "scene_new", "scene_open", "scene_save", "scene_copy", "scene_edit", "scene_palette",
     "undo", "redo", "animate",
-    "narrate", "checkpoint", "restore", "diff", "inspect", "lint", "storyboard", "review",
-    "critique", "polish", "variants", "choose", "sound", "sound_master", "voice_add",
+    "narrate", "voice_add", "cue", "bed", "sound_report", "sound_master",
+    "checkpoint", "restore", "diff", "inspect", "lint",
+    "storyboard", "review",
+    "critique", "polish", "variants", "choose",
     "events", "when_hidden", "free_space_near", "hit_test", "resolve", "render", "docs_search",
     "object_types",
 )  # fmt: skip
@@ -63,7 +65,7 @@ def build_server(workspace: Workspace | None = None) -> MCPServer:
         return fn
 
     for name in TOOL_NAMES:
-        if name not in ("storyboard", "review", "variants", "sound"):  # with a picture, below
+        if name not in ("storyboard", "review", "variants"):  # these also return a picture, below
             tool(getattr(ws, name))
 
     # These two return a picture next to the data, so they are plain content, not structured.
@@ -100,18 +102,6 @@ def build_server(workspace: Workspace | None = None) -> MCPServer:
         parts: list[Any] = [json.dumps(r)]
         if r["storyboard"]:
             parts.append(Image(path=r["storyboard"]))
-        return parts
-
-    @server.tool(structured_output=False)
-    @_wrap
-    def sound(with_picture: bool = True) -> list[Any]:
-        """Hear the scene with numbers: every lane's level and loudness (LUFS), each spoken
-        sentence's voice against the beds under it, the mix's loudness and peak, and the
-        sound lint issues; with a picture of the loudness over time."""
-        r = ws.sound(with_picture)
-        parts: list[Any] = [json.dumps(r)]
-        if r.get("image"):
-            parts.append(Image(path=r["image"]))
         return parts
 
     @server.resource("phasor://docs/{name}")

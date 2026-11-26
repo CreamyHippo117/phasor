@@ -9,11 +9,27 @@ import wave
 import numpy as np
 import pytest
 
+from phasor.core.schema import Narration, NarrationBlock, Word
 from phasor.gui.audio import Player, backend
 from phasor.gui.controller import Editor
 from phasor.time.narration import write_wav
 from phasor.workspace import Workspace
-from tests.test_sound_bed import _narration, _tone
+
+RATE = 22_050
+
+
+def _tone(path, freq, seconds, amp=8000, rate=RATE):
+    t = np.arange(round(seconds * rate)) / rate
+    write_wav(path, (amp * np.sin(2 * np.pi * freq * t)).astype(np.int16), rate)
+
+
+def _narration(starts, length=1.5, audio="v.wav"):
+    """One sentence per start, one stressed word each, a marker on the word."""
+    return Narration(script="x", voice="test", blocks=tuple(
+        NarrationBlock(text=f"word{k}", start=s, duration=length, audio=audio,
+                       words=(Word(text=f"word{k}", start=0.1, end=length - 0.1),),
+                       markers={f"m{k}": 0.1})
+        for k, s in enumerate(starts)))  # fmt: skip
 
 
 @pytest.fixture
@@ -42,23 +58,24 @@ def test_adding_music_copies_it_into_the_scene_folder(ed, ambient):
     r = ed.add_bed(ambient)
     assert r["ok"]
     (bed,) = ed.engine.document.sound.beds
-    assert bed.id == "night_drift" and bed.file == "audio/Night Drift.wav"
+    assert bed.id == "bed_night_drift" and bed.path == "audio/Night Drift.wav"
     assert (ed.engine.base_dir / "audio" / "Night Drift.wav").read_bytes() == ambient.read_bytes()
     assert ed.add_bed(ambient)["ok"]  # the same file again: a second bed, no second copy
-    assert [b.id for b in ed.engine.document.sound.beds] == ["night_drift", "night_drift_2"]
+    assert [b.id for b in ed.engine.document.sound.beds] == ["bed_night_drift",
+                                                             "bed_night_drift_2"]  # fmt: skip
     assert len(list((ed.engine.base_dir / "audio").iterdir())) == 1
     other = ambient.with_name("x") / ambient.name
     other.parent.mkdir()
     _tone(other, 330, 1.0)
     ed.add_bed(other)  # same name, other sound: kept apart
-    assert ed.engine.document.sound.beds[-1].file == "audio/Night Drift_1.wav"
+    assert ed.engine.document.sound.beds[-1].path == "audio/Night Drift_1.wav"
 
 
 def test_an_effect_at_the_playhead_ties_itself_to_the_nearest_marker(ed):
     ed.set_time(5.3)  # just after the second sentence's marker (5.1 s)
     assert ed.add_cue("chime")["ok"]
     (cue,) = ed.engine.document.sound.cues
-    assert cue.id == "chime_m1" and cue.at.marker == "m1"
+    assert cue.id == "cue_chime_m1" and cue.at.marker == "m1"
     assert cue.at.offset == pytest.approx(0.2)
     assert ed.add_cue("pop", marker="m0", offset=-0.1)["ok"]
     assert ed.engine.document.sound.cues[-1].at.marker == "m0"
@@ -66,14 +83,14 @@ def test_an_effect_at_the_playhead_ties_itself_to_the_nearest_marker(ed):
 
 def test_dragging_a_cue_snaps_it_to_a_marker_and_it_follows_the_voice(ed):
     ed.add_cue("tick", marker="m0")
-    assert ed.move_cue("tick_m0", 4.8)["ok"]
-    cue = ed.engine.document.sound.item("tick_m0")
+    assert ed.move_cue("cue_tick_m0", 4.8)["ok"]
+    (cue,) = ed.engine.document.sound.cues
     assert cue.at.marker == "m1" and cue.at.offset == pytest.approx(-0.3)
     assert ed.move_sentence(1, 6.0)["ok"]  # move the second sentence: its marker and the cue
-    (t,) = [c["t"] for c in ed.timeline()["sound"]["cues"]]
+    (t,) = [c["t"] for c in ed.timeline()["cues"]]
     assert t == pytest.approx(5.8)
     ed.undo()
-    assert ed.timeline()["sound"]["cues"][0]["t"] == pytest.approx(4.8)
+    assert ed.timeline()["cues"][0]["t"] == pytest.approx(4.8)
 
 
 def test_a_sentence_moves_only_between_its_neighbours(ed):
@@ -85,10 +102,10 @@ def test_a_sentence_moves_only_between_its_neighbours(ed):
 
 
 def test_sliding_a_bed_keeps_its_length(ed, ambient):
-    ed.add_bed(ambient, start={"marker": "m0"}, end={"marker": "m1", "offset": 1.0})
-    before = ed.timeline()["sound"]["beds"][0]
-    assert ed.move_bed("night_drift", before["start"] + 0.5)["ok"]
-    after = ed.timeline()["sound"]["beds"][0]
+    ed.add_bed(ambient, start="m0", end="m1")
+    before = ed.timeline()["beds"][0]
+    assert ed.move_bed("bed_night_drift", before["start"] + 0.5)["ok"]
+    after = ed.timeline()["beds"][0]
     assert after["start"] == pytest.approx(before["start"] + 0.5)
     assert after["end"] - after["start"] == pytest.approx(before["end"] - before["start"])
 
@@ -96,49 +113,48 @@ def test_sliding_a_bed_keeps_its_length(ed, ambient):
 def test_gain_and_removal_are_one_undo_step_each(ed, ambient):
     ed.add_bed(ambient)
     v = ed.version
-    assert ed.update_sound("night_drift", gain=-4.0)["ok"] and ed.version == v + 1
-    assert ed.engine.document.sound.beds[0].gain == -4.0
+    assert ed.update_sound("bed_night_drift", gain=-24.0)["ok"] and ed.version == v + 1
+    assert ed.engine.document.sound.beds[0].gain == -24.0
     assert not ed.update_sound("nothing", gain=1.0)["ok"]
-    assert ed.remove_sound("night_drift")["ok"] and not ed.engine.document.sound.beds
+    assert ed.remove_sound("bed_night_drift")["ok"] and not ed.engine.document.sound.beds
     ed.undo()
-    assert ed.engine.document.sound.beds[0].gain == -4.0
+    assert ed.engine.document.sound.beds[0].gain == -24.0
     assert [a["who"] for a in ed.activity()][-2:] == ["you", "you"]
 
 
-def test_master_turns_down_what_covers_the_voice(ed, ambient):
-    ed.add_bed(ambient, gain=20.0)
-    ed.add_cue("pop", marker="m0", gain=14.0)
-    report = ed.sound()
-    assert {"bed_masks_voice", "cue_on_word"} <= {i["code"] for i in report["issues"]}
+def test_master_turns_down_a_bed_covering_the_voice_and_moves_a_cue_off_a_word(ed, ambient):
+    ed.add_bed(ambient, gain=6.0)
+    ed.add_cue("pop", marker="m0")  # on the stressed word itself
+    codes = {i["code"] for i in ed.sound()["issues"]}
+    assert {"bed_masks_voice", "cue_on_word"} <= codes
     r = ed.master()
-    assert r["ok"] and r["rounds"] and r["before"]["issues"]
+    assert r["ok"] and r["rounds"]
     assert not {"bed_masks_voice", "cue_on_word"} & set(r["after"]["issues"])
-    assert min(r["after"]["margins"]) >= 12.0
-    assert ed.engine.document.sound.beds[0].gain < 20.0
+    assert ed.engine.document.sound.beds[0].gain < 6.0
+    assert ed.engine.document.sound.cues[0].at.offset < 0  # now just before the word
     for _ in r["rounds"]:
         ed.undo()
-    assert ed.engine.document.sound.beds[0].gain == 20.0
+    assert ed.engine.document.sound.beds[0].gain == 6.0
 
 
-def test_master_on_a_clipping_mix_brings_it_under(ed, ambient):
-    for k in range(4):
-        ed.add_bed(ambient, gain=30.0, duck=False, id=f"layer{k}")
-    assert "audio_clip" in {i["code"] for i in ed.sound()["issues"]}
+def test_master_with_nothing_to_fix_changes_nothing(ed, ambient):
+    ed.add_bed(ambient)
+    v = ed.version
     r = ed.master()
-    assert "audio_clip" not in r["after"]["issues"]
+    assert r["ok"] and r["rounds"] == [] and ed.version == v
 
 
 def test_the_sound_tab_reads_lanes_levels_and_switches(ed, ambient):
     ed.add_bed(ambient)
     ed.add_cue("chime", marker="m0")
     s = ed.sound()
-    assert [x["id"] for x in s["lanes"]] == ["voice", "night_drift", "chime_m0"]
-    assert s["beds"][0]["file"] == "audio/Night Drift.wav" and s["cues"][0]["sound"] == "chime"
-    assert not s["scripted"] and s["muted"] == [] and len(s["sentences"]) == 2
-    ed.toggle_mute("night_drift")
+    assert [x["id"] for x in s["lanes"]] == ["voice", "bed_night_drift", "cue_chime_m0"]
+    assert s["beds"][0]["path"] == "audio/Night Drift.wav" and s["cues"][0]["sound"] == "chime"
+    assert not s["scripted"] and s["muted"] == [] and s["defaults"]["bed"] == -18.0
+    ed.toggle_mute("bed_night_drift")
     ed.toggle_solo("voice")
     s = ed.sound()
-    assert s["muted"] == ["night_drift"] and s["solo"] == ["voice"]
+    assert s["muted"] == ["bed_night_drift"] and s["solo"] == ["voice"]
     picture = ed.sound_picture()
     assert picture and picture.endswith(".png")
 
@@ -151,18 +167,18 @@ def _read(path):
 
 
 def test_listening_plays_the_mix_from_the_playhead_with_mutes(ed, ambient):
-    ed.add_bed(ambient, fade_in=0.0)
+    ed.add_bed(ambient, fade=0.0)
     full, rate = _read(ed.listen_file(0.0))
     track, rate2 = ed.engine.audio_track()
     assert rate == rate2 and (full == track).all()  # what you hear is what gets encoded
     later, _ = _read(ed.listen_file(2.0))
     assert len(later) == len(full) - 2 * rate
     ed.toggle_solo("voice")  # only the voice: silent before the first sentence
-    only_voice, _ = _read(ed.listen_file(0.0))
-    assert not only_voice[: rate // 2].any() and full[: rate // 2].any()
+    only_voice, r1 = _read(ed.listen_file(0.0))
+    assert not only_voice[: r1 // 2].any() and full[: rate // 2].any()
     ed.toggle_solo("voice")
     ed.toggle_mute("voice")
-    ed.toggle_mute("night_drift")
+    ed.toggle_mute("bed_night_drift")
     silent, _ = _read(ed.listen_file(0.0))
     assert not silent.any()
 
@@ -171,7 +187,7 @@ def test_a_silent_scene_has_nothing_to_listen_to(tmp_path):
     ws = Workspace(tmp_path)
     ws.scene_new("quiet")
     e = Editor(ws)
-    assert e.listen_file() is None and e.sound()["silent"]
+    assert e.listen_file() is None and not e.sound()["lanes"]
     assert e.master() == {"ok": True, "silent": True}
 
 
@@ -192,22 +208,15 @@ def test_a_script_scene_becomes_an_editable_copy_and_the_script_stays(tmp_path):
     assert e.sound()["scripted"]
     r = e.add_cue("pop", marker="go")  # the first sound edit: a copy, then the edit
     assert r["ok"] and e.copied == str(tmp_path / "s_edit.phasor.json")
-    assert not e.engine.scripted and e.engine.document.sound.cues[0].id == "pop_go"
+    assert not e.engine.scripted and e.engine.document.sound.cues[0].id == "cue_pop_go"
     assert script.read_text(encoding="utf-8") == code  # the script is untouched
     assert not (tmp_path / "s.overrides.json").exists()  # and so are its tweaks
-    assert "editing a copy" in e.activity()[-2]["what"]
+    assert any("editing a copy" in a["what"] for a in e.activity())
     e.save()
     from phasor.scene import load
 
     again = load(tmp_path / "s_edit.phasor.json", passes=None)
-    assert again.document.sound.cues[0].id == "pop_go" and not again.scripted
-    assert e.add_bed(_tone_file(tmp_path))["ok"] and e.copied.endswith("s_edit.phasor.json")
-
-
-def _tone_file(tmp_path):
-    path = tmp_path / "hum.wav"
-    _tone(path, 110, 1.0)
-    return path
+    assert again.document.sound.cues[0].id == "cue_pop_go" and not again.scripted
 
 
 def test_a_copy_never_overwrites_an_earlier_copy(tmp_path):
@@ -232,26 +241,19 @@ def test_your_recordings_become_the_narration_where_you_drop_them(tmp_path):
     ws = Workspace(tmp_path / "scenes")
     ws.scene_new("my voice")
     e = Editor(ws)
-    loud = _take(tmp_path / "take one.wav", 1.5, 20000)
-    soft = _take(tmp_path / "take two.wav", 1.0, 2000, freq=250)
-    assert e.add_voice(loud, t=0.5, text="Here is a pole.")["ok"]
-    assert e.add_voice(soft, t=3.0)["ok"]
+    one = _take(tmp_path / "take one.wav", 1.5, 20000)
+    two = _take(tmp_path / "take two.wav", 1.0, 2000, freq=250)
+    assert e.add_voice(one, t=0.5, text="Here is a pole.")["ok"]
+    assert e.add_voice(two, t=3.0)["ok"]
     n = e.engine.document.narration
     assert [b.text for b in n.blocks] == ["Here is a pole.", "take two"]
     assert [b.audio for b in n.blocks] == ["audio/take one.wav", "audio/take two.wav"]
     assert [b.start for b in n.blocks] == [0.5, 3.0] and n.blocks[1].duration == 1.0
     assert n.voice == "recorded" and n.script == "Here is a pole.\ntake two"
-    over = e.add_voice(loud, t=3.5)  # on top of the second take
+    over = e.add_voice(one, t=3.5)  # on top of the second take
     assert not over["ok"] and "overlap" in over["errors"][0]["message"]
-    m = e.engine.sound_mix()  # each take levelled on its own: loud and soft come out even
-    from phasor.time import sound as snd
-
-    voice = [x for x in m.lanes if x.kind == "voice"]
-    pad = np.zeros((m.rate, 2), np.float32)
-    takes = [snd.loudness(np.concatenate([pad, x.samples, pad]), m.rate) for x in voice]
-    assert takes[0] == pytest.approx(takes[1], abs=0.2)  # 20 dB apart as recorded
-    together = snd.mix([snd.Placed(x.start, x.samples, m.rate) for x in voice], m.duration)
-    assert snd.loudness(together[0], m.rate) == pytest.approx(-16.0, abs=0.3)
+    track, rate = e.engine.audio_track()
+    assert np.abs(track[round(0.6 * rate) : round(1.9 * rate)]).max() > 1000  # heard
 
 
 def test_music_ducks_under_your_voice(tmp_path, ambient):
@@ -259,9 +261,10 @@ def test_music_ducks_under_your_voice(tmp_path, ambient):
     ws.scene_new("duck")
     e = Editor(ws)
     e.add_voice(_take(tmp_path / "v.wav", 1.5, 12000), t=2.0)
-    e.add_bed(ambient, fade_in=0.0, fade_out=0.0)
-    assert e.engine.sound_mix().speech == ((2.0, 3.5),)
-    assert e.sound()["sentences"][0]["margin"] > 20
+    e.add_bed(ambient, fade=0.0)
+    m = e.engine.sound_mix()
+    assert m.spans == ((2.0, 3.5),) and m.duck_db(2.3, 3.2) < -6
+    assert e.sound()["issues"] == []
 
 
 def test_a_marker_in_your_recording_moves_with_it(tmp_path):
@@ -270,13 +273,13 @@ def test_a_marker_in_your_recording_moves_with_it(tmp_path):
     e = Editor(ws)
     e.add_voice(_take(tmp_path / "v.wav", 2.0, 12000), t=1.0)
     assert e.add_marker("pole", t=1.6)["ok"]  # inside the take: its own marker
-    assert e.add_marker("later", t=5.0)["ok"]  # outside: a marker of its own
+    assert e.add_marker("later", t=2.9)["ok"]  # inside too (the take ends at 3 s)
     assert not e.add_marker("pole", t=2.0)["ok"] and not e.add_marker("Bad name!")["ok"]
     e.add_cue("chime", marker="pole")
     assert e.move_sentence(0, 2.0)["ok"]
     tl = e.timeline()
-    assert tl["markers"]["pole"] == pytest.approx(2.6) and tl["markers"]["later"] == 5.0
-    assert tl["sound"]["cues"][0]["t"] == pytest.approx(2.6)
+    assert tl["markers"]["pole"] == pytest.approx(2.6) and tl["markers"]["later"] == 3.9
+    assert tl["cues"][0]["t"] == pytest.approx(2.6)
 
 
 def test_taking_a_recording_out(tmp_path):

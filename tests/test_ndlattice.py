@@ -271,3 +271,28 @@ def test_star_lattice_golden_storyboard():
     if not path.exists():
         pytest.skip(f"no {klass} golden yet; create with PHASOR_UPDATE_GOLDEN=1")
     assert ssim(sheet, np.asarray(Image.open(path).convert("RGB"))) >= 0.97
+
+
+@pytest.mark.gl
+@needs_gl
+@pytest.mark.slow
+def test_star_lattice_vivid_keeps_the_first_look():
+    """``flash_style="vivid"`` (preset ``vivid``) is the star's first look, kept as an option
+    beside the shared flash: its golden is the storyboard from before the flash was shared
+    (owner, 2026-11-26: "save the two as different options")."""
+    from PIL import Image
+
+    from phasor.render.output import save_png
+    from tests.ssim import ssim
+
+    s = runpy.run_path(str(ROOT / "examples" / "echo_lattice.py"), run_name="x")["s"]
+    s.set("echoes.flash_style", "vivid")
+    e = s.engine
+    sheet = e.storyboard([1.5, 4.0, 8.0, 12.0], size=(320, 180))["image"]
+    klass = e.pass_runner().renderer_class()
+    path = GOLDEN / klass / "echo_lattice_vivid.png"
+    if os.environ.get("PHASOR_UPDATE_GOLDEN"):
+        save_png(path, sheet)
+    if not path.exists():
+        pytest.skip(f"no {klass} golden yet; create with PHASOR_UPDATE_GOLDEN=1")
+    assert ssim(sheet, np.asarray(Image.open(path).convert("RGB"))) >= 0.97

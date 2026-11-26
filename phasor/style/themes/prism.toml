@@ -78,6 +78,20 @@ gap = 0.3
 pause_per_change = 0.25
 pause_max = 1.5
 
+[sound]
+# The mix (SOUND.md, time/sound.py). Levels are loudness (ITU BS.1770), not peaks.
+target = -16.0    # LUFS: the voice, and the whole mix after the final trim
+bed = -18.0       # LU relative to the voice: a bed's level when it gives no gain
+cue = -10.0       # LU relative to the voice: a cue's level (its loudest 400 ms)
+duck = 8.0        # dB beds dip while the narration speaks
+attack = 0.25     # s: the dip starts this long before the speech
+release = 0.6     # s: and recovers over this long after it
+ceiling = -1.0    # dBTP: the limiter's ceiling
+knee = 2.0        # dB: the limiter's soft knee
+masking = 12.0    # lint bed_masks_voice: a bed closer than this to the voice in speech
+word_gap = 0.08   # lint cue_on_word: s between a cue's peak and a stressed word's onset
+clip = 3.0        # lint audio_clip: dB over full scale the mix may reach before the limiter
+
 # 3D camera (SPEC "3D auto-cinematography"). `drift`: slow sway in azimuth, degrees either
 # way, over `drift_period` seconds. The camera solver: `fill` is the share of the frame
 # height the kept objects should span, `thirds` and `smooth` are the weights of those goals,
@@ -126,6 +140,7 @@ text_min = 0.02      # text lower than this share of the frame height
 clutter = 4          # more objects than this changing at once in one block
 crowded = 0.05       # a placed label still covered by more than this share is "unsolved"
 occluded = 0.9       # 3D: a label less visible than this is "occluded_label"
+bake_renders = 3000  # slow_layout: occlusion buffers the layout bake may render (one per 10 Hz key while a label is shown)
 
 # Aesthetic rules (lint(aesthetic=True)); the taste knobs.
 hues = 7             # color_restraint: saturated flat-paint hues (hue along a curve or in a colormap is not counted)
@@ -136,11 +151,6 @@ rhythm = 0.3         # motion_rhythm: seconds within which unrelated objects sho
 margin = 0.05        # margin: content must stay out of this outer share of the frame
 stroke_mix = 2       # stroke_mix: more than this many stroke weights in one frame
 impure = 1e-9        # impure_updater (strict): two answers of one updater may differ by this much
-# Sound (SOUND.md).
-sound_masking = 12.0 # bed_masks_voice: a bed less than this many dB under the voice while it speaks
-sound_clip = 3.0     # audio_clip: the mix before the limiter more than this many dB over full scale
-cue_word = 0.08      # cue_on_word (aesthetic): a loud cue's peak this close (s) to a word's start,
-cue_loud = 6.0       # ... loud meaning less than this many dB under the voice
 
 # Living motion (SPEC "Living motion"). Everything is a smooth deterministic function of
 # (object id, seed, t); scene `life` "off" turns it all off, "subtle" scales amplitudes by
@@ -247,18 +257,3 @@ ease = "in_out"
 [motion.unfold]
 duration = 1.1
 ease = "smoother"
-
-# Sound (SOUND.md). Levels: the voice is set to `voice` LUFS; beds sit `bed` dB and cues
-# `cue` dB relative to it (without narration, beds play at the voice level). While a sentence
-# is spoken, beds dip `duck` dB, ramping down over `attack` s before it and up over
-# `release` s after. `fade`: a bed's default fade in and out, s. `ceiling`: the master
-# limiter, dBFS.
-[sound]
-voice = -16.0
-bed = -18.0
-cue = -10.0
-duck = 8.0
-attack = 0.3
-release = 0.8
-fade = 2.0
-ceiling = -1.0

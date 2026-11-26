@@ -321,7 +321,7 @@ def _press(widget, x, y, kind):
 def test_the_sound_tab_adds_music_and_effects_and_the_timeline_moves_them(window):
     from PySide6.QtCore import QEvent
 
-    from tests.test_sound_bed import _tone
+    from tests.test_gui_sound import _tone
 
     app, win, _server, root = window
     music = root / "picked" / "hum.wav"
@@ -334,9 +334,9 @@ def test_the_sound_tab_adds_music_and_effects_and_the_timeline_moves_them(window
     win.tick()
     app.processEvents()
     doc = win.ed.engine.document
-    assert [b.id for b in doc.sound.beds] == ["hum"] and doc.sound.cues[0].at.marker == "go"
+    assert [b.id for b in doc.sound.beds] == ["bed_hum"] and doc.sound.cues[0].at.marker == "go"
     rows = [win.sound.table.item(r, 0).text() for r in range(win.sound.table.rowCount())]
-    assert rows == ["hum (bed)", "chime_go (cue)"]
+    assert rows == ["bed_hum (bed)", "cue_chime_go (cue)"]
     assert "LUFS" in win.sound.status.text()
     tl = win.timeline
     tl.resize(900, 200)
@@ -347,12 +347,12 @@ def test_the_sound_tab_adds_music_and_effects_and_the_timeline_moves_them(window
     tl.mousePressEvent(_press(tl, start.x(), start.y(), QEvent.Type.MouseButtonPress))
     tl.mouseMoveEvent(_press(tl, tl._x(1.9), start.y(), QEvent.Type.MouseMove))
     tl.mouseReleaseEvent(_press(tl, tl._x(1.9), start.y(), QEvent.Type.MouseButtonRelease))
-    cue = win.ed.engine.document.sound.item(cue_id)
+    cue = next(c for c in win.ed.engine.document.sound.cues if c.id == cue_id)
     assert cue.at.marker == "end" and cue.at.offset == pytest.approx(-0.1, abs=0.02)
 
 
 def test_gain_spin_and_master_from_the_sound_tab(window):
-    from tests.test_sound_bed import _tone
+    from tests.test_gui_sound import _tone
 
     app, win, _server, root = window
     _tone(root / "hum.wav", 110, 2.0, amp=6000)
@@ -360,15 +360,15 @@ def test_gain_spin_and_master_from_the_sound_tab(window):
     win.tick()
     app.processEvents()
     spin = win.sound.table.cellWidget(0, 2)
-    spin.setValue(-7.0)
+    spin.setValue(-22.0)
     spin.editingFinished.emit()
-    assert win.ed.engine.document.sound.beds[0].gain == -7.0
+    assert win.ed.engine.document.sound.beds[0].gain == -22.0
     win.sound.master_button.click()  # nothing to fix here: a clean report, nothing changed
-    assert win.ed.engine.document.sound.beds[0].gain == -7.0
+    assert win.ed.engine.document.sound.beds[0].gain == -22.0
 
 
 def test_play_plays_the_sound_from_the_playhead_and_scrubbing_restarts_it(window):
-    from tests.test_sound_bed import _tone
+    from tests.test_gui_sound import _tone
 
     _app, win, _server, root = window
     _tone(root / "hum.wav", 110, 2.0, amp=6000)
@@ -390,7 +390,7 @@ def test_play_plays_the_sound_from_the_playhead_and_scrubbing_restarts_it(window
 
 
 def test_your_voice_and_a_marker_from_the_sound_tab(window):
-    from tests.test_sound_bed import _tone
+    from tests.test_gui_sound import _tone
 
     app, win, _server, root = window
     _tone(root / "me.wav", 200, 0.8, amp=9000)

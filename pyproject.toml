@@ -13,6 +13,7 @@ dependencies = [
     "pillow>=13.0.0",
     "pydantic>=2.7",
     "scipy>=1.13",
+    "soundfile>=0.14.0",
     "sympy>=1.14.0",
 ]
 
@@ -24,9 +25,7 @@ gl = ["moderngl>=5.12"]
 gpu = ["cupy-cuda12x[ctk]>=13.3"]
 # Video encoding (NVENC when the driver supports it, libx264 otherwise).
 encode = ["av>=14"]
-all = ["phasor[gl,gpu,encode,mcp,gui,notebook,sound]"]
-# Sound files other than WAV (OGG, FLAC, MP3) for beds and cues (SOUND.md).
-sound = ["soundfile>=0.12"]
+all = ["phasor[gl,gpu,encode,mcp,gui,notebook]"]
 # The MCP server an AI client connects to (`phasor mcp`).
 mcp = ["mcp>=2.0,<3"]
 # Jupyter widgets for interactive scenes (`phasor.interactive.notebook`).

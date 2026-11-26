@@ -1,16 +1,29 @@
-"""The sound of a scene: every source mixed on one stereo bus (SOUND.md).
+"""The sound mix (SOUND.md, SPEC "Sound"): the voice, beds and cues on one stereo bus.
+Pure NumPy/SciPy (and ``soundfile`` to decode files); no GPU, GL or video library.
 
-The mix is a pure function of the document and the files it names, like ``state_at``: the
-same document gives the same samples, bit for bit. Everything here is NumPy and SciPy, so
-the encoder and the desktop app play the same mix.
+A document's ``sound`` section (core.schema ``Bed``, ``Cue``) is resolved to seconds by
+``compile_document`` through the TimeMap, like tracks, so re-narrating moves every cue and
+every bed end anchored to a marker. ``mix`` turns that into samples, a pure function of the
+document and the files it names:
 
-- Sources are stereo float32 in -1..1; mono is centred (the same samples in both channels).
-- The bus runs at the sources' common sample rate, or at 48 kHz when they differ.
-- Loudness is measured as ITU-R BS.1770-4 integrated loudness (LUFS) with EBU R128 gating.
-- The master is a look-ahead limiter at a ceiling (-1 dBFS by default). It only acts where
-  the mix would cross the ceiling; quieter mixes pass through untouched.
-
-Files are read only from inside the scene's folder (``core/files.py``).
+- **A narration-only scene is the narration, untouched**: the int16 track ``mix_track``
+  makes, at its own rate, copied to both channels. Nothing below runs.
+- Otherwise everything runs on a **stereo float32 bus at 48 kHz**. Files at another rate
+  are resampled once (polyphase, cached per file version); mono is centred.
+- **Loudness, not peaks** (ITU-R BS.1770-4: K-weighting, 400 ms blocks, gates at -70 LUFS
+  and -10 LU). The voice is set to the theme's ``[sound] target``; a bed to ``target + gain``
+  (its integrated loudness), a cue to ``target + gain`` (its loudest 400 ms), ``gain``
+  defaulting to ``[sound] bed`` / ``[sound] cue``.
+- **Ducking** from the narration's word times, not from the signal: while a block speaks,
+  beds dip by ``[sound] duck`` dB, starting ``attack`` s before the first word and
+  recovering over ``release`` s after the last (smoothstep ramps). Exact and deterministic.
+- **Bus**: a final trim brings the whole mix to ``target`` LUFS, then a soft-knee limiter
+  (``knee`` dB wide) holds the true peak (4x oversampled) at ``ceiling`` dBTP. Its gain is
+  a running minimum then a running mean over the same window, which never exceeds the gain
+  each sample needs, so the ceiling holds without a click.
+- **Built-in cues** (``tick``, ``chime``, ``whoosh``, ``pop``, ``swell``, ``tone``) are
+  synthesized from (cue id, scene seed) through ``rng`` and cached, so a scene needs no
+  downloads and two renders agree to the bit.
 """
 
 from __future__ import annotations
@@ -18,500 +31,691 @@ from __future__ import annotations
 import functools
 import math
 import os
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+import re
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+from numpy.random import Generator  # the type only; generators come from core.rng
 
 from phasor.core import files
-from phasor.core.schema import Narration, Sound
+from phasor.core.rng import rng
+from phasor.core.schema import BUILTIN_SOUNDS, Bed, Cue, Narration
 
-RATE = 48_000  # the bus rate when the sources disagree
-CEILING_DB = -1.0  # where the master limiter holds the peaks
+RATE = 48000  # Hz: the bus
+BLOCK = 0.4  # s: a loudness block (BS.1770 gating block, and "momentary" loudness)
+HOP = 0.1  # s: blocks overlap by 75 %
+ABS_GATE = -70.0  # LUFS
+REL_GATE = -10.0  # LU below the absolutely gated loudness
+OVERSAMPLE = 4  # true-peak estimate (BS.1770-4 Annex 2)
+LIMIT_WINDOW = 0.005  # s: the limiter looks this far ahead and holds this long
+STRESSED_LETTERS = 4  # lint cue_on_word: a word this long (or longer) carries a stress
+MAX_TIMES = 12
+PEAK_MARGIN = 6.0  # dB: a chunk this far under a peak floor is not oversampled (``true_peak``)
+
+# Partials of each ``tone`` voice: (ratio to the fundamental, amplitude, decay in 1/s; 0 = steady)
+VOICES: dict[str, tuple[tuple[float, float, float], ...]] = {
+    "sine": ((1.0, 1.0, 0.0),),
+    "soft": ((1.0, 1.0, 0.0), (2.0, 0.35, 0.0), (3.0, 0.12, 0.0), (4.0, 0.05, 0.0)),
+    "pluck": tuple((float(k), 1.0 / k, 3.0 + 2.5 * k) for k in range(1, 9)),
+    "bell": ((1.0, 1.0, 1.5), (2.76, 0.6, 2.5), (5.4, 0.35, 4.0), (8.93, 0.2, 6.0)),
+}
+# The knobs a built-in uses when the cue leaves them unset, and its length in seconds.
+DEFAULTS: dict[str, dict[str, Any]] = {
+    "tick": {"dur": 0.03},
+    "chime": {"midi": 84.0, "dur": 1.6},
+    "whoosh": {"dur": 0.6},
+    "pop": {"midi": 76.0, "dur": 0.09},
+    "swell": {"midi": 60.0, "dur": 2.0},
+    "tone": {"midi": 69.0, "dur": 0.5, "voice": "sine"},
+}
+if set(DEFAULTS) != set(BUILTIN_SOUNDS):  # the schema names what is built here
+    raise ImportError("time/sound.py and core.schema.BUILTIN_SOUNDS name different built-ins")
 
 
-class SoundError(ValueError):
-    pass
+@dataclass(frozen=True)
+class PlacedCue:
+    """A cue with its start resolved to seconds on the scene timeline."""
+
+    id: str
+    t: float
+    cue: Cue
 
 
-# ---------------------------------------------------------------- reading
+@dataclass(frozen=True)
+class PlacedBed:
+    """A bed with its ends resolved to seconds (``t1`` is the scene's end when it has none)."""
+
+    id: str
+    t0: float
+    t1: float
+    bed: Bed
 
 
-def read_audio(path: str | Path) -> tuple[np.ndarray, int]:
-    """A sound file as stereo float32 in -1..1, shape (n, 2), and its sample rate.
+def midi_hz(midi: float) -> float:
+    """Equal temperament, A4 (69) = 440 Hz."""
+    return 440.0 * 2.0 ** ((midi - 69.0) / 12.0)
 
-    WAV (8, 16, 24, 32-bit or float) needs nothing extra. Other formats (OGG, FLAC, MP3) are
-    read through ``soundfile`` when it is installed. Cached per file version; the array is
-    read-only."""
-    p = Path(path)
-    return _read(str(p), os.path.getmtime(p))
+
+def builtin_seconds(cue: Cue) -> float:
+    """How long a built-in cue plays (known without synthesizing it)."""
+    return float(cue.dur if cue.dur is not None else DEFAULTS[cue.sound]["dur"])
+
+
+# ---------------------------------------------------------------- loudness (BS.1770-4)
+
+
+@functools.cache
+def k_weighting(rate: int) -> np.ndarray:
+    """The K-weighting filter (a high shelf, then a high pass) as second-order sections at
+    ``rate``. The analogue prototypes are the ones that give BS.1770's 48 kHz table."""
+    g, q1, f1 = 3.999843853973347, 0.7071752369554196, 1681.974450955533
+    k = math.tan(math.pi * f1 / rate)
+    vh = 10 ** (g / 20)
+    vb = vh**0.4996667741545416
+    a0 = 1 + k / q1 + k * k
+    shelf = [(vh + vb * k / q1 + k * k) / a0, 2 * (k * k - vh) / a0,
+             (vh - vb * k / q1 + k * k) / a0, 1.0, 2 * (k * k - 1) / a0,
+             (1 - k / q1 + k * k) / a0]  # fmt: skip
+    q2, f2 = 0.5003270373238773, 38.13547087602444
+    k = math.tan(math.pi * f2 / rate)
+    a0 = 1 + k / q2 + k * k
+    high = [1.0, -2.0, 1.0, 1.0, 2 * (k * k - 1) / a0, (1 - k / q2 + k * k) / a0]
+    return np.array([shelf, high])
+
+
+def _stereo(x: np.ndarray) -> np.ndarray:
+    x = np.asarray(x)
+    if x.ndim == 1:
+        return np.stack([x, x], axis=1)
+    if x.shape[1] == 1:
+        return np.repeat(x, 2, axis=1)
+    return x[:, :2]
+
+
+def block_energies(x: np.ndarray, rate: int, hop: float = HOP) -> np.ndarray:
+    """The mean square of the K-weighted signal, summed over channels, in each ``BLOCK``
+    starting every ``hop`` seconds (a partial last block is dropped, as BS.1770 says)."""
+    from scipy.signal import sosfilt
+
+    y = sosfilt(k_weighting(rate), _stereo(x).astype(np.float64), axis=0)
+    power = (y * y).sum(axis=1)
+    nb, nh = round(BLOCK * rate), max(1, round(hop * rate))
+    if len(power) < nb:
+        return np.zeros(0)
+    c = np.concatenate([[0.0], np.cumsum(power)])
+    starts = np.arange(0, len(power) - nb + 1, nh)
+    return (c[starts + nb] - c[starts]) / nb
+
+
+def lufs(z: np.ndarray | float) -> np.ndarray | float:
+    """Loudness of a block energy (LUFS); -inf for silence."""
+    with np.errstate(divide="ignore"):
+        return -0.691 + 10 * np.log10(np.maximum(z, 0.0))
+
+
+def gated(z: np.ndarray) -> float:
+    """Integrated loudness from block energies: the absolute gate, then the relative one."""
+    z = np.asarray(z, dtype=np.float64)
+    z = z[lufs(z) > ABS_GATE] if z.size else z
+    if not z.size:
+        return -math.inf
+    z = z[lufs(z) > float(lufs(z.mean())) + REL_GATE]
+    return float(lufs(z.mean()))
+
+
+def integrated(x: np.ndarray, rate: int) -> float:
+    """BS.1770-4 integrated loudness of ``x`` (mono is heard on both channels), in LUFS."""
+    return gated(block_energies(x, rate))
+
+
+def momentary_max(x: np.ndarray, rate: int) -> float:
+    """The loudest 400 ms of ``x`` (sampled every 10 ms), in LUFS: a one-shot's level. A
+    sound shorter than 400 ms is measured as itself followed by silence."""
+    x = _stereo(x)
+    nb = round(BLOCK * rate)
+    if len(x) < nb:
+        x = np.concatenate([x, np.zeros((nb - len(x), 2), x.dtype)])
+    z = block_energies(x, rate, hop=0.01)
+    return float(lufs(z.max())) if z.size else -math.inf
+
+
+def true_peak(x: np.ndarray, floor: float | None = None) -> np.ndarray:
+    """Each sample's true-peak estimate (the largest |value| of the 4x oversampled signal
+    around it, or the sample itself), over both channels. Computed in chunks of 4096
+    samples; with ``floor``, a chunk whose samples all stay ``PEAK_MARGIN`` dB under it is
+    not oversampled (its sample peaks are kept), since no inter-sample peak of real audio
+    rises that far over its samples."""
+    from scipy.signal import resample_poly
+
+    x = _stereo(x).astype(np.float64)
+    n = len(x)
+    out = np.abs(x).max(axis=1) if n else np.zeros(0)
+    chunk, pad = 4096, 64
+    skip = -1.0 if floor is None else floor * 10 ** (-PEAK_MARGIN / 20)
+    for a in range(0, n, chunk):
+        if out[a : a + chunk].max() < skip:
+            continue
+        lo, hi = max(0, a - pad), min(n, a + chunk + pad)
+        up = resample_poly(x[lo:hi], OVERSAMPLE, 1, axis=0)
+        env = np.abs(up).reshape(hi - lo, OVERSAMPLE, 2).max(axis=(1, 2))
+        b = min(n, a + chunk)
+        out[a:b] = np.maximum(out[a:b], env[a - lo : b - lo])
+    return out
+
+
+def limit(x: np.ndarray, rate: int, ceiling: float, knee: float) -> np.ndarray:
+    """A soft-knee limiter: the true peak never passes ``ceiling`` dBTP. Below
+    ``ceiling - knee/2`` the signal is untouched; through the knee the reduction grows
+    quadratically, above it the peak is held at the ceiling. The gain is smooth (a running
+    minimum then a running mean over ``2 LIMIT_WINDOW``), never above what a sample needs."""
+    from scipy.ndimage import minimum_filter1d, uniform_filter1d
+
+    with np.errstate(divide="ignore"):
+        level = 20 * np.log10(np.maximum(true_peak(x, 10 ** ((ceiling - knee / 2) / 20)), 1e-12))
+    over = level - ceiling
+    if knee > 0:
+        knee_cut = -((over + knee / 2) ** 2) / (2 * knee)
+        cut = np.where(over <= -knee / 2, 0.0, np.where(over >= knee / 2, -over, knee_cut))
+    else:
+        cut = np.minimum(0.0, -over)
+    need = 10 ** (cut / 20)
+    if np.all(need >= 1.0):
+        return x
+    size = 2 * max(1, round(LIMIT_WINDOW * rate)) + 1
+    gain = uniform_filter1d(minimum_filter1d(need, size, mode="nearest"), size, mode="nearest")
+    gain = np.minimum(gain, need)  # float rounding in the mean must never tip it over
+    return (x * gain[:, None]).astype(x.dtype)
+
+
+# ---------------------------------------------------------------- the narration's timing
+
+
+def speech_spans(narration: Narration | None) -> tuple[tuple[float, float], ...]:
+    """Where the narration speaks: each spoken block from its first word to its last (the
+    block itself when it has no word times), in seconds on the scene timeline."""
+    if narration is None:
+        return ()
+    spans = []
+    for b in narration.blocks:
+        if not b.text:
+            continue
+        if b.words:
+            spans.append((b.start + b.words[0].start, b.start + max(w.end for w in b.words)))
+        else:
+            spans.append((b.start, b.start + b.duration))
+    return tuple(spans)
+
+
+def stressed_onsets(narration: Narration | None) -> tuple[tuple[float, str], ...]:
+    """The onset of every word that carries a stress (``STRESSED_LETTERS`` letters or more:
+    short function words do not), with the word."""
+    if narration is None:
+        return ()
+    return tuple((b.start + w.start, w.text) for b in narration.blocks for w in b.words
+                 if len(re.findall(r"\w", w.text)) >= STRESSED_LETTERS)  # fmt: skip
+
+
+def duck_envelope(spans: Sequence[tuple[float, float]], n: int, rate: int, depth: float,
+                  attack: float, release: float) -> np.ndarray:  # fmt: skip
+    """The beds' gain (linear, ``n`` samples): 1 away from speech, ``-depth`` dB during it,
+    ramping down over ``attack`` s before each span and back up over ``release`` s after.
+    Spans closer than ``attack + release`` are one: the bed stays down between sentences
+    instead of pumping."""
+    merged: list[list[float]] = []
+    for t0, t1 in sorted(spans):
+        if merged and t0 - merged[-1][1] < attack + release:
+            merged[-1][1] = max(merged[-1][1], t1)
+        else:
+            merged.append([t0, t1])
+    w = np.zeros(n)
+    for t0, t1 in merged:
+        lo = max(0, math.floor((t0 - attack) * rate))
+        hi = min(n, math.ceil((t1 + release) * rate) + 1)
+        if hi <= lo:
+            continue
+        t = np.arange(lo, hi) / rate
+        up = np.clip((t - (t0 - attack)) / attack, 0, 1) if attack > 0 else (t >= t0) * 1.0
+        down = np.clip((t1 + release - t) / release, 0, 1) if release > 0 else (t <= t1) * 1.0
+        u = np.minimum(up, down)
+        w[lo:hi] = np.maximum(w[lo:hi], u * u * (3 - 2 * u))  # smoothstep
+    return 10 ** (-depth * w / 20)
+
+
+# ---------------------------------------------------------------- files
+
+
+def _stamp(base_dir: str | Path, path: str) -> tuple[str, int, int] | None:
+    try:
+        p = files.resolve(base_dir, path)
+        st = os.stat(p)
+    except (OSError, ValueError):
+        return None
+    return str(p), st.st_mtime_ns, st.st_size
 
 
 @functools.lru_cache(maxsize=32)
-def _read(path: str, mtime: float) -> tuple[np.ndarray, int]:
-    if path.lower().endswith(".wav"):
-        from scipy.io import wavfile
+def _decode(path: str, mtime_ns: int, size: int) -> tuple[np.ndarray, int] | None:
+    """A file as float32 stereo and its rate; None when it cannot be decoded."""
+    import soundfile
 
-        rate, data = wavfile.read(path)
-        if data.dtype.kind == "u":  # 8-bit PCM is unsigned, centred on 128
-            x = (data.astype(np.float64) - 128.0) / 128.0
-        elif data.dtype.kind == "i":
-            x = data.astype(np.float64) / float(-np.iinfo(data.dtype).min)
-        else:
-            x = data.astype(np.float64)
-    else:
-        try:
-            import soundfile
-        except ImportError:
-            msg = (f"{Path(path).name}: only WAV can be read without the `soundfile` package "
-                   "(uv sync --extra sound); install it or convert the file to WAV")  # fmt: skip
-            raise SoundError(msg) from None
-        x, rate = soundfile.read(path, dtype="float64", always_2d=True)
-    out = _stereo(x, path)
+    try:
+        data, rate = soundfile.read(path, dtype="float32", always_2d=True)
+    except (OSError, RuntimeError, ValueError, TypeError):
+        return None
+    out = _stereo(data)
     out.setflags(write=False)
     return out, int(rate)
 
 
-def _stereo(x: np.ndarray, name: str = "sound") -> np.ndarray:
-    x = np.asarray(x)
-    if x.ndim == 1:
-        x = x[:, None]
-    if x.ndim != 2 or x.shape[1] not in (1, 2):
-        raise SoundError(f"{name}: only mono or stereo sound is supported")
-    if x.shape[1] == 1:
-        x = np.repeat(x, 2, axis=1)
-    return np.ascontiguousarray(x, dtype=np.float32)
-
-
-def resample(x: np.ndarray, rate: int, to: int) -> np.ndarray:
-    """``x`` (n, channels) from ``rate`` to ``to`` samples per second (polyphase filter)."""
-    if rate == to:
-        return x
-    from scipy.signal import resample_poly
-
-    g = math.gcd(int(rate), int(to))
-    y = resample_poly(np.asarray(x, dtype=np.float64), to // g, rate // g, axis=0)
-    return y.astype(np.float32)
-
-
-# ---------------------------------------------------------------- the bus
-
-
-@dataclass(frozen=True, eq=False)
-class Placed:
-    """One clip on the bus: stereo float samples at ``rate``, starting ``start`` seconds into
-    the scene, ``gain_db`` louder (negative: quieter)."""
-
-    start: float
-    samples: np.ndarray
-    rate: int
-    gain_db: float = 0.0
-
-
-def bus_rate(clips: Sequence[Placed]) -> int:
-    rates = {c.rate for c in clips}
-    return rates.pop() if len(rates) == 1 else RATE
-
-
-def mix(clips: Sequence[Placed], duration: float) -> tuple[np.ndarray, int] | None:
-    """The clips summed on one stereo float32 bus at least ``duration`` seconds long (longer
-    if a clip runs past it), and its rate. None with no clips. No limiting: see ``master``."""
-    if not clips:
+@functools.lru_cache(maxsize=32)
+def _at_rate(path: str, mtime_ns: int, size: int, rate: int) -> np.ndarray | None:
+    """The file at ``rate`` (polyphase resampling, cached per file version)."""
+    got = _decode(path, mtime_ns, size)
+    if got is None:
         return None
-    rate = bus_rate(clips)
-    placed = [(c, resample(_stereo(c.samples), c.rate, rate)) for c in clips]
-    end = max(duration, max(c.start + len(s) / rate for c, s in placed))
-    bus = np.zeros((math.ceil(end * rate), 2), dtype=np.float32)
-    for c, s in placed:
-        i = round(c.start * rate)
-        if i < 0:  # a clip starting before the scene: keep what falls inside it
-            s, i = s[-i:], 0
-        s = s[: len(bus) - i]
-        bus[i : i + len(s)] += s if c.gain_db == 0 else s * np.float32(db_to_gain(c.gain_db))
-    return bus, rate
+    x, src = got
+    if src != rate:
+        from scipy.signal import resample_poly
+
+        g = math.gcd(rate, src)
+        x = resample_poly(x.astype(np.float64), rate // g, src // g, axis=0).astype(np.float32)
+        x.setflags(write=False)
+    return x
 
 
-def master(x: np.ndarray, rate: int, ceiling_db: float = CEILING_DB) -> np.ndarray:
-    """``x`` with its peaks held at ``ceiling_db`` dBFS by a smooth look-ahead limiter.
-
-    The gain needed at each sample is held for 50 ms either side and then averaged over the
-    same span, so it ramps down before a peak and back up after it, never above what any
-    sample in reach needs. A mix that stays under the ceiling comes back unchanged."""
-    ceiling = db_to_gain(ceiling_db)
-    peak = np.abs(x).max(axis=1) if x.ndim == 2 else np.abs(x)
-    need = np.minimum(1.0, ceiling / np.maximum(peak.astype(np.float64), 1e-12))
-    if need.min() >= 1.0:
-        return x
-    from scipy.ndimage import minimum_filter1d, uniform_filter1d
-
-    reach = max(1, round(0.05 * rate))
-    held = minimum_filter1d(need, size=2 * reach + 1, mode="nearest")
-    gain = uniform_filter1d(held, size=2 * reach + 1, mode="nearest")
-    gain = np.minimum(gain, need)  # rounding in the average must not let a peak through
-    y = x * (gain[:, None] if x.ndim == 2 else gain).astype(np.float32)
-    return np.clip(y, -ceiling, ceiling).astype(np.float32)
-
-
-def to_int16(x: np.ndarray) -> np.ndarray:
-    """Float samples in -1..1 as int16 (rounded; full scale clips)."""
-    return np.clip(np.round(np.asarray(x, dtype=np.float64) * 32768.0), -32768, 32767).astype(
-        np.int16
-    )
-
-
-def db_to_gain(db: float) -> float:
-    return 10.0 ** (db / 20.0)
-
-
-# ---------------------------------------------------------------- measuring
-
-
-def _k_weighting(rate: int) -> tuple[tuple[np.ndarray, np.ndarray], ...]:
-    """The two BS.1770 pre-filters (a high shelf for the head, then a high pass) at ``rate``,
-    designed so that at 48 kHz they equal the coefficients printed in the standard."""
-    k = math.tan(math.pi * 1681.974450955533 / rate)
-    q = 0.7071752369554196
-    vh = 10.0 ** (3.999843853973347 / 20.0)
-    vb = vh**0.4996667741545416
-    a0 = 1.0 + k / q + k * k
-    shelf = (np.array([(vh + vb * k / q + k * k) / a0, 2.0 * (k * k - vh) / a0,
-                       (vh - vb * k / q + k * k) / a0]),
-             np.array([1.0, 2.0 * (k * k - 1.0) / a0, (1.0 - k / q + k * k) / a0]))  # fmt: skip
-    k = math.tan(math.pi * 38.13547087602444 / rate)
-    q = 0.5003270373238773
-    a0 = 1.0 + k / q + k * k
-    high = (np.array([1.0, -2.0, 1.0]),
-            np.array([1.0, 2.0 * (k * k - 1.0) / a0, (1.0 - k / q + k * k) / a0]))  # fmt: skip
-    return shelf, high
-
-
-def block_powers(x: np.ndarray, rate: int, block: float = 0.4, step: float = 0.1) -> np.ndarray:
-    """The K-weighted power (sum over channels) of each ``block``-second window, windows
-    ``step`` seconds apart (BS.1770 gating blocks: 400 ms, 75% overlap)."""
-    from scipy.signal import lfilter
-
-    y = np.asarray(x, dtype=np.float64)
-    if y.ndim == 1:
-        y = y[:, None]
-    for b, a in _k_weighting(rate):
-        y = lfilter(b, a, y, axis=0)
-    n, hop = round(block * rate), round(step * rate)
-    if len(y) < n:
-        return np.zeros(0)
-    c = np.concatenate([np.zeros((1, y.shape[1])), np.cumsum(y * y, axis=0)])
-    starts = np.arange(0, len(y) - n + 1, hop)
-    return ((c[starts + n] - c[starts]) / n).sum(axis=1)
-
-
-def _lufs(power: float | np.ndarray) -> float | np.ndarray:
-    with np.errstate(divide="ignore"):
-        return -0.691 + 10.0 * np.log10(power)
-
-
-def loudness(x: np.ndarray, rate: int) -> float:
-    """Integrated loudness in LUFS (BS.1770-4: absolute gate -70 LUFS, relative gate -10 LU).
-    ``-inf`` for silence or for sound shorter than one 400 ms block."""
-    z = block_powers(x, rate)
-    z = z[_lufs(z) > -70.0]
-    if not len(z):
+@functools.lru_cache(maxsize=64)
+def _file_level(path: str, mtime_ns: int, size: int, rate: int, one_shot: bool) -> float:
+    x = _at_rate(path, mtime_ns, size, rate)
+    if x is None:
         return -math.inf
-    z = z[_lufs(z) > _lufs(z.mean()) - 10.0]
-    return float(_lufs(z.mean()))
+    return momentary_max(x, rate) if one_shot else integrated(x, rate)
 
 
-def true_peak(x: np.ndarray, rate: int) -> float:
-    """The peak in dBTP: the highest sample after 4x oversampling (BS.1770 annex 2)."""
-    y = resample(np.asarray(x, dtype=np.float32).reshape(len(x), -1), rate, 4 * rate)
-    p = float(np.abs(y).max()) if len(y) else 0.0
-    return 20.0 * math.log10(p) if p > 0 else -math.inf
+def read_audio(base_dir: str | Path, path: str, rate: int = RATE) -> np.ndarray | None:
+    """The file ``path`` names in the scene's folder as float32 stereo at ``rate``; None when
+    it is missing or cannot be decoded (lint says which). Re-read when the file changes."""
+    stamp = _stamp(base_dir, path)
+    return None if stamp is None else _at_rate(*stamp, rate)
 
 
-# ---------------------------------------------------------------- the scene's lanes
+def file_seconds(base_dir: str | Path, path: str) -> float | None:
+    """How long the file plays; None when it is missing or cannot be decoded."""
+    stamp = _stamp(base_dir, path)
+    got = None if stamp is None else _decode(*stamp)
+    return None if got is None else len(got[0]) / got[1]
 
 
-@dataclass(frozen=True, eq=False)
+# ---------------------------------------------------------------- built-in effects
+
+
+def _ramp(n: int, attack: int, release: int) -> np.ndarray:
+    """Linear fade-in from exactly 0 over ``attack`` samples, fade-out to 0 over ``release``."""
+    env = np.ones(n)
+    a, r = max(1, min(n // 2, attack)), max(1, min(n // 2, release))
+    env[:a] = np.arange(a) / a
+    env[n - r :] = np.minimum(env[n - r :], np.arange(r - 1, -1, -1) / r)
+    return env
+
+
+def _band_noise(noise: np.ndarray, rate: int, center: np.ndarray, octaves: float) -> np.ndarray:
+    """``noise`` through a band (Gaussian in log frequency, ``octaves`` wide) whose centre
+    moves: ``center`` gives it in Hz at each 1024-sample frame (Hann, 50 % overlap-add)."""
+    frame, hop = 1024, 512
+    n = len(noise)
+    count = max(1, math.ceil(n / hop) + 1)
+    padded = np.concatenate([np.zeros(hop), noise, np.zeros(count * hop + frame)])
+    idx = np.arange(count)[:, None] * hop + np.arange(frame)[None, :]
+    win = 0.5 - 0.5 * np.cos(2 * np.pi * np.arange(frame) / frame)  # periodic: sums to 1
+    spec = np.fft.rfft(padded[idx] * win, axis=1)
+    f = np.maximum(np.fft.rfftfreq(frame, 1 / rate), 1.0)
+    c = np.interp(np.arange(count) * hop, np.linspace(0, n, len(center)), center)[:, None]
+    mask = np.exp(-0.5 * (np.log2(f[None, :] / c) / octaves) ** 2)
+    frames = np.fft.irfft(spec * mask, n=frame, axis=1)
+    out = np.zeros(len(padded))
+    np.add.at(out, idx.ravel(), frames.ravel())
+    return out[hop : hop + n]
+
+
+def _tone(midi: float, dur: float, voice: str, rate: int) -> np.ndarray:
+    n = max(1, round(dur * rate))
+    t = np.arange(n) / rate
+    f0 = midi_hz(midi)
+    x = np.zeros(n)
+    for ratio, amp, decay in VOICES[voice]:
+        if f0 * ratio < rate / 2:  # no partial above Nyquist (it would alias)
+            part = amp * np.sin(2.0 * np.pi * f0 * ratio * t)
+            x += part * np.exp(-decay * t) if decay else part
+    return x * _ramp(n, round(0.005 * rate), round(0.030 * rate))
+
+
+def _synth(name: str, gen: Generator, midi: float, dur: float, voice: str,
+           rate: int) -> np.ndarray:  # fmt: skip
+    n = max(1, round(dur * rate))
+    t = np.arange(n) / rate
+    if name == "tick":  # a click and a short high ring
+        x = 0.5 * gen.standard_normal(n) * np.exp(-t / 0.0015)
+        x += np.sin(2 * np.pi * 3200 * t) * np.exp(-t / 0.006)
+        return x * _ramp(n, round(0.0005 * rate), round(0.003 * rate))
+    if name == "chime":  # a small bell, every partial a hair detuned
+        f0, x = midi_hz(midi), np.zeros(n)
+        for ratio, amp, decay in ((1.0, 1.0, 2.2), (2.76, 0.5, 3.5), (5.4, 0.3, 5.0),
+                                  (8.93, 0.15, 7.0)):  # fmt: skip
+            f = f0 * ratio * 2 ** (gen.uniform(-3, 3) / 1200)
+            if f < rate / 2:
+                phase = gen.uniform(0, 2 * np.pi)
+                x += amp * np.sin(2 * np.pi * f * t + phase) * np.exp(-decay * t)
+        return x * _ramp(n, round(0.003 * rate), round(0.05 * rate))
+    if name == "whoosh":  # noise through a band sweeping up, loudest at 70 %
+        u = t / dur
+        center = np.geomspace(350, 2800, 64)
+        x = _band_noise(gen.standard_normal(n), rate, center, 0.6)
+        env = np.where(u < 0.7, (u / 0.7) ** 2, np.cos(0.5 * np.pi * (u - 0.7) / 0.3) ** 2)
+        return x * env * _ramp(n, 1, round(0.01 * rate))
+    if name == "pop":  # a pitch that drops an octave into its note, very short
+        f = midi_hz(midi) * (1 + np.exp(-t / 0.008))
+        x = np.sin(2 * np.pi * np.cumsum(f) / rate) * np.exp(-t / 0.025)
+        x += 0.15 * gen.standard_normal(n) * np.exp(-t / 0.001)
+        return x * _ramp(n, round(0.001 * rate), round(0.01 * rate))
+    if name == "swell":  # an open fifth and a rising breath of noise, growing to the end
+        f0, x = midi_hz(midi), np.zeros(n)
+        for ratio, amp in ((1.0, 1.0), (1.5, 0.6), (2.0, 0.4)):
+            for cents in (-4.0, 4.0):
+                f = f0 * ratio * 2 ** (cents / 1200)
+                x += amp * np.sin(2 * np.pi * f * t + gen.uniform(0, 2 * np.pi))
+        air = _band_noise(gen.standard_normal(n), rate, np.geomspace(300, 1500, 64), 0.8)
+        x = x / 4 + 0.6 * air / max(1e-9, float(np.abs(air).max()))
+        return x * (t / dur) ** 2.5 * _ramp(n, 1, round(0.06 * rate))
+    return _tone(midi, dur, voice, rate)
+
+
+@functools.lru_cache(maxsize=256)
+def _builtin(name: str, cue_id: str, seed: int, midi: float, dur: float, voice: str,
+             rate: int) -> np.ndarray:  # fmt: skip
+    x = _synth(name, rng(cue_id, seed), midi, dur, voice, rate)
+    peak = float(np.abs(x).max())
+    x = (x / peak if peak > 0 else x).astype(np.float32)
+    x.setflags(write=False)
+    return x
+
+
+def builtin(cue: Cue, seed: int, rate: int = RATE) -> np.ndarray:
+    """A built-in cue as float32 mono at ``rate``, peak 1: a pure function of the cue (its
+    id, sound and knobs) and the scene's seed, cached."""
+    d = DEFAULTS[cue.sound]
+    midi = float(cue.midi if cue.midi is not None else d.get("midi", 69.0))
+    voice = cue.voice or d.get("voice", "sine")
+    return _builtin(cue.sound, cue.id, seed, midi, builtin_seconds(cue), voice, rate)
+
+
+@functools.lru_cache(maxsize=256)
+def _builtin_level(name: str, cue_id: str, seed: int, midi: float, dur: float, voice: str,
+                   rate: int) -> float:  # fmt: skip
+    return momentary_max(_builtin(name, cue_id, seed, midi, dur, voice, rate), rate)
+
+
+def _cue_source(cue: Cue, base_dir: str | Path, seed: int) -> tuple[np.ndarray, float] | None:
+    """A cue's samples (mono or stereo, at ``RATE``) and their level in LUFS."""
+    if cue.builtin:
+        x = builtin(cue, seed)
+        d = DEFAULTS[cue.sound]
+        midi = float(cue.midi if cue.midi is not None else d.get("midi", 69.0))
+        level = _builtin_level(cue.sound, cue.id, seed, midi, builtin_seconds(cue),
+                               cue.voice or d.get("voice", "sine"), RATE)  # fmt: skip
+        return x, level
+    stamp = _stamp(base_dir, cue.sound)
+    x = None if stamp is None else _at_rate(*stamp, RATE)
+    return None if x is None else (x, _file_level(*stamp, RATE, True))
+
+
+# ---------------------------------------------------------------- the mix
+
+
+@dataclass(frozen=True)
 class Lane:
-    """One source after its level, fades, ducking and pan: ``kind`` is "voice", "bed" or
-    "cue"; ``id`` the block index ("voice.3"), bed or cue id. Samples are at the mix's rate."""
+    """What one source contributes, measured: its level before gain (LUFS), the gain that
+    set it, and its block energies as mixed (before the final trim), every ``HOP``."""
 
     id: str
-    kind: str
-    start: float
-    samples: np.ndarray
-    gain_db: float = 0.0  # the level the mixer chose (already applied to ``samples``)
+    kind: str  # "voice", "bed" or "cue"
+    level: float
+    gain_db: float
+    energies: np.ndarray = field(repr=False)
+    t0: float = 0.0
+    t1: float = 0.0
+    peak_t: float | None = None  # cues: when the cue is loudest
+
+    def loudness(self, t0: float | None = None, t1: float | None = None) -> float:
+        """Integrated loudness of the lane as mixed between ``t0`` and ``t1`` (whole lane by
+        default), before the final trim. The 400 ms blocks inside the span count; a span
+        shorter than a block is measured by the block centred on it."""
+        z = self.energies
+        if t0 is None or t1 is None or not z.size:
+            return gated(z)
+        starts = np.arange(len(z)) * HOP
+        inside = z[(starts >= t0 - 1e-9) & (starts + BLOCK <= t1 + 1e-9)]
+        if not inside.size:
+            k = int(np.clip(round(((t0 + t1) / 2 - BLOCK / 2) / HOP), 0, len(z) - 1))
+            inside = z[k : k + 1]
+        return gated(inside)
 
 
-@dataclass(frozen=True, eq=False)
+@dataclass(frozen=True)
 class Mix:
-    """The scene's sound, lane by lane, before the master limiter."""
+    """The scene's audio: int16 stereo ``samples`` at ``rate``, and how it was made."""
 
+    samples: np.ndarray = field(repr=False)
     rate: int
-    duration: float
-    lanes: tuple[Lane, ...]
-    speech: tuple[tuple[float, float], ...]  # spans the voice speaks (where beds duck)
-    problems: tuple[tuple[str, str], ...] = ()  # (bed or cue id, why it is silent)
-
-    def bus(self) -> np.ndarray:
-        """All lanes summed, before the limiter."""
-        return mix([Placed(x.start, x.samples, self.rate) for x in self.lanes], self.duration)[0]
+    mixed: bool  # False: the narration alone, untouched
+    lanes: tuple[Lane, ...] = ()
+    spans: tuple[tuple[float, float], ...] = ()
+    duck: np.ndarray | None = field(default=None, repr=False)  # the beds' gain, every sample
+    levels: Mapping[str, float] = field(default_factory=dict)
+    trim_db: float = 0.0
+    pre_peak_db: float = -math.inf  # sample peak before the limiter (after the trim)
+    over: tuple[float, ...] = ()  # where the mix passes full scale by ``[sound] clip`` dB
+    loudness: float = -math.inf  # integrated loudness of the result
+    peak_dbtp: float = -math.inf  # true peak of the result
 
     def lane(self, lane_id: str) -> Lane | None:
         return next((x for x in self.lanes if x.id == lane_id), None)
 
+    def voice_level(self, t0: float, t1: float) -> float:
+        """The voice's loudness over a span; the target (where it will sit) when the
+        narration has no audio yet (estimated timing)."""
+        v = self.lane("voice")
+        return v.loudness(t0, t1) if v is not None else float(self.levels.get("target", -16.0))
 
-def momentary_max(x: np.ndarray, rate: int) -> float:
-    """The loudest 400 ms of ``x`` in LUFS (EBU R128 momentary loudness); a sound shorter
-    than that is measured as if followed by silence. How loud a short effect seems."""
-    n = round(0.4 * rate)
-    if len(x) < n:
-        x = np.concatenate([np.asarray(x, np.float32).reshape(len(x), -1),
-                            np.zeros((n - len(x), np.asarray(x).reshape(len(x), -1).shape[1]),
-                                     np.float32)])  # fmt: skip
-    z = block_powers(x, rate)
-    return float(_lufs(z.max())) if len(z) and z.max() > 0 else -math.inf
+    def duck_db(self, t0: float, t1: float) -> float:
+        """The beds' mean dip over a span, in dB (0 when nothing ducks)."""
+        if self.duck is None:
+            return 0.0
+        a, b = round(t0 * self.rate), max(round(t0 * self.rate) + 1, round(t1 * self.rate))
+        seg = self.duck[a:b]
+        return float(20 * np.log10(seg.mean())) if seg.size else 0.0
 
+    def report(self) -> dict[str, Any]:
+        """Numbers an AI can read instead of listening: loudness per lane per narration
+        block (as heard, LUFS), the ducking, the trim and the peaks."""
 
-@functools.lru_cache(maxsize=32)
-def _file_loudness(path: str, mtime: float) -> float:
-    x, rate = _read(path, mtime)
-    return loudness(x, rate)
+        def num(v: float) -> float | None:
+            return round(float(v), 2) if math.isfinite(v) else None
 
-
-def _speech(narration: Narration | None) -> tuple[tuple[float, float], ...]:
-    """Where the voice speaks: each sentence with audio, from its first word to its last
-    (the whole block when it has no word times)."""
-    if narration is None:
-        return ()
-    out = []
-    for b in narration.blocks:
-        if not (b.audio and b.text.strip()):
-            continue
-        if b.words:
-            out.append((b.start + b.words[0].start, b.start + b.words[-1].end))
-        else:
-            out.append((b.start, b.start + b.duration))
-    return tuple(out)
-
-
-def duck_envelope(t: np.ndarray, speech: Sequence[tuple[float, float]], depth_db: float,
-                  attack: float, release: float) -> np.ndarray:  # fmt: skip
-    """The gain (dB, zero or negative) a ducked bed gets at times ``t``: ``-depth_db`` while a
-    span is spoken, ramping down over ``attack`` s before it and back over ``release`` s."""
-    amount = np.zeros(len(t))
-    for a, b in speech:
-        up = np.clip((t - (a - attack)) / attack, 0.0, 1.0) if attack > 0 else (t >= a) * 1.0
-        down = np.clip(((b + release) - t) / release, 0.0, 1.0) if release > 0 else (t <= b) * 1.0
-        amount = np.maximum(amount, np.minimum(up, down))
-    return -depth_db * amount
-
-
-def _raised(n: int) -> np.ndarray:
-    return 0.5 - 0.5 * np.cos(np.pi * np.arange(n) / max(n, 1))
-
-
-def _balance(pan: float) -> np.ndarray:
-    """Per-channel gains: centre is both at 1; a pan to one side lowers the other."""
-    return np.array([min(1.0, 1.0 - pan), min(1.0, 1.0 + pan)], dtype=np.float32)
-
-
-def build(
-    narration: Narration | None,
-    sound: Sound | None,
-    base_dir: str | Path,
-    duration: float,
-    *,
-    levels: dict[str, float] | None = None,
-    resolve: Callable[[Any], float] | None = None,
-    seed: int = 0,
-) -> Mix | None:
-    """Every lane of the scene's sound (SOUND.md). ``levels`` is the theme's ``[sound]``
-    table: with it the voice is set to ``voice`` LUFS, beds and cues are placed relative to
-    it and beds duck under speech; without it every source plays as recorded (no ducking).
-    ``resolve`` turns a time (seconds or a ``MarkerRef``) into seconds. A bed or cue whose
-    file is missing or unreadable is silent and listed in ``problems``. None: no sound."""
-    from phasor.time.synth import builtin
-
-    resolve = resolve or (lambda t: float(t))
-    voice = voice_lane(narration, base_dir)
-    sound = sound or Sound()
-    problems: list[tuple[str, str]] = []
-    beds, cues = [], []  # (item, samples, rate, source loudness)
-    for bed in sound.beds:
-        try:
-            path = files.resolve(base_dir, bed.file)
-            x, r = read_audio(path)
-            beds.append((bed, x, r, _file_loudness(str(path), os.path.getmtime(path))))
-        except (OSError, ValueError) as e:
-            problems.append((bed.id, _why(e, bed.file)))
-    for cue in sound.cues:
-        try:
-            if "." in cue.sound or "/" in cue.sound:
-                x, r = read_audio(files.resolve(base_dir, cue.sound))
+        lanes = []
+        for x in self.lanes:
+            heard = x.loudness() + self.trim_db
+            row: dict[str, Any] = {"id": x.id, "kind": x.kind, "loudness": num(heard),
+                                   "source_lufs": num(x.level), "gain_db": num(x.gain_db),
+                                   "blocks": [num(x.loudness(a, b) + self.trim_db)
+                                              for a, b in self.spans]}  # fmt: skip
+            if x.kind == "bed":
+                row["duck_db"] = [num(self.duck_db(a, b)) for a, b in self.spans]
+                row["under_voice_lu"] = [num(self.voice_level(a, b) - x.loudness(a, b))
+                                         for a, b in self.spans]  # fmt: skip
+            if x.kind == "cue":
+                row["t"], row["peak_t"] = round(x.t0, 4), num(x.peak_t or 0.0)
             else:
-                x, r = builtin(cue.sound, cue.id, seed)
-            cues.append((cue, _stereo(x), r, None))
-        except (OSError, ValueError) as e:
-            problems.append((cue.id, _why(e, cue.sound)))
-    if not (voice or beds or cues):  # silent: only what went wrong, if anything
-        return Mix(RATE, duration, (), (), tuple(problems)) if problems else None
-    rate = bus_rate([*voice, *(Placed(0, x, r) for _, x, r, _ in (*beds, *cues))])
-    lv = levels or {}
-    lanes: list[Lane] = []
-    if voice:
-        clips = [Placed(c.start, resample(_stereo(c.samples), c.rate, rate), rate) for c in voice]
-        gains = [0.0] * len(clips)
-        if levels is not None:  # measured as it will be heard: at the bus rate
-            # Each clip to the voice level on its own, so takes recorded louder or softer
-            # come out even; a clip too short to measure takes the level of them all.
-            whole = loudness(mix(clips, 0.0)[0], rate)
-            voice_db = lv["voice"] - whole if math.isfinite(whole) else 0.0
-            pad = np.zeros((round(0.4 * rate), 2), np.float32)
-            for k, c in enumerate(clips):  # measured in silence, as it sits in the mix
-                own = loudness(np.concatenate([pad, c.samples, pad]), rate)
-                gains[k] = lv["voice"] - own if math.isfinite(own) else voice_db
-        for k, (c, db) in enumerate(zip(clips, gains, strict=True)):
-            s = c.samples if db == 0 else c.samples * np.float32(db_to_gain(db))
-            lanes.append(Lane(f"voice.{k}", "voice", c.start, s, db))
-    speech = _speech(narration) if voice else ()
-    ref = lv.get("voice", 0.0)
-    for bed, x, r, measured in beds:
-        t0 = max(0.0, resolve(bed.start))
-        t1 = min(duration, resolve(bed.end)) if bed.end is not None else duration
-        n = round((t1 - t0) * rate)
-        if n <= 0:
-            problems.append((bed.id, f"ends ({t1:g} s) before it starts ({t0:g} s)"))
-            continue
-        s = resample(x, r, rate)
-        s = np.tile(s, (math.ceil(n / len(s)), 1))[:n] if bed.loop else s[:n]
-        db = 0.0
-        if levels is not None and math.isfinite(measured):
-            db = ref + (lv["bed"] if voice else 0.0) + bed.gain - measured
-        elif levels is None:
-            db = bed.gain
-        gain = np.full(len(s), db_to_gain(db))
-        fade = lv.get("fade", 0.0)
-        fade_in = round((fade if bed.fade_in is None else bed.fade_in) * rate)
-        fade_out = round((fade if bed.fade_out is None else bed.fade_out) * rate)
-        if fade_in > 0:
-            m = min(fade_in, len(s))
-            gain[:m] *= _raised(m)
-        if fade_out > 0:
-            m = min(fade_out, len(s))
-            gain[len(s) - m :] *= _raised(m)[::-1]
-        if bed.duck and speech and levels is not None:
-            grid = np.arange(t0, t1 + 0.01, 0.01)
-            env = duck_envelope(grid, speech, lv["duck"], lv["attack"], lv["release"])
-            gain *= 10.0 ** (np.interp(t0 + np.arange(len(s)) / rate, grid, env) / 20.0)
-        lanes.append(Lane(bed.id, "bed", t0, (s * gain[:, None]).astype(np.float32), db))
-    for cue, x, r, _ in cues:
-        s = resample(x, r, rate)
-        db = cue.gain
-        if levels is not None:
-            measured = momentary_max(s, rate)
-            if math.isfinite(measured):
-                db = ref + lv["cue"] + cue.gain - measured
-        s = (s * np.float32(db_to_gain(db)) * _balance(cue.pan)).astype(np.float32)
-        lanes.append(Lane(cue.id, "cue", resolve(cue.at), s, db))
-    return Mix(rate, duration, tuple(lanes), speech, tuple(problems))
+                row["start"], row["end"] = round(x.t0, 4), round(x.t1, 4)
+            lanes.append(row)
+        return {
+            "mixed": self.mixed, "rate": self.rate, "channels": 2,
+            "seconds": round(len(self.samples) / self.rate, 4),
+            "loudness": num(self.loudness), "true_peak_dbtp": num(self.peak_dbtp),
+            "target": self.levels.get("target"), "trim_db": num(self.trim_db),
+            "peak_before_limiter_dbfs": num(self.pre_peak_db),
+            "duck": {"depth_db": self.levels.get("duck"), "attack": self.levels.get("attack"),
+                     "release": self.levels.get("release")},
+            "blocks": [{"start": round(a, 4), "end": round(b, 4)} for a, b in self.spans],
+            "lanes": lanes,
+        }  # fmt: skip
 
 
-def file_versions(narration: Narration | None, sound: Sound | None,
-                  base_dir: str | Path) -> tuple:  # fmt: skip
-    """The modification time of every file the sound reads (None for a missing one), so a
-    cached mix can tell when a file changed."""
-    names = [b.audio for b in (narration.blocks if narration else ()) if b.audio]
-    if sound is not None:
-        names += [b.file for b in sound.beds]
-        names += [c.sound for c in sound.cues if "." in c.sound or "/" in c.sound]
-    out = []
-    for name in names:
-        try:
-            out.append(os.path.getmtime(files.resolve(base_dir, name)))
-        except (OSError, ValueError):
-            out.append(None)
-    return tuple(out)
+def to_int16(x: np.ndarray) -> np.ndarray:
+    """Float samples (full scale 1.0 = 32768) to int16, the inverse of reading a WAV."""
+    return np.clip(np.round(x * 32768.0), -32768, 32767).astype(np.int16)
 
 
-def _why(e: Exception, name: str) -> str:
-    if isinstance(e, FileNotFoundError):
-        return f"no file {name!r} in the scene's folder"
-    return str(e)
-
-
-def voice_lane(narration: Narration | None, base_dir: str | Path) -> list[Placed]:
-    """Each narration block's recorded or synthesized clip, placed at the block's start."""
-    if narration is None:
-        return []
-    out = []
-    for b in narration.blocks:
-        if b.audio:
-            samples, rate = read_audio(files.resolve(base_dir, b.audio))
-            out.append(Placed(b.start, samples, rate))
+def _placed_energies(x: np.ndarray, i0: int, n: int, rate: int) -> np.ndarray:
+    """Block energies over the whole track of a lane that is ``x`` from sample ``i0`` and
+    silent elsewhere, filtering only from the block boundary before it (the filter starts
+    at rest, as it would in the silence)."""
+    nh, nb = round(HOP * rate), round(BLOCK * rate)
+    total = max(0, (n - nb) // nh + 1) if n >= nb else 0
+    out = np.zeros(total)
+    if not len(x) or not total:
+        return out
+    a = (i0 // nh) * nh
+    local = np.zeros((min(n, i0 + len(x) + nb) - a, 2), np.float32)
+    local[i0 - a : i0 - a + len(x)] = _stereo(x)
+    z = block_energies(local, rate)
+    k0 = a // nh
+    m = min(len(z), total - k0)
+    if m > 0:
+        out[k0 : k0 + m] = z[:m]
     return out
 
 
-def mixdown(
+def _pan(x: np.ndarray, pan: float) -> np.ndarray:
+    """Constant power: centred is the signal itself on both channels."""
+    theta = (pan + 1) * math.pi / 4
+    gains = np.array([math.sqrt(2) * math.cos(theta), math.sqrt(2) * math.sin(theta)], np.float32)
+    return _stereo(x) * gains
+
+
+def _fades(m: int, fade_in: float, fade_out: float, rate: int) -> np.ndarray:
+    """Equal-power fades (sin in, cos out), so two overlapping fades crossfade evenly."""
+    a, b = round(fade_in * rate), round(fade_out * rate)
+    if a + b > m:  # too short for both: shrink them in proportion
+        a, b = (m * a) // max(1, a + b), m - (m * a) // max(1, a + b)
+    env = np.ones(m, np.float32)
+    if a:
+        env[:a] = np.sin(0.5 * np.pi * np.arange(a) / a)
+    if b:
+        env[m - b :] *= np.cos(0.5 * np.pi * np.arange(1, b + 1) / b)
+    return env
+
+
+def mix(
+    voice: tuple[np.ndarray, int] | None,
     narration: Narration | None,
+    beds: Sequence[PlacedBed],
+    cues: Sequence[PlacedCue],
     base_dir: str | Path,
     duration: float,
-    *,
-    sound: Sound | None = None,
-    levels: dict[str, float] | None = None,
-    resolve: Callable[[Any], float] | None = None,
+    levels: Mapping[str, float],
     seed: int = 0,
-) -> tuple[np.ndarray, int] | None:
-    """The scene's whole sound as stereo int16, shape (n, 2), at least ``duration`` seconds
-    long, and its rate; None when nothing makes a sound. See ``build`` for the arguments."""
-    m = build(narration, sound, base_dir, duration, levels=levels, resolve=resolve, seed=seed)
-    if m is None or not m.lanes:
-        return None
-    ceiling = (levels or {}).get("ceiling", CEILING_DB)
-    return to_int16(master(m.bus(), m.rate, ceiling)), m.rate
+) -> Mix | None:
+    """The scene's audio (see the module docstring); None when there is nothing to hear.
+    ``voice`` is ``narration.mix_track``'s mono int16 track and its rate."""
+    spans = speech_spans(narration)
+    if not beds and not cues:
+        if voice is None:
+            return None
+        v, r = voice
+        lane = Lane("voice", "voice", integrated(v / 32768.0, r), 0.0,
+                    block_energies(v / 32768.0, r), 0.0, len(v) / r)  # fmt: skip
+        out = np.stack([v, v], axis=1)
+        return Mix(out, r, False, (lane,), spans, None, dict(levels),
+                   loudness=lane.loudness(), peak_dbtp=_peak(v / 32768.0))  # fmt: skip
 
+    rate, target = RATE, float(levels["target"])
+    n = math.ceil(duration * rate - 1e-9)
+    v = None
+    if voice is not None:
+        v = voice[0].astype(np.float64) / 32768.0
+        if voice[1] != rate:
+            from scipy.signal import resample_poly
 
-def report(m: Mix, narration: Narration | None) -> dict[str, Any]:
-    """The mix in numbers, for an AI that cannot hear it: each lane's span, chosen level and
-    loudness, and for each spoken sentence the voice's loudness against every bed under it
-    (``margin``: dB the loudest bed sits under the voice there)."""
-    rate = m.rate
-    lanes = []
-    voice = [x for x in m.lanes if x.kind == "voice"]
-    if voice:
-        bus = mix([Placed(x.start, x.samples, rate) for x in voice], m.duration)[0]
-        lanes.append({"id": "voice", "kind": "voice", "start": round(voice[0].start, 3),
-                      "end": round(max(x.start + len(x.samples) / rate for x in voice), 3),
-                      "gain_db": round(voice[0].gain_db, 2),
-                      "loudness": _round(loudness(bus, rate))})  # fmt: skip
-    else:
-        bus = None
-    for x in m.lanes:
-        if x.kind == "voice":
+            g = math.gcd(rate, voice[1])
+            v = resample_poly(v, rate // g, voice[1] // g)
+        n = max(n, len(v))
+    bus = np.zeros((n, 2), np.float32)
+    lanes: list[Lane] = []
+    if v is not None:
+        level = integrated(v, rate)
+        g_db = target - level if math.isfinite(level) else 0.0
+        bus[: len(v)] += _stereo(v * 10 ** (g_db / 20)).astype(np.float32)
+        lanes.append(Lane("voice", "voice", level, g_db, block_energies(bus, rate), 0.0,
+                          len(v) / rate))  # fmt: skip
+    duck = None
+    if beds:
+        duck = duck_envelope(spans, n, rate, levels["duck"], levels["attack"], levels["release"])
+    for p in beds:
+        stamp = _stamp(base_dir, p.bed.path)
+        x = None if stamp is None else _at_rate(*stamp, rate)
+        i0, i1 = round(p.t0 * rate), min(round(p.t1 * rate), n)
+        if x is None or not len(x) or i1 <= i0:
+            lanes.append(Lane(p.id, "bed", -math.inf, 0.0, np.zeros(0), p.t0, p.t1))
             continue
-        level = loudness(x.samples, rate) if x.kind == "bed" else momentary_max(x.samples, rate)
-        lanes.append({"id": x.id, "kind": x.kind, "start": round(x.start, 3),
-                      "end": round(x.start + len(x.samples) / rate, 3),
-                      "gain_db": round(x.gain_db, 2), "loudness": _round(level)})  # fmt: skip
-    sentences = []
-    beds = [x for x in m.lanes if x.kind == "bed"]
-    texts = [b.text for b in (narration.blocks if narration else ()) if b.audio and b.text.strip()]
-    for (a, b), text in zip(m.speech, texts, strict=False):
-        i, j = round(a * rate), round(b * rate)
-        lv = loudness(bus[i:j], rate) if bus is not None else -math.inf
-        under = {}
-        for x in beds:
-            k = i - round(x.start * rate)
-            under[x.id] = _round(loudness(x.samples[max(k, 0) : max(k + j - i, 0)], rate))
-        finite = [v for v in under.values() if v is not None]
-        margin = round(lv - max(finite), 1) if finite and math.isfinite(lv) else None
-        sentences.append({"start": round(a, 3), "end": round(b, 3), "text": text[:60],
-                          "voice": _round(lv), "beds": under, "margin": margin})  # fmt: skip
-    return {"rate": rate, "duration": round(m.duration, 3), "lanes": lanes,
-            "sentences": sentences,
-            "problems": [{"id": i, "why": w} for i, w in m.problems]}  # fmt: skip
+        level = _file_level(*stamp, rate, False)
+        want = target + (p.bed.gain if p.bed.gain is not None else levels["bed"])
+        g_db = want - level if math.isfinite(level) else 0.0
+        m = i1 - i0
+        seg = np.tile(x, (math.ceil(m / len(x)), 1))[:m] if p.bed.loop else x[:m]
+        env = _fades(len(seg), p.bed.fade_in, p.bed.fade_out, rate) * duck[i0 : i0 + len(seg)]
+        seg = seg * (10 ** (g_db / 20) * env)[:, None].astype(np.float32)
+        bus[i0 : i0 + len(seg)] += seg
+        lanes.append(Lane(p.id, "bed", level, g_db, _placed_energies(seg, i0, n, rate),
+                          p.t0, (i0 + len(seg)) / rate))  # fmt: skip
+    for p in cues:
+        got = _cue_source(p.cue, base_dir, seed)
+        i0 = round(p.t * rate)
+        if got is None or i0 >= n:
+            lanes.append(Lane(p.id, "cue", -math.inf, 0.0, np.zeros(0), p.t, p.t, None))
+            continue
+        x, level = got
+        want = target + (p.cue.gain if p.cue.gain is not None else levels["cue"])
+        g_db = want - level if math.isfinite(level) else 0.0
+        seg = _pan(x[: n - i0], p.cue.pan) * np.float32(10 ** (g_db / 20))
+        bus[i0 : i0 + len(seg)] += seg
+        peak = i0 + int(np.argmax(np.abs(seg).max(axis=1))) if len(seg) else i0
+        lanes.append(Lane(p.id, "cue", level, g_db, _placed_energies(seg, i0, n, rate),
+                          p.t, (i0 + len(seg)) / rate, peak / rate))  # fmt: skip
+
+    # The trim makes the program ``target`` loud. A narration with no audio yet (estimated
+    # timing) leaves every lane where it sits relative to the voice it will have.
+    whole = integrated(bus, rate)
+    trim = target - whole if math.isfinite(whole) and (v is not None or not spans) else 0.0
+    bus *= np.float32(10 ** (trim / 20))
+    mag = np.abs(bus).max(axis=1)
+    pre_peak = _db(mag.max()) if n else -math.inf
+    loud = np.flatnonzero(mag > 10 ** (levels["clip"] / 20))
+    over = tuple(round(float(i) / rate, 3) for i in loud[np.diff(loud, prepend=-rate) > rate // 10]
+                 [:MAX_TIMES])  # fmt: skip
+    out = limit(bus, rate, levels["ceiling"], levels["knee"])
+    return Mix(to_int16(out), rate, True, tuple(lanes), spans, duck, dict(levels), trim,
+               pre_peak, over, integrated(out, rate), _peak(out))  # fmt: skip
 
 
-def _round(x: float) -> float | None:
-    """LUFS for a client: one decimal, None for silence."""
-    return round(x, 1) if math.isfinite(x) else None
+def _peak(x: np.ndarray) -> float:
+    """True peak in dBTP (only the chunks near the sample peak are oversampled)."""
+    if not len(x):
+        return -math.inf
+    top = float(np.abs(x).max())
+    return _db(true_peak(x, top).max()) if top > 0 else -math.inf
+
+
+def _db(x: float) -> float:
+    return 20 * math.log10(x) if x > 0 else -math.inf

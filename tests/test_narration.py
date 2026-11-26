@@ -17,6 +17,7 @@ from phasor.time.easing import EASINGS
 from phasor.time.narration import (
     ScriptError,
     estimate_duration,
+    mix_track,
     parse_script,
     write_wav,
 )
@@ -177,19 +178,17 @@ def test_the_audio_track_places_each_clip_at_its_block(tmp_path):
     rate = 1000
     write_wav(tmp_path / "a.wav", np.full(500, 7, np.int16), rate)
     from phasor.core.schema import Narration, NarrationBlock
-    from phasor.time.sound import mixdown
 
     n = Narration(script="x", voice="test", blocks=(
         NarrationBlock(text="a", start=0.25, duration=0.5, audio="a.wav"),
         NarrationBlock(text="b", start=2.0, duration=0.5, audio="a.wav")))  # fmt: skip
-    track, r = mixdown(n, tmp_path, duration=3.0)
-    assert r == rate and track.shape == (3000, 2)
-    track = track[:, 0]
+    track, r = mix_track(n, tmp_path, duration=3.0)
+    assert r == rate and len(track) == 3000
     assert track[249] == 0 and track[250] == 7 and track[749] == 7 and track[750] == 0
     assert track[2000] == 7
     est = Narration(script="x", voice="estimate", blocks=(NarrationBlock(text="a", start=0,
                                                                         duration=1),))  # fmt: skip
-    assert mixdown(est, tmp_path, 1.0) is None
+    assert mix_track(est, tmp_path, 1.0) is None
 
 
 # ---------------------------------------------------------------- verbs

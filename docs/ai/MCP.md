@@ -28,17 +28,19 @@ a variant and compare.
 | --- | --- |
 | `scene_new`, `scene_open`, `scene_save` | start, load or save `name.phasor.json` (inside the workspace folder only) |
 | `scene_palette` | the colors run along strokes: `spectrum` (the prism rainbow), `moonlight`, `gold`, `glacier`, `borealis`, `rose`, or none; in the prism looks every glowing curve takes them |
-| `scene_copy` | an editable copy of a script's scene (`<name>_edit.phasor.json` beside it), opened in its place; the script is never changed. Needed before sound, voice or narration edits on a script's scene |
+| `scene_copy` | an editable copy of a script's scene (`<name>_edit.phasor.json` beside it), opened in its place; the script is never changed. Do it before sound, voice or narration edits on a script's scene |
 | `scene_edit` | apply a patch (below); returns `ok`, `errors`, and the lint issues it added or fixed |
 | `animate` | a choreography verb at a marker or time: `reveal`, `exit`, `trace`, `bloom_in`, `dim_others`, `undim`, `focus_pull`, `morph`, `settle`, `write`, `travel`, `flash`, `wiggle`, `circumscribe` (`value` "circle" or "box"), `transform` and `become` (`targets` [from, to]), `sweep` (`path`, `value`), `unfold` (`targets` [room, ray], `value` flips, default 5), and in 3D `orbit` (`value` degrees, `until` a marker) and `orbit_reveal` |
-| `narrate` | set the script and voice; markers appear in `markers` |
+| `narrate` | set the script and voice (synthetic); markers appear in `markers` |
+| `voice_add` | a recording of the person's voice (an audio file in the folder) into the narration at a time or marker, with `text` (what it says); music ducks under it. Move it with `set_narration` |
+| `cue` | a one-shot sound on a marker (`at`, `offset`): a built-in (`tick`, `chime`, `whoosh`, `pop`, `swell`, `tone`) or an audio file in the folder; `gain` (LU relative to the voice), `pan`, `midi`, `dur`, `voice` (tone: sine/soft/pluck/bell) |
+| `bed` | music or ambience (an audio file in the folder) under the scene from marker `start` to `end`, looped, with fades; it dips while the narration speaks |
+| `sound_master` | master the sound: lower a bed covering the voice, turn a clipping mix down evenly, move a cue off a stressed word; check again (3 rounds at most, each undoable) |
+| `sound_report` | the mix in numbers (you cannot hear it): loudness per lane per narration block, how far each bed sits under the voice, ducking, trim, true peak, sound lint |
 | `inspect` | what is on screen at `t`: `brief` (a line each), `standard`, `full` |
 | `lint` | visual problems; `fix: true` applies the certain fixes |
 | `review` | the whole self-review round in one call |
 | `storyboard` | keyframe picture with each object's box and id drawn on it |
-| `voice_add` | a recording of the person's voice (a file in the scene's folder) into the narration at a time or marker; levelled to the voice level, music ducks under it |
-| `sound_master` | master the sound: turn down a bed covering the voice, a mix that would clip, a cue loud on a word; check again (3 rounds at most, each undoable) |
-| `sound` | hear the scene with numbers: each lane's level and loudness (LUFS), the voice against the beds in every sentence, the mix's loudness and peak, sound lint; with a picture of loudness over time |
 | `hit_test`, `resolve` | what is at a pixel; which object ids "the label of the pole" means |
 | `events`, `when_hidden`, `free_space_near` | 3D: when things get hidden or leave the frame (with fixes), spans an object is hidden, empty places next to an object |
 | `critique`, `polish` | the art director: a taste score, aesthetic issues with fixes and the rubric; apply the fixes (3 rounds at most) |
@@ -182,40 +184,33 @@ to a marker with a verb. Do not animate by raw seconds in a narrated scene (lint
 {"tool": "animate", "verb": "trace", "at": "loop", "targets": ["loop"]}
 ```
 
-`animate` returns `start` and `end`: pass `offset: end - start` to start the next step when
-the first ends. A verb moves nothing for an object that has no track yet, so `reveal` an
-object you want to appear (it is hidden until then).
+Sound is timed the same way (SOUND.md). A `cue` is a one-shot sound on a marker: a
+built-in (`tick`, `chime`, `whoosh`, `pop`, `swell`, `tone`), synthesized, or an audio file
+from the scene's folder. A `bed` is music or ambience from a file under a stretch of the
+scene; it dips while the voice speaks. Levels are loudness relative to the voice (`gain` in
+LU; defaults: cues 10 under, beds 18 under), so you never set peaks. Then read the mix with
+`sound_report` and fix what `bed_masks_voice`, `cue_on_word` or `audio_clip` report:
 
-## Sound: beds and cues
+```json calls
+{"tool": "cue", "at": "poles", "sound": "chime"}
+{"tool": "cue", "at": "loop", "sound": "whoosh", "offset": -0.5, "gain": -14}
+{"tool": "cue", "at": "loop", "sound": "tone", "offset": 0.2, "midi": 76, "voice": "pluck", "id": "loop_ping"}
+{"tool": "sound_report"}
+```
 
-Beds (music or ambience, the person's own files in the scene's folder) and cues (effects on
-markers: built-in `chime`, `pop`, `swell`, `tick`, `whoosh`, or a file) are patch ops. The
-theme sets every level; change `gain` (dB) only when `sound` says a lane is wrong.
+Retime or re-level one with `set_cue` / `set_bed` (the whole cue or bed, by id), take one
+out with `remove_sound` (its id is retired):
 
 ```json patch
 [
-  {"op": "set_marker", "name": "appear", "t": 1.0},
-  {"op": "set_cue", "cue": {"id": "chime_appear", "sound": "chime", "at": {"marker": "appear"}}},
-  {"op": "set_cue", "cue": {"id": "chime_appear", "sound": "chime",
-    "at": {"marker": "appear", "offset": -0.1}, "gain": -3}},
-  {"op": "remove_sound", "id": "chime_appear"}
+  {"op": "set_cue", "cue": {"id": "loop_ping", "at": {"marker": "loop", "offset": 0.4}, "sound": "tone", "midi": 79, "voice": "pluck"}},
+  {"op": "remove_sound", "id": "cue_chime_poles"}
 ]
 ```
 
-You cannot hear, so call `sound` after changing any: read each sentence's `margin` (the
-voice should stay well over the beds, 12 dB or more) and the issues
-(`bed_masks_voice` comes with a fix; `audio_clip`, `cue_on_word`, `missing_file`). Asked to
-master it, call `sound_master`, then `sound` again: it only turns things down, so a bed you
-want louder is a `gain` you set yourself.
-
-The person's own voice: `voice_add` with a recording in the scene's folder (`audio/...`),
-`at` a time or a marker, and `text` (what it says). Each take is levelled on its own. A
-marker on a word of it goes into that block's `markers` (via `set_narration`), so it moves
-with the take.
-
-Placing narration: `narrate` sets the whole script (a synthetic voice). To move one sentence, send
-`set_narration` with that block's `start` changed (keep it between its neighbours); every
-cue and motion anchored to its markers moves with it.
+`animate` returns `start` and `end`: pass `offset: end - start` to start the next step when
+the first ends. A verb moves nothing for an object that has no track yet, so `reveal` an
+object you want to appear (it is hidden until then).
 
 ## What comes back from `review`
 

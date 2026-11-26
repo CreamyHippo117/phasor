@@ -100,6 +100,18 @@ Status: **built; gates green on Linux (see Verification).** Untested on Windows 
     `core` is the lowest layer both can import. Pure NumPy, no drawing, as the domains rule
     asks. `HingedCopy` has no style roles (it draws its source's look);
     `tests/test_final.py` exempts it as `BORROWED`.
+12. **`unfold` beyond the box (2026-11-25): a hinge may mirror before it turns.** SPEC said
+    copies are "always turns, never reflections". For a convex polyhedron that is not
+    symmetric about the plane through the hinge line square to the wall, no rigid turn can
+    land on the mirror room (the mirror image has the other handedness), so the landed
+    copy would be a wrong picture. Such a hinge carries a fourth entry, a normal: the copy
+    appears mirrored in that plane (on top of the room it leaves) and the half turn then
+    lands it exactly on the reflection in the wall (half turn = the product of the two
+    perpendicular mirrors). Boxes, symmetric meshes and every flat polygon need no mirror,
+    so their copies are plain turns as before. `HingedCopy`'s 3-entry hinges are unchanged.
+    Non-box copies are named by the walls crossed (`mirror_b_a_c`), since a polygon's
+    copies have no lattice. Rooms that are not convex are refused (a ray can leave a
+    non-convex mirror copy through a dent, so the straight line is not the echo path).
 
 ## Bugs caught while building
 

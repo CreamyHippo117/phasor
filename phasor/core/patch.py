@@ -141,22 +141,36 @@ class RemoveControl(Model):
     component: int | None = None
 
 
+class AddBed(Model):
+    """Put music or ambience under a stretch of the scene (SOUND.md)."""
+
+    op: Literal["add_bed"] = "add_bed"
+    bed: Bed
+
+
 class SetBed(Model):
-    """Add a bed (music or ambience under the narration), or replace the bed with its id."""
+    """Replace the bed with the same id (to move its ends, fades or gain)."""
 
     op: Literal["set_bed"] = "set_bed"
     bed: Bed
 
 
+class AddCue(Model):
+    """Put a one-shot sound (a built-in or a file) on a marker (SOUND.md)."""
+
+    op: Literal["add_cue"] = "add_cue"
+    cue: Cue
+
+
 class SetCue(Model):
-    """Add a cue (a one-shot sound effect), or replace the cue with its id."""
+    """Replace the cue with the same id (to retime, retune or re-level it)."""
 
     op: Literal["set_cue"] = "set_cue"
     cue: Cue
 
 
 class RemoveSound(Model):
-    """Remove the bed or cue ``id``."""
+    """Take a bed or a cue out. Its id is retired like a removed object's."""
 
     op: Literal["remove_sound"] = "remove_sound"
     id: str
@@ -179,7 +193,9 @@ Op = Annotated[
     | RemoveConstraint
     | AddControl
     | RemoveControl
+    | AddBed
     | SetBed
+    | AddCue
     | SetCue
     | RemoveSound,
     Field(discriminator="op"),
@@ -213,6 +229,10 @@ def parse_patch(patch: Any) -> Patch:
                 for err in e.errors()
             ]
         ) from e
+
+
+def _with_sound(doc: Document, lane: str, items: tuple[Any, ...]) -> Document:
+    return doc.model_copy(update={"sound": doc.sound.model_copy(update={lane: items})})
 
 
 def _fail(code: str, message: str, **kw: Any) -> DocumentError:
@@ -371,31 +391,32 @@ def _apply_op(doc: Document, op: Any) -> Document:
             return doc.model_copy(
                 update={"controls": tuple(c for c in doc.controls if c.key != key)}
             )
-        case SetBed():
-            beds = doc.sound.beds
-            kept = [b for b in beds if b.id != op.bed.id]
-            at = next((i for i, b in enumerate(beds) if b.id == op.bed.id), len(kept))
-            kept.insert(at, op.bed)  # a replaced bed keeps its place
-            return doc.model_copy(
-                update={"sound": doc.sound.model_copy(update={"beds": tuple(kept)})}
-            )
-        case SetCue():
-            cues = doc.sound.cues
-            kept = [c for c in cues if c.id != op.cue.id]
-            at = next((i for i, c in enumerate(cues) if c.id == op.cue.id), len(kept))
-            kept.insert(at, op.cue)
-            return doc.model_copy(
-                update={"sound": doc.sound.model_copy(update={"cues": tuple(kept)})}
-            )
+        case AddBed() | AddCue():
+            item = op.bed if isinstance(op, AddBed) else op.cue
+            if item.id in doc.retired_ids:
+                raise _fail("id_retired", f"id {item.id!r} belonged to something removed; "
+                            "ids are never reused", ids=(item.id,),
+                            fix_hint="give it a new id that says what it is")  # fmt: skip
+            lane = "beds" if isinstance(op, AddBed) else "cues"
+            return _with_sound(doc, lane, (*getattr(doc.sound, lane), item))
+        case SetBed() | SetCue():
+            item, lane = (op.bed, "beds") if isinstance(op, SetBed) else (op.cue, "cues")
+            items = getattr(doc.sound, lane)
+            if all(x.id != item.id for x in items):
+                raise _fail("unknown_id", f"no {lane[:-1]} {item.id!r}; {lane} are "
+                            f"{[x.id for x in items]}", ids=(item.id,))  # fmt: skip
+            return _with_sound(doc, lane, tuple(item if x.id == item.id else x for x in items))
         case RemoveSound():
-            snd = doc.sound
-            if snd.item(op.id) is None:
-                ids = [x.id for x in (*snd.beds, *snd.cues)]
-                raise _fail("unknown_id", f"no bed or cue {op.id!r}; there are {ids}", ids=(op.id,))
-            beds = tuple(b for b in snd.beds if b.id != op.id)
-            cues = tuple(c for c in snd.cues if c.id != op.id)
-            snd = snd.model_copy(update={"beds": beds, "cues": cues})
-            return doc.model_copy(update={"sound": snd})
+            if doc.bed(op.id) is None and doc.cue(op.id) is None:
+                known = [x.id for x in (*doc.sound.beds, *doc.sound.cues)]
+                raise _fail("unknown_id", f"no bed or cue {op.id!r}; there are {known}",
+                            ids=(op.id,))  # fmt: skip
+            sound = doc.sound.model_copy(update={
+                "beds": tuple(x for x in doc.sound.beds if x.id != op.id),
+                "cues": tuple(x for x in doc.sound.cues if x.id != op.id),
+            })  # fmt: skip
+            retired = tuple(sorted({*doc.retired_ids, op.id}))
+            return doc.model_copy(update={"sound": sound, "retired_ids": retired})
         case RemoveConstraint():
             rule = normalize_rule(op.rule)
             if all(c.rule != rule for c in doc.constraints):
@@ -487,8 +508,10 @@ def record_tweaks(overrides: Overrides, patch: Patch) -> Overrides:
 
 
 __all__ = [
+    "AddBed",
     "AddConstraint",
     "AddControl",
+    "AddCue",
     "AddObject",
     "AddSegment",
     "ClearTrack",

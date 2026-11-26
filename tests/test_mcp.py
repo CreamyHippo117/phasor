@@ -407,12 +407,12 @@ def test_a_title_cannot_write_outside_the_workspace(tmp_path, title):
 
 def test_narration_audio_must_stay_in_the_scene_folder(tmp_path):
     from phasor.core.schema import Narration, NarrationBlock
-    from phasor.time.sound import mixdown
+    from phasor.time.narration import mix_track
 
     n = Narration(script="x", voice="estimate",
                   blocks=(NarrationBlock(text="x", start=0, duration=1, audio="../secret.wav"),))  # fmt: skip
-    with pytest.raises(ValueError, match="scene's folder"):
-        mixdown(n, tmp_path, 1.0)
+    with pytest.raises(ValueError, match="outside the scene"):
+        mix_track(n, tmp_path, 1.0)
 
 
 def test_restore_is_one_undoable_step_and_versions_only_grow(ws):

@@ -10,6 +10,8 @@ none can be created the inspector runs in analytic mode (tier C).
 
 from __future__ import annotations
 
+import dataclasses
+import weakref
 from collections import OrderedDict
 from collections.abc import Callable
 from pathlib import Path
@@ -31,7 +33,7 @@ from phasor.inspect import lint as lint_rules
 from phasor.inspect import variants as variant_ops
 from phasor.inspect.oracle import PassOracle
 from phasor.inspect.passes import PassRunner
-from phasor.layout.bake import Bake, bake, baked_state
+from phasor.layout.bake import Bake, bake, baked_state, key_times
 from phasor.layout.plan import Plan, compile_plan
 from phasor.time.compile import Compiled, compile_document
 from phasor.time.expr import CompiledExpr
@@ -104,9 +106,14 @@ class _Snapshot:
         self.plan: Plan = compile_plan(self.compiled)
         self.orphans: tuple[Issue, ...] = tuple(orphans)
         self.bake: Bake | None = None
+        self.partial: Bake | None = None  # the bake up to some time (``Engine._state_upto``)
+        # The snapshot this one was edited from: its bake is reused up to the edit (weak, so
+        # history beyond the undo limit is still freed).
+        self.prior: weakref.ref[_Snapshot] | None = None
         self.lint: dict[float, tuple[Issue, ...]] = {}
         self.aesthetic: tuple[Issue, ...] | None = None
-        self.mix: tuple[tuple, Any] | None = None  # (file versions, time/sound.py Mix)
+        # The sound mix (time/sound.py) and the versions of the files it read.
+        self.mix: tuple[Any, Any] | None = None
         self.states: OrderedDict[float, SceneState] = OrderedDict()
         self.snapshots: OrderedDict[float, dict[str, Any]] = OrderedDict()
 
@@ -121,6 +128,16 @@ _LOADED: dict[str, tuple[int, str, Any]] = {}
 _LOADING: set[str] = set()  # modules being run now (a scene script that builds its own Scene)
 REFUSED = ("refused: scripts may not run here (open the scene with allow_scripts=True, or "
            "start the MCP server with --allow-scripts)")  # fmt: skip
+
+
+def _file_sha(path: Path) -> str | None:
+    """A file's SHA-256, or None when it cannot be read."""
+    import hashlib
+
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
 
 
 def needs_code(doc: Document) -> bool:
@@ -247,15 +264,21 @@ class Engine:
         passes: PassRunner | str | None = "auto",
         base_dir: str | Path | None = None,
         allow_scripts: bool = False,
+        script: str | Path | None = None,
     ) -> None:
         """``allow_scripts``: the modules the document names (``meta.modules``, types and
         updaters defined in the scene's folder) may run. Off by default: like the importers,
         code runs only on the person's request (``phasor.load("scene.py")`` runs the script
-        anyway, so it turns this on)."""
+        anyway, so it turns this on). ``script``: the scene script that built the document
+        (``phasor.load`` sets it), run again by each render worker for what it sets up
+        outside the document (a registry its types draw from); its hash is kept as it
+        was now, so a worker refuses a script edited since."""
         base = document or Document(meta=Meta(title=title))
         # The folder that files the document refers to (narration audio, meshes) are relative to.
         self.base_dir = Path(base_dir) if base_dir is not None else Path.cwd()
         self.allow_scripts = allow_scripts
+        self.script = Path(script).resolve() if script is not None else None
+        self.script_sha = _file_sha(self.script) if self.script is not None else None
         self._snap = _build(base, overrides or Overrides(), str(self.base_dir), allow_scripts)
         self._undo: list[_Snapshot] = []
         self._redo: list[_Snapshot] = []
@@ -278,12 +301,18 @@ class Engine:
         return {
             "document": io.dumps(self._snap.base),
             "overrides": io.dumps(self._snap.overrides),
-            "bake": self._bake(self._snap),
+            "bake": dataclasses.replace(self._bake(self._snap), resume=None),
             "fingerprint": self.fingerprint(),
             "base_dir": str(self.base_dir),
             # The scene's own code (ADR 0005) runs in a worker when it could run here: the
             # parent was allowed to, or already had every type (the person ran the script).
             "allow_scripts": self.allow_scripts or not self._snap.compiled.missing,
+            # The script the person ran to build this scene: workers run it too, before
+            # building the document, so what it set up for the scene's own code (ADR 0005)
+            # exists there as here. Only when the document names such code: built-in types
+            # draw from the document alone, and a script can take seconds to run.
+            "script": str(self.script) if self.script and self._snap.base.meta.modules else None,
+            "script_sha": self.script_sha,
         }
 
     @classmethod
@@ -306,8 +335,10 @@ class Engine:
     def fork(self) -> Engine:
         """A private copy of this engine's current scene (document and overrides) with its own
         history: edit it freely (a player moving sliders) and this one never changes."""
-        return Engine(self._snap.base, overrides=self._snap.overrides, passes=self._passes,
-                      base_dir=self.base_dir, allow_scripts=self.allow_scripts)  # fmt: skip
+        other = Engine(self._snap.base, overrides=self._snap.overrides, passes=self._passes,
+                       base_dir=self.base_dir, allow_scripts=self.allow_scripts)  # fmt: skip
+        other.script, other.script_sha = self.script, self.script_sha
+        return other
 
     def as_document(self) -> Engine:
         """A new engine on a plain-document copy of this scene: the document as it stands
@@ -436,59 +467,39 @@ class Engine:
 
     def _aesthetic(self, snap: _Snapshot) -> tuple[Issue, ...]:
         if snap.aesthetic is None:
-            snap.aesthetic = (*aesthetic_rules.rules(
+            snap.aesthetic = tuple(aesthetic_rules.rules(
                 snap.compiled,
                 snap.plan,
                 lambda t: self._state(snap, t),
                 lambda t: self._snapshot_of(snap, t),
                 self.pass_runner(),
-            ), *aesthetic_rules.sound_rules(snap.compiled, self._mix(snap)))  # fmt: skip
+            ))  # fmt: skip
         return snap.aesthetic
 
     def audio_track(self):
-        """The scene's sound as one stereo int16 track, shape (n, 2), covering the scene, and
-        its sample rate; None when nothing makes a sound (``time/sound.py``, SOUND.md)."""
-        from phasor.time.sound import master, to_int16
-
+        """The soundtrack as one stereo int16 track ``(n, 2)`` covering the scene, and its
+        sample rate: the narration with the document's beds and cues mixed in
+        (``time/sound.py``; a narration-only scene is its narration, untouched). None when
+        there is nothing to hear."""
         m = self.sound_mix()
-        if m is None or not m.lanes:
-            return None
-        ceiling = self._snap.compiled.theme.sound["ceiling"]
-        return to_int16(master(m.bus(), m.rate, ceiling)), m.rate
+        return None if m is None else (m.samples, m.rate)
 
-    def sound_report(self) -> dict[str, Any]:
-        """The sound in numbers (``time/sound.report``): every lane's span, level and
-        loudness, each sentence's voice against the beds under it, the finished mix's
-        loudness and true peak, and the sound lint issues. ``{"silent": True}`` without
-        any sound."""
-        from phasor.time import sound as snd
-
-        m = self.sound_mix()
-        if m is None:
-            return {"silent": True}
-        out = snd.report(m, self.document.narration)
-        track = self.audio_track()
-        if track is not None:
-            x = track[0].astype(np.float32) / 32768.0
-            out["mix"] = {"loudness": snd._round(snd.loudness(x, track[1])),
-                          "true_peak": snd._round(snd.true_peak(x, track[1]))}  # fmt: skip
-        ids = {x.id for x in (*self.document.sound.beds, *self.document.sound.cues)}
-        found = [*self.lint(strict=True), *aesthetic_rules.sound_rules(self._snap.compiled, m)]
-        out["issues"] = [i.to_dict() for i in found
-                         if i.code in lint_rules.SOUND_CODES or set(i.ids) & ids]  # fmt: skip
-        return out
+    def sound_mix(self):
+        """The ``time.sound.Mix`` behind ``audio_track``: the samples and how they were
+        made (each lane's loudness, the ducking, the trim, the peaks). Cached per document
+        version and re-made when a file it reads changes."""
+        return self._mix(self._snap)
 
     def master_sound(self, rounds: int = 3) -> dict[str, Any]:
-        """The sound engineer's pass (SOUND.md): fix what the sound lint finds, then look
-        again, at most ``rounds`` times, each round one undo step. It only turns gains down:
-        a bed under the voice to ``[lint] sound_masking`` dB below it, every bed and cue
-        evenly when the mix would clip, a cue loud on a word to ``[lint] cue_loud`` dB under
-        the voice. Levels the theme sets are left alone. Returns the sound before and after
-        (loudness, peak, the margin of each sentence), what each round changed and what is
-        left (``remaining``). ``{"silent": True}`` without sound."""
-        before = self.sound_report()
-        if before.get("silent"):
+        """The sound engineer's pass (SOUND.md): fix what the sound lint finds, look again,
+        at most ``rounds`` times, each round one undo step. A bed under the voice takes the
+        lint's own fix (its gain lowered); a mix that would clip turns every bed and cue
+        down evenly; a cue that peaks on a stressed word moves just before it (its offset).
+        Returns the loudness, peak and issues before and after, what each round changed,
+        and what is left (``remaining``). ``{"silent": True}`` with no beds or cues."""
+        if not (self.document.sound.beds or self.document.sound.cues):
             return {"silent": True}
+        before = self.sound_report()
         history = []
         for k in range(1, rounds + 1):
             ops = self._master_ops()
@@ -505,69 +516,120 @@ class Engine:
         after = self.sound_report()
 
         def short(r: dict[str, Any]) -> dict[str, Any]:
-            return {"mix": r.get("mix"), "margins": [s["margin"] for s in r["sentences"]],
+            return {"loudness": r.get("loudness"), "true_peak_dbtp": r.get("true_peak_dbtp"),
                     "issues": sorted({i["code"] for i in r["issues"]})}  # fmt: skip
 
         return {"before": short(before), "after": short(after), "remaining": after["issues"]}
 
     def _master_ops(self) -> list[dict[str, Any]]:
-        """One round of certain gain changes (see ``master_sound``), one op per bed or cue."""
-        from phasor.time import sound as snd
+        """One round of certain changes (see ``master_sound``), one op per bed or cue."""
+        from phasor.core.schema import MarkerRef
+        from phasor.time.sound import stressed_onsets
 
-        m = self.sound_mix()
-        if m is None or not m.lanes:
+        snap = self._snap
+        m = self._mix(snap)
+        if m is None or not m.mixed:
             return []
-        c = self._snap.compiled
-        th = c.theme.lint
-        down: dict[str, float] = {}  # bed or cue id -> dB to take off
-        issues = [*lint_rules.sound_rules(c, m), *aesthetic_rules.sound_rules(c, m)]
-        sound = self.document.sound
+        c = snap.compiled
+        level = c.theme.sound
+        issues = lint_rules.sound_rules(c, lambda: m)
+        snd = self.document.sound
+        changed: dict[str, dict[str, Any]] = {}  # id -> the bed or cue as it will be
+
+        def item(sid: str) -> dict[str, Any]:
+            if sid not in changed:
+                found = next(x for x in (*snd.beds, *snd.cues) if x.id == sid)
+                changed[sid] = found.model_dump(mode="json")
+            return changed[sid]
+
         for i in issues:
             if i.code == "bed_masks_voice":
                 for op in i.fix:
-                    item = sound.item(op["bed"]["id"])
-                    down[item.id] = max(down.get(item.id, 0.0), item.gain - op["bed"]["gain"])
+                    item(op["bed"]["id"])["gain"] = op["bed"]["gain"]
             elif i.code == "audio_clip":
-                peak = 20.0 * np.log10(max(float(np.abs(m.bus()).max()), 1e-12))
-                cut = float(np.ceil((peak - th["sound_clip"]) * 2.0) / 2.0) + 0.5
-                for x in (*sound.beds, *sound.cues):
-                    down[x.id] = max(down.get(x.id, 0.0), cut)
-        voice = [x for x in m.lanes if x.kind == "voice"]
-        if voice and any(i.code == "cue_on_word" for i in issues):
-            vbus = snd.mix([snd.Placed(x.start, x.samples, m.rate) for x in voice], m.duration)
-            lv = snd.loudness(vbus[0], m.rate)
-            for i in issues:
-                if i.code == "cue_on_word":
-                    level = snd.momentary_max(m.lane(i.ids[0]).samples, m.rate)
-                    cut = float(np.ceil((level - (lv - th["cue_loud"])) * 2.0) / 2.0) + 0.5
-                    down[i.ids[0]] = max(down.get(i.ids[0], 0.0), cut)
-        ops = []
-        for item_id, cut in down.items():
-            item = sound.item(item_id)
-            if item is None or cut <= 0:
+                cut = round(m.pre_peak_db - level["clip"] + 0.5, 1)
+                for x in (*snd.beds, *snd.cues):
+                    kind = "bed" if x in snd.beds else "cue"
+                    now = item(x.id)["gain"]
+                    base = now if now is not None else level[kind]
+                    item(x.id)["gain"] = max(-60.0, round(base - cut, 1))
+        onsets = stressed_onsets(c.doc.narration)
+        for i in issues:
+            if i.code != "cue_on_word":
                 continue
-            kind = "bed" if item in sound.beds else "cue"
-            lowered = {**item.model_dump(mode="json"), "gain": round(item.gain - cut, 1)}
-            ops.append({"op": f"set_{kind}", kind: lowered})
+            lane = m.lane(i.ids[0])
+            if lane is None or lane.peak_t is None:
+                continue
+            words = [t for t, _ in onsets if abs(t - lane.peak_t) <= level["word_gap"]]
+            if not words:
+                continue
+            word = min(words, key=lambda t: abs(t - lane.peak_t))
+            shift = (word - level["word_gap"] - 0.05) - lane.peak_t  # peak just before it
+            cue = item(i.ids[0])
+            at = cue["at"]
+            if isinstance(at, dict):
+                ref = MarkerRef.model_validate(at)
+                cue["at"] = {"marker": ref.marker, "offset": round(ref.offset + shift, 3)}
+            else:
+                cue["at"] = round(max(0.0, float(at) + shift), 3)
+        ops = []
+        for sid, new in changed.items():
+            kind = "bed" if any(b.id == sid for b in snd.beds) else "cue"
+            ops.append({"op": f"set_{kind}", kind: new})
         return ops
 
-    def sound_mix(self):
-        """The scene's sound lane by lane, before the master limiter (``time/sound.Mix``):
-        the narration set to the theme's level, beds ducked under it, cues placed on their
-        markers. Cached per document version and per version of the files it reads."""
-        return self._mix(self._snap)
+    def sound_report(self) -> dict[str, Any]:
+        """What the mix sounds like, in numbers (SOUND.md "For the AI"): loudness per lane
+        per narration block, the ducking depth, the trim and peaks, and the sound lint."""
+        m = self._mix(self._snap)
+        doc = self.document
+        out: dict[str, Any] = {"beds": [b.id for b in doc.sound.beds],
+                               "cues": [c.id for c in doc.sound.cues]}  # fmt: skip
+        out.update(m.report() if m is not None else {"mixed": False, "lanes": []})
+        codes = lint_rules.SOUND_CODES
+        out["issues"] = [i.to_dict() for i in self.lint(strict=True) if i.code in codes]
+        return out
+
+    def sound_lanes(self, width: int = 960, frames: list[float] | None = None):
+        """The mix's loudness lanes as a picture ``width`` pixels wide (uint8 RGB): the
+        voice, each bed and the cues (diamonds where they play), loudness over time as
+        heard, spoken spans shaded, markers and ``frames`` marked. None with no audio."""
+        from phasor.render.storyboard import sound_lanes
+        from phasor.time.sound import BLOCK, HOP, lufs
+
+        m = self._mix(self._snap)
+        if m is None:
+            return None
+        rows, cue_z, marks = [], None, []
+        for lane in m.lanes:
+            z = lane.energies
+            if lane.kind == "cue":
+                marks.append(lane.t0)
+                if z.size:
+                    cue_z = z if cue_z is None else cue_z + z
+                continue
+            rows.append({"label": lane.id, "kind": lane.kind, "times": _lane_times(z, HOP, BLOCK),
+                         "lufs": lufs(z) + m.trim_db, "marks": ()})  # fmt: skip
+        if marks:
+            z = np.zeros(0) if cue_z is None else cue_z
+            rows.append({"label": "cues", "kind": "cue", "times": _lane_times(z, HOP, BLOCK),
+                         "lufs": lufs(z) + m.trim_db, "marks": marks})  # fmt: skip
+        markers = dict(self.document.timeline.markers)
+        return sound_lanes(rows, self.duration, width, markers, list(m.spans), frames or [])
 
     def _mix(self, snap: _Snapshot):
-        from phasor.time.sound import build, file_versions
+        from phasor.time.narration import mix_track
+        from phasor.time.sound import mix
 
         c = snap.compiled
-        doc = c.doc
-        key = file_versions(doc.narration, doc.sound, self.base_dir)
-        if snap.mix is None or snap.mix[0] != key:
-            levels, resolve = c.theme.sound, c.time_map.resolve
-            m = build(doc.narration, doc.sound, self.base_dir, c.duration, levels=levels,
-                      resolve=resolve, seed=doc.meta.seed)  # fmt: skip
-            snap.mix = (key, m)
+        named = [b.bed.path for b in c.beds] + [p.cue.sound for p in c.cues if not p.cue.builtin]
+        narration = c.doc.narration
+        named += [b.audio for b in (narration.blocks if narration else ()) if b.audio]
+        stamps = tuple(_file_stamp(self.base_dir, path) for path in named)
+        if snap.mix is None or snap.mix[0] != stamps:
+            voice = None if narration is None else mix_track(narration, self.base_dir, c.duration)
+            snap.mix = (stamps, mix(voice, narration, c.beds, c.cues, self.base_dir, c.duration,
+                                    c.theme.sound, c.doc.meta.seed))  # fmt: skip
         return snap.mix[1]
 
     def _lint(self, snap: _Snapshot, step: float) -> tuple[Issue, ...]:
@@ -580,12 +642,14 @@ class Engine:
                 self.pass_runner(),
                 step=step,
             )
-            snap.lint[step] = (*snap.orphans, *self._bake(snap).issues,
+            baked = self._bake(snap)
+            snap.lint[step] = (*snap.orphans, *baked.issues,
+                               *lint_rules.bake_rules(snap.compiled, snap.plan, baked),
                                *lint_rules.control_rules(snap.compiled),
                                *lint_rules.file_rules(snap.compiled),
-                               *lint_rules.type_rules(snap.compiled),
-                               *lint_rules.sound_rules(snap.compiled, self._mix(snap)),
-                               *visual)  # fmt: skip
+                               *lint_rules.sound_rules(snap.compiled,
+                                                       lambda: self._mix(snap)),
+                               *lint_rules.type_rules(snap.compiled), *visual)  # fmt: skip
         return snap.lint[step]
 
     def _oracle(self) -> PassOracle | None:
@@ -594,8 +658,41 @@ class Engine:
 
     def _bake(self, snap: _Snapshot) -> Bake:
         if snap.bake is None:
-            snap.bake = bake(snap.compiled, snap.plan, self._oracle())
+            # The nearest earlier snapshot that was baked: what the edits since then cannot
+            # have changed is kept (``layout.bake.unchanged_until``).
+            snap.bake = bake(snap.compiled, snap.plan, self._oracle(), self._donor(snap))
+            snap.partial = None
         return snap.bake
+
+    @staticmethod
+    def _donor(snap: _Snapshot) -> tuple[Compiled, Plan, Bake] | None:
+        """The most of a bake this snapshot or the ones it was edited from already has."""
+        at: _Snapshot | None = snap
+        while at is not None:
+            done = at.bake or at.partial
+            if done is not None:
+                return at.compiled, at.plan, done
+            at = at.prior() if at.prior is not None else None
+        return None
+
+    def _state_upto(self, t: float) -> SceneState:
+        """``state_at(t)``, baking only as far as ``t`` needs (the next baked key after it).
+        The same scene ``state_at`` gives; for verbs, which read the scene where they start:
+        a script's verbs walk forward through a long scene without baking all of it each
+        time. Not cached in ``states``."""
+        snap = self._snap
+        if snap.bake is not None or snap.plan.goals:
+            return self.state_at(t)
+        t = float(t)
+        part = snap.partial
+        covers = part is not None and part.resume is not None and (
+            (bool(part.times) and part.times[-1] > t)  # it ran past t
+            or len(part.resume.keyed) == len(key_times(snap.compiled))  # it ran to the end
+        )  # fmt: skip
+        if not covers:
+            snap.partial = bake(snap.compiled, snap.plan, self._oracle(), self._donor(snap),
+                                upto=t)  # fmt: skip
+        return baked_state(snap.compiled, snap.partial, t)
 
     @property
     def layout(self) -> Bake:
@@ -647,6 +744,7 @@ class Engine:
                 new = _build(base, overrides, str(self.base_dir), self.allow_scripts)
         except DocumentError as e:
             return PatchResult(False, self._version, errors=tuple(e.issues))
+        new.prior = weakref.ref(old)
         if self._undo:  # keep evaluated caches only for the current and previous step
             self._undo[-1].states.clear()
             self._undo[-1].snapshots.clear()
@@ -894,9 +992,8 @@ class Engine:
 
     def timeline(self) -> dict[str, Any]:
         """What a timeline panel shows: the duration, the markers, for every animated
-        parameter its spans in resolved seconds (``{"d.pos": [[1.0, 2.0], ...]}``) and the
-        spoken narration blocks (text, start, duration, audio file, ``index`` among all
-        blocks) and the sound: beds (id, start, end) and cues (id, time, sound), in seconds."""
+        parameter its spans in resolved seconds (``{"d.pos": [[1.0, 2.0], ...]}``), the spoken
+        narration blocks (text, start, duration, audio file), the beds and the cues."""
         c = self._snap.compiled
         lanes = {
             path: [[seg.t0, seg.t1] for seg in node.segments]
@@ -906,17 +1003,12 @@ class Engine:
         markers = dict(sorted(c.time_map.markers.items(), key=lambda kv: kv[1]))
         nar = self._snap.compiled.doc.narration
         blocks = [{"text": b.text, "start": b.start, "duration": b.duration, "audio": b.audio,
-                   "index": k}
+                   "index": k}  # its place among all blocks, pauses too (to drag it)
                   for k, b in enumerate(nar.blocks if nar else ()) if b.text]  # fmt: skip
-        snd, at = c.doc.sound, c.time_map.resolve
-        sound = {
-            "beds": [{"id": b.id, "start": at(b.start), "gain": b.gain,
-                      "end": c.duration if b.end is None else at(b.end)} for b in snd.beds],
-            "cues": [{"id": q.id, "t": at(q.at), "sound": q.sound, "gain": q.gain}
-                     for q in snd.cues],
-        }  # fmt: skip
+        beds = [{"id": p.id, "path": p.bed.path, "start": p.t0, "end": p.t1} for p in c.beds]
+        cues = [{"id": p.id, "sound": p.cue.sound, "t": p.t} for p in c.cues]
         return {"duration": c.duration, "markers": markers, "lanes": lanes, "narration": blocks,
-                "sound": sound}  # fmt: skip
+                "beds": beds, "cues": cues}  # fmt: skip
 
     def is_moving(self, t0: float, t1: float) -> bool:
         """Whether anything animated by the document runs between ``t0`` and ``t1``: a
@@ -997,6 +1089,12 @@ class Engine:
             lines = inspector.render_detail(snap, "brief")["objects"]
             frames.append({"t": float(t), "marker": markers.get(t), "objects": lines})
         out = {"image": contact_sheet(cells, columns), "frames": frames}
+        doc = self.document
+        if doc.sound.beds or doc.sound.cues:  # the loudness lanes under the stills (SOUND.md)
+            strip = self.sound_lanes(out["image"].shape[1], [f["t"] for f in frames])
+            if strip is not None:
+                out["image"] = np.concatenate([out["image"], strip], axis=0)
+                out["sound_lanes"] = True
         if compare is not None:
             from phasor.render import gallery
 
@@ -1010,6 +1108,20 @@ class Engine:
         if id is not None and self.document.object(id) is None:
             known = sorted(o.id for o in self.document.objects)
             raise KeyError(f"no object {id!r}; objects are {known}")
+
+
+def _lane_times(z: Any, hop: float, block: float) -> Any:
+    """The middle of each loudness block."""
+    return np.arange(len(z)) * hop + block / 2
+
+
+def _file_stamp(base_dir: Path, path: str) -> tuple[str, int, int] | None:
+    """A file's version (path, modification time, size), or None when it is not there."""
+    try:
+        st = (Path(base_dir) / path).stat()
+    except (OSError, ValueError):
+        return None
+    return path, st.st_mtime_ns, st.st_size
 
 
 def blur_times(t: float, fps: float, shutter: float = 0.5, samples: int = 4) -> list[float]:
