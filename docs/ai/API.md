@@ -1542,7 +1542,10 @@ way; default: all lit), `arms` (animatable 0-K: arm i shows by
 clip(arms - i, 0, 1) and its echoes slide out of the others), `lap_gain` (light kept per lap),
 `color_by` (`arrival`/`order`/`arm`/`value` with `arm_values`), `hue`, `hue_span`,
 `point_size` (share of the frame height), `arm_opacity` (the faint arms), `crowd` (echoes at
-full light; more share it, so a packed star glows in colour). Style: `colormap` (colormap,
+full light; more share it, so a packed star glows in colour), `flash_style` (`shared`: the
+white-hot flash with a halo every lattice of lights has; `vivid`: the star's first look,
+brighter and bigger in its own colour, so a packed star stays saturated; preset `vivid`).
+Style: `colormap` (colormap,
 spectrum), `glow` (glow, soft; the prism look: strong), `stroke` (stroke, hairline). Semantics:
 `points`, `shown`, `heard` (arrived by `time`), `arms_shown`, `complete_until`. The maths is
 `ndlattice_math`: `enumerate_lattice` (every n under the hyperplane, sorted by arrival),

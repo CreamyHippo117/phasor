@@ -27,10 +27,12 @@ from phasor.core.objects import Bounds, DrawContext, ObjectBase, ParamsBase, Pas
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
 from phasor.domains import ndlattice_math as nlm
-from phasor.domains.strokes import flash_points, lut_colors, polylines
+from phasor.domains.strokes import disc_batch, flash_points, lut_colors, polylines
 
 DEFAULT_LOOPS = 3  # loops when neither ``loops`` nor ``delays`` says
 MAX_DRAWN = 200_000  # echoes enumerated (and drawn) at most
+VIVID_BRIGHT = 1.5  # flash_style "vivid": at arrival an echo is this much brighter...
+VIVID_GROW = 1.2  # ...and this much bigger (its own look, before the shared flash)
 SHOWN_FEATURES = 200  # echoes listed in ``features`` (the earliest), for the inspector
 
 
@@ -72,6 +74,11 @@ class StarLattice(ObjectBase):
     Presets: ClassVar = {
         "prism": {"style": {"colormap": "spectrum", "glow": "strong"}},
         "plain": {"params": {"afterglow": 0.6}, "style": {"glow": "none"}},
+        # the star's first look (2026-11-25): saturated colours, no white heat or halo
+        "vivid": {
+            "params": {"flash_style": "vivid"},
+            "style": {"colormap": "spectrum", "glow": "strong"},
+        },
     }
 
     class Params(ParamsBase):
@@ -92,6 +99,9 @@ class StarLattice(ObjectBase):
         afterglow: float = Field(0.35, ge=0, le=1)  # its light after the flash
         swell: float = Field(1.2, ge=0)  # a flashing echo grows by this share of its size
         white: float = Field(0.6, ge=0, le=1)  # how white-hot the flash runs
+        # "shared": the flash every lattice of lights shares (white heat, halo); "vivid": the
+        # star's own, brighter and bigger in its own colour, so a packed star stays saturated
+        flash_style: Literal["shared", "vivid"] = "shared"
         lap_gain: float = Field(1.0, gt=0, le=1)  # light kept per lap round a loop
         color_by: Literal["arrival", "order", "arm", "value"] = "arrival"
         arm_values: tuple[float, ...] = ()  # color_by "value": one number per loop
@@ -222,8 +232,15 @@ class StarLattice(ObjectBase):
             colors = lut_colors(lut, p.hue + p.hue_span * vis["values"])
             colors[:, 3] = vis["light"]
             radius = p.point_size * np.asarray(cam.units_per_height(vis["points"]))
-            flash_points(ctx, cam, vis["points"], radius, colors=colors, flash=vis["flash"],
-                         glow=glow, opacity=p.opacity, swell=p.swell, white=p.white)  # fmt: skip
+            if p.flash_style == "vivid":
+                colors[:, :3] *= (1.0 + VIVID_BRIGHT * vis["burst"])[:, None]
+                colors[:, 3] *= p.opacity
+                disc_batch(ctx, cam, vis["points"], radius * (1.0 + VIVID_GROW * vis["burst"]),
+                           colors=colors, glow=glow)  # fmt: skip
+            else:
+                flash_points(ctx, cam, vis["points"], radius, colors=colors,
+                             flash=vis["flash"], glow=glow, opacity=p.opacity, swell=p.swell,
+                             white=p.white)  # fmt: skip
         if p.arm_opacity > 0:
             lat = self.lattice(state)
             w = nlm.arm_weights(p.k, p.arms)
