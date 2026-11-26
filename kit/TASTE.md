@@ -26,3 +26,8 @@ examples. Add a dated line whenever they say something about taste.
 - 2026-11-26: show more math, to teach: the formula being drawn, the number that turns with
   its live value, labels on what matters. Little prose still, but this replaces "not much
   equations" of 2026-11-25.
+- 2026-11-26: a breathtaking picture keeps the full frame. Where there is room, the
+  equation sits beside it. Where it is breathtaking and also carries the idea, share
+  time, not space: it runs alone first, then at its key moment it slows, dims, and the
+  math is written in, held and taken away (example: `reverb_la`'s hands as the n-th roots
+  of unity, the reverb as a DFT).

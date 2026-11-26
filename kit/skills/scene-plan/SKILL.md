@@ -278,6 +278,10 @@ formulas, live values and labels so they are readable without covering what is b
 studied (at the edge of the stage, at the theme's sizes), and give each term of a
 formula the color of the thing it names, so formula and picture read as one. A formula
 changes with `transform` as the picture changes, and leaves when its object leaves.
+When a picture is breathtaking and also carries the idea, share time, not space: it runs
+alone and full frame first, then at its key moment the motion slows, what is not needed
+dims, and the line of math is written into the dark part, held, and taken away. Pure
+spectacle with nothing more to read gets the frame with no math.
 
 **Verbs.** Only now, with the path chosen and drawn in imagination, read phasor's verbs
 and camera moves in `kit/docs/API.md` (the list grows; read it each time, do not work from

@@ -96,6 +96,23 @@ report; it is part of building faithfully, not re-planning.
   mathematics that goes with it, and change it with `transform` as the picture changes,
   rather than replacing it with a new one.
 
+**When the picture is breathtaking.** Decide per stretch, not per scene:
+
+- **Breathtaking and nothing more to read in it** (a lift that shows the whole): give it
+  the full frame, no math, and keep it short.
+- **Room beside it** (the picture is calm or leaves a dark band): the formula and the live
+  number sit there the whole time.
+- **Breathtaking and it carries the idea**: never shrink it and never cover the part being
+  studied. Share time, not space:
+  1. let it run alone first, full frame, so the viewer sees it before being told;
+  2. put the math *on* the picture where it can be: a label riding the object (`λ^n` on
+     a hand), a term in the same hue as the thing it names;
+  3. at the moment that carries the idea (the hands line up, the set connects), slow the
+     motion, dim what is not needed (`dim_others`), write the line of math into the dark
+     part, hold, then take it away and let the picture run on;
+  4. bring the formula back when the picture settles at the end of the stretch, so the
+     math names what was just seen.
+
 Keep it legible and out of the way: few objects of math at once (a formula, a value, a
 label or two), at the theme's sizes, placed by layout at the edge of the stage, never
 over the part of the picture being studied. Math comes in after the viewer has seen the
