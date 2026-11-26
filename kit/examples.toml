@@ -47,6 +47,11 @@ kind = "complex"
 tier = "technique"
 teaches = "Domain coloring of a function with a glowing contour on top"
 
+[examples.s_plane_roll]
+kind = "complex"
+tier = "technique"
+teaches = "A conformal morph (ComplexMap path=family, preset roll) wrapping the s-plane onto the unit disc, then a 600x log-eased zoom"
+
 [examples.riemann_sqrt]
 kind = "three_d"
 tier = "technique"
@@ -176,6 +181,11 @@ teaches = "A lattice flashing as a surface sweeps it: the image sources of a roo
 kind = "physics"
 tier = "technique"
 teaches = "The unfold verb: a ray bouncing in a room becomes a straight line through mirror rooms that swing over like pages"
+
+[examples.kaleidoscope]
+kind = "physics"
+tier = "technique"
+teaches = "Unfolding in a polygon: a ray in a triangle of mirrors runs straight through the copies that tile the plane"
 
 [examples.spider_and_fly]
 kind = "three_d"

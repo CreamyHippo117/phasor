@@ -414,16 +414,14 @@ def load(path: str | Path, **engine_kwargs: Any) -> Engine:
     engine_kwargs.setdefault("base_dir", path.parent)
     engine_kwargs.setdefault("allow_scripts", True)  # the person ran this script: its code runs
     engine_kwargs.setdefault("script", path)  # render workers run it too (_worker_engine)
-    base = scene.engine.base
-    have = base.meta.modules
+    have = scene.engine.base.meta.modules
     if have and path.name not in have:
         # The scene has code of its own, and the script may set up what that code draws
         # from (a registry): the document names the script too, last, so the saved
         # document opens with it (contract 3). Last: the script registers the types its
         # modules define again, from the same files, with what it filled in.
-        base = base.model_copy(update={"meta": base.meta.model_copy(
-            update={"modules": (*have, path.name)})})  # fmt: skip
-    return Engine(base, overrides=overrides, **engine_kwargs)
+        scene._apply(SetMeta(field="modules", value=[*have, path.name]))
+    return Engine(scene.engine.base, overrides=overrides, **engine_kwargs)
 
 
 def _run_script(path: Path) -> Scene:

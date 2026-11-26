@@ -311,8 +311,12 @@ def _same_segment(a: ResolvedSegment, b: ResolvedSegment) -> bool:
     return a.t0 == b.t0 and a.t1 == b.t1 and a.ease is b.ease and _same(a.to, b.to)
 
 
-def _without_tracks(doc):
-    return doc.model_copy(update={"timeline": doc.timeline.model_copy(update={"tracks": {}})})
+def _without_tracks(doc) -> dict:
+    """The document as plain data with its tracks left out, for comparing two versions
+    (a dump, not a copy: documents are only rebuilt by patches, contract 1)."""
+    data = doc.model_dump(mode="json")
+    data["timeline"]["tracks"] = {}
+    return data
 
 
 def unchanged_until(old: Compiled, new: Compiled) -> float:
