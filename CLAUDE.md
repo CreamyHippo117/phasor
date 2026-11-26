@@ -30,8 +30,9 @@ compounding. If this file and SPEC.md disagree, stop and ask.
   last. Windows, CUDA and macOS untested: **`pc_tasks/09_pc_checks_after_14_15.md`** lists what
   the owner's PC must run.
 - Sound bed (owner, 2026-11-26): music, ambience and effects under the narration, editable in
-  the app: `SOUND.md`, approved 2026-11-26; after `BEAUTY.md`,
-  not started until the owner says so.
+  the app: `SOUND.md`, approved and started 2026-11-26 (owner). Steps 1-3 and `sound_report`
+  built (schema 9 `sound` section: beds and cues); step 4 (the app) waits for `APP_PLAN.md`
+  phase 2.
 - Render speed: `GPU_SPEED.md` (steps 1-4 done, workers included); resume at its "Next
   session"; measure with wall clock before and after each step.
 - One milestone per branch. No work on milestone N+1 until N's exit demo and tests pass.
@@ -100,7 +101,8 @@ compounding. If this file and SPEC.md disagree, stop and ask.
   `PHASOR_UPDATE_GOLDEN=1 uv run pytest -k golden` and look at them before committing.
 - Layout runs only inside `layout/bake.py`, and only `Engine` runs or applies the bake.
   Anything that draws or inspects takes `Engine.state_at(t)`, never `time.compile.evaluate`.
-- A lint rule lives in `inspect/lint.py`, takes its threshold from the theme's `[lint]` table,
+- A lint rule lives in `inspect/lint.py`, takes its threshold from the theme's `[lint]` table
+  (sound rules from `[sound]`, owner 2026-11-26),
   reports `times`, and offers a `fix` only when the fix is certain to be right.
 - New lint rules and layout features are tested with `passes=None` and with OpenGL (see
   `MODES` in `tests/test_lint.py`); CI on Windows has no OpenGL.
