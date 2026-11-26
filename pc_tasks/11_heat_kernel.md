@@ -23,16 +23,15 @@ functions is the newest thing in it), say what it printed.
 ## 2. Pictures: finals before and after
 
 `pc_tasks/pin_frames.py` on `prism_heat`, `interference`, `room_acoustics`,
-`prism_spectrogram` and `heat_dihedral`, `final` preset, before (the PR's base) and after.
-**The hashes must be equal** (owner, 2026-11-26: a change that is not bit-identical is for
-previews only). Then look at one frame of each.
+`prism_spectrogram` and `heat_dihedral`, `final` preset, before (the PR's base) and after,
+then `uv run python pc_tasks/pin_frames.py --compare before.json after.json`. **It must
+pass**: every 8-bit value within 1 code value (owner, 2026-11-26: a final may change only
+where the eye cannot see it). Then look at one frame of each.
 
-If any hash differs: count the differing 8-bit values and find the first stage they appear
-in (the kernel's float32 pixels against its reference: `tests/test_heat_kernel.py`'s `gpu`
-test prints the largest error). Do not merge for `final` until it is equal: either the
-difference is removed, or `heat_shade` on CUDA is used only for `draft` and `preview` (a
+If it fails: find the first stage the difference appears in (the kernel's float32 pixels
+against its reference: `tests/test_heat_kernel.py`'s `gpu` test prints the largest error)
+and report it. Until it passes, `heat_shade` on CUDA is for `draft` and `preview` only (a
 table in `render/job.py`, like `FIELD_SCALE`) and finals keep the NumPy path on CUDA.
-Report what you found.
 
 ## 3. Speed: the numbers for `GPU_SPEED.md`'s Status table
 
