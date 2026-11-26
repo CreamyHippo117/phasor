@@ -221,7 +221,7 @@ assert not [i for i in k.engine.lint(strict=True) if i.code == "impure_updater"]
 `always` lists `"<file>:<function>"`. Opening the document loads those modules only where
 scripts may run (`phasor.load("scene.py")`, `Engine(..., allow_scripts=True)`, the MCP
 server's `--allow-scripts`, and `--allow-scripts` on `phasor inspect`, `lint`, `storyboard`,
-`render`, `web`, `bench --frames` and `sketch`; render workers inherit it), only from inside the scene's folder. A missing, refused or
+`render`, `web`, `bench --frames` and `sketch`; render workers inherit it; a worker for a scene loaded from its `.py` script runs that script first, so state the script sets up for its types reaches the workers too: `PITFALLS.md`), only from inside the scene's folder. A missing, refused or
 broken module is lint `missing_type`: the object draws as a placeholder box and keeps its
 parameters and overrides (saving it changes nothing). An updater defined anywhere else (a
 notebook cell, a prompt) is refused: the document could not find it again. Types shipped in phasor still get an entry here, an

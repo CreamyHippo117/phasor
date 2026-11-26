@@ -361,16 +361,23 @@ def load(path: str | Path, **engine_kwargs: Any) -> Engine:
     path = Path(path)
     if path.suffix != ".py":
         return Engine.open(path, **engine_kwargs)
+    scene = _run_script(path)
+    overrides = io.load_overrides(path.with_name(path.stem + io.OVERRIDES_SUFFIX))
+    engine_kwargs.setdefault("base_dir", path.parent)
+    engine_kwargs.setdefault("allow_scripts", True)  # the person ran this script: its code runs
+    engine_kwargs.setdefault("script", path)  # render workers run it too (_worker_engine)
+    return Engine(scene.engine.base, overrides=overrides, **engine_kwargs)
+
+
+def _run_script(path: Path) -> Scene:
+    """Run a scene script, as ``load`` and every render worker do, and return its Scene."""
     scenes = [v for v in runpy.run_path(str(path), run_name="__phasor__").values()
               if isinstance(v, Scene)]  # fmt: skip
     if len(scenes) != 1:
         raise ValueError(
             f"{path} must define exactly one Scene at module level, found {len(scenes)}"
         )
-    overrides = io.load_overrides(path.with_name(path.stem + io.OVERRIDES_SUFFIX))
-    engine_kwargs.setdefault("base_dir", path.parent)
-    engine_kwargs.setdefault("allow_scripts", True)  # the person ran this script: its code runs
-    return Engine(scenes[0].engine.base, overrides=overrides, **engine_kwargs)
+    return scenes[0]
 
 
 # ---------------------------------------------------------------- render workers (ADR 0003)
@@ -416,8 +423,17 @@ def parallel_frames(engine: Any, workers: int, *, chunk: int = WORKER_CHUNK,
     single process makes. A failed worker stops the render with its error; workers stop by
     themselves if this process dies (the desktop app's Cancel kills it). ``threads``: CPU
     kernel threads in each worker (default ``default_threads(workers)``). ``_fail_at``,
-    ``_on_start`` and ``_slow`` are for tests."""
+    ``_on_start`` and ``_slow`` are for tests.
+
+    A worker built from a scene script runs that script first (``_worker_engine``). Then,
+    before its first frame, each worker reports what the scene's own code draws at that
+    frame (``core.record.census`` of ``_census_ids``); a worker that draws otherwise than
+    this process stops the render there, naming the objects (state the code keeps outside
+    the document, which a worker cannot rebuild). Built-in types are not checked: they draw
+    from the document alone, so a scene without code of its own pays nothing."""
     import multiprocessing
+
+    from phasor.core.record import census
 
     def source(times, size, fps, shutter, samples, field_scale=1.0):
         n = len(times)
@@ -425,6 +441,8 @@ def parallel_frames(engine: Any, workers: int, *, chunk: int = WORKER_CHUNK,
         count = max(1, min(workers, len(stretches)))
         each = default_threads(count) if threads is None else threads
         payload = engine.worker_payload()
+        watch = _census_ids(engine, times[0]) if n else ()
+        checked: set[int] = set()
         ctx = multiprocessing.get_context("spawn")  # Windows has no fork; the same everywhere
         frame_bytes = size[0] * size[1] * 3
         depth = max(chunk + 1, min(2 * chunk, WORKER_BUFFER_BYTES // frame_bytes))
@@ -432,7 +450,8 @@ def parallel_frames(engine: Any, workers: int, *, chunk: int = WORKER_CHUNK,
         procs = [
             ctx.Process(target=_render_worker, name=f"phasor-render-{w}", daemon=True,
                         args=(payload, stretches[w::count], times, size, fps, shutter, samples,
-                              queues[w], 1.0 / count, each, _fail_at, _slow, field_scale))
+                              queues[w], 1.0 / count, each, _fail_at, _slow, field_scale,
+                              watch))
             for w in range(count)
         ]  # fmt: skip
         with _workers_skip_main():
@@ -447,6 +466,14 @@ def parallel_frames(engine: Any, workers: int, *, chunk: int = WORKER_CHUNK,
                     msg = _receive(queues[w], procs[w])
                     if msg[0] == "error":
                         raise RuntimeError(f"render worker {w} failed: {msg[1]}")
+                    if w not in checked:  # a worker's first word: what it draws at frame a
+                        checked.add(w)
+                        here = census(engine.state_at(times[a]), watch) if watch else {}
+                        if msg[0] != "census" or msg[1] != here:
+                            raise RuntimeError(_census_error(w, times[a], here, msg))
+                        msg = _receive(queues[w], procs[w])
+                        if msg[0] == "error":
+                            raise RuntimeError(f"render worker {w} failed: {msg[1]}")
                     if msg[1] != k:
                         raise RuntimeError(f"render worker {w} sent frame {msg[1]}, not {k}")
                     yield msg[2]
@@ -500,9 +527,11 @@ def _receive(q: Any, proc: Any) -> tuple:
 
 
 def _render_worker(payload, stretches, times, size, fps, shutter, samples, q, share, threads,
-                   fail_at, slow, field_scale=1.0) -> None:  # fmt: skip
-    """A render worker's whole life: build the engine from the payload, render its
-    stretches, send each frame. Stops when the parent is gone."""
+                   fail_at, slow, field_scale=1.0, watch=()) -> None:  # fmt: skip
+    """A render worker's whole life: build the engine from the payload (``_worker_engine``),
+    report what the scene's own code draws at its first frame (``watch``: the ids
+    ``_census_ids`` chose), render its stretches, send each frame. Stops when the parent is
+    gone."""
     import multiprocessing
     import queue
     import time
@@ -526,14 +555,18 @@ def _render_worker(payload, stretches, times, size, fps, shutter, samples, q, sh
                     return False
 
     try:
-        from phasor.engine import Engine
+        from phasor.core.record import census
         from phasor.render.cpu import set_threads
         from phasor.render.gpu.budget import set_share
         from phasor.render.job import render_frame
 
         set_share(share)
         set_threads(threads)  # None: every core (one worker, or kernels on the card)
-        engine = Engine.from_payload(payload)
+        engine = _worker_engine(payload)
+        if stretches:
+            t0 = times[stretches[0][0]]
+            if not send(("census", census(engine.state_at(t0), watch) if watch else {})):
+                return
         for a, b in stretches:
             for k in range(a, b):
                 if orphaned():
@@ -547,3 +580,78 @@ def _render_worker(payload, stretches, times, size, fps, shutter, samples, q, sh
                     return
     except BaseException:
         send(("error", traceback.format_exc(limit=12)))
+
+
+def _worker_engine(payload: dict[str, Any], **kwargs: Any) -> Any:
+    """A render worker's engine. When the scene was built by a script (``load``), the
+    script runs here first, as it ran in the parent: whatever it sets up outside the
+    document (types, a registry of drawings its types read) then exists in this process
+    too. The engine itself is still the parent's document with the parent's bake
+    (``Engine.from_payload``, ADR 0003): edits made after loading are kept, and the
+    script's own Scene is dropped. A script edited since the parent loaded it is refused:
+    it could set up something else."""
+    from phasor.engine import _file_sha
+
+    script = payload.get("script")
+    if script:
+        path = Path(script)
+        sha = _file_sha(path)
+        if sha is None or sha != payload.get("script_sha"):
+            raise RuntimeError(
+                f"the scene script {path.name} changed since the scene was loaded (or is gone); "
+                "load it again and render, so every process runs the same script"
+            )
+        _run_script(path)
+    return Engine.from_payload(payload, **kwargs)
+
+
+def _census_ids(engine: Any, t: float = 0.0) -> tuple[str, ...]:
+    """The objects whose drawing depends on the scene's own code (ADR 0005), which render
+    workers are checked on: objects of a scene-local type, objects with updaters, and the
+    parts of either. Empty for a scene of built-in types only."""
+    from phasor.core.objects import is_builtin
+
+    if not engine.base.meta.modules:  # scene-local types and updaters are named there
+        return ()
+    state = engine.state_at(t)
+    updated = {o.id for o in engine.document.objects if o.always}
+    local: set[str] = set()
+    for o in state.objects:
+        chain, parent = [o.id], o.parent
+        while parent is not None and parent in state:
+            chain.append(parent)
+            parent = state[parent].parent
+        if any(i in updated or not is_builtin(type(state[i].impl)) for i in chain):
+            local.add(o.id)
+    return tuple(sorted(local))
+
+
+def _census_error(w: int, t: float, here: dict, msg: tuple) -> str:
+    """What a worker that draws otherwise than this process is told, object by object."""
+    there = msg[1] if msg[0] == "census" else {}
+
+    def say(c) -> str:
+        if c is None:
+            return "is missing"
+        kinds, n, _ = c
+        if not kinds or n == 0:
+            return "draws nothing"
+        return f"draws {len(kinds)} command(s), {n} vertices"
+
+    diffs = []
+    for oid in sorted(set(here) | set(there)):
+        a, b = here.get(oid), there.get(oid)
+        if a == b:
+            continue
+        if a is not None and b is not None and a[:2] == b[:2]:
+            diffs.append(f"{oid} has other params in the worker (an updater?)")
+        else:
+            diffs.append(f"{oid} {say(b)} in the worker but {say(a)} here")
+    shown = "; ".join(diffs[:6]) + (f"; and {len(diffs) - 6} more" if len(diffs) > 6 else "")
+    return (
+        f"render worker {w} does not draw what this process draws at t = {t:g} s: {shown}. "
+        "The scene's own code keeps state outside the document that a worker cannot rebuild "
+        "(a registry the scene script fills, say). Render from the scene script "
+        "(`phasor render scene.py`: workers run it too), keep that state in the object's "
+        "params or in the module meta.modules names, or render with --workers 1."
+    )

@@ -56,6 +56,24 @@ report `visible_fraction` 1.0. Its own visibility is still measured.
 If the script later drops that object, lint reports `orphan_override` (an error). Fix the
 script or delete the entry; phasor never discards a tweak silently.
 
+## Render workers and state the scene script sets up
+
+`phasor render --workers N` starts fresh processes (spawned, as on Windows). Each builds the
+scene from the parent's document and bake; it does not have what the parent's process had.
+A scene-local type that draws from module-level state the *script* fills (a registry of
+drawings in `progs.py`, filled by `scene.py`) would draw nothing there. So when the scene
+came from a script (`phasor render scene.py`, `phasor.load("scene.py")`) and the document
+names scene code (`meta.modules`), every worker runs that script first, then uses the
+parent's document (`scene._worker_engine`). A script edited after the render started is
+refused. A saved `.phasor.json` has no script: the module `meta.modules` names is loaded
+afresh, and anything only a script put in it is missing.
+
+Safety net: before its first frame, each worker reports what the scene's own objects
+(scene-local types, objects with updaters, their parts) draw at that frame
+(`core.record.census`); if it differs from the parent, the render stops at once, naming
+the objects. Keep such state in params, in a file the document names, or fill it in the
+module `meta.modules` names; or render with `--workers 1`.
+
 ## GL contexts
 
 GL calls go to whichever context is current. Never call `moderngl.create_context`; use

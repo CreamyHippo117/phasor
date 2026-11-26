@@ -120,6 +120,16 @@ REFUSED = ("refused: scripts may not run here (open the scene with allow_scripts
            "start the MCP server with --allow-scripts)")  # fmt: skip
 
 
+def _file_sha(path: Path) -> str | None:
+    """A file's SHA-256, or None when it cannot be read."""
+    import hashlib
+
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
 def needs_code(doc: Document) -> bool:
     """Whether the document names code that is not here yet: a type nobody registered or an
     updater nobody defined in this process."""
@@ -244,15 +254,21 @@ class Engine:
         passes: PassRunner | str | None = "auto",
         base_dir: str | Path | None = None,
         allow_scripts: bool = False,
+        script: str | Path | None = None,
     ) -> None:
         """``allow_scripts``: the modules the document names (``meta.modules``, types and
         updaters defined in the scene's folder) may run. Off by default: like the importers,
         code runs only on the person's request (``phasor.load("scene.py")`` runs the script
-        anyway, so it turns this on)."""
+        anyway, so it turns this on). ``script``: the scene script that built the document
+        (``phasor.load`` sets it), run again by each render worker for what it sets up
+        outside the document (a registry its types draw from); its hash is kept as it
+        was now, so a worker refuses a script edited since."""
         base = document or Document(meta=Meta(title=title))
         # The folder that files the document refers to (narration audio, meshes) are relative to.
         self.base_dir = Path(base_dir) if base_dir is not None else Path.cwd()
         self.allow_scripts = allow_scripts
+        self.script = Path(script).resolve() if script is not None else None
+        self.script_sha = _file_sha(self.script) if self.script is not None else None
         self._snap = _build(base, overrides or Overrides(), str(self.base_dir), allow_scripts)
         self._undo: list[_Snapshot] = []
         self._redo: list[_Snapshot] = []
@@ -281,6 +297,12 @@ class Engine:
             # The scene's own code (ADR 0005) runs in a worker when it could run here: the
             # parent was allowed to, or already had every type (the person ran the script).
             "allow_scripts": self.allow_scripts or not self._snap.compiled.missing,
+            # The script the person ran to build this scene: workers run it too, before
+            # building the document, so what it set up for the scene's own code (ADR 0005)
+            # exists there as here. Only when the document names such code: built-in types
+            # draw from the document alone, and a script can take seconds to run.
+            "script": str(self.script) if self.script and self._snap.base.meta.modules else None,
+            "script_sha": self.script_sha,
         }
 
     @classmethod
@@ -303,8 +325,10 @@ class Engine:
     def fork(self) -> Engine:
         """A private copy of this engine's current scene (document and overrides) with its own
         history: edit it freely (a player moving sliders) and this one never changes."""
-        return Engine(self._snap.base, overrides=self._snap.overrides, passes=self._passes,
-                      base_dir=self.base_dir, allow_scripts=self.allow_scripts)  # fmt: skip
+        other = Engine(self._snap.base, overrides=self._snap.overrides, passes=self._passes,
+                       base_dir=self.base_dir, allow_scripts=self.allow_scripts)  # fmt: skip
+        other.script, other.script_sha = self.script, self.script_sha
+        return other
 
     # ------------------------------------------------------------ files
 
