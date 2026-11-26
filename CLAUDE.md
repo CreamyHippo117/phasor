@@ -31,7 +31,9 @@ compounding. If this file and SPEC.md disagree, stop and ask.
   the owner's PC must run.
 - Render speed: `GPU_SPEED.md` (steps 1-4 done, workers included; 9a-9c done, 9c untested on
   CUDA: `pc_tasks/11_heat_kernel.md`; step 10 is a survey, not built); resume at its "Next
-  session"; measure with wall clock before and after each step.
+  session"; measure with wall clock before and after each step. A speed-up that is not
+  bit-identical is for previews only (`draft`, `preview`): `final` and `4k` frames must hash
+  the same as before (owner, 2026-11-26).
 - One milestone per branch. No work on milestone N+1 until N's exit demo and tests pass.
 - Before declaring a milestone done, run the `phasor-milestone-gate` skill.
 

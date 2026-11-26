@@ -23,8 +23,16 @@ functions is the newest thing in it), say what it printed.
 ## 2. Pictures: finals before and after
 
 `pc_tasks/pin_frames.py` on `prism_heat`, `interference`, `room_acoustics`,
-`prism_spectrogram` and `heat_dihedral`, before (the PR's base) and after. Expected: equal
-hashes or within 1 code value. Then look at one frame of each.
+`prism_spectrogram` and `heat_dihedral`, `final` preset, before (the PR's base) and after.
+**The hashes must be equal** (owner, 2026-11-26: a change that is not bit-identical is for
+previews only). Then look at one frame of each.
+
+If any hash differs: count the differing 8-bit values and find the first stage they appear
+in (the kernel's float32 pixels against its reference: `tests/test_heat_kernel.py`'s `gpu`
+test prints the largest error). Do not merge for `final` until it is equal: either the
+difference is removed, or `heat_shade` on CUDA is used only for `draft` and `preview` (a
+table in `render/job.py`, like `FIELD_SCALE`) and finals keep the NumPy path on CUDA.
+Report what you found.
 
 ## 3. Speed: the numbers for `GPU_SPEED.md`'s Status table
 

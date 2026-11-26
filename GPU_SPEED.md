@@ -442,7 +442,14 @@ card `tanh`, `exp` and `pow` are not libm's, so expect the last bits to differ t
 Measured here (4 cores, no GPU): one 1920x1080 prism heat map (smooth, 8 isolines) 778 ms
 in NumPy -> 178 ms in the kernel on 4 threads (680 ms on one: five bicubic samples a pixel).
 On the card: to measure. Double arithmetic is slow on consumer cards; if `phasor bench`
-shows `heat_shade` above about 20 ms, a float32 variant is the next trim.
+shows `heat_shade` above about 20 ms, a float32 variant is the next trim, and since it
+would change pictures, for previews only (owner, 2026-11-26).
+
+**The card must give the same finals.** On the card `tanh`, `exp` and `hypot` are not libm's
+(double, last bits), so the float32 pixels may differ on rare values. By the owner's rule
+(2026-11-26) `final` and `4k` need the 8-bit frames hash-identical to before
+(`pc_tasks/11_heat_kernel.md`, section 2). If they are not, the kernel is for previews on
+CUDA until the difference is removed, and finals keep the NumPy path there.
 
 ### 9d. Polynomial roots on the card (expected: point_cloud 3043 -> ~150 ms draw while `twist` moves)
 
@@ -510,9 +517,11 @@ lines (stroke building: `strokes.polylines` 1600 calls a frame; step 3b/3c).
   rows, so an unchanged field is not converted again. Changes what `ctx.field`'s `pixels`
   may return (`core/objects.py` says NumPy): the owner's OK, and a test that CuPy's
   float32 -> float16 rounds as NumPy's does (to nearest even). Card.
-- **10c. One field per frame, not per blur sample.** The largest single lever left (x4 on
-  every moving field), and the only one that changes pictures: a moving field would blur
-  differently. Opt-in per type, only with the owner's say-so (already noted under step 9).
+- **10c. One field per frame, not per blur sample.** It changes pictures (a moving field
+  would blur differently), so by the owner's rule (2026-11-26) it is for previews only.
+  Neither preview preset has motion blur (`BLUR`: one sample a frame), so today it would
+  gain nothing there: **not built**. It becomes worth building only if a preview gets
+  motion blur.
 - **10d. Strokes.** Step 3b/3c (one draw per object, the command cache) for scenes made of
   lines; nothing new.
 - **10e. Without a card.** `gpu.box_mean`'s float64 mean of the supersampled tile is the top
@@ -520,16 +529,25 @@ lines (stroke building: `strokes.polylines` 1600 calls a frame; step 3b/3c).
   a box-mean kernel would run it on every core. Not the owner's machine.
 
 Order suggested: 10a and 10b together on the PC (small, bit-identical, every field type
-gains), then 9d, then decide 10c.
+gains: 10b only if CuPy's float32 -> float16 rounds as NumPy's on every value the fields
+make, else it is for previews), then 9d. 9d replaces `eigvals` by another algorithm, so
+its roots differ in the last bits: by the owner's rule its finals must hash-identical or
+it is for previews only (check on the card before building it for `final`).
 
 ## Rules for the whole plan
 
 - One step per commit series; a step is done when its tests pass, the full suite passes
   (`uv run pytest`), the `gpu` tests pass on the RTX 4070 Ti, and the bench shows the gain.
 - Every new kernel: NumPy reference first, then `CASES`, the emulator and the card.
-- A speed-up may not change pictures. Steps 1-2 may differ by at most 1 code value (float
-  rounding); steps 3, 4 and step 5's interop must be bit-identical; step 5's encoder
-  switch is held to codec tolerance (PSNR > 45 dB at cq 19).
+- **Owner, 2026-11-26: a speed-up that is not bit-identical is for previews only**
+  (`draft`, `preview`). In `final` and `4k` every new speed-up must leave the 8-bit frames
+  bit-identical (`pc_tasks/pin_frames.py` hashes equal, on the card too); one that cannot
+  goes into a preview preset's table in `render/job.py` (like `FIELD_SCALE`), or is not
+  done. Already merged before this rule: steps 1-2 may differ by at most 1 code value
+  (float rounding), left as they are unless the owner says otherwise; steps 3, 4 and step
+  5's interop must be bit-identical; step 5's encoder switch is held to codec tolerance
+  (PSNR > 45 dB at cq 19), so under this rule it is for previews unless the owner says
+  otherwise.
 - Record each step's bench numbers in the table below, with the commit.
 
 ## Next session (written 2026-11-22, after step 4)
