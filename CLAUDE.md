@@ -33,8 +33,12 @@ compounding. If this file and SPEC.md disagree, stop and ask.
   the app: `SOUND.md`, approved and started 2026-11-26 (owner). Steps 1-3 and `sound_report`
   built (schema 9 `sound` section: beds and cues); step 4 (the app) waits for `APP_PLAN.md`
   phase 2.
-- Render speed: `GPU_SPEED.md` (steps 1-4 done, workers included); resume at its "Next
-  session"; measure with wall clock before and after each step.
+- Render speed: `GPU_SPEED.md` (steps 1-4 done, workers included; 9a-9c done, 9c untested on
+  CUDA: `pc_tasks/11_heat_kernel.md`; step 10 is a survey, not built); resume at its "Next
+  session"; measure with wall clock before and after each step. In `final` and `4k` a
+  speed-up may change pictures only where the eye cannot see it: every 8-bit value within 1
+  code value (`pc_tasks/pin_frames.py --compare`); anything visible is for previews only
+  (`draft`, `preview`) (owner, 2026-11-26).
 - One milestone per branch. No work on milestone N+1 until N's exit demo and tests pass.
 - Before declaring a milestone done, run the `phasor-milestone-gate` skill.
 

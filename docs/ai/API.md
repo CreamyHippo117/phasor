@@ -704,6 +704,7 @@ assert field.shape == (90, 160) and (field == -1).any()  # -1 marks points in th
 | `srgb8` | `image` | linear display RGBA (0..1) -> (h, w, 3) uint8 sRGB (whole image) |
 | `accumulate` | `image`, `weight=1.0`, `acc=None` | float32 `acc + weight * image`; `image` may be float16 (whole image, any channel count; the motion-blur sum) |
 | `splat` | `points` ((n, 2) plane coordinates), `colors` ((n, 3) linear RGB, or one), `center`, `height`, `weights=None`, `sigma=1.0` (px), `gain=1.0`, `curve=True`, `white=0.0` | each point adds a Gaussian of light (integer `atomicAdd` in fixed point, so the same bits every run); rgb = mean colour (toward white by white x a^4) x a, alpha a = 1 - exp(-gain x density); `curve=False`: the raw sums |
+| `heat_shade` | `center`, `height`, `size`, `recipe` (`heatmap.Recipe`: how a value becomes level, colour and glow weight), `grid=None` or `image=None` (with `origin=(0, 0)`), `cells=False`, `how="linear"`, `isolines=0`, `line_glow=0.7`, `background=None`, `ambient=0.12`, `fade=0.0`, `contrast=1.0` | RGBA: a heat map of a grid (sampled `nearest`, `linear` or `smooth`) or of a field made per pixel, with contour lines, the glow weight in alpha and the edge fade, in one pass |
 
 - `center` and `height` describe the view like the 2D camera: the point at the middle of
   the frame and how many units the frame is tall.

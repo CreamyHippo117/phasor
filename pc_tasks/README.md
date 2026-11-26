@@ -14,6 +14,7 @@ fast renders), so they are done on the PC. Each has its own instruction file her
 | `cpu_workers.md` | Milestone 14.3: how many render workers the RTX card wants | `perf/cuda-workers` | `C:\Users\Atlas\phasor-workers` |
 | `08_wave_fields.md` | Interference, beamforming, bifurcation (`ANIMATIONS.md`); after 3 and 4 | `anim/wave-fields` | `C:\Users\Atlas\phasor-waves` |
 | `09_pc_checks_after_14_15.md` | Milestones 14 and 15: Windows CPU backend, GPU kernels, Riemann timing, GPU golden for `open_contract`, decisions | `claude/eloquent-mayer-jiqxs9` (no new branch) | `C:\Users\Atlas\phasor-dev` |
+| `11_heat_kernel.md` | Render speed step 9c: heat maps drawn by the `heat_shade` kernel; checks and measurements only the card can give | the PR's branch (no new branch) | `C:\Users\Atlas\phasor-dev` |
 | `10_render_speed.md` | Render speed: measure before/after on the card (`GPU_SPEED.md` steps 7-8); measurements only, no code | `perf/measure` | `C:\Users\Atlas\phasor-speed` |
 
 ## Starting the three at once (PowerShell)

@@ -1,11 +1,11 @@
 ---
-name: idea-scout
-description: Hunt for video ideas worth a full scene plan, without writing scenes or plans. A panel of specialists (geometer, algebraist, combinatorialist, ...) each proposes a mechanism and one picture for a topic, a separate attacker tries to kill each one, and only survivors reach the ledger in `ideas/`. Use when asked to "scout ideas", "find video ideas", "run the idea scout", or on an unattended scheduled run.
+name: scene-brainstorm
+description: Brainstorm video ideas worth a `/scene-plan`, without writing scenes or plans. A panel of specialists (geometer, algebraist, combinatorialist, ...) each proposes a mechanism and one picture for a topic, a separate attacker tries to kill each one, and only survivors reach the ledger in `ideas/`. Use for /scene-brainstorm, or when asked to "brainstorm scene ideas", "find video ideas", "scout ideas", or on an unattended scheduled run.
 ---
 
-# idea scout
+# scene brainstorm
 
-Purpose: raise the hit rate of the expensive step (a full scene plan, done by the owner) by
+Purpose: raise the hit rate of the expensive step (`/scene-plan`, run by the owner) by
 killing weak ideas cheaply first. A good run ends with a few survivors and many recorded
 deaths. A run that kills everything is a valid result; say so and stop.
 
