@@ -21,3 +21,5 @@ examples. Add a dated line whenever they say something about taste.
   with new cases; usually not concrete before abstract (ask which route).
 - 2026-11-25: not much text or equations on screen; no hard cuts, one animation becomes
   the next.
+- 2026-11-26: a long hold milks extensions of the same idea (the next case, the parameter
+  going further, a deeper level, another view), never a replay of the exact same visual.
