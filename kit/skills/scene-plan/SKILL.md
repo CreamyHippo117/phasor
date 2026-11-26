@@ -25,6 +25,9 @@ rules below are a summary of it as of 2026-11-25; where they differ, `TASTE.md` 
   a long silent stretch over ambient music, then more words only if needed. Half the video
   may have no voice.
 - **Never rush.** A long hold is not a fault.
+- **A hold extends the idea; it never replays it.** Each stretch of a hold shows something
+  new: the next case, the parameter going further, another parameter, a deeper level,
+  another view, the edge case. The same motion again, or a sweep out and back, is a replay.
 - **Quality, not quantity.** As many animations as the best story needs (ten or three). None
   added to fill time, none dropped to save it.
 - **Come back to the same picture** and test it on new cases, instead of a new picture for
@@ -120,7 +123,9 @@ the feel, its lens and question, the house rules above, and these instructions:
   other branch. Write the obvious ones down, then keep going past them.
 - For every picture say how it fills the frame, how it moves, and what could change in it
   to keep it worth watching for a minute or more (which parameter turns, which cases run
-  through it). A picture that is finished in five seconds cannot hold a stage.
+  through it). List these as different things, not one thing repeated: a picture whose
+  only way to last a minute is to loop cannot hold a stage, and neither can one that is
+  finished in five seconds.
 - Do not ask whether phasor can draw it. (The phasor expert is the exception: it says what
   phasor draws well now.)
 - Write to `plans/NAME.work/round1/LENS.md`.
@@ -211,6 +216,10 @@ Now make the chosen path teach as well as it can:
 - **Name what is hard**: the one step where people get lost. Give it the most time.
 - **Plan the returns**: cases that run through the same animation, each changing one thing.
   The last should surprise.
+- **Fill every hold with extensions.** For each hold, list its stretches in order, each
+  with what it shows that the ones before did not, enough of them to carry the hold's
+  whole length. If the list is too short for the hold, find more of the idea or shorten
+  the hold; never leave the builder time it can only fill by replaying.
 - **Place the predictions**: points where the picture holds before answering.
 - **Earn every symbol.** A word or equation appears only after the viewer has seen the
   thing it names.
@@ -313,6 +322,8 @@ A fresh agent reads the plan as the viewer from step 1 and answers each; fix wha
 13. Is any verb there only as decoration? Cut it.
 14. If the plan uses a weave, do the two ideas truly live in one object, or were they
     stapled together?
+15. In any hold, did I watch the same thing twice? Each stretch must show something new;
+    replace a replay with an extension of the idea, or shorten the hold.
 
 If the Editor finds the path itself weak, go back to the map; do not patch.
 
@@ -337,8 +348,9 @@ The central picture. What color encodes. The music bed.
 
 ## Animations
 ### 1. What fills the stage
-- **While it holds:** how it changes, in order (iterations, cases, parameters, big moves),
-  with the verb for each motion and where it lands
+- **While it holds:** its stretches, in order (iterations, cases, parameters, big moves),
+  each with roughly how long, what it shows that the earlier ones did not, the verb for
+  each motion and where it lands. Enough stretches for the whole hold; no replays
 - **Say before:** brief; the gist, for the person to put in their own words
 - **Silent stretch:** how long, and what the viewer should work out alone
 - **Say after:** if anything

@@ -31,14 +31,51 @@ These come from the plan and are not yours to trade away for convenience:
   forty-second silent stretch, the scene does too. Long is intended.
 - **How it changes while it holds**: the plan's iterations, cases, parameters and big
   moves, in its order.
+- **A hold extends the idea; it never replays it.** See the next section.
 - **No hard cuts**: each animation becomes the next the way the plan says.
 - **What color encodes**, and the same meaning for a hue throughout.
 - **Little text**: only the labels and equations the plan names.
 
+## Filling a hold: extensions, not replays
+
+A long hold is long because the idea has more to give, not so the same motion can run
+again. Every stretch of a hold must show the viewer something they have not yet seen in
+this video.
+
+A replay is: the same motion looped; a parameter swept out and then back over the range
+it just covered; a case run a second time; the same camera move again; the earlier
+picture again with nothing but its color or speed changed. None of these is allowed as a
+way to fill time. (Coming back to a picture *with a new case* is not a replay: the case
+is the new thing.)
+
+An extension stays inside the same idea and the same picture and takes it one step
+further. In rough order of strength:
+
+- **the next case**: a different starting point, shape, function or number through the
+  same animation, chosen because it behaves differently from the ones already shown;
+- **further along**: the parameter goes on past where it stopped, into a range where the
+  picture does something new (it should never turn round and go home);
+- **another number turns**: a second parameter of the same object, the first now fixed;
+- **deeper**: more iterations, a finer level, the next order of the approximation;
+- **another view of the same thing**: a different big move (a lift after a sweep, a
+  descent into one part), which shows the part against the whole;
+- **the edge**: the extreme, degenerate or breaking case, where the idea almost fails.
+
+Before coding a hold, write its stretches as a list with one line each: what it shows
+that the stretches before it did not. If two lines say the same thing, one of them is a
+replay; replace it. If the plan's own "While it holds" list runs out before the hold
+does, add extensions of these kinds, the plan's first, yours after, and name the ones
+you added in the report. If the idea is truly used up, end the hold there and say so in
+the report: a shorter hold is better than a replay.
+
+The small motion that keeps a resting frame alive (life, a slow drift) is not a stretch
+and does not count as content; it only keeps the picture from freezing between them.
+
 ## The steps
 
 1. **Read the plan and list the work.** One line per animation: what fills the stage, how
-   it changes, how long, how it becomes the next. Name the scene after the plan.
+   it changes (the list of stretches from the section above), how long, how it becomes
+   the next. Name the scene after the plan.
 2. **Find the means.** For each animation, find in `kit/docs/API.md` (or `docs_search`)
    the object types, parameters, verbs and camera moves that make it; and in
    `kit/examples/INDEX.md` the closest example for its technique (copy the technique, not
@@ -67,6 +104,9 @@ These come from the plan and are not yours to trade away for convenience:
    animation you just added, answer:
    - Does it fill the stage, alone?
    - Does it hold as long as the plan says, and is something always changing a little?
+   - Replay test: go along the hold's frames in order. Does each stretch show something
+     no earlier frame of the video did? Any two stretches that look alike are a replay;
+     turn the later one into an extension.
    - Silent test: from the frames alone, would the viewer work out what the plan says
      they should?
    - Does it become the next animation without a cut?
@@ -76,5 +116,6 @@ These come from the plan and are not yours to trade away for convenience:
    on.
 7. **Preview:** render `--preset preview` to `out/NAME.mp4`.
 8. **Report** in a few lines: each animation as built against the plan (as planned,
-   nearly, or not possible), the files (plan, script, storyboard, video), what went to
+   nearly, or not possible), the extensions you added to fill a hold and any hold you
+   ended early, the files (plan, script, storyboard, video), what went to
    `WISHLIST.md`, warnings left on purpose, and anything in the plan you would question.
