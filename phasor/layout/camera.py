@@ -34,6 +34,7 @@ from phasor.core.constraints import Goal
 from phasor.core.issues import Issue
 from phasor.core.spatial import Camera, OrbitCameraParams, perspective_camera
 from phasor.core.state import SceneState
+from phasor.core.values import geo_lerp
 from phasor.layout.geometry import is_backdrop, occludes
 from phasor.layout.plan import Plan, Rule
 from phasor.time.compile import Compiled, evaluate, sway
@@ -300,12 +301,12 @@ class _Handoff:
                 continue
             start = np.asarray(self.start[n], dtype=np.float64)
             init = np.asarray(tr.initial, dtype=np.float64)
-            w = (
-                1.0
-                if keep or t <= s.t0
-                else 1.0 - (s.ease(min((t - s.t0) / max(s.t1 - s.t0, 1e-9), 1.0)))
-            )
-            v = np.asarray(tr.value_at(t), dtype=np.float64) + (start - init) * w
+            e = s.ease(min((t - s.t0) / max(s.t1 - s.t0, 1e-9), 1.0)) if t > s.t0 else 0.0
+            if s.geometric and not keep and t < s.t1 and start.ndim == 0:  # a zoom, by factors
+                v = np.asarray(geo_lerp(float(start), float(s.to), e), dtype=np.float64)
+            else:
+                w = 1.0 if keep or t <= s.t0 else 1.0 - e
+                v = np.asarray(tr.value_at(t), dtype=np.float64) + (start - init) * w
             upd[n] = tuple(float(a) for a in v) if v.ndim else float(v)
         return OrbitCameraParams(**{**p.model_dump(), **upd}) if upd else p
 

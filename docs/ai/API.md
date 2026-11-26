@@ -267,8 +267,8 @@ assert s4.engine.lint(strict=True) == []
 | `bloom_in(*ids)` | fade in and grow from a point with a small overshoot (objects with `r`) |
 | `dim_others(*keep)` | dim everything but the object (or objects) you keep, to the theme's `dim_level` (backdrops stay) |
 | `undim()` | bring dimmed objects back |
-| `focus_pull(id, margin=0.15)` | move the camera onto an object |
-| `morph(path, value)` | change any parameter smoothly (a whole-number one, such as `terms`, in whole steps) |
+| `focus_pull(id, margin=0.15)` | move the camera onto an object (the zoom by factors: `log:` easing) |
+| `morph(path, value)` | change any parameter smoothly (a whole-number one, such as `terms`, in whole steps; a camera's `height` or `distance` by factors, so a 600x dive is even) |
 | `settle(path, value)` | move like a released spring (overshoot, then rest) |
 | `transform(a, b)` | equation `a` becomes `b`: parts that appear in both glide over (and change color); the rest fade |
 | `become(a, b)` | curve `a` turns into the shape of curve `b` (a circle into a square), then `b` takes its place |
@@ -294,7 +294,14 @@ point riding another curve (a `Line`, `calc.Graph`, `geo.ParametricCurve` or
 digits=2)` shows a number that follows whatever it reads. `Callout(target=, shape=)` is the
 ring `circumscribe` draws. `cx.ComplexMap(function="z**2", amount=0)` is a grid pushed
 through f (animate `amount` 0 to 1 with `morph`; `center` is the complex point at the grid's
-middle, drawn at `pos`; lines break at poles). `geo.FlowParticles(fp=, fq=, fr=, count=,
+middle, drawn at `pos`; lines get extra points where they bend and break at poles). The
+straight path `(1 - amount) z + amount f(z)` can fold the grid on the way (its derivative
+vanishes somewhere); with `path="family"` the function is a family `f(z, a)` and the
+picture at `amount` is `f(z, a=amount)`, a holomorphic map at every step, so the grid rolls
+conformally. Preset `roll` is `(exp(a*z) - 1)/a` (the identity at 0, `e^z - 1` at 1; the
+0/0 at `a = 0` gives its limit): vertical lines curl into circles, and drawn at
+`pos = center + 1` the s-plane lands on `z = e^s`, the left half plane in the unit disc
+(`examples/s_plane_roll.py`). `geo.FlowParticles(fp=, fq=, fr=, count=,
 speed=, lifetime=, tail=)` streams particles along a field (random starts from
 `rng(id, seed)`, a pure function of time; presets `streaks`, `sparks`). `geo.ParametricCurve`
 and `geo.ParametricSurface` take `to_fx`/`to_fy`/`to_fz` and `blend` (0 to 1) to flow into
@@ -317,6 +324,14 @@ me = mo.engine
 assert me.inspect(1.0, id="after")["objects"][0]["semantic"]["matched"] == 1
 assert me.inspect(4.0, id="comet.count")["objects"][0]["semantic"]["text"] == "$p = 1.00$"
 assert "after.ring" in [o.id for o in me.document.objects]
+
+ro = Scene("roll", passes=None)
+ro.add(cx.ComplexMap(id="s", preset="roll", center=(-1, 0), extent=(2, 6.2832), amount=0.0))
+ro.marker("go", 0.5)
+ro.at("go").morph("s.amount", 1.0)
+rs = ro.engine.state_at(3.0)
+axis = [p for fam, p in rs["s"].impl._runs(rs["s"].params) if fam == 0][-1]  # e^{i y}
+assert all(abs(abs(complex(x, y)) - 1.0) < 1e-9 for x, y, _ in axis)  # the unit circle
 ```
 
 **Smooth transitions** (`examples/prism_transitions.py`).
@@ -378,7 +393,21 @@ Times anchored to a marker move with it. Segments on one parameter must not over
 A parameter set by `expr(...)` cannot also have a track; animate what it reads.
 Easings: `linear smooth smoother in out in_out`, and `back spring` (these overshoot: not for
 opacity). Custom easing functions are not supported: a document must mean the same
-everywhere.
+everywhere. `log:<easing>` (`"log:smooth"`, `"log:linear"`) runs any of them by factors,
+`value = a (b / a)^ease(u)`: equal times give equal ratios, so a zoom looks even. Both
+ends must be positive (else `bad_segment`). `focus_pull` and `morph` already use it for a
+camera's `height` and `distance`.
+
+```python
+from phasor import Dot, Scene
+
+zo = Scene("dive", passes=None)
+zo.add(Dot(id="d", r=0.01))
+zo.set("camera.height", 600.0)
+zo.at(0.0).to("camera.height", 1.0, duration=3.0, ease="log:linear")
+hs = [zo.engine.state_at(t).values["camera.height"] for t in (0.0, 1.0, 2.0, 3.0)]
+assert all(abs(a / b - 600 ** (1 / 3)) < 1e-9 for a, b in zip(hs, hs[1:]))  # even factors
+```
 
 ## Engine: state, patches, undo
 

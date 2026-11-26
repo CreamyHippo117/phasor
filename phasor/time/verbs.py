@@ -25,9 +25,11 @@ from phasor.core import unfold_math
 from phasor.core.schema import ExprSpec, MarkerRef, TimeRef
 from phasor.core.state import SceneState
 from phasor.time.compile import Compiled, evaluate
+from phasor.time.easing import LOG
 from phasor.time.tracks import ResolvedTrack
 
 FOCUS_MARGIN = 0.15  # focus_pull leaves this share of the frame around the object
+ZOOM_PARAMS = ("height", "distance")  # camera scales: a verb moves them by factors (log:)
 
 
 class VerbError(ValueError):
@@ -93,8 +95,17 @@ class Verbs:
         spec = self.motion[timing or verb]
         t0 = shift(self.at, delay)
         t1 = shift(self.at, delay + spec["duration"])
-        seg = {"t0": _ref(t0), "t1": _ref(t1), "to": to, "ease": spec["ease"], "verb": verb}
+        seg = {"t0": _ref(t0), "t1": _ref(t1), "to": to, "ease": self._ease(path, spec["ease"]),
+               "verb": verb}  # fmt: skip
         return {"op": "add_segment", "path": path, "segment": seg}, delay + spec["duration"]
+
+    def _ease(self, path: str, ease: str) -> str:
+        """A camera's zoom (``height``, ``distance``) moves by factors: ``log:`` + the curve,
+        so a 600x dive looks even. Everything else eases as the theme says."""
+        target, _, name = path.rpartition(".")
+        if name in ZOOM_PARAMS and self.c.doc.camera(target) and not ease.startswith(LOG):
+            return LOG + ease
+        return ease
 
     def _each(self, ids: Sequence[str], verb: str, make) -> Motion:
         if not ids:
