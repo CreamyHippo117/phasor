@@ -227,6 +227,11 @@ kind = "fourier_linalg"
 tier = "technique"
 teaches = "The Fourier transform as a winding picture: a wound signal, its centre of mass and the spectrum it traces"
 
+[examples.aliasing]
+kind = "fourier_linalg"
+tier = "technique"
+teaches = "Sampling and aliasing, the wagon wheel: sweep the sample rate down and the slowest wave through the samples appears, runs backwards, stops"
+
 [examples.prism_spectrogram]
 kind = "fourier_linalg"
 tier = "technique"
