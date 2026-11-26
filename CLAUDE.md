@@ -30,7 +30,8 @@ compounding. If this file and SPEC.md disagree, stop and ask.
   last. Windows, CUDA and macOS untested: **`pc_tasks/09_pc_checks_after_14_15.md`** lists what
   the owner's PC must run.
 - Sound bed (owner, 2026-11-26): music, ambience and effects under the narration, editable in
-  the app: `SOUND.md`, proposed, waiting for the owner's answers; nothing built.
+  the app: `SOUND.md`, approved 2026-11-26; after `BEAUTY.md`,
+  not started until the owner says so.
 - Render speed: `GPU_SPEED.md` (steps 1-4 done, workers included); resume at its "Next
   session"; measure with wall clock before and after each step.
 - One milestone per branch. No work on milestone N+1 until N's exit demo and tests pass.

@@ -2,8 +2,8 @@
 
 Working doc, like `APP_PLAN.md`. Asked for by the owner on 2026-11-26: "a sound bed: sound
 effects merged nicely with background music, most likely ambient, under the narration, and
-all of it editable in the desktop app". Status: **proposed, nothing built**. Needs the
-owner's answers (end of this doc) before step 1 starts.
+all of it editable in the desktop app". Status: **approved by the owner 2026-11-26, not started**. It comes after `BEAUTY.md`; the
+owner's answers are at the end of this doc.
 
 ## What exists to build on
 
@@ -53,7 +53,7 @@ document, same samples, bit for bit. It runs in NumPy at encode and for the app'
    centred; other sample rates are resampled once (polyphase, cached).
 2. **Loudness, not peaks.** Each source is measured in LUFS (ITU BS.1770 K-weighting, a few
    lines of NumPy) and set relative to the voice: by default voice at -16 LUFS, bed 18 dB
-   under, cues 6 dB under. These live in a new theme table `[sound]`, so a look can be
+   under, cues 10 dB under (owner: effects a bit quieter). These live in a new theme table `[sound]`, so a look can be
    quieter or louder (taste knobs stay in themes).
 3. **Ducking.** While a narration block speaks, beds dip by `[sound] duck` dB (default 8)
    with `attack`/`release` ramps. The envelope comes from the narration's word times, not
@@ -64,13 +64,13 @@ document, same samples, bit for bit. It runs in NumPy at encode and for the app'
    to the theme's target. Nothing else: no reverb on the bed by default (the acoustics
    domain can convolve a cue with a room's impulse response later, see "Later").
 
-### Built-in sounds, so a scene needs no downloads
+### Built-in effects, so a scene needs no downloads
 
 Short sounds synthesized from (id, seed) through `rng(object_id, seed)`, cached as WAV:
 `tick`, `chime` (tuned to the bed's key if it has one), `whoosh` (filtered noise sweep),
-`pop`, `swell`, and two ambient beds, `pad` (slow detuned drone) and `air` (filtered noise
-with slow movement). Licence-free by construction, and the gallery can ship scenes with
-sound. Your own files work the same way and stay inside the scene's folder (`core/files.py`).
+`pop`, `swell`. Licence-free by construction. No built-in beds: the owner imports their own
+ambient sounds and handles their licences (owner, 2026-11-26). Imported files, beds and
+cues alike, stay inside the scene's folder (`core/files.py`).
 
 ### Lint rules (`inspect/lint.py`, thresholds from `[sound]`)
 
@@ -131,7 +131,7 @@ updated in the same commit, as CLAUDE.md requires.
    `[sound]`, lint rules. Exit: tests first for ducking envelopes and cue anchoring (they
    follow markers when narration is re-recorded), lint in `MODES`, an `examples/` scene and
    a storyboard snapshot with loudness lanes.
-3. **Built-in sounds.** Synths, cache, the two ambient beds. Exit: each is a pure function
+3. **Built-in effects.** Synths and their cache. Exit: each is a pure function
    of (id, seed) (hash test), loudness within 0.5 LU of its nominal level.
 4. **The app.** Audio lanes, drag to retime, playback, the Sound tab. Exit: controller tests
    without Qt (drag a cue, it snaps; undo restores), window tests on `offscreen`, and the
@@ -139,8 +139,8 @@ updated in the same commit, as CLAUDE.md requires.
 5. **AI.** `sound_report`, docs, `llms.txt`. Exit: tool test without the protocol, docs
    blocks run in CI.
 
-Steps 1-3 need nothing from the app and could start now; step 4 waits for `APP_PLAN.md`
-phase 2.
+Steps 1-3 need nothing from the app; step 4 waits for `APP_PLAN.md` phase 2. None starts
+before `BEAUTY.md` is done, and not without the owner's go-ahead.
 
 ## Later (not in this plan)
 
@@ -149,14 +149,12 @@ phase 2.
 - Sonification: a cue or bed driven by a scene value (a Fourier partial you can hear).
 - Music that follows the scene's beats (a bed cut to bar lines at markers).
 
-## Questions for the owner
+## Owner's answers (2026-11-26)
 
-1. **Scope:** all five steps, or just 1-3 (sound in rendered videos, edited in the script)
-   until the code-first app exists?
-2. **Where it goes in the order:** after `BEAUTY.md`, interleaved with it like Milestones
-   14-20, or before Milestone 16?
-3. **Levels:** voice at -16 LUFS, bed 18 dB under, ducking 8 dB. Fine as defaults, or do you
-   publish somewhere with a different target (YouTube normalises to -14)?
-4. **Built-in sounds:** synthesized ones as proposed, or would you rather supply a small
-   pack of your own recordings?
-5. **Stereo:** the output becomes stereo. Any reason to keep mono?
+1. **Scope:** all five steps.
+2. **Order:** after `BEAUTY.md`. Do not start before the owner says so.
+3. **Levels:** voice -16 LUFS, bed 18 dB under and ducking 8 dB are fine; effects quieter,
+   so cues default to 10 dB under the voice (was 6).
+4. **Sounds:** beds are the owner's own imported ambient files (licensing is theirs); no
+   built-in beds. Effects are built in (synthesized).
+5. **Stereo:** yes.
