@@ -34,7 +34,7 @@ from phasor.core.values import normalize, positive, same_shape
 from phasor.style.theme import PALETTES, Theme, ThemeError, load_theme
 from phasor.time.easing import EASINGS, LOG, ease_named
 from phasor.time.expr import CompiledExpr, ExprError, compile_expr
-from phasor.time.sound import PlacedSound
+from phasor.time.sound import PlacedBed, PlacedCue, builtin_seconds
 from phasor.time.tracks import ResolvedSegment, ResolvedTrack, TimeMap
 from phasor.time.updaters import MEMO, Updater, UpdaterOut
 
@@ -75,8 +75,9 @@ class Compiled:
     base_dir: str = ""
     # (object id, why) for each object whose code is not available (lint missing_type).
     missing: tuple[tuple[str, str], ...] = ()
-    # The document's sound events with their start in seconds (time/sound.py).
-    sounds: tuple[PlacedSound, ...] = ()
+    # The document's beds and cues with their times in seconds (time/sound.py).
+    beds: tuple[PlacedBed, ...] = ()
+    cues: tuple[PlacedCue, ...] = ()
 
 
 @functools.cache
@@ -274,22 +275,37 @@ def compile_document(
             duration = max(duration, t1)
         nodes[path] = ResolvedTrack(node.value, tuple(resolved))
 
-    placed: list[PlacedSound] = []
-    for snd in doc.sounds:
+    cues: list[PlacedCue] = []
+    for cue in doc.sound.cues:
         try:
-            t0 = time_map.resolve(snd.at)
+            t0 = time_map.resolve(cue.at)
         except KeyError as e:
-            add(Issue("unknown_marker", f"sound {snd.id!r}: no marker {e.args[0]!r}",
-                      ids=(snd.id,), path=f"{snd.id}.at"))  # fmt: skip
+            add(Issue("unknown_marker", f"cue {cue.id!r}: no marker {e.args[0]!r}",
+                      ids=(cue.id,), path=f"{cue.id}.at"))  # fmt: skip
             continue
         if t0 < 0:
-            add(Issue("bad_sound", f"sound {snd.id!r} starts at {t0:g} s, before the scene",
-                      ids=(snd.id,), path=f"{snd.id}.at"))  # fmt: skip
+            add(Issue("bad_sound", f"cue {cue.id!r} starts at {t0:g} s, before the scene",
+                      ids=(cue.id,), path=f"{cue.id}.at"))  # fmt: skip
             continue
-        placed.append(PlacedSound(snd.id, t0, snd))
-        # A note holds the scene open until it ends; a file only to its start (its length is
-        # in the file, which compiling does not read: lint ``sound_cut`` says if it is cut).
-        duration = max(duration, t0 + getattr(snd, "dur", 0.0))
+        cues.append(PlacedCue(cue.id, t0, cue))
+        # A built-in holds the scene open until it ends; a file only to its start (its length
+        # is in the file, which compiling does not read: lint ``sound_cut`` says if it is cut).
+        duration = max(duration, t0 + (builtin_seconds(cue) if cue.builtin else 0.0))
+    bed_times: list[tuple[Any, float, float | None]] = []
+    for bed in doc.sound.beds:
+        try:
+            t0 = 0.0 if bed.start is None else time_map.resolve(bed.start)
+            t1 = None if bed.end is None else time_map.resolve(bed.end)
+        except KeyError as e:
+            add(Issue("unknown_marker", f"bed {bed.id!r}: no marker {e.args[0]!r}",
+                      ids=(bed.id,)))  # fmt: skip
+            continue
+        if t0 < 0 or (t1 is not None and t1 <= t0):
+            add(Issue("bad_sound", f"bed {bed.id!r} runs from {t0:g} s to "
+                      f"{'the end' if t1 is None else f'{t1:g} s'}: it must start at 0 or "
+                      "later and end after it starts", ids=(bed.id,)))  # fmt: skip
+            continue
+        bed_times.append((bed, t0, t1))
 
     if any(o.always for o in doc.objects) and not issues:
         _attach_updaters(doc, nodes, objects, placeholders, modules, missing, add)
@@ -311,8 +327,11 @@ def compile_document(
         )  # fmt: skip
     if doc.meta.duration is not None:
         duration = doc.meta.duration
+    beds = tuple(
+        PlacedBed(b.id, t0, duration if t1 is None else t1, b) for b, t0, t1 in bed_times
+    )  # a bed does not hold the scene open
     compiled = Compiled(doc, theme, time_map, MappingProxyType(nodes), order, tuple(objects),
-                        duration, str(base_dir), tuple(missing), tuple(placed))  # fmt: skip
+                        duration, str(base_dir), tuple(missing), beds, tuple(cues))  # fmt: skip
     evaluate(compiled, 0.0)  # surfaces type errors from expressions before anything is saved
     return compiled
 

@@ -17,6 +17,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 import phasor.domains  # noqa: F401  (registers the built-in object types)
 from phasor.core import io
 from phasor.core.issues import DocumentError, Issue
@@ -110,6 +112,8 @@ class _Snapshot:
         self.prior: weakref.ref[_Snapshot] | None = None
         self.lint: dict[float, tuple[Issue, ...]] = {}
         self.aesthetic: tuple[Issue, ...] | None = None
+        # The sound mix (time/sound.py) and the versions of the files it read.
+        self.mix: tuple[Any, Any] | None = None
         self.states: OrderedDict[float, SceneState] = OrderedDict()
         self.snapshots: OrderedDict[float, dict[str, Any]] = OrderedDict()
 
@@ -463,15 +467,72 @@ class Engine:
         return snap.aesthetic
 
     def audio_track(self):
-        """The soundtrack as one mono int16 track covering the scene, and its sample rate:
-        the narration's recorded or synthesized audio with the document's sounds (notes and
-        WAV files, ``time/sound.py``) mixed in. None when there is nothing to hear."""
-        from phasor.time.narration import mix_track
-        from phasor.time.sound import soundtrack
+        """The soundtrack as one stereo int16 track ``(n, 2)`` covering the scene, and its
+        sample rate: the narration with the document's beds and cues mixed in
+        (``time/sound.py``; a narration-only scene is its narration, untouched). None when
+        there is nothing to hear."""
+        m = self.sound_mix()
+        return None if m is None else (m.samples, m.rate)
 
-        n = self.document.narration
-        voice = None if n is None else mix_track(n, self.base_dir, self.duration)
-        return soundtrack(self._snap.compiled.sounds, self.base_dir, self.duration, voice)
+    def sound_mix(self):
+        """The ``time.sound.Mix`` behind ``audio_track``: the samples and how they were
+        made (each lane's loudness, the ducking, the trim, the peaks). Cached per document
+        version and re-made when a file it reads changes."""
+        return self._mix(self._snap)
+
+    def sound_report(self) -> dict[str, Any]:
+        """What the mix sounds like, in numbers (SOUND.md "For the AI"): loudness per lane
+        per narration block, the ducking depth, the trim and peaks, and the sound lint."""
+        m = self._mix(self._snap)
+        doc = self.document
+        out: dict[str, Any] = {"beds": [b.id for b in doc.sound.beds],
+                               "cues": [c.id for c in doc.sound.cues]}  # fmt: skip
+        out.update(m.report() if m is not None else {"mixed": False, "lanes": []})
+        codes = lint_rules.SOUND_CODES
+        out["issues"] = [i.to_dict() for i in self.lint(strict=True) if i.code in codes]
+        return out
+
+    def sound_lanes(self, width: int = 960, frames: list[float] | None = None):
+        """The mix's loudness lanes as a picture ``width`` pixels wide (uint8 RGB): the
+        voice, each bed and the cues (diamonds where they play), loudness over time as
+        heard, spoken spans shaded, markers and ``frames`` marked. None with no audio."""
+        from phasor.render.storyboard import sound_lanes
+        from phasor.time.sound import BLOCK, HOP, lufs
+
+        m = self._mix(self._snap)
+        if m is None:
+            return None
+        rows, cue_z, marks = [], None, []
+        for lane in m.lanes:
+            z = lane.energies
+            if lane.kind == "cue":
+                marks.append(lane.t0)
+                if z.size:
+                    cue_z = z if cue_z is None else cue_z + z
+                continue
+            rows.append({"label": lane.id, "kind": lane.kind, "times": _lane_times(z, HOP, BLOCK),
+                         "lufs": lufs(z) + m.trim_db, "marks": ()})  # fmt: skip
+        if marks:
+            z = np.zeros(0) if cue_z is None else cue_z
+            rows.append({"label": "cues", "kind": "cue", "times": _lane_times(z, HOP, BLOCK),
+                         "lufs": lufs(z) + m.trim_db, "marks": marks})  # fmt: skip
+        markers = dict(self.document.timeline.markers)
+        return sound_lanes(rows, self.duration, width, markers, list(m.spans), frames or [])
+
+    def _mix(self, snap: _Snapshot):
+        from phasor.time.narration import mix_track
+        from phasor.time.sound import mix
+
+        c = snap.compiled
+        named = [b.bed.path for b in c.beds] + [p.cue.sound for p in c.cues if not p.cue.builtin]
+        narration = c.doc.narration
+        named += [b.audio for b in (narration.blocks if narration else ()) if b.audio]
+        stamps = tuple(_file_stamp(self.base_dir, path) for path in named)
+        if snap.mix is None or snap.mix[0] != stamps:
+            voice = None if narration is None else mix_track(narration, self.base_dir, c.duration)
+            snap.mix = (stamps, mix(voice, narration, c.beds, c.cues, self.base_dir, c.duration,
+                                    c.theme.sound, c.doc.meta.seed))  # fmt: skip
+        return snap.mix[1]
 
     def _lint(self, snap: _Snapshot, step: float) -> tuple[Issue, ...]:
         if step not in snap.lint:
@@ -488,7 +549,8 @@ class Engine:
                                *lint_rules.bake_rules(snap.compiled, snap.plan, baked),
                                *lint_rules.control_rules(snap.compiled),
                                *lint_rules.file_rules(snap.compiled),
-                               *lint_rules.sound_rules(snap.compiled),
+                               *lint_rules.sound_rules(snap.compiled,
+                                                       lambda: self._mix(snap)),
                                *lint_rules.type_rules(snap.compiled), *visual)  # fmt: skip
         return snap.lint[step]
 
@@ -833,7 +895,7 @@ class Engine:
     def timeline(self) -> dict[str, Any]:
         """What a timeline panel shows: the duration, the markers, for every animated
         parameter its spans in resolved seconds (``{"d.pos": [[1.0, 2.0], ...]}``), the spoken
-        narration blocks (text, start, duration, audio file) and the sound events."""
+        narration blocks (text, start, duration, audio file), the beds and the cues."""
         c = self._snap.compiled
         lanes = {
             path: [[seg.t0, seg.t1] for seg in node.segments]
@@ -844,11 +906,10 @@ class Engine:
         nar = self._snap.compiled.doc.narration
         blocks = [{"text": b.text, "start": b.start, "duration": b.duration, "audio": b.audio}
                   for b in (nar.blocks if nar else ()) if b.text]  # fmt: skip
-        sounds = [{"id": p.id, "kind": p.spec.kind, "t": p.t,
-                   "label": getattr(p.spec, "path", None) or f"midi {p.spec.midi:g}"}
-                  for p in c.sounds]  # fmt: skip
+        beds = [{"id": p.id, "path": p.bed.path, "start": p.t0, "end": p.t1} for p in c.beds]
+        cues = [{"id": p.id, "sound": p.cue.sound, "t": p.t} for p in c.cues]
         return {"duration": c.duration, "markers": markers, "lanes": lanes, "narration": blocks,
-                "sounds": sounds}  # fmt: skip
+                "beds": beds, "cues": cues}  # fmt: skip
 
     def is_moving(self, t0: float, t1: float) -> bool:
         """Whether anything animated by the document runs between ``t0`` and ``t1``: a
@@ -929,6 +990,12 @@ class Engine:
             lines = inspector.render_detail(snap, "brief")["objects"]
             frames.append({"t": float(t), "marker": markers.get(t), "objects": lines})
         out = {"image": contact_sheet(cells, columns), "frames": frames}
+        doc = self.document
+        if doc.sound.beds or doc.sound.cues:  # the loudness lanes under the stills (SOUND.md)
+            strip = self.sound_lanes(out["image"].shape[1], [f["t"] for f in frames])
+            if strip is not None:
+                out["image"] = np.concatenate([out["image"], strip], axis=0)
+                out["sound_lanes"] = True
         if compare is not None:
             from phasor.render import gallery
 
@@ -942,6 +1009,20 @@ class Engine:
         if id is not None and self.document.object(id) is None:
             known = sorted(o.id for o in self.document.objects)
             raise KeyError(f"no object {id!r}; objects are {known}")
+
+
+def _lane_times(z: Any, hop: float, block: float) -> Any:
+    """The middle of each loudness block."""
+    return np.arange(len(z)) * hop + block / 2
+
+
+def _file_stamp(base_dir: Path, path: str) -> tuple[str, int, int] | None:
+    """A file's version (path, modification time, size), or None when it is not there."""
+    try:
+        st = (Path(base_dir) / path).stat()
+    except (OSError, ValueError):
+        return None
+    return path, st.st_mtime_ns, st.st_size
 
 
 def blur_times(t: float, fps: float, shutter: float = 0.5, samples: int = 4) -> list[float]:

@@ -13,15 +13,20 @@ returns one issue per problem with the times it was seen. Rules in this mileston
 | clutter   | warning  | too many objects changing at once in one block                 |
 | unsolved  | error    | a constraint that does not hold (from the bake, or a guard)    |
 | occluded_label | warning | 3D: a label partly hidden by something in front of it      |
-| missing_file | warning | a file an object reads (a mesh) or a sound plays is not there  |
-| bad_sound_file | warning | a sound file that is not a 16-bit PCM WAV (it stays silent)  |
-| sound_cut | warning | a sound file that runs past the end of the scene                    |
+| missing_file | warning | a file an object reads (a mesh), a bed or a cue plays is not there |
+| bad_sound_file | warning | a bed's or cue's file that cannot be decoded (it stays silent) |
+| sound_cut | warning | a cue's file that runs past the end of the scene                    |
+| bed_masks_voice | warning | a bed within ``[sound] masking`` dB of the voice in speech |
+| cue_on_word | warning | a cue peaking within ``[sound] word_gap`` s of a stressed word |
+| audio_clip | warning | the mix over full scale by ``[sound] clip`` dB before the limiter |
+| cue_unanchored | warning | (strict) a cue at raw seconds instead of on a marker        |
 | slow_layout | warning | the layout bake renders more occlusion buffers than ``bake_renders`` |
 
 Under a perspective camera ``overlap`` only compares labels with labels and points with
 points: a label in front of a surface is fine, and one behind it is ``occluded_label``.
 
-Thresholds come from the theme's ``[lint]`` table.
+Thresholds come from the theme's ``[lint]`` table; the sound rules' from ``[sound]``
+(SOUND.md: they sit beside the levels they judge).
 """
 
 from __future__ import annotations
@@ -37,6 +42,7 @@ from phasor.core.color import contrast_ratio, over
 from phasor.core.constraints import LABEL_SUFFIX
 from phasor.core.ids import parent_of
 from phasor.core.issues import Issue
+from phasor.core.schema import MarkerRef
 from phasor.core.state import SceneState
 from phasor.inspect.passes import PassRunner, inspect_size
 from phasor.layout.bake import Bake
@@ -318,35 +324,94 @@ def file_rules(c: Compiled) -> list[Issue]:
     return out
 
 
-def sound_rules(c: Compiled) -> list[Issue]:
-    """Sound files (``Document.sounds``, time/sound.py): ``missing_file`` when the file is not
-    in the scene's folder, ``bad_sound_file`` when it is not a 16-bit PCM WAV, ``sound_cut``
-    when it plays past the end of the scene. Each stays silent (or is cut), never fails."""
-    from phasor.core import files
-    from phasor.core.schema import SoundFile
-    from phasor.time.sound import file_seconds
+SOUND_CODES = ("missing_file", "bad_sound_file", "sound_cut", "bed_masks_voice", "cue_on_word",
+               "audio_clip", "cue_unanchored")  # fmt: skip
 
-    out = []
-    for p in c.sounds:
-        spec = p.spec
-        if not isinstance(spec, SoundFile):
+
+def sound_rules(c: Compiled, mix: Callable[[], Any]) -> list[Issue]:
+    """The document's beds and cues (SOUND.md, time/sound.py). Files: ``missing_file`` (not
+    in the scene's folder), ``bad_sound_file`` (not audio ``soundfile`` can decode), and
+    ``sound_cut`` (a file cue that plays past the end of the scene); each stays silent or is
+    cut, never fails. The mix (``mix()``, made only when there are beds or cues), against
+    thresholds in the theme's ``[sound]``: ``bed_masks_voice``, ``cue_on_word``,
+    ``audio_clip``."""
+    from phasor.core import files
+    from phasor.time.sound import file_seconds, stressed_onsets
+
+    out: list[Issue] = []
+    named = [(p.id, p.bed.path, p.t0, None) for p in c.beds]
+    named += [(p.id, p.cue.sound, p.t, p) for p in c.cues if not p.cue.builtin]
+    for sid, path, t, cue in named:
+        field = "sound" if cue is not None else "path"
+        where = dict(severity="warning", ids=(sid,), path=f"{sid}.{field}", times=(t,))
+        if not files.exists(c.base_dir, path):
+            out.append(Issue("missing_file", f"{sid!r}: no file {path!r} in the scene's folder",
+                             fix_hint=f"put {path!r} next to the scene, or name a file that is",
+                             **where))  # fmt: skip
             continue
-        where = dict(severity="warning", ids=(p.id,), path=f"{p.id}.path", times=(p.t,))
-        if not files.exists(c.base_dir, spec.path):
-            out.append(Issue("missing_file", f"sound {p.id!r}: no file {spec.path!r} in the "
-                             "scene's folder", fix_hint=f"put {spec.path!r} next to the scene, "
-                             "or point the sound at a file that is", **where))  # fmt: skip
-            continue
-        length = file_seconds(c.base_dir, spec)
+        length = file_seconds(c.base_dir, path)
         if length is None:
-            out.append(Issue("bad_sound_file", f"sound {p.id!r}: {spec.path!r} is not a 16-bit "
-                             "PCM WAV, so it is silent", fix_hint="convert it, e.g. ffmpeg -i "
-                             "in.wav -c:a pcm_s16le out.wav", **where))  # fmt: skip
-        elif p.t + length > c.duration + 1e-6:
-            end = p.t + length
-            out.append(Issue("sound_cut", f"sound {p.id!r} plays until {end:.3f} s but the scene "
+            out.append(Issue("bad_sound_file", f"{sid!r}: {path!r} is not audio that can be "
+                             "decoded, so it is silent", fix_hint="convert it to WAV, FLAC or "
+                             "OGG, e.g. ffmpeg -i in.m4a out.flac", **where))  # fmt: skip
+        elif cue is not None and t + length > c.duration + 1e-6:
+            end = t + length
+            out.append(Issue("sound_cut", f"cue {sid!r} plays until {end:.3f} s but the scene "
                              f"ends at {c.duration:.3f} s", fix_hint="set meta.duration to "
                              f"{end:.3f} (or later), or start it earlier", **where))  # fmt: skip
+    if not c.beds and not c.cues:
+        return out
+    try:
+        m = mix()
+    except (OSError, ValueError):  # the narration's own audio is broken: its rules say so
+        return out
+    if m is None or not m.mixed:
+        return out
+    level = c.theme.sound
+    scripted = c.doc.meta.source == "script"
+    for p in c.beds:
+        lane = m.lane(p.id)
+        if lane is None:
+            continue
+        gaps = [(a, m.voice_level(a, b) - lane.loudness(a, b)) for a, b in m.spans]
+        close = [(a, g) for a, g in gaps if np.isfinite(g) and g < level["masking"]]
+        if not close:
+            continue
+        worst = min(g for _, g in close)
+        now = p.bed.gain if p.bed.gain is not None else level["bed"]
+        lower = max(-60.0, round(now - (level["masking"] - worst) - 0.5, 1))
+        fix: tuple[dict[str, Any], ...] = ()
+        if not scripted:  # a script's bed is changed in the script, not by a tweak
+            bed = {**p.bed.model_dump(mode="json"), "gain": lower}
+            fix = ({"op": "set_bed", "bed": bed},)
+        out.append(Issue(
+            "bed_masks_voice", f"bed {p.id!r} is only {worst:.1f} dB under the voice while it "
+            f"speaks {_when([a for a, _ in close])} (keep it {level['masking']:g} dB under)",
+            severity="warning", ids=(p.id,), path=f"{p.id}.gain",
+            times=tuple(round(a, 3) for a, _ in close[:MAX_TIMES]),
+            fix_hint=f"lower the bed: gain={lower:g}", fix=fix,
+        ))  # fmt: skip
+    onsets = stressed_onsets(c.doc.narration)
+    for p in c.cues:
+        lane = m.lane(p.id)
+        if lane is None or lane.peak_t is None:
+            continue
+        hit = [(t, w) for t, w in onsets if abs(t - lane.peak_t) <= level["word_gap"]]
+        if hit:
+            t, word = min(hit, key=lambda h: abs(h[0] - lane.peak_t))
+            out.append(Issue(
+                "cue_on_word", f"cue {p.id!r} peaks at {lane.peak_t:.3f} s, on the word "
+                f"{word!r} ({t:.3f} s): it may cover it", severity="warning", ids=(p.id,),
+                path=f"{p.id}.at", times=(round(lane.peak_t, 3),),
+                fix_hint="move it into a pause, or just before the word with a negative offset",
+            ))  # fmt: skip
+    if m.over:
+        out.append(Issue(
+            "audio_clip", f"the mix reaches {m.pre_peak_db:+.1f} dBFS before the limiter "
+            f"{_when(list(m.over))} (more than {level['clip']:g} dB over full scale): the "
+            "limiter squashes it audibly", severity="warning", times=m.over,
+            fix_hint="lower the loudest cues or beds there, or space out cues that pile up",
+        ))  # fmt: skip
     return out
 
 
@@ -432,7 +497,12 @@ def strict_rules(c: Compiled) -> list[Issue]:
             "theme sets timing and easing",
         )
         for object_id, ts in sorted(raw.items())
-    ] + updater_rules(c)
+    ] + updater_rules(c) + [
+        Issue("cue_unanchored", f"cue {p.id!r} is at {p.t:g} s, not on a marker: it will not "
+              "follow the narration", "warning", (p.id,), path=f"{p.id}.at", times=(p.t,),
+              fix_hint="anchor it: s.cue(\"<marker>\", ..., offset=...)")
+        for p in c.cues if not isinstance(p.cue.at, MarkerRef)
+    ]  # fmt: skip
 
 
 def clutter(c: Compiled) -> list[Issue]:

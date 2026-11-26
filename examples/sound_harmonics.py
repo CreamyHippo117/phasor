@@ -1,13 +1,15 @@
-"""Sound events: the harmonic series, seen and heard.
+"""Sound cues: the harmonic series, seen and heard.
 
 A string's overtones sit at 1, 2, 3, 4, 5 times its pitch. Each one appears on its marker,
-and on the same marker the soundtrack plays it: ``s.note`` puts a dry, synthesized note on a
-marker, so moving the marker (or re-narrating: ``s.narrate`` with ``[[h1]]`` ... in the
-script makes these markers words) moves the sound with the picture. The last beat plays the
-first five harmonics together, the chord a plucked string makes. (A recorded sound would be
-``s.sound("pluck.wav", at="chord")``, a 16-bit WAV beside this script.)
+and on the same marker the soundtrack plays it: ``s.cue(marker, "tone", midi=...)`` puts a
+dry synthesized note there, so moving the marker (or re-narrating: ``s.narrate`` with
+``[[h1]]`` ... in the script makes these markers words) moves the sound with the picture.
+The last beat plays the first five harmonics together, the chord a plucked string makes,
+each partial quieter than the one below. (A recorded sound is ``s.cue("chord",
+"audio/pluck.wav")``, a file beside this script; other built-ins: tick, chime, whoosh,
+pop, swell.)
 
-Run:  uv run python examples/sound_harmonics.py        (lint report and the sound events)
+Run:  uv run python examples/sound_harmonics.py        (lint report and the sound report)
       uv run phasor render examples/sound_harmonics.py --preset draft -o examples/out/harmonics.mp4
 """
 
@@ -35,14 +37,16 @@ for k in range(1, 6):
     s.at(f"h{k}").bloom_in(f"h{k}").then().reveal(f"h{k}.label")
     # The k-th harmonic is 12 log2(k) semitones above the fundamental (not always a whole
     # number: the 3rd and 5th harmonics are a little off the piano's keys).
-    s.note(BASE + 12 * math.log2(k), at=f"h{k}", amp=0.3, dur=0.9, voice="soft")
+    s.cue(f"h{k}", "tone", midi=BASE + 12 * math.log2(k), dur=0.9, voice="soft")
 s.at("chord").flash("string")  # the string itself rings
 for k in range(1, 6):
-    s.note(BASE + 12 * math.log2(k), at="chord", amp=0.18 / k, dur=2.0, voice="pluck",
-           id=f"chord_{k}")  # fmt: skip
+    s.cue("chord", "tone", midi=BASE + 12 * math.log2(k), dur=2.0, voice="pluck",
+          gain=-10 - 6 * math.log2(k), id=f"chord_{k}")  # fmt: skip
 
 if __name__ == "__main__":
     for issue in s.engine.lint(strict=True):
         print(issue)
-    for e in s.engine.timeline()["sounds"]:
-        print(f"  {e['t']:6.2f} s  {e['id']}  ({e['label']})")
+    report = s.engine.sound_report()
+    print(f"mix: {report['loudness']} LUFS, true peak {report['true_peak_dbtp']} dBTP")
+    for lane in report["lanes"]:
+        print(f"  {lane['t']:6.2f} s  {lane['id']}  ({lane['loudness']} LUFS)")

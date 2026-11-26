@@ -40,7 +40,12 @@ teaches = "A narrated short: [[markers]] in the narration, every motion anchored
 [examples.sound_harmonics]
 kind = "fourier_linalg"
 tier = "technique"
-teaches = "Sound events: s.note puts a dry synthesized note on a marker (and s.sound a WAV), so the soundtrack moves with the narration"
+teaches = "Sound cues: s.cue(marker, \"tone\", midi=...) puts a synthesized note on a marker, so the soundtrack moves with the picture"
+
+[examples.sound_bed]
+kind = "complex"
+tier = "technique"
+teaches = "A bed under the narration: s.bed loops an ambient file under the voice and ducks it while the voice speaks; built-in cues (whoosh, pop, chime) on markers"
 
 [examples.residues]
 kind = "complex"
