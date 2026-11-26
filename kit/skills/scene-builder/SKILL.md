@@ -44,8 +44,10 @@ this video.
 
 A replay is: the same motion looped; a parameter swept out and then back over the range
 it just covered; a case run a second time; the same camera move again; the earlier
-picture again with nothing but its color or speed changed. None of these is allowed as a
-way to fill time. (Coming back to a picture *with a new case* is not a replay: the case
+picture again with nothing but its color or speed changed. A replay can also hide behind a
+symmetry: new parameter values whose picture is an old one mirrored, rotated or shifted (a
+Julia set for c and for its conjugate are mirror images, so a drift across the real axis
+replays itself upside down). None of these is allowed as a way to fill time. (Coming back to a picture *with a new case* is not a replay: the case
 is the new thing.)
 
 An extension stays inside the same idea and the same picture and takes it one step
@@ -104,9 +106,11 @@ and does not count as content; it only keeps the picture from freezing between t
    animation you just added, answer:
    - Does it fill the stage, alone?
    - Does it hold as long as the plan says, and is something always changing a little?
-   - Replay test: go along the hold's frames in order. Does each stretch show something
-     no earlier frame of the video did? Any two stretches that look alike are a replay;
-     turn the later one into an extension.
+   - Replay test: the marker frames show only where each stretch starts, so make a second
+     storyboard with `--t` at two or three times inside every stretch, and go along it in
+     order. Does each stretch show something no earlier frame of the video did? Any two
+     frames that look alike, even mirrored or turned, are a replay; turn the later stretch
+     into an extension.
    - Silent test: from the frames alone, would the viewer work out what the plan says
      they should?
    - Does it become the next animation without a cut?
