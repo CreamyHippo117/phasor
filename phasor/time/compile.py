@@ -30,9 +30,9 @@ from phasor.core.spatial import (
     perspective_camera,
 )
 from phasor.core.state import ObjectState, SceneState
-from phasor.core.values import normalize, same_shape
+from phasor.core.values import normalize, positive, same_shape
 from phasor.style.theme import PALETTES, Theme, ThemeError, load_theme
-from phasor.time.easing import EASINGS
+from phasor.time.easing import EASINGS, LOG, ease_named
 from phasor.time.expr import CompiledExpr, ExprError, compile_expr
 from phasor.time.tracks import ResolvedSegment, ResolvedTrack, TimeMap
 from phasor.time.updaters import MEMO, Updater, UpdaterOut
@@ -239,9 +239,11 @@ def compile_document(
             except KeyError as e:
                 add(Issue("unknown_marker", f"{where}: no marker {e.args[0]!r}", path=path))
                 continue
-            if seg.ease not in EASINGS:
-                add(Issue("unknown_ease", f"{where}: no easing {seg.ease!r}; "
-                          f"available: {sorted(EASINGS)}", path=path))  # fmt: skip
+            ease = ease_named(seg.ease)
+            if ease is None:
+                add(Issue("unknown_ease", f"{where}: no easing {seg.ease!r}; available: "
+                          f"{sorted(EASINGS)}, each also as 'log:<name>' (by factors)",
+                          path=path))  # fmt: skip
                 continue
             if t1 < t0 or t0 < prev_end:
                 add(Issue("bad_segment", f"{where}: spans {t0:g}-{t1:g} s but must not run "
@@ -258,7 +260,13 @@ def compile_document(
                 add(Issue("bad_param", f"{where}: target {to!r} does not match the shape of "
                           f"{node.value!r}", ids=(target,), path=path))  # fmt: skip
                 continue
-            resolved.append(ResolvedSegment(t0, t1, to, EASINGS[seg.ease]))
+            start = resolved[-1].to if resolved else node.value
+            if ease[1] and not (positive(start) and positive(to)):
+                add(Issue("bad_segment", f"{where}: {seg.ease!r} moves by factors, so both "
+                          f"ends must be positive numbers; it goes from {start!r} to {to!r}",
+                          path=path, fix_hint=f"use {seg.ease.removeprefix(LOG)!r}"))  # fmt: skip
+                continue
+            resolved.append(ResolvedSegment(t0, t1, to, *ease))
             prev_end = t1
             duration = max(duration, t1)
         nodes[path] = ResolvedTrack(node.value, tuple(resolved))
