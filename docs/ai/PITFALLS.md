@@ -65,8 +65,11 @@ drawings in `progs.py`, filled by `scene.py`) would draw nothing there. So when 
 came from a script (`phasor render scene.py`, `phasor.load("scene.py")`) and the document
 names scene code (`meta.modules`), every worker runs that script first, then uses the
 parent's document (`scene._worker_engine`). A script edited after the render started is
-refused. A saved `.phasor.json` has no script: the module `meta.modules` names is loaded
-afresh, and anything only a script put in it is missing.
+refused. `phasor.load("scene.py")` also names the script in `meta.modules`, after the
+type's modules, when the scene has code of its own, so the saved `.phasor.json` opened with
+scripts allowed runs it too and draws the same in one process. Opening such a document
+runs the whole script. A document saved before 2026-11-26 does not name its script: load
+the script and save again.
 
 Safety net: before its first frame, each worker reports what the scene's own objects
 (scene-local types, objects with updaters, their parts) draw at that frame

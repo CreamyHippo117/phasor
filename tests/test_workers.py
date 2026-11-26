@@ -8,6 +8,7 @@ the serial render, byte for byte.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -314,14 +315,50 @@ def test_the_bug_a_worker_built_from_the_document_alone_draws_nothing(registry_s
 
     script, name, module = registry_scene
     parent = load(script, passes=None)
-    assert parent.document.meta.modules == (f"{module}.py",)  # the script is not named
     here = census(parent.state_at(0.0), ["prog"])
     assert here["prog"][1] == 6  # two triangles: the registry is full here
     payload = parent.worker_payload()
+    # The document as it was before the script named itself in meta.modules:
+    old = json.loads(payload["document"])
+    assert old["meta"]["modules"] == [f"{module}.py", "scene.py"]
+    old["meta"]["modules"] = [f"{module}.py"]
     _as_in_a_new_process(name, module)
-    bare = Engine.from_payload({**payload, "script": None}, passes=None)
+    from phasor.core import io
+
+    bare = Engine(io.parse_document(old), base_dir=script.parent, allow_scripts=True,
+                  passes=None)  # fmt: skip
     assert get_type(name) is not None  # the type loaded, its module ran (no missing_type) ...
     assert census(bare.state_at(0.0), ["prog"])["prog"][1] == 0  # ... and it draws nothing
+
+
+def test_a_saved_script_scene_reopens_drawing_what_its_script_set_up(registry_scene):
+    """The document names the script after the type's module (contract 3, owner
+    2026-11-26), so the saved ``.phasor.json`` opened with scripts allowed draws in one
+    process too, not only in workers started from the script."""
+    from phasor.core.record import census
+    from phasor.scene import load
+
+    script, name, module = registry_scene
+    parent = load(script, passes=None)
+    assert parent.document.meta.modules == (f"{module}.py", "scene.py")  # script last
+    here = census(parent.state_at(0.0), ["prog"])
+    saved = script.parent / "scene.phasor.json"
+    parent.save(saved)
+    _as_in_a_new_process(name, module)
+    reopened = Engine.open(saved, passes=None, allow_scripts=True)
+    assert census(reopened.state_at(0.0), ["prog"]) == here
+    assert here["prog"][1] == 6
+
+
+def test_a_scene_without_its_own_code_names_no_script(tmp_path):
+    from phasor.scene import load
+
+    script = tmp_path / "plain.py"
+    script.write_text(
+        "from phasor import Scene, Text\ns = Scene('plain')\ns.add(Text(id='t', text='x'))\n",
+        "utf-8",
+    )
+    assert load(script, passes=None).document.meta.modules == ()
 
 
 def test_a_worker_runs_the_scene_script_its_parent_loaded(registry_scene):
@@ -420,7 +457,8 @@ def test_census_counts_what_each_object_draws(registry_scene):
 
 def test_a_worker_that_draws_differently_stops_the_render(registry_scene, tmp_path):
     """The safety net: a parent whose scene code kept state the workers cannot rebuild (here
-    a saved document opened in a process where the registry happens to be full) fails at
+    an older saved document, which does not name the script, opened in a process where the
+    registry happens to be full) fails at
     the first frame, naming the object, instead of rendering for hours without it.
     Workers are spawned, as on Windows (Linux uses spawn here too); needs no OpenGL: the
     check comes before any frame is drawn."""
@@ -429,6 +467,10 @@ def test_a_worker_that_draws_differently_stops_the_render(registry_scene, tmp_pa
     script, _, _ = registry_scene
     doc = tmp_path / "saved.phasor.json"
     load(script, passes=None).save(doc)
+    # A document saved before the script named itself in meta.modules:
+    saved = json.loads(doc.read_text("utf-8"))
+    saved["meta"]["modules"] = [m for m in saved["meta"]["modules"] if m != "scene.py"]
+    doc.write_text(json.dumps(saved, sort_keys=True), "utf-8")
     e = Engine.open(doc, allow_scripts=True, passes=None)  # no script: only the document
     assert e.worker_payload()["script"] is None
     frames = parallel_frames(e, 2, chunk=2)([0.0, 0.1, 0.2, 0.3], (64, 36), 10.0, 0.0, 1)
