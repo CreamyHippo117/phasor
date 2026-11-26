@@ -549,7 +549,10 @@ The subject is what moves; it needs a `pos` parameter that is not an expression.
 - `engine.layout` shows the bake: `times` (the key times it ran at), `slots` (per label, per
   key time), `spans` (each run of baked keys), `renders` (occlusion buffers it drew), `issues`.
 - An edit that only changes motion from some time on (a verb, a segment) keeps the bake
-  before that time and re-bakes the rest; any other edit bakes it all again. A verb reads
+  before that time and re-bakes the rest; so does a `set` on an object hidden until later
+  (opacity or dim 0) that no rule names and nothing reads, before the first key it is shown
+  at (`layout.bake.layout_unchanged_until`). Any other edit bakes it all again, and so does
+  every edit with camera goals (the camera solver is global). A verb reads
   the scene where it starts and bakes only that far. Lint `slow_layout` flags a costly bake.
 - A rule that cannot hold is a lint error `unsolved`, with the times. Nothing is dropped.
 - `visible_in_3d(a)` (not hidden by anything in front of it) is a guard checked by the linter.

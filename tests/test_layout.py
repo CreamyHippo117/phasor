@@ -695,3 +695,200 @@ def test_a_verb_bakes_only_as_far_as_the_time_it_starts(monkeypatch):
     partial = [e._state_upto(t) for t in (0.0, 4.95, 9.0, 9.5)]
     assert [e.state_at(t) for t in (0.0, 4.95, 9.0, 9.5)] == partial
     assert e.layout == Engine(e.document, passes=None).layout
+
+
+# ---------------------------------------------------------------- the camera solver's depth checks
+# The solver checks avoid_occlusion on a depth buffer at every key; the refine rounds and
+# the final check asked again about cameras already measured, so a long orbit rendered
+# about two buffers per key. Each (time, camera, object) is now measured once, and no
+# buffer is drawn when the answer needs none.
+
+
+def _old_hidden_share(state, object_id, oracle):
+    """``hidden_share`` as it was before (commit 70476b7): it always rendered first."""
+    from phasor.layout.bake import DEPTH_SLACK
+
+    obj = state[object_id]
+    cam = state.camera_for(obj)
+    b = obj.impl.world_bounds(state)
+    labels_ = {o.id for o in state.objects if o.impl.semantics(state).get("kind") == "label"}
+    depth = oracle.depth(state, frozenset({object_id} | labels_))
+    h, w = depth.shape
+    d = float(cam.depth(b.center)[0])
+    if d <= 0:
+        return 1.0
+    ((px, py),) = cam.to_screen([b.center], w, h)
+    r = max(0.5 * b.radius / (cam.units_per_height(b.center)) * h, 1.5)
+    yy, xx = np.mgrid[0:h, 0:w] + 0.5
+    disc = (xx - px) ** 2 + (yy - py) ** 2 <= r * r
+    if not disc.any():
+        return 0.0
+    return float((depth[disc] < d * (1 - 2 * DEPTH_SLACK)).mean())
+
+
+def _measure_every_time(monkeypatch):
+    """The solver as it was: every check renders again."""
+    from phasor.layout import bake as bake_mod
+    from phasor.layout import camera
+    from phasor.time.compile import evaluate
+
+    def uncached(seen, t, p, object_id):
+        state = evaluate(seen.c, t, {path: getattr(p, n) for path, n in seen.paths})
+        return seen.hidden(state, object_id)
+
+    monkeypatch.setattr(camera._Seen, "__call__", uncached)
+    monkeypatch.setattr(bake_mod, "hidden_share", _old_hidden_share)
+
+
+def _peek(passes, duration=6.0):
+    s = Scene("peek_orbit", passes=passes)
+    s.use_camera("orbit", drift=0, azimuth=0, target=(0, 0, 0))
+    s.add(Dot(id="wall", pos=(2.5, 0, 0.3), r=0.5))  # a disc between the camera and the gem
+    s.add(Dot(id="post", pos=(-1.5, 1.5, 0.2), r=0.5))
+    s.add(Dot(id="gem", pos=(0, 0, 0), r=0.25, tags=["key"]))
+    s.marker("spin", 0.5)
+    s.marker("gone", 3.0)
+    s.marker("back", 4.5)
+    s.marker("end", duration)
+    s.at("spin").orbit(200, until="end")
+    s.at("gone").exit("wall", "post")  # for a while nothing can hide the gem
+    s.at("back").reveal("wall", "post")
+    s.constrain("camera keep_visible(gem) and camera avoid_occlusion(gem)")
+    return s
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_camera_goals_measure_each_camera_once_and_solve_the_same(passes, monkeypatch):
+    built = _peek(passes).engine
+    counting = _Counting(monkeypatch)
+    lay = Engine(built.document, passes=built._passes).layout
+    assert counting.n == lay.renders
+    _measure_every_time(monkeypatch)
+    before = Engine(built.document, passes=built._passes).layout
+    assert set(lay.camera) >= {"camera.elevation", "camera.distance"}
+    assert lay.camera == before.camera and lay.camera_times == before.camera_times
+    assert lay.issues == before.issues and lay.tracks == before.tracks
+    # The same cameras, each measured once: about half the buffers (analytic: 274 -> 138).
+    assert lay.renders < 0.6 * before.renders
+
+
+def test_a_hidden_share_that_needs_no_buffer_draws_none(monkeypatch):
+    from phasor.layout.bake import AnalyticOracle, hidden_share
+
+    e = _peek(None).engine
+    states = [e.state_at(t) for t in (1.0, 3.7, 5.5)]  # walls shown, gone, shown again
+    oracle = AnalyticOracle()
+    counting = _Counting(monkeypatch)
+    old = [_old_hidden_share(st, "gem", oracle) for st in states]
+    assert counting.n == 3
+    assert [hidden_share(st, "gem", oracle) for st in states] == old
+    assert counting.n == 3 + 2  # nothing occludes at 3.7 s: no buffer drawn
+
+
+def test_pixel_mask_gives_what_testing_every_pixel_gives():
+    from phasor.layout.geometry import pixel_mask
+
+    rng = np.random.default_rng(3)
+    h, w = 90, 160
+    yy, xx = np.mgrid[0:h, 0:w] + 0.5
+    cases = [(80.0, 45.0, 3.0), (-5.0, 20.0, 4.0), (300.0, 40.0, 500.0), (10.0, 10.0, 1e-9),
+             (159.99, 89.99, 1.5), (1e9, -1e9, 1e9), (0.5, 0.5, 0.5)]  # fmt: skip
+    cases += [(*rng.uniform(-50, 200, 2), float(rng.uniform(0.5, 80))) for _ in range(40)]
+    for px, py, r in cases:
+
+        def disc(xx, yy, px=px, py=py, r=r):
+            return (xx - px) ** 2 + (yy - py) ** 2 <= r * r
+
+        got = pixel_mask((h, w), (px - r, px + r, py - r, py + r), disc)
+        assert np.array_equal(got, disc(xx, yy)), (px, py, r)
+    unknown = pixel_mask((h, w), (np.nan, 1.0, 0.0, 1.0), lambda xx, yy: xx < 3)
+    assert np.array_equal(unknown, xx < 3)  # no reach known: every pixel is tested
+
+
+def test_a_point_footprint_is_the_disc_inside_its_box():
+    s = Scene("fp", passes=None)
+    s.add(Dot(id="d", pos=(0.7, -0.4), r=0.6))
+    st = s.engine.state_at(0)
+    obj = st["d"]
+    w, h = 480, 270
+    px = st.camera_for(obj).to_screen(obj.impl.world_bounds(st).corners(), w, h)
+    (x0, y0), (x1, y1) = px.min(0), px.max(0)
+    yy, xx = np.mgrid[0:h, 0:w] + 0.5
+    rx, ry = max((x1 - x0) / 2, 1e-9), max((y1 - y0) / 2, 1e-9)
+    disc = ((xx - (x0 + x1) / 2) / rx) ** 2 + ((yy - (y0 + y1) / 2) / ry) ** 2 <= 1.0
+    assert disc.any() and np.array_equal(footprint(st, obj, (w, h)), disc)
+
+
+# ---------------------------------------------------------------- edits the layout cannot see
+# A parameter of an object that is hidden (opacity x dim = 0) at a key, that no rule names
+# and nothing reads, cannot change the layout at that key: the bake keeps every key before
+# the first one at which the object is shown.
+
+
+def _late(passes, more=()):
+    s = _brief(passes, duration=30.0, show=8.0, hide=25.0,
+               more=[Dot(id="late", pos=(0.4, 0.3, 0.1), r=0.3), *more])  # fmt: skip
+    s.at(20).reveal("late")
+    return s
+
+
+def _first_shown(e, object_id):
+    return next(
+        t for t in key_times(e._snap.compiled) if e.state_at(t)[object_id].params.opacity > 0
+    )
+
+
+@pytest.mark.parametrize("passes", MODES)
+def test_an_edit_to_an_object_hidden_until_later_keeps_the_bake_before_it(passes, monkeypatch):
+    s = _late(passes)
+    e = s.engine
+    first = e.layout
+    shown = _first_shown(e, "late")
+    assert 20.0 <= shown < 20.2
+    counting = _Counting(monkeypatch)
+    for name, value in (("r", 0.6), ("pos", (0.1, 0.2, 0.3))):
+        counting.n = 0
+        s.set(f"late.{name}", value)
+        again = e.layout
+        assert 0 < counting.n == len([t for t in again.times if t >= shown]) < len(again.times)
+        assert [t for t in again.times if t < shown] == [t for t in first.times if t < shown]
+        fresh = Engine(e.document, passes=e._passes)  # the same document, baked from nothing
+        assert fresh.layout == again
+
+
+def _until(s, edit):
+    from phasor.layout.bake import layout_unchanged_until
+
+    c0 = s.engine._snap.compiled
+    edit(s)
+    snap = s.engine._snap
+    return layout_unchanged_until(c0, snap.compiled, snap.plan, key_times(snap.compiled))
+
+
+def test_which_edits_the_layout_cannot_see():
+    shown = _first_shown(_late(None).engine, "late")
+    assert _until(_late(None), lambda s: s.set("late.r", 0.5)) == shown
+    assert _until(_late(None), lambda s: s.at(22).morph("late.r", 0.5)) == shown
+    assert _until(_late(None), lambda s: s.at(12).morph("x.r", 0.1)) == pytest.approx(12.0)
+    # Shown from the start, so every key may see it.
+    assert _until(_late(None), lambda s: s.set("surf.radius", 2.5)) == 0.0
+    # What decides whether, and in what order, it draws.
+    for name, value in (("opacity", 0.5), ("dim", 0.5), ("z_index", 3)):
+        assert _until(_late(None), lambda s, n=name, v=value: s.set(f"late.{n}", v)) == 0.0
+    # Read by another object's expression, named by another object, or named by a rule.
+    echo = Dot(id="echo", pos=expr("late.pos + vec(0, 0, 1)"), r=0.05)
+    assert _until(_late(None, more=[echo]), lambda s: s.set("late.r", 0.5)) == 0.0
+    ringed = _late(None)
+    ringed.at(26).circumscribe("late")
+    assert _until(ringed, lambda s: s.set("late.r", 0.5)) == 0.0
+    ruled = _late(None)
+    ruled.constrain("on_screen(late)")
+    assert _until(ruled, lambda s: s.set("late.r", 0.5)) == 0.0
+    # A composite builds its parts from the whole scene, so it might read anything.
+    from phasor import net
+
+    boxed = _late(None, more=[net.Polyhedron(id="cube", size=(0.5, 0.5, 0.5), origin=(3, 3, 0))])
+    assert _until(boxed, lambda s: s.set("late.r", 0.5)) == 0.0
+    # Never shown: nothing it does reaches the layout.
+    never = _late(None, more=[Dot(id="ghost", pos=(1, 1, 1), r=0.2, opacity=0.0)])
+    assert _until(never, lambda s: s.set("ghost.r", 0.4)) == float("inf")
