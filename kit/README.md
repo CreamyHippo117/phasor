@@ -17,7 +17,7 @@ yours (`TASTE.md`, `WISHLIST.md`, `scenes/`, `plans/`, other MCP servers in `.mc
 | `TASTE.md` | `TASTE.md` (yours) | the person's taste; imported into every session; the AI adds to it |
 | `WISHLIST.md` | `WISHLIST.md` (yours) | what scenes needed that phasor could not do |
 | `skills/scene-plan/SKILL.md` | `.claude/skills/scene-plan/` | the `/scene-plan` command: an idea becomes a plan for a beautiful teaching video (wide brainstorm with many subagents, pruned to one path); writes `plans/NAME.md`, no code |
-| `skills/scene-shots/SKILL.md` | `.claude/skills/scene-shots/` | the `/scene-shots` command: the person brings the story (script, outline, notes); it designs how each beat is seen, as a cinematographer works from a finished screenplay (breakdown, one world, shots, continuity); writes `plans/NAME.md` in the same shape, no code |
+| `skills/scene-shots/SKILL.md` | `.claude/skills/scene-shots/` | the `/scene-shots` command: the person brings the story (script, outline, notes); it designs how each beat is seen, as a cinematographer works from a finished screenplay (breakdown, one world from four treatments including a phasor expert's, four shot lists, continuity; `TASTE.md` in every brief); writes `plans/NAME.md` in the same shape, no code |
 | `skills/scene-builder/SKILL.md` | `.claude/skills/scene-builder/` | the `/scene-builder` command: codes an approved plan as faithfully as phasor allows; script, checks, storyboard, preview; what phasor cannot do goes to `WISHLIST.md` |
 | `examples.toml` | `kit/examples/<kind>/`, `kit/examples/INDEX.md` | every example sorted by kind and tier |
 

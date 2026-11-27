@@ -85,7 +85,10 @@ Sound**, step **9. Claims check** and **The references**.
 
 Work files go in `plans/NAME.work/`, and the plan is `plans/NAME.md`. Have subagents write
 their output to files and return only a two-line summary, so your own context stays free
-for judging. This is a medium run, a few agents per stage, not the wide brainstorm of
+for judging. **Every brief carries `TASTE.md` in full**, plus the source and the
+breakdown: a subagent knows only its brief, and taste it never saw cannot steer it. Every
+judge, picker and editor scores against `TASTE.md` too, and where a choice goes against a
+line of it, says which line and why. This is a medium run, a few agents per stage, not the wide brainstorm of
 `/scene-plan`. Say so in one line at the start. If you have no way to spawn subagents, play
 each role yourself, one at a time, and write each role's file before you start the next.
 
@@ -145,8 +148,8 @@ cinematographer's look book. The biggest decision is whether one object can carr
 the beats (the room carries the clap, the echoes, the crystal and the impulse response),
 because the house rule "come back to the same picture" depends on it.
 
-Spawn three treatment agents in parallel. Give each a different kind of world, so they do
-not all find the same one:
+Spawn four treatment agents in parallel. Give three of them a different kind of world, so
+they do not all find the same one:
 
 - **the thing itself**: the physical or concrete object the source talks about;
 - **the space it lives in**: the mathematical object behind it (a lattice, a phase plane, a
@@ -155,9 +158,16 @@ not all find the same one:
   it (a geometer sees the mirror rooms as a crystal, a topologist sees the unfolding as a
   covering).
 
-Each brief carries the breakdown, the consult answers, the scene-plan sections above and
-these instructions. Cover every beat in the source's order, adding none and dropping none.
-Do not ask whether phasor can draw it yet. Write to `treatments/KIND.md`:
+The fourth is the **phasor expert**. It reads `kit/docs/API.md`, `kit/examples/INDEX.md`
+and the model examples (`kit/examples/complex/prism_primes.py` is the reference look), and
+proposes the world phasor already draws most beautifully for this source: the prism
+look's glowing strokes and spectrum, a kernel-drawn field filling the frame, a 3D surface
+under a turning camera. Its job is to bring what the tool is best at, not to set a limit:
+the other three do not read the docs and do not ask whether phasor can draw their world.
+
+Each brief carries `TASTE.md`, the breakdown, the consult answers, the scene-plan sections
+above and these instructions. Cover every beat in the source's order, adding none and
+dropping none. Write to `treatments/KIND.md`:
 
 - the central picture, and how it fills the frame;
 - what colour encodes, with a meaning for each hue that holds for the whole video, and the
@@ -169,24 +179,30 @@ Do not ask whether phasor can draw it yet. Write to `treatments/KIND.md`:
   comes back understood;
 - the music bed.
 
-A fresh judge scores the three for beauty (would each still be worth looking at with the
+A fresh judge scores the four for beauty (would each still be worth looking at with the
 sound off?), evidence (is each beat's evidence visible?), continuity (one world, no cuts),
-truth (does the picture itself claim anything false?) and fit with `TASTE.md`. It
-recommends one, or one with a graft from another.
+truth (does the picture itself claim anything false?) and fit with `TASTE.md`. It does
+not score whether phasor can draw it: a world phasor lacks goes under "Wanted additions",
+never out of the running. It recommends one, or one with a graft from another.
 
-Show the person the three in two lines each, with the judge's pick and why, and ask which
+Show the person the four in two lines each, with the judge's pick and why, and ask which
 they want. This is the second and last question. If they say "you choose", choose.
 
 ### 5. Shots
 
-Now plan each beat in the chosen world. Spawn three shot designers in parallel. Each writes
-the *whole* shot list, so each version runs as a film from the first beat to the last:
+Now plan each beat in the chosen world. Spawn four shot designers in parallel. Each writes
+the *whole* shot list, so each version runs as a film from the first beat to the last.
+Each brief carries `TASTE.md`, the breakdown, the chosen world and the scene-plan sections
+above.
 
 - **cinematographer**: the unforgettable shot, and how each shot moves, holds and becomes
   the next;
 - **2swap student**: what 2swap would do here, judged from the references in scene-plan;
 - **the beat's home mathematician** (a geometer for mirror rooms, an analyst for spectra):
-  what shape the thing really has, so the picture is true as well as beautiful.
+  what shape the thing really has, so the picture is true as well as beautiful;
+- **phasor expert**: which of phasor's objects, looks, verbs and camera moves would make
+  each shot most beautiful, including ones nobody would think to ask for. It reads the
+  docs and examples as in step 4; the other three still do not.
 
 For each beat, each shot says: what fills the stage; the evidence it shows (its picture
 test: with the voice off, what is seen); how it changes while it holds (iterations, cases,
@@ -200,9 +216,11 @@ forward, and the composed frame it ends on. A showcase has room to be watched an
 no math, and the math comes right after it to explain what it showed. Write to
 `shots/showcase_NAME.md`.
 
-A fresh picker then chooses, beat by beat, the best of the three versions and stitches them
+A fresh picker then chooses, beat by beat, the best of the four versions and stitches them
 into `shots.md`. A shot that wins its own beat but breaks the next one's continuity loses
-to one that runs on smoothly. The picker says why each beat went the way it did.
+to one that runs on smoothly. A shot never wins because it is easier to build: the phasor
+expert's version wins a beat only on beauty, evidence and continuity, as any other does.
+The picker says why each beat went the way it did.
 
 ### 6. Continuity
 
@@ -253,6 +271,8 @@ answers each question below. Fix whatever fails.
 8. Is any verb there only as decoration? Cut it.
 9. Held beside the references (the reverb A1 opening, the 2swap clips), where does it fall
    short?
+10. Does anything go against a line of `TASTE.md`? Fix it, or say which line and why the
+    plan keeps it.
 
 If the world itself fails, go back to step 4. Do not patch it.
 
@@ -267,7 +287,7 @@ builds it unchanged. Change these parts:
 - **The path** becomes **The source**: the path to `plans/NAME.source.md`, then a table
   with one row per beat: the source words, the animation that shows them, and its
   evidence.
-- **Runners-up** become the two worlds not chosen, one line each, and why.
+- **Runners-up** become the worlds not chosen, one line each, and why.
 - Add **Narration edits**: each change to the person's words, and why. Write "none" if
   there were none.
 - Add **Notes for you**: suggestions about the content (a reorder, a weak beat, a missing
