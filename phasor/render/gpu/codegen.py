@@ -6,6 +6,9 @@ function for the reference, and LaTeX for the label.
     f.numpy()   -> callable on complex arrays
     f.latex()   -> "\\frac{1}{z^{2} + 1}"
 
+A ``RealFunction`` is the same for a real formula in named real variables (``x``, ``y``, ``z``
+and constants: a scalar painted on a surface, ``kernels/wall.py``); ``^`` means power there.
+
 The text is read with a whitelist (names, numbers, + - * / **, known functions) and built
 into a SymPy expression node by node; it is never evaluated as Python.
 """
@@ -160,3 +163,79 @@ class ComplexFunction:
 
     def latex(self) -> str:
         return sp.latex(self.expr)
+
+
+# ---------------------------------------------------------------- real formulas
+
+_R_FUNCS = {
+    sp.exp: "exp", sp.log: "log", sp.sin: "sin", sp.cos: "cos", sp.tan: "tan",
+    sp.sinh: "sinh", sp.cosh: "cosh", sp.tanh: "tanh",
+}  # fmt: skip
+# The device helper ``_emit_real`` calls for a whole-number power; kernels put it in their source.
+POWI = """static __device__ real phasor_powi(real b, int n) {
+    real r = R(1);
+    for (int k = n < 0 ? -n : n; k > 0; k--) r = r * b;
+    return n < 0 ? R(1) / r : r;
+}"""
+
+
+def _emit_real(e: sp.Expr) -> str:
+    if e.is_Symbol:
+        return e.name
+    if e.is_number:
+        v = float(e)
+        if not np.isfinite(v):
+            raise FunctionError(f"{e} is not a finite number")
+        return f"R({v!r})"
+    if isinstance(e, sp.Add | sp.Mul):
+        return (
+            "("
+            + (" + " if isinstance(e, sp.Add) else " * ").join(_emit_real(a) for a in e.args)
+            + ")"
+        )
+    if isinstance(e, sp.Pow):
+        base, exponent = e.args
+        b = _emit_real(base)
+        if exponent.is_Integer and abs(int(exponent)) <= 64:
+            return f"phasor_powi({b}, {int(exponent)})"
+        if exponent == sp.Rational(1, 2):
+            return f"(real)sqrt({b})"
+        return f"(real)pow({b}, {_emit_real(exponent)})"
+    if isinstance(e, sp.Abs):
+        return f"(real)fabs({_emit_real(e.args[0])})"
+    if type(e) in _R_FUNCS:
+        return f"(real){_R_FUNCS[type(e)]}({_emit_real(e.args[0])})"
+    raise FunctionError(f"no kernel code for {e!r}")
+
+
+@dataclass(frozen=True)
+class RealFunction:
+    """A real function of the named variables, read with the same whitelist as
+    ``ComplexFunction`` (never run as Python); ``^`` is a power, as in a textbook."""
+
+    source: str
+    names: tuple[str, ...]
+    expr: sp.Expr
+
+    @classmethod
+    def parse(cls, source: str, names: tuple[str, ...]) -> RealFunction:
+        expr = parse_expression(source.replace("^", "**"), names)
+        if expr.has(sp.I) or expr.free_symbols - {sp.Symbol(n, real=True) for n in names}:
+            raise FunctionError(f"{source!r} must be a real formula in {', '.join(names)}")
+        return cls(source, tuple(names), expr)
+
+    def c(self) -> str:
+        """A C expression of type ``real`` in variables of those names (also needs ``POWI``)."""
+        return _emit_real(self.expr)
+
+    def numpy(self):
+        """``f(*arrays)`` in the order of ``names``; float64, nan where undefined."""
+        fn = sp.lambdify([sp.Symbol(n, real=True) for n in self.names], self.expr, "numpy")
+
+        def call(*args):
+            shape = np.broadcast(*[np.asarray(a) for a in args]).shape
+            with np.errstate(all="ignore"):
+                out = fn(*[np.asarray(a, dtype=np.float64) for a in args])
+            return np.broadcast_to(np.asarray(out, dtype=np.float64), shape)
+
+        return call

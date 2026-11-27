@@ -14,12 +14,12 @@ from typing import Any
 import numpy as np
 
 from phasor.render.gpu.budget import Tile, budget_bytes, plan_tiles
-from phasor.render.gpu.codegen import ComplexFunction, FunctionError
+from phasor.render.gpu.codegen import ComplexFunction, FunctionError, RealFunction
 from phasor.render.gpu.registry import KernelError, default_gpu, get, kernel, registered, run
 
 __all__ = [
-    "ComplexFunction", "FunctionError", "KernelError", "Tile", "box_mean", "default_gpu", "get",
-    "kernel", "plan_tiles", "registered", "render", "run",
+    "ComplexFunction", "FunctionError", "KernelError", "RealFunction", "Tile", "box_mean",
+    "default_gpu", "get", "kernel", "plan_tiles", "registered", "render", "run",
 ]  # fmt: skip
 
 
