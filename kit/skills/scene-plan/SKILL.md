@@ -29,9 +29,9 @@ rules below are a summary of it as of 2026-11-25; where they differ, `TASTE.md` 
   added to fill time, none dropped to save it.
 - **Come back to the same picture** and test it on new cases, instead of a new picture for
   each point.
-- **No repetition.** Every beat gives the viewer something no earlier beat gave. A return
-  to a picture must ask it a new question; the same point made again, in a new case whose
-  outcome the viewer can already predict, is cut (step 9).
+- **Repeat only to add something.** A picture, case or point comes back only when the
+  viewer gains something new from it: a new question, a new sense, an outcome they could
+  not predict. The weavers (step 2) decide where returns go and say what each one adds.
 - **Open with a question** or a picture the viewer wants explained; never a title or a
   definition. **Let the viewer predict** before each reveal.
 - **Usually not concrete before abstract.** Ask which route the person wants (step 4).
@@ -155,14 +155,25 @@ they do not all find the same thing:
 A weave is real when the second idea is a consequence of the first inside the same object,
 so that removing either weakens the other. Two good ideas placed side by side are a staple,
 not a weave; leave those out. "None worth it" is an allowed answer, and no video is obliged
-to use a weave. Weaves go in `weaves.md`, each with what the viewer would see and hear.
+to use a weave.
+
+A weave brings something back: an object, a picture, a case, a sound. That return is
+repetition, and it is allowed only when it adds something: a new question asked of the
+same thing, a new sense (the picture now heard), a case whose outcome the viewer could
+not predict, or another field's view that changes what the thing means. For every return
+a weave makes, write in one sentence what the viewer gains from it that they did not
+already have. If that sentence restates an earlier point ("again, the hands line up"),
+drop the return; a weave whose second idea is its first one said again is a repeat, not
+a weave. Weaves go in `weaves.md`, each with what the viewer would see and hear, and that
+sentence for each return.
 
 **Paths.** Two or three agents each join branches of the map into whole paths, a short
 paragraph each, deliberately unlike one another (different openings, different
 destinations, different central pictures, different orders). Each path names its own
 point A and point B in its first line; the twenty should not all end in the same place. They read `weaves.md` too: a weave often makes the
 best return to the central picture (the same object, now heard, or now seen from the other
-field). At least 20 in all, in `paths.md`.
+field), and it comes with what that return adds. A path repeats a picture, case or point
+only where it adds something in the same way. At least 20 in all, in `paths.md`.
 
 ### 3. Prune
 
@@ -180,9 +191,7 @@ Brainstormers never judge; use fresh agents. Four tests:
    1, each score every path and give one line on its weakest point. Keep the five best
    that are still unlike one another.
 2. **Develop the five.** One agent per path writes it out animation by animation.
-   Weaknesses hidden in a paragraph show here, repetition above all: under each animation
-   the agent writes the one thing it adds, and a path whose list says the same thing
-   twice is marked down.
+   Weaknesses hidden in a paragraph show here.
 
 ### 4. Ask the person which route
 
@@ -214,8 +223,8 @@ Now make the chosen path teach as well as it can:
 - **Write the silent test** for each animation: what should the viewer work out from it
   with no voice? If the answer is "nothing", the animation or the setup is wrong.
 - **Name what is hard**: the one step where people get lost. Give it the most time.
-- **Plan the returns**: cases that run through the same animation, each changing one thing
-  and answering a question no earlier case answered. The last should surprise.
+- **Plan the returns**: cases that run through the same animation, each changing one thing.
+  The last should surprise.
 - **Place the predictions**: points where the picture holds before answering.
 - **Earn every symbol.** A word or equation appears only after the viewer has seen the
   thing it names.
@@ -297,48 +306,7 @@ accent belongs where a verb lands.
   for the same kind of event.
 - **Silence**: a short quiet before the payoff.
 
-### 9. Repetition
-
-A fresh agent, which wrote none of the plan, reads the finished draft cold, as the viewer
-from step 1, and weeds out repetition. It writes `plans/NAME.work/repeats.md`.
-
-1. **Cut the plan into beats.** A beat is the smallest stretch with one job: a spoken line
-   with the motion it anchors, a silent stretch, or one case run through an animation. A
-   ninety-second silence that runs three cases is three beats. Number them.
-2. **Write the ledger.** For each beat, one sentence: what the viewer has after it that
-   they did not have before, as the viewer would get it from what is shown and said (not
-   as the author meant it). Then put each sentence beside every earlier one; do not judge
-   from memory.
-3. **Flag** a beat whose sentence is empty, or is:
-   - **restated**: an earlier beat's point in other words or over a new picture;
-   - **same case again**: a new example whose outcome the viewer already predicts and
-     which shows nothing new about why (a second confirming case may stay; a third needs
-     a reason);
-   - **replayed**: the same motion, sound or comparison run again (another clap, a second
-     A/B, the sweep once more) with no new question asked of it;
-   - **echoed**: words saying what the picture already shows, or a recap of what was just
-     seen;
-   - **padded**: a silence that goes on after the viewer has worked it out.
-4. **Keep, with the reason written down:** a return that asks the picture a new question;
-   a control that rules out a wrong explanation the viewer could really hold (name it); a
-   prediction and its reveal (one beat); the ending's return to the opening picture, once;
-   a reminder of a fact just before the step that uses it, a few seconds long. Judge a
-   beat's job, not its look: the same picture can carry new ideas many times.
-5. **Give each flagged beat one verdict**: cut, merge into another beat, shorten to a
-   stated length, or replace with a case or question that does teach something new
-   (proposed). Then check the cuts together: if a later beat relies on something only a
-   cut beat gave, change that verdict. Removing repetition must not open a gap.
-
-Apply the verdicts to the draft, and keep the ledger's surviving sentences: in order, they
-are the whole video as a list, and no two may say the same thing.
-
-The yardstick (the person, 2026-11-27): of three reverb plans, the one liked most repeated
-itself least. Its central picture came back three times, but each return asked something
-new (echoes crowding in, the gaps of a box's arithmetic, the gap between a sphere and a
-flat front). The weakest made one point ("an echo is the hands lining up") and then showed
-it again in several cases whose outcome the viewer could mostly predict.
-
-### 10. Editor
+### 9. Editor
 
 A fresh agent reads the plan as the viewer from step 1 and answers each; fix what fails:
 
@@ -359,11 +327,10 @@ A fresh agent reads the plan as the viewer from step 1 and answers each; fix wha
 13. Is any verb there only as decoration? Cut it.
 14. If the plan uses a weave, do the two ideas truly live in one object, or were they
     stapled together?
-15. Is any beat still telling me something I already had? Cut it (step 9's rules).
 
 If the Editor finds the path itself weak, go back to the map; do not patch.
 
-### 11. Hand back
+### 10. Hand back
 
 Write `plans/NAME.md` in this shape, then show it to the person and stop. Do not start
 `/scene-builder` until they approve.
