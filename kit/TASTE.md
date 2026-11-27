@@ -24,3 +24,10 @@ examples. Add a dated line whenever they say something about taste.
 - 2026-11-27: no repetition unless it adds something: a picture, case or point comes back
   only with a new question, a new sense or an outcome the viewer could not predict. (Of the
   three reverb plans, A1 was liked most because it repeats itself least.)
+- 2026-11-27: more math on screen and more explanation; the plans had become "low quality
+  content enshrined in glamour". This replaces "not much text or equations", "the
+  animation does the talking … long silences" and "never rush" above. The model for
+  explanation is the person's own "A Room Is a Matrix": a spine of a few sentences, each
+  equation earned by a visual and built term by term, a ledger of results, worked numbers,
+  earlier courses written beside new results. Silence only with one thing to watch; no
+  padding; length follows content. Every claim is checked.
