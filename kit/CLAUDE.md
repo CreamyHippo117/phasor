@@ -29,8 +29,10 @@ with `scene_open` (again after every edit to the file), then `review`.
 
 The usual way is two commands: `/scene-plan <idea>` decides what to show and why and
 writes `plans/NAME.md`; once the person approves it, `/scene-builder plans/NAME.md` codes
-it. The steps below are what building comes down to, and serve for a small scene with no
-plan.
+it. When the person already knows what the video says (a script, an outline, notes) and
+wants it made beautiful, use `/scene-shots <the source>` instead of `/scene-plan`: it keeps
+their story and plans only the pictures, in the same plan shape. The steps below are what
+building comes down to, and serve for a small scene with no plan.
 
 1. **Understand the idea.** Restate it as a few beats: what appears, what moves, what the
    viewer should understand at each point. Ask at most one or two questions, only when the

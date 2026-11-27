@@ -206,7 +206,10 @@ def _cmd_kit(args: argparse.Namespace) -> int:
     print("  written: " + ", ".join(r["written"]))
     if r["kept"]:
         print("  kept (yours): " + ", ".join(r["kept"]))
-    print(f'start an AI there: cd "{r["dest"]}" and run claude; then /scene-plan <your idea>')
+    print(
+        f'start an AI there: cd "{r["dest"]}" and run claude; then /scene-plan <your idea>,'
+        " or /scene-shots <your script> when you already know what to say"
+    )
     return 0
 
 

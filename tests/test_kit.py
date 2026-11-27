@@ -61,7 +61,7 @@ def test_the_kit_installs_what_an_ai_needs(installed):
     for f in ("CLAUDE.md", "TASTE.md", "WISHLIST.md", ".mcp.json", ".phasor-kit.json",
               "kit/examples/INDEX.md", "kit/docs/API.md", "kit/docs/PATTERNS.md",
               "kit/docs/PITFALLS.md", ".claude/skills/scene-builder/SKILL.md",
-              ".claude/skills/scene-plan/SKILL.md",
+              ".claude/skills/scene-plan/SKILL.md", ".claude/skills/scene-shots/SKILL.md",
               ".claude/skills/phasor/SKILL.md"):  # fmt: skip
         assert (d / f).is_file(), f
     assert (d / "scenes").is_dir() and (d / "out").is_dir()
@@ -116,6 +116,7 @@ def _commands_in(text: str) -> list[list[str]]:
 
 @pytest.mark.parametrize("source", ["kit/CLAUDE.md", "kit/skills/scene-builder/SKILL.md",
                                     "kit/skills/scene-plan/SKILL.md",
+                                    "kit/skills/scene-shots/SKILL.md",
                                     "skills/phasor/SKILL.md"])  # fmt: skip
 def test_every_command_the_kit_names_exists_with_its_options(source):
     from phasor.cli import build_parser

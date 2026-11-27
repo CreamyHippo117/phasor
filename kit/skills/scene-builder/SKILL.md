@@ -1,6 +1,6 @@
 ---
 name: scene-builder
-description: Build a phasor scene from a plan made by /scene-plan - code each animation of the plan as faithfully as phasor allows, check it, look at it, render a preview. Use when the person pastes a plan or points at one ("build this", "code this plan", "/scene-builder plans/NAME.md", a pasted block with Point A / Point B / Animations), or says a plan is approved. If there is no plan yet, run /scene-plan first.
+description: Build a phasor scene from a plan made by /scene-plan or /scene-shots - code each animation of the plan as faithfully as phasor allows, check it, look at it, render a preview. Use when the person pastes a plan or points at one ("build this", "code this plan", "/scene-builder plans/NAME.md", a pasted block with Point A / Point B / Animations), or says a plan is approved. If there is no plan yet, run /scene-plan first.
 argument-hint: "<plans/NAME.md, or the plan pasted in>"
 ---
 
@@ -8,15 +8,16 @@ argument-hint: "<plans/NAME.md, or the plan pasted in>"
 
 The plan: $ARGUMENTS
 
-The thinking is already done. `/scene-plan` chose what to show, in what order, how long
-each animation holds and where the voice is silent, and the person approved it. Your job
+The thinking is already done. `/scene-plan` (or `/scene-shots`, from the person's own
+story) chose what to show, in what order, how long each animation holds and where the
+voice is silent, and the person approved it. Your job
 is to code that plan as well as phasor can, not to improve, shorten or re-plan it. If you
 think the plan is wrong somewhere, build it as written and say so in the report.
 
 The plan is either a file (`plans/NAME.md`) or pasted text. If pasted, save it to
 `plans/NAME.md` first so the scene and its plan stay together. If what you were given is
 a bare idea and not a plan (no path, no list of animations), stop and tell the person to
-run `/scene-plan` on it.
+run `/scene-plan` on it (or `/scene-shots`, if it is a script or outline of what to say).
 
 `CLAUDE.md` in this folder has the commands and the rules; `TASTE.md` has the person's
 taste, and it outranks everything else here.

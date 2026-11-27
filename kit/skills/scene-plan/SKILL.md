@@ -1,6 +1,6 @@
 ---
 name: scene-plan
-description: Plan a teaching video, beautiful and full of real mathematics, before any code is written - brainstorm very widely with many subagents, prune to one path, and hand back a plan (the question, the central picture, the spine, an animation list with what to say and the equations on screen). Use whenever the person gives a topic or idea to teach or express ("a video about Lorenz attractors", "something on group theory", "how would you show X beautifully", "plan a scene/video on ...", "/scene-plan ..."), or asks how to make an idea beautiful, intuitive or well taught, even if they do not say "plan". Run it before /scene-builder, which codes the plan.
+description: Plan a teaching video, beautiful and full of real mathematics, before any code is written - brainstorm very widely with many subagents, prune to one path, and hand back a plan (the question, the central picture, the spine, an animation list with what to say and the equations on screen). Use whenever the person gives a topic or idea to teach or express ("a video about Lorenz attractors", "something on group theory", "how would you show X beautifully", "plan a scene/video on ...", "/scene-plan ..."), or asks how to make an idea beautiful, intuitive or well taught, even if they do not say "plan". Run it before /scene-builder, which codes the plan. If the person already knows what the video says (a script, an outline, notes) and wants only the pictures planned, use /scene-shots instead.
 argument-hint: "<the idea or topic, in a sentence or a paragraph>"
 ---
 
