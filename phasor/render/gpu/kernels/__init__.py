@@ -6,5 +6,6 @@ from phasor.render.gpu.kernels import (  # noqa: F401
     heat,
     post,
     splat,
+    wall,
     wave,
 )

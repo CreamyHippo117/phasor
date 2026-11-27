@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from typing import Any, ClassVar, Literal
 
 import numpy as np
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from phasor.core import files
 from phasor.core.objects import Bounds, DrawContext, ObjectBase, ParamsBase, Pass, register
@@ -42,6 +42,7 @@ from phasor.domains.heatmap import (
     PRISM,
     HeatParams,
     Recipe,
+    field_pixels,
     heat_pixels,
     wheel_recipe,
 )
@@ -54,6 +55,8 @@ from phasor.domains.strokes import (
     polylines,
     with_alpha,
 )
+from phasor.render.gpu import FunctionError
+from phasor.render.gpu.kernels import wall
 
 SHOWN_FEATURES = 1000  # image sources listed in ``features`` at most (the lowest orders)
 CHECKPOINT_EVERY = 50  # FDTD steps between cached checkpoints
@@ -782,6 +785,22 @@ def _relative(v: str) -> str:
     return files.relative_path(v) if v else v
 
 
+def _box_faces(size):
+    """The six walls of a shoebox of ``size`` with its corner at 0: (name, corner, unit vector
+    along the bottom edge, unit vector up the left edge, (width, height), inward normal)."""
+    sx, sy, sz = (float(v) for v in size)
+    x, y, z = np.eye(3)
+    zero = np.zeros(3)
+    return [
+        ("x_min", zero, y, z, (sy, sz), x),
+        ("x_max", sx * x, y, z, (sy, sz), -x),
+        ("y_min", zero, x, z, (sx, sz), y),
+        ("y_max", sy * y, x, z, (sx, sz), -y),
+        ("z_min", zero, x, y, (sx, sy), z),
+        ("z_max", sz * z, x, y, (sx, sy), -z),
+    ]
+
+
 @register
 class Room3D(ObjectBase):
     """A room in 3D, drawn as faint glowing lines along its edges, with optional faint
@@ -789,7 +808,17 @@ class Room3D(ObjectBase):
     Wavefront ``.obj`` file (``path``, relative to the scene's folder, scaled by ``scale`` and
     moved by ``origin``); for a mesh, the edges drawn are its creases (``edge_angle``), not
     the diagonals that split flat walls into triangles. ``SoundRays`` and ``Wavefront3D``
-    name a room by its id and bounce off its walls."""
+    name a room by its id and bounce off its walls.
+
+    ``paint`` (a shoebox only) paints a number on the walls: a formula in ``x``, ``y``, ``z``
+    (meters from the room's corner), the mode numbers ``l``, ``m``, ``n`` (``mode``, animate
+    them) and the room's size ``Lx``, ``Ly``, ``Lz``; ``^`` is a power. A room mode's
+    pressure squared is ``(cos(pi*l*x/Lx)*cos(pi*m*y/Ly)*cos(pi*n*z/Lz))^2``. The value is
+    worked out for every pixel of each wall (a kernel), 1 at ``paint_range``, and read off the
+    ``colormap`` with the light weighted by it. ``paint_to`` and ``paint_blend`` (0-1) change
+    one formula into another through every value between. ``paint_faces``: ``far`` paints the
+    inside of the walls behind the room, as seen through the glass; ``all`` paints all six
+    (the near ones hide what is in the room)."""
 
     type: ClassVar[str] = "room3d"
     Files: ClassVar = ("path",)
@@ -798,6 +827,7 @@ class Room3D(ObjectBase):
         "stroke": ("stroke", "hairline"),
         "glow": ("glow", "soft"),
         "material": ("surface", "glass"),
+        "colormap": ("colormap", "spectrum"),  # for ``paint``
     }
     Presets: ClassVar = {
         "glass": {},
@@ -813,6 +843,13 @@ class Room3D(ObjectBase):
         absorption: float = -1.0  # 0-1; negative: take it from ``material``
         walls: float = Field(0.25, ge=0, le=1)  # glass walls' share of the material; 0: lines
         edge_angle: float = Field(20.0, gt=0, lt=180)  # degrees: a crease drawn as a line
+        paint: str = ""  # a formula painted on the walls (a shoebox); empty: no paint
+        paint_to: str = ""  # a second formula; ``paint_blend`` says how far to it
+        paint_blend: float = Field(0.0, ge=0, le=1)  # (1 - blend) paint + blend paint_to
+        mode: Vec3 = (1.0, 0.0, 0.0)  # l, m, n in the formulas: animate them to change note
+        paint_range: float = Field(1.0, gt=0)  # the value that is full brightness
+        paint_opacity: float = Field(0.9, ge=0, le=1)
+        paint_faces: Literal["far", "all"] = "far"
 
         @field_validator("size")
         @classmethod
@@ -823,6 +860,24 @@ class Room3D(ObjectBase):
         @classmethod
         def _path(cls, v):
             return _relative(v)
+
+        @field_validator("paint", "paint_to")
+        @classmethod
+        def _paint(cls, v: str) -> str:
+            if v.strip():
+                try:
+                    wall.parse(v)
+                except FunctionError as e:
+                    raise ValueError(str(e)) from None
+            return v
+
+        @model_validator(mode="after")
+        def _paint_needs_a_box(self):
+            if self.path and self.paint.strip():
+                raise ValueError("paint is for a shoebox room; leave path empty")
+            if self.paint_to.strip() and not self.paint.strip():
+                raise ValueError("paint_to needs paint")
+            return self
 
         @field_validator("material")
         @classmethod
@@ -869,6 +924,10 @@ class Room3D(ObjectBase):
             return {**out, "missing_file": p.path}
         alpha = self.alpha(state)
         vol, area = ac_math.mesh_stats(g.vertices, g.triangles)
+        if p.paint.strip():
+            out["paint"] = {"formula": p.paint.strip(), "to": p.paint_to.strip(),
+                            "blend": round(p.paint_blend, 6), "mode": list(p.mode),
+                            "mean": self.paint_means(state)}  # fmt: skip
         return {**out, "volume": round(vol, 3), "surface_area": round(area, 3),
                 "walls": len(g.walls), "edges": len(g.edges), "triangles": len(g.triangles),
                 "material": p.material, "absorption": round(alpha, 4),
@@ -893,10 +952,64 @@ class Room3D(ObjectBase):
                         colors=np.tile(np.asarray(color), (3 * len(tri), 1)),
                         material=me.roles["material"],
                         opacity=p.opacity * p.walls * float(me.style["material"]))  # fmt: skip
+        if p.paint.strip() and p.paint_opacity > 0:
+            self._paint(ctx, state)
         segs = g.vertices[g.edges]  # (E, 2, 3)
         width = me.style["stroke"] * cam.units_per_height(segs.reshape(-1, 3)).reshape(-1, 2)
         polylines(ctx, cam, segs, width, color=with_alpha(color, p.opacity),
                   glow=me.style["glow"])  # fmt: skip
+
+    # -- paint on the walls
+    def paint_means(self, state: SceneState, n: int = 24) -> dict[str, float]:
+        """The mean of the painted value (1 at ``paint_range``) over each wall, by name
+        (``x_min`` ... ``z_max``): where a note is strong and where it leaves the walls dark."""
+        p = self.me(state).params
+        f, g = wall.parse(p.paint), (wall.parse(p.paint_to) if p.paint_to.strip() else None)
+        out = {}
+        for name, corner, ex, ey, (w, h), _ in _box_faces(p.size):
+            u = (np.arange(n) + 0.5) / n
+            pts = (np.asarray(corner) + (u * w)[None, :, None] * ex
+                   + (u * h)[:, None, None] * ey)  # fmt: skip
+            args = (pts[..., 0], pts[..., 1], pts[..., 2], *p.mode, *p.size)
+            val = f.numpy()(*args)
+            if g is not None and p.paint_blend > 0:
+                val = (1 - p.paint_blend) * val + p.paint_blend * g.numpy()(*args)
+            out[name] = round(float(np.mean(val)) / p.paint_range, 4)
+        return out
+
+    def _paint(self, ctx: DrawContext, state: SceneState) -> None:
+        """The value painted on each wall, as ``ctx.field`` quads coloured like a heat map."""
+        me = self.me(state)
+        p = me.params
+        cam = state.camera_for(me)
+        f = wall.parse(p.paint)
+        to = wall.parse(p.paint_to) if p.paint_to.strip() else None
+        origin = np.asarray(p.origin, dtype=np.float64)
+        recipe = Recipe(colour="lut", lut=me.style["colormap"], blend=True, weight="value")
+        glow = float(me.style["glow"])
+        for _, corner, ex, ey, (w, h), inward in _box_faces(p.size):
+            centre = origin + corner + (w * ex + h * ey) / 2
+            toward = (cam.eye - centre) if cam.perspective else -cam.forward
+            if p.paint_faces == "far" and float(toward @ inward) <= 0:
+                continue  # a near wall: its outside faces us, and it would hide the room
+
+            def values(tile, center, height, corner=corner, ex=ex, ey=ey):
+                from phasor.render import gpu
+
+                return gpu.run("wall_field", tile, function=f, to=to, blend=p.paint_blend,
+                               origin=tuple(corner), right=tuple(ex), up=tuple(ey),
+                               center=center, height=height, mode=tuple(p.mode),
+                               size=tuple(p.size), scale=p.paint_range)  # fmt: skip
+
+            pixels = field_pixels(values, (w, h), recipe, background=state.background)
+            ctx.field(
+                origin + corner,
+                w * ex,
+                h * ey,
+                pixels=pixels,
+                opacity=p.opacity * p.paint_opacity,
+                glow=glow,
+            )
 
 
 class _InRoom(ObjectBase):

@@ -1406,6 +1406,17 @@ camera.
   diagonals of flat walls stay hidden) and faint glass walls (`walls`, 0 for lines only;
   `preset="outline"`). A file that is not there is lint `missing_file` and draws nothing.
   Semantics: volume, surface area, walls, Sabine and Eyring RT60.
+- `ac.Room3D(paint="(cos(pi*l*x/Lx)*cos(pi*m*y/Ly)*cos(pi*n*z/Lz))^2", mode=(1, 0, 0))`: a
+  number painted on the walls of a shoebox, worked out for every pixel by a kernel
+  (`wall_field`, a NumPy fallback without a card) and smooth at any zoom. The formula is in
+  `x`, `y`, `z` (meters from the room's corner), `l`, `m`, `n` (`mode`: animate it to change
+  note, no flicker) and `Lx`, `Ly`, `Lz` (the size); `^` is a power; functions `sin cos tan
+  exp log sqrt sinh cosh tanh abs`. The value is colored from the `colormap` and the light
+  weighted by it (`paint_range` is the value that is full light, `paint_opacity` the
+  opacity). `paint_to` and `paint_blend` (0-1) change one formula into another along a
+  straight line. `paint_faces="far"` (default) paints the inside of the walls behind the
+  room, seen through the glass; `"all"` paints all six. Semantics: `paint.mean`, the mean
+  value on each wall (`x_min` ... `z_max`). Shoebox only (not with `path=`).
 - `ac.SoundRays(room="room", source=, time=expr("t - 1"), speed=0.01, count=1200,
   bounces=6, trail=1.5)`: rays leaving the source evenly in every direction, reflecting off
   the walls (angle in = angle out). `time` is scene seconds since the sound left, `speed`
@@ -1437,6 +1448,19 @@ room.add(ac.Wavefront3D(id="front", **clap))
 rays = room.engine.inspect(3.0, id="rays")["objects"][0]["semantic"]
 assert abs(rays["distance"] - 6.86) < 1e-6 and rays["reflections_so_far"] > 1
 assert room.engine.inspect(0.0, id="room")["objects"][0]["semantic"]["volume"] == 120.0
+```
+
+```python
+from phasor import Scene, ac
+
+hall = Scene("modes", look="prism", passes=None)
+hall.use_camera("orbit", target=(2.5, 2, 1.5), distance=12)
+note = "(cos(pi*l*x/Lx) * cos(pi*m*y/Ly) * cos(pi*n*z/Lz))^2"
+hall.add(ac.Room3D(id="room", size=(5, 4, 3), paint=note, mode=(1, 0, 0)))
+hall.at(0.0).to("room.mode", (1, 1, 1), duration=4.0)  # the axial note glides to the oblique
+mean = lambda t: hall.engine.inspect(t, id="room")["objects"][0]["semantic"]["paint"]["mean"]
+assert mean(0.0)["x_min"] == 1.0 and mean(0.0)["y_min"] == 0.5  # the end walls carry it all
+assert set(mean(4.0).values()) == {0.25}  # the oblique note: patchy on every wall
 ```
 
 **Echoes are mirror rooms: the `unfold` verb** (`examples/mirror_rooms.py`). A ray that

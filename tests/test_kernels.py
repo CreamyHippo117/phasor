@@ -18,6 +18,7 @@ from phasor.render import gpu
 from phasor.render.gpu import ComplexFunction, FunctionError, KernelError, Tile, plan_tiles
 from phasor.render.gpu.kernels.fractal import precision_for
 from phasor.render.gpu.kernels.heat import Recipe
+from phasor.render.gpu.kernels.wall import parse as wall_formula
 from phasor.render.gpu.registry import active_backend, get, kernel, plane, registered
 from tests import cuda_emu
 
@@ -75,6 +76,12 @@ HEAT_BG = (0.02, 0.03, 0.06, 1.0)
 HEAT_VIEW = {"center": (1.9, 1.6), "height": 3.3, "size": (4.0, 3.0)}
 PRISM_HEAT = {"isolines": 8, "ambient": 0.0, "fade": 0.1, "contrast": 2.0,
               "background": HEAT_BG}  # fmt: skip
+
+# For the wall kernel: a room mode and a different one to blend to, on a wall that is not
+# axis-aligned in the room (the floor, and a slanted rectangle).
+WALL_MODE = wall_formula("(cos(pi*l*x/Lx)*cos(pi*m*y/Ly)*cos(pi*n*z/Lz))^2")
+WALL_TO = wall_formula("sin(l*x + 0.5) * exp(-z/Lz) + abs(y - Ly/2) / Ly")
+WALL_VIEW = {"center": (2.0, 1.5), "height": 3.4, "size": (5.0, 4.0, 3.0), "mode": (2.0, 1.0, 1.0)}
 
 # name -> list of (tile, params) cases every backend must agree on
 CASES = {
@@ -170,6 +177,18 @@ CASES = {
         (FULL, {"sources": WAVE_FOUR, "center": (0.0, 0.0), "height": 5.0, "wavenumber": 7.5,
                 "omega_t": -0.7, "precision": "f64"}),
     ],
+    "wall_field": [
+        (FULL, {**WALL_VIEW, "function": WALL_MODE, "origin": (0.0, 0.0, 0.0),
+                "right": (1.0, 0.0, 0.0), "up": (0.0, 1.0, 0.0)}),
+        (OFFSET, {**WALL_VIEW, "function": WALL_MODE, "origin": (0.0, 4.0, 0.0),
+                  "right": (1.0, 0.0, 0.0), "up": (0.0, 0.0, 1.0), "scale": 0.5,
+                  "precision": "f64"}),
+        (OFFSET, {**WALL_VIEW, "function": WALL_MODE, "origin": (0.3, 0.2, 0.1),
+                  "right": (0.6, 0.0, 0.8), "up": (0.0, 1.0, 0.0), "to": WALL_TO,
+                  "blend": 0.35}),
+        (FULL, {**WALL_VIEW, "function": WALL_MODE, "origin": (5.0, 0.0, 0.0),
+                "right": (0.0, 1.0, 0.0), "up": (0.0, 0.0, 1.0), "to": WALL_TO, "blend": 1.0}),
+    ],
     "heat_shade": [
         # plain pictures: the table's nearest entry, a blended table on cell centres
         (FULL, {**HEAT_VIEW, "grid": HEAT_GRID, "recipe": Recipe(lut=HEAT_LUT)}),
@@ -251,6 +270,7 @@ def test_every_kernel_has_a_reference_and_a_signature():
         "srgb8",
         "tonemap",
         "vignette",
+        "wall_field",
         "wave_field",
     ]
     assert all(callable(k.reference) and "->" in k.signature for k in ks.values())
