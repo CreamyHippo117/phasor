@@ -78,6 +78,20 @@ gap = 0.3
 pause_per_change = 0.25
 pause_max = 1.5
 
+[sound]
+# The mix (SOUND.md, time/sound.py). Levels are loudness (ITU BS.1770), not peaks.
+target = -16.0    # LUFS: the voice, and the whole mix after the final trim
+bed = -18.0       # LU relative to the voice: a bed's level when it gives no gain
+cue = -10.0       # LU relative to the voice: a cue's level (its loudest 400 ms)
+duck = 8.0        # dB beds dip while the narration speaks
+attack = 0.25     # s: the dip starts this long before the speech
+release = 0.6     # s: and recovers over this long after it
+ceiling = -1.0    # dBTP: the limiter's ceiling
+knee = 2.0        # dB: the limiter's soft knee
+masking = 12.0    # lint bed_masks_voice: a bed closer than this to the voice in speech
+word_gap = 0.08   # lint cue_on_word: s between a cue's peak and a stressed word's onset
+clip = 3.0        # lint audio_clip: dB over full scale the mix may reach before the limiter
+
 # 3D camera (SPEC "3D auto-cinematography"). `drift`: slow sway in azimuth, degrees either
 # way, over `drift_period` seconds. The camera solver: `fill` is the share of the frame
 # height the kept objects should span, `thirds` and `smooth` are the weights of those goals,
@@ -126,6 +140,7 @@ text_min = 0.02      # text lower than this share of the frame height
 clutter = 4          # more objects than this changing at once in one block
 crowded = 0.05       # a placed label still covered by more than this share is "unsolved"
 occluded = 0.9       # 3D: a label less visible than this is "occluded_label"
+bake_renders = 3000  # slow_layout: occlusion buffers the layout bake may render (one per 10 Hz key while a label is shown)
 
 # Aesthetic rules (lint(aesthetic=True)); the taste knobs.
 hues = 7             # color_restraint: saturated flat-paint hues (hue along a curve or in a colormap is not counted)
@@ -161,6 +176,8 @@ float_period = 9.0
 stagger = 0.12
 dim_level = 0.25
 orbit_swing = 35.0   # degrees the camera swings during orbit_reveal
+camera_lead = 3.0   # seconds (at least) the camera takes to swing to protect an appearing object
+camera_speed = 2.0  # degrees per second that swing stays under (longer lead for a bigger swing)
 transform_arc = 0.9   # line heights a part arcs by when transform moves it past other parts
 
 [motion.reveal]

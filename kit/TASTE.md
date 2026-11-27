@@ -21,6 +21,19 @@ examples. Add a dated line whenever they say something about taste.
   with new cases; usually not concrete before abstract (ask which route).
 - 2026-11-25: not much text or equations on screen; no hard cuts, one animation becomes
   the next.
+- 2026-11-26: a long hold milks extensions of the same idea (the next case, the parameter
+  going further, a deeper level, another view), never a replay of the exact same visual.
+- 2026-11-26: show more math, to teach: the formula being drawn, the number that turns with
+  its live value, labels on what matters. Little prose still, but this replaces "not much
+  equations" of 2026-11-25.
+- 2026-11-26: a breathtaking picture keeps the full frame. Where there is room, the
+  equation sits beside it. Where it is breathtaking and also carries the idea, share
+  time, not space: it runs alone first, then at its key moment it slows, dims, and the
+  math is written in, held and taken away (example: `reverb_la`'s hands as the n-th roots
+  of unity, the reverb as a DFT).
+- 2026-11-26: narration explains what is happening and what it means mathematically (one
+  sentence when those are obviously the same); equations on screen still come in as the
+  exact statement of that meaning. The voice explains an equation, never reads it out.
 - 2026-11-27: no repetition unless it adds something: a picture, case or point comes back
   only with a new question, a new sense or an outcome the viewer could not predict. (Of the
   three reverb plans, A1 was liked most because it repeats itself least.)

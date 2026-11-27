@@ -30,10 +30,15 @@ compounding. If this file and SPEC.md disagree, stop and ask.
   last. Windows, CUDA and macOS untested: **`pc_tasks/09_pc_checks_after_14_15.md`** lists what
   the owner's PC must run.
 - Sound bed (owner, 2026-11-26): music, ambience and effects under the narration, editable in
-  the app: `SOUND.md`, approved 2026-11-26; after `BEAUTY.md`,
-  not started until the owner says so.
-- Render speed: `GPU_SPEED.md` (steps 1-4 done, workers included); resume at its "Next
-  session"; measure with wall clock before and after each step.
+  the app: `SOUND.md`, approved and started 2026-11-26 (owner). All five steps built (schema 9
+  `sound` section: beds and cues; the editor's Sound tab, timeline rows, playback, mastering,
+  the owner's own voice takes; a script's scene is edited as a copy, `scene_copy`).
+- Render speed: `GPU_SPEED.md` (steps 1-4 done, workers included; 9a-9c done, 9c untested on
+  CUDA: `pc_tasks/11_heat_kernel.md`; step 10 is a survey, not built); resume at its "Next
+  session"; measure with wall clock before and after each step. In `final` and `4k` a
+  speed-up may change pictures only where the eye cannot see it: every 8-bit value within 1
+  code value (`pc_tasks/pin_frames.py --compare`); anything visible is for previews only
+  (`draft`, `preview`) (owner, 2026-11-26).
 - One milestone per branch. No work on milestone N+1 until N's exit demo and tests pass.
 - Before declaring a milestone done, run the `phasor-milestone-gate` skill.
 
@@ -100,7 +105,8 @@ compounding. If this file and SPEC.md disagree, stop and ask.
   `PHASOR_UPDATE_GOLDEN=1 uv run pytest -k golden` and look at them before committing.
 - Layout runs only inside `layout/bake.py`, and only `Engine` runs or applies the bake.
   Anything that draws or inspects takes `Engine.state_at(t)`, never `time.compile.evaluate`.
-- A lint rule lives in `inspect/lint.py`, takes its threshold from the theme's `[lint]` table,
+- A lint rule lives in `inspect/lint.py`, takes its threshold from the theme's `[lint]` table
+  (sound rules from `[sound]`, owner 2026-11-26),
   reports `times`, and offers a `fix` only when the fix is certain to be right.
 - New lint rules and layout features are tested with `passes=None` and with OpenGL (see
   `MODES` in `tests/test_lint.py`); CI on Windows has no OpenGL.
