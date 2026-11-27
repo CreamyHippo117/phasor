@@ -1373,8 +1373,11 @@ scene or with `layer="overlay"` (`extent` in frame heights). Numerics: `calc_mat
 from phasor import Scene, calc, expr
 
 poisson = Scene("poisson", passes=None)
-poisson.add(calc.Periodize(id="p", f="exp(-(x-1.3)^2/9.68)", period=10.0, copies=(-2, 3),
-                           fold=expr("t / 4")))
+poisson.add(
+    calc.Periodize(
+        id="p", f="exp(-(x-1.3)^2/9.68)", period=10.0, copies=(-2, 3), fold=expr("t / 4")
+    )
+)
 info = poisson.engine.inspect(4.0, id="p")["objects"][0]["semantic"]
 assert info["max_mismatch"] < 1e-12 and info["fold"] == 1.0  # c_k == fhat(k/P) / P
 assert abs(complex(*info["c_k"][4]) - 0.5515) < 1e-3  # k = 0 (the list runs from -4): the mean of g
