@@ -29,7 +29,8 @@ class RealFunction:
 
     @classmethod
     def parse(cls, source: str) -> RealFunction:
-        return cls(source, parse_expression(source, ("x",)))
+        # ``^`` is a power, as in a textbook ("exp(-(x-1)^2)"); Python's XOR means nothing here
+        return cls(source, parse_expression(source.replace("^", "**"), ("x",)))
 
     @property
     def x(self) -> sp.Symbol:
@@ -225,17 +226,114 @@ def disc_integral(f: VectorField, expr: sp.Expr, center, radius: float, n: int =
     return float(np.sum(vals * R * w[:, None]) * math.pi / n)
 
 
+# ---------------------------------------------------------------- periodization (Poisson summation)
+#
+# g(x) = sum_j f(x - jP) over the copies j in [lo, hi), the periodic function made from f. Its
+# Fourier coefficients are c_k = (1/P) integral over a cell of g(x) e^{-2 pi i k x / P} dx. Every
+# copy j, shifted back, is f over the cell ``cell - jP``, so the sum of the integrals is one
+# integral of f over the union of those cells (the *window*): c_k = fhat_W(k/P) / P. That is
+# Poisson summation; with all j it is exact for any integrable f, with a finite set the window is
+# finite and the identity holds for f cut to the window. The pieces are f cut at the cell edges:
+# piece m is f over [cell + mP, cell + (m+1)P) for m = -j; slid back by mP into the cell they
+# add up to g.
+
+
+def copy_range(copies: tuple[int, int]) -> list[int]:
+    """The shifts j of the copies: ``range(lo, hi)`` (the end is not included)."""
+    return list(range(copies[0], copies[1]))
+
+
+def piece_range(copies: tuple[int, int]) -> list[int]:
+    """The pieces m = -j, in increasing order: the cells of f whose slid-back sum is g."""
+    return sorted(-j for j in copy_range(copies))
+
+
+def periodize_window(period: float, copies: tuple[int, int], cell: float) -> tuple[float, float]:
+    """The part of the line the pieces cover: ``(a, b)``, ``b - a`` whole periods."""
+    ms = piece_range(copies)
+    return cell + ms[0] * period, cell + (ms[-1] + 1) * period
+
+
+def periodic_sum(f: RealFunction, period: float, copies: tuple[int, int], x) -> np.ndarray:
+    """g(x) = sum of f(x - jP) over the copies (NaN counts as 0: f is zero where undefined)."""
+    x = np.asarray(x, dtype=np.float64)
+    out = np.zeros_like(x)
+    for j in copy_range(copies):
+        out += np.nan_to_num(f(x - j * period))
+    return out
+
+
+def fold_piece(f: RealFunction, period: float, m: int, cell: float, fold: float, n: int = 240):
+    """Piece ``m`` of f at ``fold`` (0: slid into the cell, 1: where f has it): ``(x, y)``."""
+    x = cell + m * period + np.linspace(0.0, period, n + 1)
+    return x - (1.0 - float(fold)) * m * period, np.nan_to_num(f(x))
+
+
+def fourier_coefficients(
+    f: RealFunction, period: float, copies: tuple[int, int], cell: float, ks, n: int = 600
+) -> np.ndarray:
+    """c_k of g, by the periodic trapezoid rule over one cell (spectrally accurate for smooth g)."""
+    x = cell + np.arange(n) * period / n
+    g = periodic_sum(f, period, copies, x)
+    ks = np.asarray(ks, dtype=np.float64)
+    return np.exp(-2j * np.pi * np.outer(ks, x) / period) @ g / n
+
+
+def fourier_transform(
+    f: RealFunction, period: float, copies: tuple[int, int], cell: float, xi, n: int = 600
+) -> np.ndarray:
+    """fhat(xi) = integral of f(x) e^{-2 pi i x xi} dx over the window, by the same rule on a
+    grid of the same spacing (a different code path from the coefficients above)."""
+    a, b = periodize_window(period, copies, cell)
+    x = a + np.arange(round((b - a) / period) * n) * period / n
+    fx = np.nan_to_num(f(x))
+    xi = np.asarray(xi, dtype=np.float64)
+    return np.exp(-2j * np.pi * np.outer(xi, x)) @ fx * (period / n)
+
+
+def tail_mass(f: RealFunction, period: float, copies: tuple[int, int], cell: float) -> float:
+    """The share of |f|, over five more periods each side of the window, that lies outside
+    the window: how much of f the finite set of copies leaves out."""
+    a, b = periodize_window(period, copies, cell)
+    x = np.linspace(a - 5 * period, b + 5 * period, 4001)
+    y = np.abs(np.nan_to_num(f(x)))
+    total = float(y.sum())
+    return float(y[(x < a) | (x >= b)].sum() / total) if total > 0 else 0.0
+
+
+def nice_ticks(lo: float, hi: float, target: int = 4) -> list[float]:
+    """Round tick values (1, 2 or 5 times a power of ten) inside [lo, hi], about ``target``."""
+    span = hi - lo
+    if not span > 0:
+        return [lo]
+    raw = span / max(target, 1)
+    mag = 10.0 ** math.floor(math.log10(raw))
+    step = next(m * mag for m in (1, 2, 5, 10) if m * mag >= raw)
+    first = math.ceil(lo / step - 1e-9)
+    last = math.floor(hi / step + 1e-9)
+    return [round(i * step, 12) for i in range(first, last + 1)]
+
+
 __all__ = [
     "RULES",
     "FunctionError",
     "RealFunction",
     "VectorField",
+    "copy_range",
     "delta_for_epsilon",
     "disc_integral",
     "exact_integral",
+    "fold_piece",
+    "fourier_coefficients",
+    "fourier_transform",
     "limit_at",
     "loop_integral",
+    "nice_ticks",
+    "periodic_sum",
+    "periodize_window",
+    "piece_range",
     "riemann_sum",
+    "tail_mass",
     "taylor_coefficients",
     "taylor_polynomial",
 ]  # fmt: skip

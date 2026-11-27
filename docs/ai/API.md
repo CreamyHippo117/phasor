@@ -1280,6 +1280,30 @@ assert (
 )  # more pieces, smaller error
 ```
 
+**Poisson summation in one object.** `calc.Periodize(f="exp(-(x-1.3)^2/9.68)", period=10,
+copies=(-2, 3), cell=0, fold=expr("t / 4"), harmonics=4, spectrum=True, extent=(13, 7))`: the
+bump f, its copies every `period` (faint), their sum g (bright) and the pieces of f cut at the
+cell edges and slid into the cell (`fold=0`: they add up to g; `fold=1`: they draw f exactly);
+below, |fhat| with a stem at every k/P (`spectrum=True`), with axes, ticks and labels. `copies=(lo,
+hi)` is `range(lo, hi)`, so `(-2, 3)` is five copies. `^` is a power in function text. The
+semantics give `c_k` (the coefficients of g, summed over the cell) and `fhat_over_P` (fhat(k/P)/P,
+integrated over the line), as `[re, im]` pairs for `k = -harmonics..harmonics`, and `max_mismatch`
+between them: they are equal (Poisson summation). Also `tail` (the share of f the finite copies
+leave out), `folded_sum_error` and `series_error`. It draws in the plane z = `pos[2]` of a 3D
+scene or with `layer="overlay"` (`extent` in frame heights). Numerics: `calc_math` (`periodic_sum`,
+`fold_piece`, `fourier_coefficients`, `fourier_transform`).
+
+```python
+from phasor import Scene, calc, expr
+
+poisson = Scene("poisson", passes=None)
+poisson.add(calc.Periodize(id="p", f="exp(-(x-1.3)^2/9.68)", period=10.0, copies=(-2, 3),
+                           fold=expr("t / 4")))
+info = poisson.engine.inspect(4.0, id="p")["objects"][0]["semantic"]
+assert info["max_mismatch"] < 1e-12 and info["fold"] == 1.0  # c_k == fhat(k/P) / P
+assert abs(complex(*info["c_k"][4]) - 0.5515) < 1e-3  # k = 0 (the list runs from -4): the mean of g
+```
+
 **More of each module.** `pde.Profile(kind="heat", boundary="neumann", method="spectral")`:
 insulated ends (drawn as walls; held ends are drawn as pins) and a spectral solver that is
 exact per mode at any step. `pde.Modes(modes=(1, 0, 0.5), count=7, time=...)`: separation of
