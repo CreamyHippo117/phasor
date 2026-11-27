@@ -1,6 +1,6 @@
 ---
 name: scene-shots
-description: Plan the pictures for a story the person already knows - they bring what is said and in what order (a script, an outline, notes, the equations), and this skill designs how each beat is seen, the way a cinematographer works from a finished screenplay - no new ways to teach it, every beat made beautiful and true. Use when the person knows what they want discussed and asks for the visuals ("I know what I want to say, make it beautiful", "here is my script/outline, plan the animations", "a shot list for ...", "/scene-shots ..."). Writes plans/NAME.md in the /scene-plan format, so /scene-builder codes it. If the person has only a topic and wants to find how to teach it, use /scene-plan instead.
+description: Plan the pictures for a story the person already knows - they bring what is said and in what order (a script, an outline, notes, the equations), and this skill designs how each beat is seen, the way a cinematographer works from a finished screenplay - no new ways to teach it, every beat made beautiful and true. Use when the person knows what they want discussed and asks for the visuals ("I know what I want to say, make it beautiful", "here is my script/outline, plan the animations", "a shot list for ...", "keep this plan's story, redo its pictures", "/scene-shots ..."). Writes plans/NAME.md in the /scene-plan format, so /scene-builder codes it. If the person has only a topic and wants to find how to teach it, use /scene-plan instead.
 argument-hint: "<the script, outline or notes, pasted or as a path>"
 ---
 
@@ -25,7 +25,8 @@ viewer see that makes "a delayed, scaled copy" plainly true? How does that pictu
 into the next one? The bar is the opening of the person's reverb A1 plan, the clap and the
 room unfolding into its crystal of mirror rooms, which they called breathtaking.
 
-This skill writes no scene code. It ends with a plan the person approves. `/scene-builder`
+This skill writes no scene code. Its only code is the throwaway sketches of the look book
+(step 4). It ends with a plan the person approves. `/scene-builder`
 codes it afterwards.
 
 ## What is fixed, and what is yours
@@ -88,8 +89,8 @@ their output to files and return only a two-line summary, so your own context st
 for judging. **Every brief carries `TASTE.md` in full**, plus the source and the
 breakdown: a subagent knows only its brief, and taste it never saw cannot steer it. Every
 judge, picker and editor scores against `TASTE.md` too, and where a choice goes against a
-line of it, says which line and why. This is a medium run, a few agents per stage, not the wide brainstorm of
-`/scene-plan`. Say so in one line at the start. If you have no way to spawn subagents, play
+line of it, says which line and why. This is a medium run, a few agents per stage, not
+the wide brainstorm of `/scene-plan`. Say so in one line at the start. If you have no way to spawn subagents, play
 each role yourself, one at a time, and write each role's file before you start the next.
 
 ### 1. Read
@@ -98,6 +99,12 @@ Read `TASTE.md`, the source and the scene-plan sections above. If the source was
 save it word for word to `plans/NAME.source.md`, so the plan can always be checked against
 it. If the source points at an earlier plan or scene ("like the opening of reverb A1"),
 read it from `plans/` or `scenes/`. If it is not there, ask for it in step 3.
+
+The source may also be a finished plan, from `/scene-plan` or an earlier `/scene-shots`,
+whose story the person wants kept and whose pictures they want made again. Then its spine,
+say lines, equation inventory and claims are the source, and its pictures, look, verbs and
+sound are not: plan them fresh. Write the new plan to a new name
+(`plans/NAME_shots.md`), so the old one stays to compare against.
 
 ### 2. Break it down
 
@@ -179,14 +186,24 @@ dropping none. Write to `treatments/KIND.md`:
   comes back understood;
 - the music bed.
 
-A fresh judge scores the four for beauty (would each still be worth looking at with the
+**The look book.** Words are a poor way to choose a look. When the four treatments are in,
+one agent sketches each world as one still: the key frame that shows it best, written as
+a throwaway script in `plans/NAME.work/sketches/KIND.py` and rendered as one frame with
+the render command in `CLAUDE.md` (`--frame` at the chosen time, `--preset preview`). A
+rough still is enough. It is not a scene: no checks beyond rendering, nothing reused in
+the build. Look at each still yourself. Where phasor cannot draw a world yet, sketch the
+closest thing it can and say on the still's line what is missing. A sketch that falls
+short never counts against its world. If a sketch will not render after a few tries, give
+that world its words only and say so.
+
+A fresh judge, with the stills and the treatments, scores the four for beauty (would each still be worth looking at with the
 sound off?), evidence (is each beat's evidence visible?), continuity (one world, no cuts),
 truth (does the picture itself claim anything false?) and fit with `TASTE.md`. It does
 not score whether phasor can draw it: a world phasor lacks goes under "Wanted additions",
 never out of the running. It recommends one, or one with a graft from another.
 
-Show the person the four in two lines each, with the judge's pick and why, and ask which
-they want. This is the second and last question. If they say "you choose", choose.
+Show the person the four stills, each with two lines and what its sketch is missing, and
+the judge's pick and why. Ask which they want. This is the second and last question. If they say "you choose", choose.
 
 ### 5. Shots
 
@@ -299,6 +316,6 @@ builds it unchanged. Change these parts:
   it. Only corrected false claims are applied.
 
 Add each wanted addition to `WISHLIST.md` as its own line. Keep `breakdown.md`,
-`treatments/` and `shots/`. In your reply, give the world in a few sentences, the list of
+`treatments/`, `sketches/` and `shots/`. In your reply, give the world in a few sentences, the list of
 animations by title, the notes for you, the wanted additions and the file. Then stop. Do
 not start `/scene-builder` until the person approves the plan.
