@@ -73,6 +73,14 @@ rules below are a summary of it as of 2026-11-27; where they differ, `TASTE.md` 
 
 The person's rules (2026-11-27, from their own plan "A Room Is a Matrix"):
 
+- **The voice explains; the screen carries the math.** The explanation is spoken
+  narration, and the equations and numbers on screen go with it: each one appears as the
+  voice reaches it, and the voice says what it means while it is being built. Math with
+  explanation is the point, not math with text. No sentences of explanation on screen,
+  no captions, no bullet points, no definitions written out in words: what would be a
+  sentence of text is said instead. An equation that appears with nothing said about it is
+  "shoved on screen", and so is one that the voice explains only afterwards, once the
+  viewer has stopped reading it.
 - **Visual, then words, then symbols.** An idea arrives as a picture or a sound first, is
   named in words, and only then gets its symbol. Each term of an equation is assembled from
   the object it names: a spike becomes δ, a diagonal becomes h[k], a slider becomes H(ω).
@@ -108,9 +116,9 @@ The person's rules (2026-11-27, from a review of an LTI → convolution → FFT 
   animation 3, but frequency arrived in animation 7. The fix is to drop it from 3 and bring
   it back in 8 as "why 10 µs was enough".)
 - **State the line that does the work.** When a whole stretch rests on one identity, it is
-  stated on screen and said aloud, not assumed. (The case: working with complex tones rests
-  on Euler's formula and on a real tone being two arrows turning opposite ways,
-  cos ωt = (e^(iωt) + e^(−iωt))/2. That one line gives the reason for going complex and
+  written on screen as the voice says it, not assumed. (The case: working with complex
+  tones rests on Euler's formula and on a real tone being two arrows turning opposite
+  ways, cos ωt = (e^(iωt) + e^(−iωt))/2. That one line gives the reason for going complex and
   explains the negative frequencies that appear later.)
 - **Define before using, and use the smallest form that does the job.** A transform, an
   operator or a matrix is defined, from a picture, before any formula uses it. Prefer the
@@ -417,8 +425,10 @@ Give them a place that holds for the whole video: a band (top or bottom) for the
 being built, and a column at one edge for the ledger, both clear of the picture's subject.
 Build each one term by term out of the object it names (the term leaves the picture and
 slides into the line), in the colour of that object. Write numbers beside symbols. Keep a
-finished result readable until it shrinks into the ledger. Text that is neither an
-equation nor a number is a large plain label, used sparingly.
+finished result readable until it shrinks into the ledger. Words on screen are only names
+on the picture (a label on an object, a word inside an equation such as "echo"), never a
+sentence that explains: the explanation is the voice's job. Each equation's arrival is
+timed to the narration's words about it.
 
 **Verbs.** Only now, with the path chosen and drawn in imagination, read phasor's verbs
 and camera moves in `kit/docs/API.md` (the list grows; read it each time, do not work from
@@ -485,6 +495,8 @@ A fresh agent reads the plan as the viewer from step 1 and answers each; fix wha
 4. With the voice off, do I still see the evidence? With the picture off, do I still get
    the reason? A scene that passes only one is half a scene.
 5. Is the voice only describing what the animation shows? Replace it with the reason.
+   Is any explanation written on screen as text rather than said? Is any equation shown
+   without the voice explaining it as it is built?
 6. Does every animation prove a spine sentence (a showcase segment counts when the math
    right after it explains what it showed)? Cut any that fills time; restore any cut
    to save it. Is any stretch padded: still running after I have understood it?
@@ -538,8 +550,9 @@ music bed.
   that introduces it
 - **Say before:** what to watch for, why it matters, and the reason for any move the math
   makes
-- **On screen:** each equation and number, the visual that earns it, the word it lands on,
-  and when it goes to the ledger
+- **On screen:** each equation and number, the visual that earns it, the words of the
+  narration it is built under (what the voice says about each term as it lands), and when
+  it goes to the ledger. No explanatory text: only math, numbers and names
 - **Silent stretch:** if any: how long, and the one thing to watch
 - **Say after:** the explanation: why it is so, and what it means for the spine
 - **Sound:** ...

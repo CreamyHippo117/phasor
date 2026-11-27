@@ -43,3 +43,7 @@ examples. Add a dated line whenever they say something about taste.
   integrals; say why a block is wrapped into a circle; name causality where it first
   appears; show an image source in ten seconds rather than assert it; say in one sentence
   that h[k] is h sampled; one phrase each for dB, SPL and the 1/distance loss.
+- 2026-11-27: math goes with a spoken explanation; it is never shoved on screen with text
+  explanations. The voice explains, the screen carries the equations and numbers, each
+  built as the voice talks about it. No explanatory sentences, captions or bullet points
+  on screen.

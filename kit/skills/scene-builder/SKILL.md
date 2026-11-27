@@ -62,7 +62,9 @@ These come from the plan and are not yours to trade away for convenience:
     `Counter` or `sweep`'s readout, linked to the parameter, never typed in by hand.
   - *Matrices.* `linalg.Matrix` (its entries can follow a parameter); mathtext has no
     `pmatrix` or `cases`.
-  - Only the text the plan names: no extra labels or captions.
+  - Only the text the plan names: no extra labels or captions, and never a sentence of
+    explanation on screen. The explanation is the narration; the math goes with it, each
+    equation written in on the words that explain it.
 
 ## The steps
 
