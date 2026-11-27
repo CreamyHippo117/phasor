@@ -359,12 +359,93 @@ class Verbs:
             {"op": "set_param", "path": f"{target}.from_id", "value": source},
             {"op": "set_param", "path": f"{target}.arc", "value": self.motion["transform_arc"]},
         ]
+        # A different text size glides too (a title becoming an annotation shrinks as it goes).
+        size_a, size_b = float(a.style["size"]), float(self.state[target].style["size"])
+        from_size = size_a if abs(size_a - size_b) > 1e-9 else 0.0
+        if from_size or self.state[target].params.from_size:
+            ops.append({"op": "set_param", "path": f"{target}.from_size", "value": from_size})
         if self._starts_hidden(f"{target}.morph"):
             ops.append({"op": "set_param", "path": f"{target}.morph", "value": 0.0})
         ops += self._show_at(target, "transform", 0.0)
         ops.append(self._instant(f"{source}.opacity", 0.0, "transform", 0.0))
         seg, done = self._segment(f"{target}.morph", 1.0, "transform", 0.0)
         return Motion((*ops, seg), done)
+
+    def lift_term(self, object_id: str, eq_id: str, part: int | str) -> Motion:
+        """A term of an equation built from the object it names: ``part`` of ``eq_id`` (an
+        index, or a name from its ``keys``) leaves ``object_id`` and glides into the line.
+        It starts where the object's centre is on the screen at that moment, projected
+        through the (baked) camera, so an overlay equation takes a term from a 3D object
+        under an orbiting camera. Until now the part is not shown (its place in the line
+        stays reserved). Timing is the theme's ``[motion.transform]``. Terms lifted at the
+        same moment fly together; lifts of one equation may not overlap otherwise."""
+        eq = self._of_type(eq_id, "lift_term", "equation")
+        src = self._object(object_id)
+        if object_id == eq_id:
+            raise VerbError("lift_term takes a term from another object, not the equation")
+        if src.layer != eq.layer and eq.layer != "overlay":
+            raise VerbError(f"{eq_id!r} is a world equation; {object_id!r} is on the overlay")
+        parts, keys = list(eq.params.parts), list(eq.params.keys)
+        if isinstance(part, str):
+            hits = [i for i, k in enumerate(keys) if k == part] or [
+                i for i, t in enumerate(parts) if t == part]  # fmt: skip
+            if not hits:
+                raise VerbError(f"{eq_id!r} has no part named {part!r}; keys are {keys}")
+            part = hits[0]
+        if not 0 <= part < len(parts):
+            raise VerbError(f"{eq_id!r} has {len(parts)} parts; there is no part {part}")
+        pad = [""] * len(parts)
+        origin = [*eq.params.lift_from, *pad][: len(parts)]
+        feature = [*eq.params.lift_feature, *pad][: len(parts)]
+        if origin[part]:
+            raise VerbError(f"part {part} of {eq_id!r} already comes from {origin[part]!r}")
+        origin[part] = object_id
+        ops: list[dict[str, Any]] = [
+            {"op": "set_param", "path": f"{eq_id}.lift_from", "value": origin},
+            {"op": "set_param", "path": f"{eq_id}.lift_feature", "value": feature},
+            {"op": "set_param", "path": f"{eq_id}.lift",
+             "value": [0.0 if o else 1.0 for o in origin]},
+        ]  # fmt: skip
+        # The progress track: each segment lifts the parts that start there. Its targets are
+        # rebuilt from all of them, so the result does not depend on the order lifts are
+        # written in.
+        path = f"{eq_id}.lift"
+
+        def when(ref: Any) -> float:
+            return self.c.time_map.resolve(MarkerRef(**ref) if isinstance(ref, dict) else ref)
+
+        existing = [s.model_dump(mode="json") for s in self.c.doc.timeline.tracks.get(path, ())]
+        groups: list[tuple[dict[str, Any], set[int]]] = []
+        seen: set[int] = set()
+        for seg in sorted(existing, key=lambda s: when(s["t0"])):
+            now = {
+                i for i, v in enumerate(seg["to"]) if v >= 1.0 and origin[i] and i != part
+            } - seen
+            seen |= now
+            groups.append((seg, now))
+        fresh, end = self._segment(path, [], "lift_term", 0.0, "transform")
+        t0, t1 = self.t, self.t + end
+        for seg, got in groups:
+            s0, s1 = when(seg["t0"]), when(seg["t1"])
+            if abs(s0 - t0) < 1e-6 and abs(s1 - t1) < 1e-6:
+                got.add(part)  # flies together with the others starting now
+                break
+            if s0 < t1 - 1e-6 and t0 < s1 - 1e-6:
+                raise VerbError(f"a lift of {eq_id!r} is already under way then; start this one "
+                                f"at the same moment or after it ends")  # fmt: skip
+        else:
+            groups.append((fresh["segment"], {part}))
+        groups.sort(key=lambda g: when(g[0]["t0"]))
+        lifted: set[int] = set()
+        rebuilt = []
+        for seg, got in groups:
+            lifted |= got
+            to = [1.0 if (not o or i in lifted) else 0.0 for i, o in enumerate(origin)]
+            rebuilt.append({**seg, "to": to})
+        if existing:
+            ops.append({"op": "clear_track", "path": path})
+        ops += [{"op": "add_segment", "path": path, "segment": seg} for seg in rebuilt]
+        return Motion(tuple(ops), end)
 
     def become(self, source: str, target: str) -> Motion:
         """One curve turning into another (a circle into a square): ``source``'s points move

@@ -353,7 +353,8 @@ any format `soundfile` reads (WAV, FLAC, OGG, MP3) and live in the scene's folde
 | `focus_pull(id, margin=0.15)` | move the camera onto an object (the zoom by factors: `log:` easing) |
 | `morph(path, value)` | change any parameter smoothly (a whole-number one, such as `terms`, in whole steps; a camera's `height` or `distance` by factors, so a 600x dive is even) |
 | `settle(path, value)` | move like a released spring (overshoot, then rest) |
-| `transform(a, b)` | equation `a` becomes `b`: parts that appear in both glide over (and change color); the rest fade |
+| `transform(a, b)` | equation `a` becomes `b`: parts that appear in both glide over (and change color, and size: a title becoming an annotation shrinks as it goes); the rest fade |
+| `lift_term(obj, eq, part)` | a term of equation `eq` (index, or a name from its `keys`) leaves `obj` and glides into the line, from where the object is on the screen (see "A term from an object") |
 | `become(a, b)` | curve `a` turns into the shape of curve `b` (a circle into a square), then `b` takes its place |
 | `write(*ids)` | write text or an equation in, left to right (`write` 0 to 1) |
 | `travel(*ids)` | send `Tracer`s along their curves, trailing light (`progress` 0 to 1) |
@@ -460,6 +461,49 @@ mid = tr.engine.inspect(1.5, id="step2")["objects"][0]["semantic"]
 assert (mid["matched"], mid["changed"], mid["carried_over"]) == (3, 1, 1)
 assert len(tr.engine.inspect(9.0, id="plane")["objects"][0]["semantic"]["zeros"]) == 3
 ```
+
+## A term from an object
+
+Each term of an equation is built from the object it names, so it should leave that object
+and slide into the line. `lift_term(object_id, eq_id, part)` does it, also when the equation
+is on the overlay (screen space) and the object is in 3D under an orbiting camera. The term
+starts at the object's centre *on the screen at each moment* (the middle of the box its
+bounds cover, as the inspector's `center` reports it, through the baked camera) and glides
+to its place with the theme's `[motion.transform]` timing. Before that the part is not
+shown, but its place in the line stays reserved. Terms lifted at the same moment fly
+together; otherwise lifts of one equation may not overlap, and the order you write them in
+does not matter. Mid-flight the equation's `semantic["lifting"]` lists each part with its
+`progress`, `start` (layer units; frame heights on the overlay), `start_norm` and `now`.
+`lift_feature` (a feature name of the object) starts it from that point instead.
+
+```python
+from phasor import Equation, Scene, geo
+
+lt = Scene("lift", passes=None)
+lt.use_camera("orbit")
+lt.add(
+    geo.ParametricSurface(
+        id="ball",
+        fx="sin(u)*cos(v)",
+        fy="sin(u)*sin(v)",
+        fz="cos(u)",
+        u_range=(0, 3.1416),
+        v_range=(0, 6.2832),
+        res=(8, 16),
+    )
+)
+lt.add(Equation(id="n", layer="overlay", pos=(0.9, 0.9), parts=("$N=$", "$V$"),
+                keys=("lhs", "ball")))  # fmt: skip
+lt.marker("go", 1.0)
+lt.at("go").lift_term("ball", "n", "ball")
+mid = lt.engine.inspect(1.6, id="n")["objects"][0]["semantic"]["lifting"][0]
+ball = lt.engine.inspect(1.6, id="ball")["objects"][0]["center"]["norm"]
+assert all(abs(a - b) < 2e-3 for a, b in zip(mid["start_norm"], ball))  # on the object
+assert 0 < mid["progress"] < 1
+assert "lifting" not in lt.engine.inspect(4.0, id="n")["objects"][0]["semantic"]  # landed
+```
+
+See `examples/lift_term.py`.
 
 ## Animate by hand
 
