@@ -21,3 +21,7 @@ examples. Add a dated line whenever they say something about taste.
   with new cases; usually not concrete before abstract (ask which route).
 - 2026-11-25: not much text or equations on screen; no hard cuts, one animation becomes
   the next.
+- 2026-11-27: loosen the weaving: coherence must not be forced, and the videos should
+  teach more. A new picture for a new idea is fine (with a transition); a picture kept
+  only to stay one thread is not. Judge a plan first by what the viewer can explain
+  afterwards.

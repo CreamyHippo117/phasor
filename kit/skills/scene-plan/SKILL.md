@@ -27,8 +27,14 @@ rules below are a summary of it as of 2026-11-25; where they differ, `TASTE.md` 
 - **Never rush.** A long hold is not a fault.
 - **Quality, not quantity.** As many animations as the best story needs (ten or three). None
   added to fill time, none dropped to save it.
-- **Come back to the same picture** and test it on new cases, instead of a new picture for
-  each point.
+- **Come back to a picture when it can answer a new question**, and test it on new cases.
+  When a new idea needs a new picture, give it one (carried in by a transition, never a
+  hard cut). Do not stretch a picture to carry an idea it cannot show: a picture kept only
+  so the video stays one thread is decoration.
+- **Teach, not just connect.** The video is measured by what the viewer can explain
+  afterwards (a reason or a mechanism, not "it looks like X"), not by how tightly its
+  pieces are tied together. A looser thread that teaches more beats a seamless one that
+  teaches less.
 - **Open with a question** or a picture the viewer wants explained; never a title or a
   definition. **Let the viewer predict** before each reveal.
 - **Usually not concrete before abstract.** Ask which route the person wants (step 4).
@@ -128,7 +134,7 @@ the feel, its lens and question, the house rules above, and these instructions:
 **Merge and cross.** One agent reads all of round one and writes `map.md`: the branches
 with repeats removed, each idea tagged with its lens, then a section of crossings (one
 lens's motion on another's shape). It also names the two or three most fertile lenses,
-and marks the fifteen or so strongest ideas of any kind for the weavers.
+and marks the fifteen or so strongest ideas of any kind for the weaver and the paths.
 
 **Round two.** Spawn, in parallel: the sub-lenses of the fertile lenses (third column of
 the table), plus two fresh brainstormers. Each gets `map.md` and asks: what is missing,
@@ -138,42 +144,47 @@ another dimension, run backwards? Their additions go into `map.md`.
 Aim, across both rounds, for at least 40 opening questions, 40 central pictures and 20 in
 every other branch. If the map is short of that, run another round with new lenses.
 
-**Weave.** The lenses find connections; weavers find interconnections: two ideas from
+**Weave (optional, and rare).** Weavers look for interconnections: two ideas from
 different lenses carried by one object. (A video on differential equations drew pendulums
 to show the geometry, then let the viewer hear how a stable pendulum sounds beside an
-unstable one: the pendulum that is seen is the one that is heard.) Spawn three or four
-weavers in parallel. Each gets the marked ideas from `map.md` and one way of pairing, so
-they do not all find the same thing:
+unstable one: the pendulum that is seen is the one that is heard.) Spawn one weaver, or
+two at most, with the marked ideas from `map.md`.
 
-- across senses: a picture with a sound, a motion with a rhythm;
-- across fields: one lens's object doing another lens's job;
-- across scales or states: the small with the whole, a still shape with a process.
-
-A weave is real when the second idea is a consequence of the first inside the same object,
-so that removing either weakens the other. Two good ideas placed side by side are a staple,
-not a weave; leave those out. "None worth it" is an allowed answer, and no video is obliged
-to use a weave. Weaves go in `weaves.md`, each with what the viewer would see and hear.
+A weave is real only when the second idea is a consequence of the first inside the same
+object, and when the viewer learns something from the link that neither idea teaches
+alone. Two good ideas placed side by side are a staple, not a weave; so is an object kept
+on screen only to make two sections look connected. Expect "none worth it" most of the
+time: that is the normal answer, not a failure. Weaves go in `weaves.md`, each with what
+the viewer would see and hear, and what they would learn from the link.
 
 **Paths.** Two or three agents each join branches of the map into whole paths, a short
 paragraph each, deliberately unlike one another (different openings, different
 destinations, different central pictures, different orders). Each path names its own
-point A and point B in its first line; the twenty should not all end in the same place. They read `weaves.md` too: a weave often makes the
-best return to the central picture (the same object, now heard, or now seen from the other
-field). At least 20 in all, in `paths.md`.
+point A and point B in its first line, and then the three to six things the viewer will be
+able to explain at the end; the twenty should not all end in the same place. A path may be
+a chain of stepping stones, each picture answering a question the last one raised, rather
+than one picture throughout. Use a weave only where it teaches; never bend a path to fit
+one in. At least 20 in all, in `paths.md`.
 
 ### 3. Prune
 
-Brainstormers never judge; use fresh agents. Four tests:
+Brainstormers never judge; use fresh agents. Five tests, the first weighing most:
 
-- **Beauty**: would a still from it be worth looking at with the sound off?
+- **Teaching**: what can the viewer explain afterwards that they could not before? The
+  judge lists it as sentences the viewer could say to a friend, and counts only reasons
+  and mechanisms ("the echoes crowd in because the sphere's skin grows like t squared"),
+  not impressions ("reverb is like a crystal"). A path whose list is short, or mostly
+  impressions, fails however beautiful it is.
 - **Intuition**: does the viewer see why, not only that? Would they follow it with the
   voice off?
-- **Cohesiveness**: is it one picture and one thread from A to B, each beat growing out of
-  the last?
+- **Beauty**: would a still from it be worth looking at with the sound off?
 - **Immersion**: does the viewer stay inside it, with nothing that breaks the spell (a
   hard cut, a crowded frame, a wall of symbols, a change of look)?
+- **Flow**: does each beat follow from a question the last one raised? A path may change
+  picture; it fails only when a beat arrives unmotivated. Flow is a tie-breaker, never a
+  reason to keep a picture past its use.
 
-1. **20 to 5.** Four judges, one per test, plus a simulated viewer at the level from step
+1. **20 to 5.** Five judges, one per test, plus a simulated viewer at the level from step
    1, each score every path and give one line on its weakest point. Keep the five best
    that are still unlike one another.
 2. **Develop the five.** One agent per path writes it out animation by animation.
@@ -189,9 +200,10 @@ choose.
 
 ### 5. Choose and attack
 
-- **5 to 1.** Judge again with the person's answer in hand. A path strong on three tests
-  and weak on one loses to a path good on all four. Parts of losing paths may be grafted
-  on only if cohesiveness survives.
+- **5 to 1.** Judge again with the person's answer in hand. Teaching decides; among paths
+  that teach about as much, one good on every test beats one strong on some and weak on
+  others. Parts of losing paths may be grafted on when they teach something the winner
+  does not, even if the seam shows.
 - **Attack the winner.** One agent argues as hard as it can that the winner is the wrong
   choice and proposes a better one. If it is right, go back to "20 to 5".
 
@@ -208,6 +220,12 @@ Now make the chosen path teach as well as it can:
   something still needs saying.
 - **Write the silent test** for each animation: what should the viewer work out from it
   with no voice? If the answer is "nothing", the animation or the setup is wrong.
+- **Silence is not teaching by itself.** Before each long silent stretch the viewer must
+  know what question it answers; after it, say the answer in words if the picture alone
+  would not let them say it. A line like "now let the loops talk" before 100 seconds of
+  silence is a cue, not a setup: say what to watch for and why it matters.
+- **Write the takeaway** for each animation: one sentence the viewer could repeat, a reason
+  or a mechanism. An animation with no takeaway is cut or rebuilt, however beautiful.
 - **Name what is hard**: the one step where people get lost. Give it the most time.
 - **Plan the returns**: cases that run through the same animation, each changing one thing.
   The last should surprise.
@@ -312,7 +330,14 @@ A fresh agent reads the plan as the viewer from step 1 and answers each; fix wha
 12. Was any idea weakened to fit phasor? Restore it and list it under "Wanted additions".
 13. Is any verb there only as decoration? Cut it.
 14. If the plan uses a weave, do the two ideas truly live in one object, or were they
-    stapled together?
+    stapled together? Does the link teach anything? If not, cut the weave.
+15. Write down what I learned, as sentences I could tell a friend. Is it at least one real
+    idea (a reason or a mechanism) per animation? Where is a picture kept only so the
+    video stays one thread? Give that idea its own picture, or cut it.
+
+Then a second fresh agent checks every claim the plan makes in words (each "say" line and
+each number): derive it, compute it, or mark it unverified. A false line is fixed, never
+softened into vagueness.
 
 If the Editor finds the path itself weak, go back to the map; do not patch.
 
