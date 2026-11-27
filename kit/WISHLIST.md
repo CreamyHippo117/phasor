@@ -10,3 +10,9 @@ development.
 - 2026-11-25, `scenes/reverb_la`: wanted note and sound events in a scene (`s.note(midi=69, at="marker", amp=)` with a dry synth voice, and `s.sound("x.wav", at=)`). Sound only reaches the video through narration blocks, so the scene mixes its own WAV and attaches it with the private `s._apply(SetNarration(...))`. **Built (2026-11-26):** as SOUND.md's cues: `s.cue(marker, "tone", midi=69, voice="pluck")` for a note, `s.cue(marker, "x.wav")` for a file, in the document's `sound` section (schema 9), mixed with the narration; examples `sound_harmonics`, `sound_bed`.
 - 2026-11-25, `scenes/reverb_la`: one `label(x) near x` constraint in a long 3D scene (17 min) makes layout render depth buffers across the whole timeline, so even `s.at(...).morph(...)` took over 10 minutes. Wanted: layout that only bakes the times where the label is visible, or a warning. Done instead: a fixed-position Equation. **Built (2026-11-26):** the bake runs only while a label is shown, reuses itself across motion edits, verbs bake only up to their start; lint `slow_layout`.
 - 2026-11-25, `scenes/reverb_la`: wanted a logarithmic (or "zoom") easing for `camera.distance`, so a 600x dive moves evenly; a smooth morph does almost all of it in the last few percent. Done instead: the dive split into staged morphs (x6, x8, x12). **Built (2026-11-26):** `ease="log:<curve>"`; camera distance/height morphs and `focus_pull` use it by default.
+- 2026-11-27: wanted a violet colour role (the plan's colour for widths). Done instead: pink stands in.
+- 2026-11-27: wanted terms that slide from a 3D object into an equation.
+- 2026-11-27, A7: wanted a periodization picture.
+- 2026-11-27, A8: wanted a continuous note count.
+- 2026-11-27: wanted a scalar painted on room walls.
+- 2026-11-27: wanted a gradient shading band.
