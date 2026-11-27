@@ -30,6 +30,13 @@ rules below are a summary of it as of 2026-11-27; where they differ, `TASTE.md` 
   why, in plain words, not only "watch". Silence is for one named thing to watch (the
   viewer is told what), and it ends once that has been seen. There is no quota of silence.
 - **Never rush, never pad.** Hold as long as understanding needs and no longer.
+- **A breathtaking scene gets its own segment, if it is worthy.** When a picture is
+  breathtaking (the person's example: the opening two minutes of the reverb A1 plan, the
+  clap in the room and the room unfolding into its crystal of mirror rooms), give it room
+  to be watched: a long hold, little or no math, the music forward. Worthy means it shows
+  something true that the video then explains, so the math that follows has a picture the
+  viewer already loves. Such a segment is not padding and is never cut to save time; the
+  math comes right after it, not instead of it. Mark it in the plan as a showcase segment.
 - **Length follows content.** No target length: a video is as long as its spine needs.
   Fewer ideas make a shorter video, not a slower one.
 - **Quality, not quantity.** As many animations as the best story needs (ten or three). None
@@ -393,7 +400,8 @@ A fresh agent reads the plan as the viewer from step 1 and answers each; fix wha
 4. With the voice off, do I still see the evidence? With the picture off, do I still get
    the reason? A scene that passes only one is half a scene.
 5. Is the voice only describing what the animation shows? Replace it with the reason.
-6. Does every animation prove a spine sentence? Cut any that fills time; restore any cut
+6. Does every animation prove a spine sentence (a showcase segment counts when the math
+   right after it explains what it showed)? Cut any that fills time; restore any cut
    to save it. Is any stretch padded: still running after I have understood it?
 7. Is any animation taken off the stage before it has finished its work?
 8. Is any animation small, or sharing the frame with anything but its own math?

@@ -31,3 +31,7 @@ examples. Add a dated line whenever they say something about taste.
   equation earned by a visual and built term by term, a ledger of results, worked numbers,
   earlier courses written beside new results. Silence only with one thing to watch; no
   padding; length follows content. Every claim is checked.
+- 2026-11-27: breathtaking scenes get their own segments, if they are worthy (the opening
+  two minutes of reverb A1, the clap and the room unfolding into its crystal, were
+  breathtaking). Keep them, with room to be watched, and then bring the math: the
+  breathtaking picture is what the math explains, not a replacement for it.

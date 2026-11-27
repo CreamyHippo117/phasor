@@ -29,7 +29,8 @@ These come from the plan and are not yours to trade away for convenience:
   figure in an empty frame, and nothing else sharing the frame.
 - **The holds and the silences, and no more.** If the plan holds an animation for ninety
   seconds with a forty-second silent stretch, the scene does too. Do not pad: never add a
-  replay, another case or a longer hold to fill time.
+  replay, another case or a longer hold to fill time. A segment the plan marks as a
+  showcase keeps its full length; it is the picture the math after it explains.
 - **How it changes while it holds**: the plan's iterations, cases, parameters and big
   moves, in its order.
 - **No hard cuts**: each animation becomes the next the way the plan says.
