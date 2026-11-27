@@ -10,6 +10,7 @@
     s.add(ac.ImpulseResponse(id="ir", size=(8, 5, 3), source=(2, 2.5, 1.5), listener=(6, 2, 1.5),
                              layer="overlay", pos=(0.2, 0.62), extent=(0.8, 0.3)))
     s.add(ac.PressureSlice(id="field", size=(8, 5, 3), source=(2, 2.5, 1.5), time=expr("t")))
+    s.add(ac.ModeSum(id="ms", max_notes=5000, notes=expr("t * 1000"), layer="overlay"))
 
 In 3D (BEAUTY.md step 7), a room of any shape and sound bouncing in it:
 
@@ -29,7 +30,7 @@ from dataclasses import dataclass
 from typing import Any, ClassVar, Literal
 
 import numpy as np
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from phasor.core import files
 from phasor.core.objects import Bounds, DrawContext, ObjectBase, ParamsBase, Pass, register
@@ -629,6 +630,170 @@ class ImpulseResponse(ObjectBase):
                 ys = y + np.clip(1.0 + line / 60.0, 0.0, 1.0) * h
                 fitted = np.stack([x + tt / p.duration * w, ys, np.full_like(tt, z)], axis=1)
                 polyline(ctx, cam, fitted, width * 0.8, color=with_alpha(base, p.show_rt60))
+
+
+# ---------------------------------------------------------------- Mode sum against image sum
+
+
+@functools.lru_cache(maxsize=4)
+def _mode_table(size, source, listener, count, sigma, t0, t1, samples):
+    times = np.linspace(t0, t1, samples)
+    return ac_math.ModeSumTable(size, source, listener, count, sigma, times)
+
+
+@functools.lru_cache(maxsize=8)
+def _image_trace(size, source, listener, sigma, t0, t1, samples):
+    out = ac_math.image_trace(size, source, listener, sigma, np.linspace(t0, t1, samples))
+    out.setflags(write=False)
+    return out
+
+
+@register
+class ModeSum(ObjectBase):
+    """Two ways to the same impulse response, at one seat: summed over the room's modes
+    (the ``notes``, lowest frequency first) and over its image sources (the echoes). Both are
+    smoothed by a Gaussian ``smoothing`` seconds wide, and the walls are rigid, so with enough
+    notes the two traces lie on top of each other.
+
+    A panel, like ``ImpulseResponse``: put it on the overlay (``layer="overlay"``, ``pos`` the
+    lower-left corner, ``extent`` the (width, height) in frame heights). ``notes`` is animated
+    like any number (``morph("ms.notes", 207274)``) and the trace for every whole number in
+    between is drawn; show the count with ``Counter(value=expr("ms.notes"), digits=0)``.
+    ``max_notes`` is how many modes are summed in the end (it is the work done once, about a
+    second for 200 000 modes at 800 samples); a larger ``notes`` is cut to it. ``compare=False``
+    draws the mode trace alone. Semantics give ``max_rel_diff``: the biggest gap between the
+    two traces over ``t_range`` as a share of the image trace's peak, and ``truncation_bound``
+    what the notes beyond ``max_notes`` could still add (a share of the same peak, roughly):
+    raise ``max_notes`` until it is small."""
+
+    type: ClassVar[str] = "mode_sum"
+    Style: ClassVar = {
+        "color": ("emphasis", "secondary"),
+        "accent": ("emphasis", "highlight"),
+        "stroke": ("stroke", "regular"),
+        "glow": ("glow", "none"),
+    }
+
+    class Params(ParamsBase):
+        size: Vec3 = (8.0, 5.0, 3.0)
+        source: Vec3 = (2.0, 2.5, 1.5)
+        listener: Vec3 = (6.0, 2.0, 1.5)
+        notes: float = Field(2000.0, ge=0, allow_inf_nan=False)  # modes summed (rounded)
+        max_notes: int = Field(2000, ge=1, le=ac_math.MAX_MODES)  # the most it can reach
+        smoothing: float = Field(0.3e-3, gt=0, allow_inf_nan=False)  # seconds (Gaussian sigma)
+        t_range: tuple[float, float] = (0.0, 0.025)  # seconds shown across the panel
+        samples: int = Field(400, ge=8, le=20_000)
+        compare: bool = True  # also draw the image-source trace
+        pos: Vec3 = (0.1, 0.1, 0.0)  # lower-left corner of the panel
+        extent: tuple[float, float] = (0.8, 0.3)
+
+        @field_validator("size")
+        @classmethod
+        def _size(cls, v):
+            return _vec3_positive(v)
+
+        @field_validator("t_range")
+        @classmethod
+        def _range(cls, v):
+            if not v[0] < v[1]:
+                raise ValueError("t_range must run forward: (start, end) with start < end")
+            return v
+
+        @model_validator(mode="after")
+        def _inside(self):
+            for name in ("source", "listener"):
+                spot = getattr(self, name)
+                if any(not 0 <= x <= L for x, L in zip(spot, self.size, strict=True)):
+                    raise ValueError(f"{name} must be inside the room (0 to size in each axis)")
+            return self
+
+    def _key(self, state: SceneState) -> tuple:
+        p = self.me(state).params
+        return (tuple(p.size), tuple(p.source), tuple(p.listener), p.smoothing,
+                float(p.t_range[0]), float(p.t_range[1]), p.samples)  # fmt: skip
+
+    def table(self, state: SceneState) -> ac_math.ModeSumTable:
+        size, src, mic, sigma, t0, t1, n = self._key(state)
+        return _mode_table(size, src, mic, self.me(state).params.max_notes, sigma, t0, t1, n)
+
+    def count(self, state: SceneState) -> int:
+        """The whole number of notes drawn: ``notes`` rounded, within 0 to ``max_notes``."""
+        p = self.me(state).params
+        return int(min(max(round(p.notes), 0), p.max_notes))
+
+    def modes(self, state: SceneState) -> np.ndarray:
+        return self.table(state).at(self.count(state))
+
+    def images(self, state: SceneState) -> np.ndarray:
+        return _image_trace(*self._key(state))
+
+    def _ydir(self, state: SceneState) -> float:
+        return 1.0 if state.camera_for(self.me(state)).up[1] >= 0 else -1.0
+
+    def _curve(self, state: SceneState, values: np.ndarray, peak: float) -> np.ndarray:
+        """Panel points (samples, 3) of a trace: zero at mid-height, +-1.1 peaks at the edges."""
+        p = self.me(state).params
+        x, y, z = p.pos
+        w, h = p.extent
+        h = h * self._ydir(state)
+        xs = x + np.linspace(0.0, 1.0, p.samples) * w
+        ys = y + h * (0.5 + 0.5 * np.clip(values / (1.1 * peak), -1.0, 1.0))
+        return np.stack([xs, ys, np.full(p.samples, z)], axis=1)
+
+    @staticmethod
+    def _peak(images: np.ndarray) -> float:
+        return max(float(np.abs(images).max()), 1e-300)
+
+    def world_bounds(self, state: SceneState) -> Bounds:
+        p = self.me(state).params
+        x, y, z = p.pos
+        y2 = y + self._ydir(state) * p.extent[1]
+        return Bounds((x, min(y, y2), z), (x + p.extent[0], max(y, y2), z))
+
+    def features(self, state: SceneState) -> dict[str, np.ndarray]:
+        peak = self._peak(self.images(state))
+        modes = self._curve(state, self.modes(state), peak)
+        out = {"mode_trace": modes[:: max(1, len(modes) // 200)], "mode_end": modes[-1]}
+        if self.me(state).params.compare:
+            img = self._curve(state, self.images(state), peak)
+            out |= {"image_trace": img[:: max(1, len(img) // 200)], "image_end": img[-1]}
+        return out
+
+    def semantics(self, state: SceneState) -> dict[str, Any]:
+        p = self.me(state).params
+        tab = self.table(state)
+        n = self.count(state)
+        images = self.images(state)
+        peak = self._peak(images)
+        diff = float(np.abs(tab.at(n) - images).max() / peak)
+        top = float(tab.omega[n - 1] / (2 * np.pi)) if n else 0.0
+        return {"kind": "mode_sum", "notes": n, "notes_requested": round(p.notes, 3),
+                "notes_clipped": bool(round(p.notes) > p.max_notes), "notes_total": p.max_notes,
+                "highest_mode_hz": round(top, 3), "last_mode_hz": round(tab.cutoff, 3),
+                "max_rel_diff": diff, "converged": bool(diff < 1e-6),
+                "truncation_bound": float(np.exp(-0.5 * (tab.omega[-1] * p.smoothing) ** 2)),
+                "image_peak": peak, "compare": p.compare}  # fmt: skip
+
+    def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
+        me = self.me(state)
+        p = me.params
+        cam = state.camera_for(me)
+        x, y, z = p.pos
+        w, h = p.extent
+        width = me.style["stroke"] * float(cam.units_per_height())
+        base = with_alpha(me.style["color"], p.opacity)
+        accent = with_alpha(me.style["accent"], p.opacity)
+        h *= self._ydir(state)
+        polyline(ctx, cam, [(x, y + h / 2, z), (x + w, y + h / 2, z)], width,
+                 color=with_alpha(base, 0.5))  # fmt: skip
+        images = self.images(state)
+        peak = self._peak(images)
+        if p.compare:
+            polyline(ctx, cam, self._curve(state, images, peak), width, color=accent,
+                     glow=me.style["glow"])  # fmt: skip
+        if self.count(state) > 0:
+            polyline(ctx, cam, self._curve(state, self.modes(state), peak), width, color=base,
+                     glow=me.style["glow"])  # fmt: skip
 
 
 # ---------------------------------------------------------------- Pressure slice

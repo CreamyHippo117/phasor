@@ -1033,7 +1033,15 @@ negative radius draws nothing, so `343 * (t - 0.5)` starts at 0.5 s), `ImageSour
 reflections first up to `max_points`, drawn as steady lights by `strokes.flash_points`; to
 make them flash as a sphere of time sweeps them use `sweep.SweepLattice`), `ImpulseResponse(layer="overlay", pos=, extent=)` (arrival spikes; `reveal` and `show_rt60`
 animate; semantics give `rt60`, `rt60_theory_eyring` and `rt60_reliable`), `PressureSlice(time=)`
-(a slice of the real wave-equation field). Materials and absorption: `ac_math.MATERIALS`.
+(a slice of the real wave-equation field), `ModeSum(layer="overlay", pos=, extent=, notes=, max_notes=, smoothing=, t_range=)`
+(one seat's impulse response of a rigid-walled box summed over its modes, lowest frequency first, cyan,
+against the same sum over image sources, amber, `compare=False` hides the amber; both smoothed by a
+Gaussian `smoothing` seconds wide so they converge. `notes` morphs continuously and a trace is
+drawn for every whole number on the way; show the count with `Counter(value=expr("ms.notes"), digits=0)`.
+`max_notes` is the most it can reach (all partial sums are made once, then any count is a lookup:
+about 2 s for 200 000 modes at 800 samples). Semantics give `notes`, `max_rel_diff` (the biggest gap
+as a share of the image trace's peak), `converged` (below 1e-6) and `truncation_bound`; raise
+`max_notes` until that is small). Materials and absorption: `ac_math.MATERIALS`.
 
 ```python
 import numpy as np
@@ -1060,6 +1068,30 @@ room.add(
 )
 ir = room.engine.inspect(0.0, id="ir")["objects"][0]["semantic"]
 assert abs(ir["first_arrival_ms"] - 4.0311 / 343 * 1000) < 1e-3 and ir["arrivals"] > 1000
+
+modes = Scene("modes", passes=None)
+modes.add(
+    ac.ModeSum(
+        id="ms",
+        size=(3, 2.5, 2),
+        source=(0.7, 0.9, 0.5),
+        listener=(2.2, 1.6, 1.3),
+        smoothing=1e-3,
+        max_notes=6000,
+        notes=10,
+        layer="overlay",
+        pos=(0.1, 0.9, 0),
+    )
+)
+modes.marker("go", 1.0)
+modes.at("go").morph("ms.notes", 6000.0)  # a trace for every whole number on the way
+
+
+def gap(t):
+    return modes.engine.inspect(t, id="ms")["objects"][0]["semantic"]["max_rel_diff"]
+
+
+assert gap(0.0) > 0.1 and gap(5.0) < 1e-6
 ```
 
 **`ac.Directivity`** draws normalized pressure magnitude as a polar curve. Choose

@@ -5,6 +5,9 @@
 - ``impulse_response``: the arrivals (time, amplitude) and the sampled IR.
 - ``rt60_fit`` (Schroeder backward integration), ``sabine_rt60`` and ``eyring_rt60`` (theory).
 - ``convolve`` (FFT convolution reverb).
+- ``room_modes`` and ``ModeSumTable`` / ``image_trace``: the same smoothed impulse response of a
+  rigid-walled shoebox two ways, summed over its modes (lowest frequency first, any count as a
+  lookup) and over its image sources; they agree once enough modes are in.
 - ``RoomFDTD``: a 3D finite-difference pressure field as a ``Simulation`` (fixed dt, seed,
   checkpointed), with the stability limit enforced.
 - Rooms as triangle meshes: ``box_mesh``, ``load_obj`` (Wavefront ``.obj``), ``feature_edges``,
@@ -195,6 +198,110 @@ def rt60_fit(ir: np.ndarray, fs: int, lo: float = -5.0, hi: float = -25.0) -> di
         raise ValueError("no decay found in the impulse response")
     return {"rt60": float(-60.0 / slope), "slope": float(slope), "intercept": float(intercept),
             "curve": curve, "t": t, "fit": slope * t + intercept}  # fmt: skip
+
+
+MAX_MODES = 1_000_000
+_MODE_BLOCK = 256  # modes between two stored partial sums
+_TAIL = 8.5  # Gaussian widths past which the smoothing kernel is below 1e-15
+
+
+def room_modes(size, count: int) -> tuple[np.ndarray, np.ndarray]:
+    """The ``count`` lowest modes of a rigid-walled shoebox: indices (count, 3) (the first is
+    0, 0, 0, the uniform pressure) and angular frequencies (count,) in rad/s, sorted by
+    frequency (ties by index, so the order is the same every time)."""
+    size = np.asarray(size, dtype=np.float64)
+    if not 1 <= count <= MAX_MODES:
+        raise ValueError(f"modes must be 1 to {MAX_MODES:,}")
+    k = (6 * math.pi**2 * count / float(np.prod(size))) ** (1 / 3)  # Weyl's estimate
+    while True:
+        top = np.floor(k * size / math.pi).astype(np.int64)
+        kx, ky, kz = (np.arange(n + 1) * math.pi / L for n, L in zip(top, size, strict=True))
+        k2 = kx[:, None, None] ** 2 + ky[None, :, None] ** 2 + kz[None, None, :] ** 2
+        inside = k2 <= k * k
+        if int(inside.sum()) >= count:
+            break
+        k *= 1.05
+    i, j, m = np.nonzero(inside)
+    k2 = k2[i, j, m]
+    key = np.lexsort((m, j, i, k2))[:count]
+    n = np.stack([i[key], j[key], m[key]], axis=1)
+    return n, C * np.sqrt(k2[key])
+
+
+class ModeSumTable:
+    """The impulse response of a rigid-walled shoebox at the listener, summed over its
+    ``count`` lowest modes and smoothed by a Gaussian of width ``sigma`` seconds, sampled at
+    ``times``. Every partial sum is a lookup: ``at(n)`` is the sum over the ``n`` lowest modes
+    (a stored sum every ``_MODE_BLOCK`` modes plus at most that many more terms).
+
+    Each mode adds ``(eps / V) cos cos cos * sin(w t) / w`` (the wave equation
+    ``p_tt - c^2 laplace p = delta delta``) and the smoothing multiplies it by
+    ``exp(-(w sigma)^2 / 2)``, so modes far above ``1 / sigma`` add nothing."""
+
+    def __init__(self, size, source, listener, count: int, sigma: float, times, c: float = C):
+        size = np.asarray(size, dtype=np.float64)
+        self.times = np.asarray(times, dtype=np.float64)
+        self.count = count
+        idx, omega = room_modes(size, count)
+        self.omega = omega * (c / C)
+        eps = np.prod(np.where(idx == 0, 1.0, 2.0), axis=1)
+        w = eps / float(np.prod(size))
+        for axis in range(3):
+            q = idx[:, axis] * math.pi / size[axis]
+            w = w * np.cos(q * source[axis]) * np.cos(q * listener[axis])
+        self.weight = w * np.exp(-0.5 * (self.omega * sigma) ** 2)
+        # the modes whose weight is not exactly zero (the rest add nothing, so skip them)
+        live = np.nonzero(np.abs(self.weight) > 0)[0]
+        self.live = int(live[-1]) + 1 if len(live) else 0
+        blocks = -(-count // _MODE_BLOCK)
+        sums = np.zeros((blocks + 1, len(self.times)))
+        for b in range(blocks):
+            lo, hi = b * _MODE_BLOCK, min((b + 1) * _MODE_BLOCK, count)
+            sums[b + 1] = sums[b] + self._block(lo, hi)
+        self.sums = sums
+        self.sums.setflags(write=False)
+        self.cutoff = float(omega[-1] / (2 * math.pi))  # Hz of the highest mode
+
+    def _block(self, lo: int, hi: int) -> np.ndarray:
+        hi = min(hi, self.live)
+        if hi <= lo:
+            return np.zeros(len(self.times))
+        w, om = self.weight[lo:hi], self.omega[lo:hi]
+        t = self.times[None, :]
+        safe = np.where(om > 0, om, 1.0)[:, None]
+        wave = np.where(om[:, None] > 0, np.sin(om[:, None] * t) / safe, t)  # w=0: t
+        return w @ wave
+
+    def at(self, n: int) -> np.ndarray:
+        """The sum over the ``n`` lowest modes (0: silence)."""
+        n = int(min(max(n, 0), self.count))
+        b = n // _MODE_BLOCK
+        return self.sums[b] + self._block(b * _MODE_BLOCK, n)
+
+
+def image_trace(size, source, listener, sigma: float, times, c: float = C) -> np.ndarray:
+    """The same impulse response summed over the image sources (rigid walls, all gains 1):
+    each arrival ``delta(t - d / c) / (4 pi c^2 d)`` smoothed by the same Gaussian, and its
+    mirror at ``-d / c`` (the modal sum is odd in time). Every image that can still reach
+    ``times`` through the smoothing is in."""
+    size = np.asarray(size, dtype=np.float64)
+    times = np.asarray(times, dtype=np.float64)
+    reach = c * (float(np.abs(times).max()) + _TAIL * sigma)
+    order = math.ceil(reach * math.sqrt(float(np.sum(1.0 / size**2)))) + 3
+    if order > MAX_ORDER:
+        raise ValueError(f"the image sum needs order {order} (limit {MAX_ORDER}): a shorter "
+                         "t_range or a bigger room")  # fmt: skip
+    im = image_sources(size, source, order, 0.0)["pos"]
+    d = np.maximum(np.linalg.norm(im - np.asarray(listener, dtype=np.float64), axis=1), 1e-3)
+    d = d[d <= reach]
+    amp = 1.0 / (4 * math.pi * c * c * d)
+    out = np.zeros(len(times))
+    norm = 1.0 / (sigma * math.sqrt(2 * math.pi))
+    for lo in range(0, len(d), 2048):
+        a, tau = amp[lo : lo + 2048, None], d[lo : lo + 2048, None] / c
+        out += (a * (np.exp(-0.5 * ((times - tau) / sigma) ** 2)
+                     - np.exp(-0.5 * ((times + tau) / sigma) ** 2))).sum(axis=0) * norm  # fmt: skip
+    return out
 
 
 def convolve(dry: np.ndarray, ir: np.ndarray) -> np.ndarray:
