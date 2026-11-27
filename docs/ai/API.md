@@ -1695,6 +1695,39 @@ around them: the `orbit` verb, or drag in the editor. Formulas are text in `t` (
 
 - `geo.Axes(dims=3, x_range=(-3, 3, 1), z_range=..., labels=("x", "y", "z"))`: axes with ticks
   (ranges are (min, max, tick step); `scale` is world units per unit).
+- `geo.Band(values=, positions=, axis="y", extent=(0, 0.4), log=False, scale=1, pos=(0, 0, 0),
+  mode="fade", value_range=(0, 0), edge_fade=0)`: a continuous shading strip along a plot axis,
+  its colour following a 1D array, smooth between the samples (the modal overlap beside a
+  response ridge). `values[i]` sits at `positions[i]` (a list or NumPy array; default 0, 1, ...);
+  a position `p` is at `pos[axis] + scale * u(p)` where `u` is `log10` with `log=True`, else the
+  identity, so `scale` is world units per unit (per decade) and `extent` is the strip's span
+  across the other axis, from `pos`. Sliding the band with its ridge is moving `pos` (a track
+  or `expr`, no rebuild; the pixels come from the array at draw time). `mode="fade"` fades the
+  `color` role in from the background as the value rises across `value_range` (default: the
+  array's range); `mode="colormap"` reads the `colormap` role; `edge_fade` melts the long
+  sides into the background. A backdrop: labels may sit on it. Semantics: axis, log, samples,
+  positions, values, range, offset, scale. Example: `examples/band.py`.
+
+  ```python
+  import numpy as np
+  from phasor import Scene, geo
+
+  f = np.geomspace(30.0, 1000.0, 100)
+  s = Scene("band_doc")
+  s.add(
+      geo.Band(
+          id="overlap",
+          values=80 * (f / 1000) ** 3,
+          positions=f,
+          log=True,
+          extent=(1.5, 2.3),
+          scale=2.4,
+          pos=(0, -4.8, 0),
+          style={"color": "highlight"},
+      )
+  )
+  assert s.engine.inspect(0.0, id="overlap")["objects"][0]["semantic"]["kind"] == "band"
+  ```
 - `geo.ParametricCurve(fx="cos(t)", fy="sin(t)", fz="0.2*t", t_range=(0, 37.7),
   color_by="t")`: a curve; `color_by` is `none`, `t`, `speed`, `x`, `y` or `z` (through the
   `colormap`); `progress` traces it. Semantics: length, closed, color range.
