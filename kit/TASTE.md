@@ -21,3 +21,6 @@ examples. Add a dated line whenever they say something about taste.
   with new cases; usually not concrete before abstract (ask which route).
 - 2026-11-25: not much text or equations on screen; no hard cuts, one animation becomes
   the next.
+- 2026-11-27: no repetition. Every beat must give the viewer something new; a return to a
+  picture must ask it a new question. (Of the three reverb plans, A1 was liked most
+  because it repeats itself least.)
