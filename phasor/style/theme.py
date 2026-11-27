@@ -21,7 +21,7 @@ THEME_DIR = Path(__file__).parent / "themes"
 # role group -> role names. "surface" values are the opacity of each material; how a
 # material is lit (glass, wire, emissive) is decided by the renderer from the role name.
 ROLE_GROUPS: dict[str, tuple[str, ...]] = {
-    "emphasis": ("primary", "secondary", "muted", "highlight", "danger"),
+    "emphasis": ("primary", "secondary", "muted", "highlight", "danger", "accent"),
     "stroke": ("hairline", "regular", "bold"),
     "glow": ("none", "soft", "strong"),
     "text": ("title", "label", "annotation", "math"),

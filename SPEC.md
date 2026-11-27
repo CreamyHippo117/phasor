@@ -423,7 +423,7 @@ The AI handles structure, math and timing; the engine and your gallery hold the 
 
 | Role group | Roles |
 | --- | --- |
-| Emphasis | `primary`, `secondary`, `muted`, `highlight`, `danger` |
+| Emphasis | `primary`, `secondary`, `muted`, `highlight`, `danger`, `accent` (a free third meaning: violet) |
 | Stroke | `hairline`, `regular`, `bold` |
 | Glow | `none`, `soft`, `strong` |
 | Text | `title`, `label`, `annotation`, `math` |

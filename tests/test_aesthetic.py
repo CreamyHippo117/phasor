@@ -90,6 +90,24 @@ def test_color_restraint_counts_flat_paint_hues(passes, two_hues):
 
 
 @pytest.mark.parametrize("passes", MODES)
+def test_accent_role_is_accepted_and_counts_as_one_hue(passes, two_hues):
+    s = _base(passes)
+    _paint_dots(s, "highlight", "secondary", "primary")
+    s.marker("beat", 1.0)
+    s.add(Dot(id="third", pos=(0, -2), r=0.2, style={"color": "accent"}))
+    assert "3 saturated paint hues" in _codes(s.engine)["color_restraint"].message
+    s.add(Dot(id="fourth", pos=(0, 2), r=0.2, style={"color": "accent"}))
+    assert "3 saturated paint hues" in _codes(s.engine)["color_restraint"].message  # still one
+
+
+def test_every_theme_defines_accent():
+    from phasor.style.theme import available_themes, load_theme
+
+    for name in available_themes():
+        assert load_theme(name).resolve("emphasis", "accent")
+
+
+@pytest.mark.parametrize("passes", MODES)
 def test_color_restraint_ignores_everything_colored_through_a_colormap(passes, two_hues):
     s = _base(passes)
     s.add(cx.DomainColoring(id="plane", function="z"))  # the full wheel: hue is phase

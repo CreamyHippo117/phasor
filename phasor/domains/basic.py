@@ -244,7 +244,7 @@ class Text(ObjectBase):
 # ---------------------------------------------------------------- Equation
 
 
-EMPHASIS = ("primary", "secondary", "muted", "highlight", "danger")
+EMPHASIS = ("primary", "secondary", "muted", "highlight", "danger", "accent")
 # Parts are typeset one by one, so TeX cannot space a relation that sits at a part's edge:
 # "$E(x) =$" then "$\\psi$" would touch. Where a part ends or the next begins with one of
 # these, ``Equation`` puts TeX's thick space (5/18 em) between them.

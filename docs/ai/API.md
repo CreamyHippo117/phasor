@@ -48,7 +48,7 @@ Every type also has `opacity` (0-1; below 0.5 it stops hiding things behind it),
 `z_index` (higher draws on top among objects at the same depth). Every object takes
 `layer="overlay"` to live in screen space: units are frame heights, origin top-left, y down.
 
-Roles: emphasis `primary secondary muted highlight danger`; stroke `hairline regular bold`;
+Roles: emphasis `primary secondary muted highlight danger accent`; stroke `hairline regular bold`;
 text `title label annotation math`; glow `none soft strong`; colormap `phase sequential`;
 surface `solid glass wire emissive` (3D materials; glass is see-through and hides nothing).
 
