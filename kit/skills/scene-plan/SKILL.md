@@ -30,18 +30,13 @@ rules below are a summary of it as of 2026-11-27; where they differ, `TASTE.md` 
   why, in plain words, not only "watch". Silence is for one named thing to watch (the
   viewer is told what), and it ends once that has been seen. There is no quota of silence.
 - **Never rush, never pad.** Hold as long as understanding needs and no longer.
-- **A hold extends the idea; it never replays it.** Each stretch of a hold shows something
-  new: the next case, the parameter going further, another parameter, a deeper level,
-  another view, the edge case. The same motion again, or a sweep out and back, is a replay.
 - **A breathtaking scene gets its own segment, if it is worthy.** When a picture is
   breathtaking (the person's example: the opening two minutes of the reverb A1 plan, the
   clap in the room and the room unfolding into its crystal of mirror rooms), give it room
   to be watched: a long hold, little or no math, the music forward. Worthy means it shows
   something true that the video then explains, so the math that follows has a picture the
   viewer already loves. Such a segment is not padding and is never cut to save time; the
-  math comes right after it, not instead of it (or, when the picture itself carries the
-  idea, the math shares its time, not its space: see the Cinematographer). Mark it in the
-  plan as a showcase segment.
+  math comes right after it, not instead of it. Mark it in the plan as a showcase segment.
 - **Length follows content.** No target length: a video is as long as its spine needs.
   Fewer ideas make a shorter video, not a slower one.
 - **Quality, not quantity.** As many animations as the best story needs (ten or three). None
@@ -54,10 +49,7 @@ rules below are a summary of it as of 2026-11-27; where they differ, `TASTE.md` 
 - **Open with a question** or a picture the viewer wants explained; never a title or a
   definition. **Let the viewer predict** before each reveal.
 - **Usually not concrete before abstract.** Ask which route the person wants (step 4).
-- **Little prose, enough math. No hard cuts.** No sentences on screen, but the mathematics
-  being taught is: the formula drawn, the number that turns with its live value, labels on
-  what matters. A pretty picture the viewer cannot name is not teaching. One animation
-  becomes the next.
+- **No hard cuts.** One animation becomes the next.
 - **Stay true, and check.** Every number, demo and derivation is checked before the plan is
   handed back (step 9). A simplification may leave things out; it may not say something
   false.
@@ -177,11 +169,9 @@ the feel, its lens and question, the house rules above, and these instructions:
 - Quantity, no judging. At least 8 opening questions, 8 central pictures, 5 destinations
   (the obvious takeaway first, then the ones past it) and 4 in every
   other branch. Write the obvious ones down, then keep going past them.
-- For every picture say how it fills the frame, how it moves, what it proves (which claim
-  the viewer can see is true in it), and what could change in it to keep it worth watching
-  (which parameter turns, which cases run through it). List these as different things, not
-  one thing repeated: a picture whose only way to last a minute is to loop cannot hold a
-  stage, and a picture that proves nothing is decoration, however long it can be watched.
+- For every picture say how it fills the frame, how it moves, and what it proves: which
+  claim the viewer can see is true in it. A picture that proves nothing is decoration,
+  however long it can be watched.
 - Do not ask whether phasor can draw it. (The phasor expert is the exception: it says what
   phasor draws well now.)
 - Write to `plans/NAME.work/round1/LENS.md`.
@@ -287,14 +277,6 @@ Now make the chosen path teach as well as it can:
   why it matters, then the animation, then the explanation: what was seen, why it is so,
   and what it means for the spine. A silent stretch names its one thing to watch and ends
   once it has been seen.
-- **Two layers, voice and equation.** Narration says what is happening *and* what it means
-  mathematically, in words ("every N samples the hands line up: that is the echo"). The
-  equation on screen is the exact statement of that meaning, and it stays up so the eye
-  can come back to it. They never duplicate each other: the voice explains what the
-  equation means, never reads it out symbol by symbol, and a narrated meaning still gets
-  its equation. When what happens and what it means are obviously the same thing (the
-  hands lining up *is* the echo), say it once, in one sentence, and let the equation
-  carry the rest.
 - **Write two tests** for each animation. Picture: with the voice off, which evidence does
   it show? Voice: with the picture off, does the narration still give the reason? A scene
   needs both; "the animation does the talking" alone is not teaching.
@@ -307,15 +289,9 @@ Now make the chosen path teach as well as it can:
 - **Name what is hard**: the one step where people get lost. Give it the most time.
 - **Plan the returns**: cases that run through the same animation, each changing one thing
   and teaching something no earlier case did. The last should surprise.
-- **Fill every hold with extensions.** For each hold, list its stretches in order, each
-  with what it shows that the ones before did not, enough of them to carry the hold's
-  whole length. If the list is too short for the hold, find more of the idea or shorten
-  the hold; never leave the builder time it can only fill by replaying.
 - **Place the predictions**: points where the picture holds before answering.
-- **Earn every symbol, then use it.** A word or equation appears only after the viewer has
-  seen the thing it names, and then it stays while that thing is on stage. For each
-  animation, list the mathematics on screen: the formula, the number that turns (shown
-  live), the labelled features, and the line of working that goes with each "why".
+- **Earn every symbol.** A word or equation appears only after the viewer has seen the
+  thing it names.
 - **End on the picture, changed**: the opening picture again, now understood.
 - **Stay true.** A simplification may leave things out; it may not say something false.
   Note what was left out.
@@ -361,21 +337,13 @@ the silent stretches:
 Each must show something the viewer could not see before it began, start and end at rest,
 end on a composed frame that then holds, and bring into view only things already alive.
 
-**Math and text.** Little prose: one large plain label naming what is happening is often
-all the words a frame needs. The equations of the inventory are part of the stage, not
-laid over it. Give them a place that holds for the whole video: a band (top or bottom) for
-the equation being built, and a column at one edge for the ledger, both readable at the
-theme's sizes and clear of what is being studied. Build each one term by term out of the
-object it names (the term leaves the picture and slides into the line), in the colour of
-that object, so formula and picture read as one. Write numbers beside symbols, live where
-they turn. A formula changes with `transform` as the picture changes; keep a finished
-result readable until it shrinks into the ledger.
-
-When a picture is breathtaking and also carries the idea, share time, not space: it runs
-alone and full frame first, then at its key moment the motion slows, what is not needed
-dims, and the line of math is written into the dark part, held, and taken away (into the
-ledger). A showcase segment that is pure spectacle gets the frame with no math, and the
-math follows it.
+**Math and text.** The equations of the inventory are part of the stage, not laid over it.
+Give them a place that holds for the whole video: a band (top or bottom) for the equation
+being built, and a column at one edge for the ledger, both clear of the picture's subject.
+Build each one term by term out of the object it names (the term leaves the picture and
+slides into the line), in the colour of that object. Write numbers beside symbols. Keep a
+finished result readable until it shrinks into the ledger. Text that is neither an
+equation nor a number is a large plain label, used sparingly.
 
 **Verbs.** Only now, with the path chosen and drawn in imagination, read phasor's verbs
 and camera moves in `kit/docs/API.md` (the list grows; read it each time, do not work from
@@ -447,10 +415,6 @@ A fresh agent reads the plan as the viewer from step 1 and answers each; fix wha
 15. Is any verb there only as decoration? Cut it.
 16. If the plan uses a weave, do the two ideas truly live in one object, or were they
     stapled together?
-17. In any hold, did I watch the same thing twice? Each stretch must show something new;
-    replace a replay with an extension of the idea, or shorten the hold.
-18. Pausing on any frame, could I write down the mathematics from the screen alone (what
-    formula, which number, what value)? If not, the plan is showing too little math.
 
 If the Editor finds the path itself weak, go back to the map; do not patch.
 
@@ -480,14 +444,11 @@ music bed.
 ## Animations
 ### 1. What fills the stage
 - **Proves:** which spine sentence; **takeaway:** the sentence or equation the viewer keeps
-- **While it holds:** its stretches, in order (iterations, cases, parameters, big moves),
-  each with roughly how long, what it shows that the earlier ones did not, the verb for
-  each motion and where it lands. Enough stretches for the whole hold; no replays
-- **Say before:** what to watch for, and why it matters: what is happening and what it
-  means mathematically (one sentence when they are the same), and which on-screen equation
-  states that meaning
-- **On screen:** each equation, live value and label, the visual that earns it, the word
-  it lands on, and when it goes to the ledger or leaves
+- **While it holds:** how it changes, in order (iterations, cases, parameters, big moves),
+  with the verb for each motion and where it lands
+- **Say before:** what to watch for, and why it matters
+- **On screen:** each equation and number, the visual that earns it, the word it lands on,
+  and when it goes to the ledger
 - **Silent stretch:** if any: how long, and the one thing to watch
 - **Say after:** the explanation: why it is so, and what it means for the spine
 - **Sound:** ...
