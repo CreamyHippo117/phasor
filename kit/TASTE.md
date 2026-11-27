@@ -35,3 +35,11 @@ examples. Add a dated line whenever they say something about taste.
   two minutes of reverb A1, the clap and the room unfolding into its crystal, were
   breathtaking). Keep them, with room to be watched, and then bring the math: the
   breathtaking picture is what the math explains, not a replacement for it.
+- 2026-11-27: introduce every piece of math before it is used, and give every move its
+  reason. "An audience familiar with ODEs and linear algebra at an introductory level"
+  means just that, not Terence Tao. From the LTI → convolution → FFT plan: no spectrum
+  before frequency exists; state Euler and cos ωt = (e^(iωt) + e^(−iωt))/2 before going
+  complex; define X before using it, and stay discrete rather than jump to continuous
+  integrals; say why a block is wrapped into a circle; name causality where it first
+  appears; show an image source in ten seconds rather than assert it; say in one sentence
+  that h[k] is h sampled; one phrase each for dB, SPL and the 1/distance loss.
