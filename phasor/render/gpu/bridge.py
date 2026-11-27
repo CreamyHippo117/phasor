@@ -54,6 +54,10 @@ class CopyBridge:
             if self._texture is not None:
                 self._texture.release()
             self._texture = self.ctx.texture((w, h), 4, dtype="f2")
+            # clamp: with the default wrap the linear filter blends the opposite edge's row
+            # into a quad's outermost half texel (a bright line at the foot of a band)
+            self._texture.repeat_x = False
+            self._texture.repeat_y = False
         self._texture.write(host.tobytes())
         return self._texture
 
