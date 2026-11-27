@@ -231,6 +231,10 @@ One fresh agent reads `shots.md` from end to end as a film and fixes the followi
   frame;
 - a colour whose meaning drifts;
 - an equation band or ledger that moves for no reason;
+- a hold that cannot fit its words. Narration runs at about 2.5 words a second, so count
+  the *say* lines of each shot. If the source's words for a beat need longer than its
+  picture holds, lengthen the hold with something the viewer gains (the next case, the
+  camera's next move), never with a repeat, and never cut their words to fit;
 - a return. When the source comes back to something, the content repeat is the person's
   choice, but the picture has to give the viewer something new: a new angle, a new case on
   the same object, the picture now heard. Write that in one sentence for each return.

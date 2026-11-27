@@ -43,3 +43,4 @@ about what is missing.
 3. `/scene-plan the Riemann surface of the square root, with the camera turning once around it`
 4. `/scene-plan a slow zoom into the Mandelbrot set, ending on a spiral`
 5. `/scene-plan one idea, two objects: a dot moving along a circle and its shadow on the x-axis`
+6. `/scene-shots introduce LTI systems: a clap in a room; the room unfolds into its mirror rooms, each mirror room an echo; so what you hear is a sum of delayed, scaled copies of the clap; that is linearity and time invariance, and the room is its impulse response` (check also that every beat of the source is on screen, in order, with nothing added)
