@@ -242,6 +242,11 @@ kind = "fourier_linalg"
 tier = "technique"
 teaches = "A spectrogram of a formula in the prism look, with a glowing playhead sweeping it"
 
+[examples.mode_sum]
+kind = "physics"
+tier = "technique"
+teaches = "One room's impulse response summed over echoes and over notes, with a live note count"
+
 [examples.directivity]
 kind = "physics"
 tier = "technique"
