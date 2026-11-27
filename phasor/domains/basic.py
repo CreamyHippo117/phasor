@@ -320,8 +320,24 @@ class Equation(ObjectBase):
         from_keys: tuple[str, ...] = ()
         from_pos: Vec3 = (0.0, 0.0, 0.0)
         from_id: str = ""  # the source: life's drift passes from its to this one's, no jump
+        from_size: float = Field(0.0, ge=0)  # the source's text size; 0: the same as this one's
         morph: float = Field(1.0, ge=0, le=1)
         arc: float = Field(0.0, ge=0)
+        # Terms lifted out of the picture (the ``lift_term`` verb): per part, the id of the
+        # object it leaves from ("" for none) and optionally one of that object's features
+        # (default: the centre of its bounds); ``lift`` is each part's progress (missing: 1,
+        # in the line). A part at 0 is not shown; in between it flies from where the object
+        # is on screen at that moment (projected through the baked camera) to its place.
+        lift_from: tuple[str, ...] = ()
+        lift_feature: tuple[str, ...] = ()
+        lift: tuple[float, ...] = ()
+
+        @field_validator("lift")
+        @classmethod
+        def _progress(cls, v):
+            if any(not 0.0 <= x <= 1.0 + 1e-9 for x in v):
+                raise ValueError("lift progress is between 0 and 1")
+            return tuple(min(x, 1.0) for x in v)
 
         @field_validator("parts", "from_parts")
         @classmethod
@@ -338,15 +354,16 @@ class Equation(ObjectBase):
                 raise ValueError(f"colors are emphasis roles {EMPHASIS}, got {bad[0]!r}")
             return v
 
-    def _layout(self, state: SceneState, parts=None, pos=None):
+    def _layout(self, state: SceneState, parts=None, pos=None, size=None):
         """[(part, origin, line height)] left to right on a common baseline, and the box:
-        of this equation, or of ``parts`` at ``pos`` set the same way (a transform's source)."""
+        of this equation, or of ``parts`` at ``pos`` (and text ``size``) set the same way (a
+        transform's source)."""
         me = self.me(state)
         cam = state.camera_for(me)
         p = me.params
         parts = p.parts if parts is None else parts
         pos = p.pos if pos is None else pos
-        h = me.style["size"] * cam.units_per_height(pos)
+        h = (size or me.style["size"]) * cam.units_per_height(pos)
         widths = [text_metrics.aspect(t) * h for t in parts]
         em = h * text_metrics.MATH_EM
         gaps = [0.0] + [THICK * em if _spaced(a, b) else 0.0 for a, b in itertools.pairwise(parts)]
@@ -364,10 +381,10 @@ class Equation(ObjectBase):
             x += w
         return out, h, total, top, bottom
 
-    def _corners(self, state: SceneState, parts=None, pos=None) -> list[np.ndarray]:
+    def _corners(self, state: SceneState, parts=None, pos=None, size=None) -> list[np.ndarray]:
         me = self.me(state)
         cam = state.camera_for(me)
-        _, _, width, top, bottom = self._layout(state, parts, pos)
+        _, _, width, top, bottom = self._layout(state, parts, pos, size)
         o = np.asarray(me.params.pos if pos is None else pos, dtype=np.float64)
         return [o + cam.right * sx * width / 2 + cam.up * sy
                 for sx in (-1, 1) for sy in (-bottom, top)]  # fmt: skip
@@ -375,11 +392,71 @@ class Equation(ObjectBase):
     def _transforming(self, p) -> bool:
         return bool(p.from_parts) and p.morph < 1.0
 
+    def _lift_state(self, p, i: int) -> float:
+        """Part ``i``'s lift progress: 1 when it is not lifted from anything (or done)."""
+        if i >= len(p.lift_from) or not p.lift_from[i]:
+            return 1.0
+        return p.lift[i] if i < len(p.lift) else 1.0
+
+    def lift_start(self, state: SceneState, i: int) -> np.ndarray | None:
+        """Where part ``i`` leaves from, in this equation's layer: the object's centre (or
+        named feature) as it is on screen now, through the baked camera (an overlay equation
+        is set in frame heights, origin top-left). None if there is no such object."""
+        me = self.me(state)
+        p = me.params
+        oid = p.lift_from[i] if i < len(p.lift_from) else ""
+        if not oid or oid not in state:
+            return None
+        src = state[oid]
+        feature = p.lift_feature[i] if i < len(p.lift_feature) else ""
+        if feature:
+            point = src.impl.features(state).get(feature)
+            if point is None:
+                return None
+            points = np.asarray(point, dtype=np.float64)[None]
+        else:
+            points = src.impl.world_bounds(state).corners()
+        if src.layer == me.layer:
+            return points.mean(0) if feature else np.asarray(src.impl.world_bounds(state).center)
+        if me.layer == "overlay":
+            # a world object where it is on the screen: the centre the inspector reports (the
+            # middle of the box its bounds cover), or the named feature's point
+            px = state.camera.to_screen(points, state.width, state.height)
+            mid = (px.min(0) + px.max(0)) / 2
+            return np.array([mid[0] / state.height, mid[1] / state.height, 0.0])
+        return None
+
+    def _lift_semantics(self, state: SceneState) -> dict[str, Any]:
+        """Parts in flight: the object each leaves, its progress, where it left from
+        (``start`` in this layer's units; ``start_norm`` 0-1 of the frame) and where it is."""
+        me = self.me(state)
+        p = me.params
+        layout = self._layout(state)[0]
+        right = np.asarray(state.camera_for(me).right)
+        out = []
+        for i, (part, origin, h) in enumerate(layout):
+            m = self._lift_state(p, i)
+            if not 0.0 < m < 1.0:
+                continue
+            start = self.lift_start(state, i)
+            here = origin + right * text_metrics.aspect(part) * h / 2  # its place, centred
+            entry: dict[str, Any] = {"part": i, "text": part, "from": p.lift_from[i],
+                                     "progress": round(m, 6)}  # fmt: skip
+            if start is not None:
+                here = start * (1 - m) + here * m
+                entry["start"] = [round(float(v), 6) for v in start]
+                if me.layer == "overlay":
+                    entry["start_norm"] = [round(float(start[0]) / state.aspect, 6),
+                                           round(float(start[1]), 6)]  # fmt: skip
+            entry["now"] = [round(float(v), 6) for v in here]
+            out.append(entry)
+        return {"lifting": out} if out else {}
+
     def world_bounds(self, state: SceneState) -> Bounds:
         p = self.me(state).params
         corners = self._corners(state)
         if self._transforming(p):  # mid-transform: both places
-            corners += self._corners(state, p.from_parts, p.from_pos)
+            corners += self._corners(state, p.from_parts, p.from_pos, p.from_size)
         return Bounds.of_points(corners)
 
     def features(self, state: SceneState) -> dict[str, np.ndarray]:
@@ -404,6 +481,7 @@ class Equation(ObjectBase):
                 if self._transforming(p)
                 else {}
             ),
+            **self._lift_semantics(state),
         }
 
     def _color(self, me, roles, i):
@@ -414,9 +492,26 @@ class Equation(ObjectBase):
         p = me.params
         glow = me.style["glow"]
         layout, _, total, _, _ = self._layout(state)
+        right = np.asarray(state.camera_for(me).right)
+        lifted = {i for i in range(len(layout)) if self._lift_state(p, i) < 1.0}
+        for i in sorted(lifted):  # a lifted part flies in from its object, or waits at 0
+            m = self._lift_state(p, i)
+            if m <= 0.0:
+                continue
+            part, origin, h = layout[i]
+            here = origin + right * text_metrics.aspect(part) * h / 2
+            start = self.lift_start(state, i)
+            u = min(m / 0.25, 1.0)  # appears on the object, then glides
+            alpha = u * u * (3 - 2 * u)
+            center = here if start is None else start * (1 - m) + here * m
+            ctx.text(part, center - right * text_metrics.aspect(part) * h / 2, h,
+                     color=_rgba(self._color(me, p.colors, i), p.opacity * alpha),
+                     anchor="left", glow=glow)  # fmt: skip
         if not self._transforming(p):
             x0 = layout[0][1] if layout else None  # the left edge, for writing in
             for i, (part, origin, h) in enumerate(layout):
+                if i in lifted:
+                    continue
                 reveal = 1.0
                 if p.write < 1.0 and total > 0:
                     w = text_metrics.aspect(part) * h
@@ -428,8 +523,9 @@ class Equation(ObjectBase):
         # Mid-transform: matched parts glide from their old place (and color) to the new;
         # the source's other parts fade out in the first half, this one's fade in after.
         m = p.morph
-        before = self._layout(state, p.from_parts, p.from_pos)[0]
-        matched = pair_parts(p.from_parts, p.parts, p.from_keys, p.keys)
+        before = self._layout(state, p.from_parts, p.from_pos, p.from_size)[0]
+        matched = [(i, j) for i, j in pair_parts(p.from_parts, p.parts, p.from_keys, p.keys)
+                   if j not in lifted]  # fmt: skip
         over = crossing(matched, p.from_parts, p.parts)
         pairs = dict((j, i) for i, j in matched)
         cam = state.camera_for(me)
@@ -438,8 +534,11 @@ class Equation(ObjectBase):
             part, origin, h = layout[j]
             old = p.from_parts[i]
             # centers glide (parts of different widths stay centered on each other)
-            wa, wb = text_metrics.aspect(old) * h, text_metrics.aspect(part) * h
+            hf = before[i][2]  # the source's size: the text grows or shrinks as it glides
+            wa, wb = text_metrics.aspect(old) * hf, text_metrics.aspect(part) * h
             c0, c1 = before[i][1] + right * wa / 2, origin + right * wb / 2
+            h = hf * (1 - m) + h * m
+            wa, wb = text_metrics.aspect(old) * h, text_metrics.aspect(part) * h
             center = c0 * (1 - m) + c1 * m
             if over[k]:  # carried past other parts: over them going right, under going left
                 side = 1.0 if float((c1 - c0) @ right) >= 0 else -1.0
@@ -460,7 +559,7 @@ class Equation(ObjectBase):
                 ctx.text(part, center - right * wb / 2, h, color=_rgba(color, p.opacity * u),
                          anchor="left", glow=glow)  # fmt: skip
         for j, (part, origin, h) in enumerate(layout):
-            if j in pairs:
+            if j in pairs or j in lifted:
                 continue
             if m > 0.5:
                 ctx.text(part, origin, h, color=_rgba(self._color(me, p.colors, j),

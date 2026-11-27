@@ -170,6 +170,11 @@ class At:
         """Equation ``source`` becomes ``target``: matching parts glide over, others fade."""
         return self._verb("transform", source, target)
 
+    def lift_term(self, object_id: str, eq_id: str, part: int | str) -> At:
+        """A term of equation ``eq_id`` (index or ``keys`` name) flies from where ``object_id``
+        is on the screen into its place in the line, whatever layer the equation is on."""
+        return self._verb("lift_term", object_id, eq_id, part)
+
     def become(self, source: str, target: str) -> At:
         """Curve ``source`` turns into the shape of ``target``, which then takes its place."""
         return self._verb("become", source, target)
