@@ -138,9 +138,11 @@ def install(dest: str | Path) -> dict[str, Any]:
         shutil.rmtree(dest / ".claude" / "skills" / name, ignore_errors=True)
     for name, parts in SKILLS.items():
         target = dest / ".claude" / "skills" / name
-        target.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(root.joinpath(*parts, "SKILL.md"), target / "SKILL.md")
-        written.append(f".claude/skills/{name}/SKILL.md")
+        shutil.rmtree(target, ignore_errors=True)  # a file the skill dropped goes too
+        target.mkdir(parents=True)
+        for f in sorted(root.joinpath(*parts).glob("*.md")):  # SKILL.md and its references
+            shutil.copyfile(f, target / f.name)
+            written.append(f".claude/skills/{name}/{f.name}")
 
     kept = []
     for name in PERSON_FILES:
