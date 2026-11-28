@@ -103,7 +103,7 @@ Work files go in `plans/NAME.work/`, and the plan is `plans/NAME.md`. Have subag
 their output to files and return only a two-line summary, so your own context stays free
 for judging. **Every brief carries `TASTE.md` in full**, plus the source and the
 breakdown: a subagent knows only its brief, and taste it never saw cannot steer it. Every
-judge, picker and editor scores against `TASTE.md` too, and where a choice goes against a
+judge, picker and editor checks against `TASTE.md` too, and where a choice goes against a
 line of it, says which line and why. `EXEMPLAR.md` goes in every brief too. This is a
 medium run, a few agents per stage, not the wide brainstorm of `/scene-plan`. Say so in one
 line at the start. If you have no way to spawn subagents, play each role yourself, one at a
@@ -253,7 +253,8 @@ above.
 
 - **cinematographer**: the unforgettable shot, and how each shot moves, holds and becomes
   the next;
-- **2swap student**: what 2swap would do here, judged from the references in scene-plan;
+- **2swap student**: what 2swap would do here, judged from the references in
+  `EXEMPLAR.md` ("Other references");
 - **the beat's home mathematician** (a geometer for mirror rooms, an analyst for spectra):
   what shape the thing really has, so the picture is true as well as beautiful;
 - **phasor expert**: which of phasor's objects, looks, verbs and camera moves would make

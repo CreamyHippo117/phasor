@@ -13,7 +13,7 @@ ends with a plan the person approves; `/scene-builder` codes it afterwards.
 
 Read three files first:
 
-- `TASTE.md` (in this folder), the person's taste. It outranks everything here.
+- `TASTE.md` (in the kit folder, where you were started), the person's taste. It outranks everything here.
 - `.claude/skills/scene-plan/EXEMPLAR.md`, the opening of the person's reverb A1 plan, and
   why it worked. It is the one fixed point every plan is held against.
 - `.claude/skills/scene-plan/CASEBOOK.md`, the detailed lessons, as cases. The steps below
@@ -34,10 +34,11 @@ to be laid beside it. Every part of this skill aims at that:
    A1: LTI). Each one gets the breathtaking picture that establishes it. Beauty goes into
    the foundation, not beside it.
 3. **Let the picture prove the math.** The math of the video is first of all what its
-   pictures prove. Math that no picture proves is said by the voice, not written, or cut.
+   pictures prove. Math that no picture proves is said by the voice rather than written
+   beside the picture. Only the Teacher cuts math, and only math no spine sentence needs.
 4. **Judge what will be seen.** Beauty cannot be judged in prose. A plan says what is on
-   screen at fixed times, and finalists are rendered as rough stills that the judges look
-   at.
+   screen at fixed times, and its key frames are rendered as rough stills that the judges
+   and the Editor look at.
 
 ## House rules
 
@@ -47,17 +48,20 @@ to be laid beside it. Every part of this skill aims at that:
 - **One picture owns the stage.** It fills the frame on midnight black and keeps it while it
   has work to do. One animation becomes the next, with no hard cuts.
 - **Explain.** The voice carries the reasoning and the picture carries the evidence. Every
-  mathematical move gets its reason in one sentence before it happens.
+  mathematical move gets its reason in one sentence before it happens. Silence is for one
+  named thing to watch and ends once it has been seen; there is no quota of silence.
 - **Watched pictures get time.** A breathtaking picture that a later step stands on gets a
-  segment of its own: a long hold, the music forward, the math right after. It is never
-  cut to save time. A breathtaking picture that nothing later stands on is a detour,
+  segment of its own: a long hold, the music forward. Its math is enacted in it (the sum
+  growing one room at a time, as in A1) or built right after, on the same picture; nothing
+  explanatory is laid over the watched stretch. It is never cut to save time. A breathtaking picture that nothing later stands on is a detour,
   however true it is.
 - **Never rush, never pad.** Hold as long as understanding needs and no longer. Length
   follows content. As many animations as the story needs, and none to fill time.
 - **Come back to the same picture** with a new case, and only when the viewer gains
   something new from the return (`CASEBOOK.md` §4).
-- **Open with a question. Let the viewer predict** before each reveal. Usually not concrete
-  before abstract (ask which route, step 5).
+- **Open with a question**, or a picture the viewer wants explained; never a title or a
+  definition. **Let the viewer predict** before each reveal. Usually not concrete before
+  abstract (ask which route, step 5).
 - **Introduce, then use.** Nothing is used before the viewer has met it. The thing comes
   first, in plain words and in the picture, then its name. Where an idea needs ground the
   viewer lacks, build a bridge from what they know. The cases are in `CASEBOOK.md` §1.
@@ -68,23 +72,25 @@ to be laid beside it. Every part of this skill aims at that:
 
 ## How math is carried
 
-Every piece of math in the plan is carried in one of three ways, and the plan says which:
+Every piece of math in the plan is carried in one of three ways, and the plan says which.
+Count in lines: each written line, and each spoken step.
 
-- **Enacted.** The picture performs the step, and the written terms come out of the objects
-  as they act. *Example:* each mirror room of A1 appears and adds its term a_k δ(t − τ_k) to
+- **Enacted.** A named change in the picture produces the line: the picture performs the
+  step, and the written terms come out of the objects as they act. *Example:* each mirror room of A1 appears and adds its term a_k δ(t − τ_k) to
   the sum. Without the picture, the line would mean nothing. This is the first choice.
 - **Spoken.** The voice says it and nothing is written. This is for a step the viewer
   needs to hear but not to look at again.
-- **Written beside the picture (placed).** It is written, but the picture on screen does
-  not derive it. This is allowed for three things only: a result the viewer will need to
-  look at again (it goes to the ledger), a callback written beside a new result so the
+- **Written beside the picture (placed).** Any written line that no named picture change
+  produces is placed. This is allowed for three things only: a result the viewer will need
+  to look at again (it goes to the ledger), a callback written beside a new result so the
   sameness is seen, and the one line a whole stretch rests on (Euler, in an FFT video).
-  Each placed line names which of the three it is.
+  Each placed line names which of the three it is. Worked numbers beside their symbol (10
+  ms, 50 Hz) belong to the line they sit in and are always welcome.
 
 The plan counts all three, enacted, spoken and placed, and reports the counts. The
 person's working hypothesis (2026-11-28) is that the frames they found ugly were mostly
 placed equations, so the count is kept so that it can be checked. More math means more
-enacted and more spoken, not more written. The details of building written math (term by
+enacted and more spoken, not more placed. The details of building written math (term by
 term, the ledger, colour, numbers) are in `CASEBOOK.md` §2.
 
 ## The steps
@@ -94,7 +100,7 @@ to files and return a two-line summary. Every brief carries `TASTE.md` and `EXEM
 in full: a subagent knows only its brief. Steps 2 and 3 are meant to be expensive, with
 dozens of subagent runs. Say so in one line at the start, then do them in full. Without
 subagents, play each role yourself, one at a time, writing each file before starting the
-next.
+next, and without rereading the earlier ones until the merge.
 
 ### 1. Consult
 
@@ -104,8 +110,11 @@ Ask in one message, with your suggested answer to each, and skip what the idea a
    ("introductory ODEs: e^(rt), the integrating factor; introductory linear algebra:
    matrices, eigenvectors, change of basis"). Anything not on the list is introduced in
    the video.
-2. **Depth**: named results, or derivations followed step by step?
+2. **Depth**: named results, or derivations followed step by step? And which results do
+   you want written, for the viewer to look back at?
 3. **Feel**: calm, eerie, playful or grand?
+
+If the person does not answer, use your suggestions and say so in the plan.
 
 Do not ask where the video ends, and do not decide it. Point B is what the brainstorm
 finds. A destination the person names goes to the brainstormers as one possible ending
@@ -146,8 +155,8 @@ and 40 pictures across both rounds; if short, run another round.
 across scales), find two ideas carried by one object (`CASEBOOK.md` §4). "None worth it" is
 an allowed answer. Write to `weaves.md`.
 
-**Paths.** Two or three agents join the map into at least 20 whole paths in `paths.md`,
-deliberately unlike one another. Each path is a short paragraph that names:
+**Paths.** Two or three agents join the map and `weaves.md` into at least 20 whole paths in
+`paths.md`, deliberately unlike one another. Each path is a short paragraph that names:
 
 - its point A (the question) and point B;
 - its spine;
@@ -160,23 +169,24 @@ Fresh agents judge; brainstormers never do. There are four gates, and a path mus
 every one. No gate counts double, and no strength on one buys a pass on another.
 
 - **Question.** Does every stretch answer point A, or move toward the answer? The judge
-  names any stretch that wanders.
+  names any stretch that wanders. A bridge or an introduction that makes a spine sentence
+  reachable moves toward the answer.
 - **Teaching.** The judge writes what the viewer can explain, derive or compute at the end,
   as sentences and equations they could reproduce: reasons, mechanisms and results, never
   impressions. Is each spine sentence on that list? Is each load-bearing concept
-  established before it is used?
+  established before it is used? A short list fails, however beautiful the path.
 - **Picture.** Does each load-bearing concept have a picture that establishes it, enacts
-  its math and would be watched with the sound off? A path whose math is mostly placed
-  fails here.
+  its math and would be watched with the sound off? A path that fails this for any of its
+  load-bearing concepts fails, and so does one with more placed lines than enacted ones.
 - **Follow.** A simulated viewer who knows only the list from step 1 names every idea the
   path uses but never introduces, and every bridge it lacks. A path that needs more
   introductions than it has room for fails.
 
 Each judge gives pass or fail with the line where the path fails. Among the paths that
-pass, rank by comparison with the exemplar, not by points: for each pair, which is closer
-to the A1 opening, as true, as load-bearing, as watched and as much on its question? Keep
-the five best that are still unlike one another. If fewer than five pass, fix a path or go
-back to the map. Never lower a gate.
+pass, rank by comparison with the exemplar, not by points: for each pair, which whole path
+is closer to the A1 opening? Truth, load, being watched and staying on the question are
+what to look at, not scores to add. Keep the five best that are still unlike one another.
+If fewer than five pass, fix a path or go back to the map. Never lower a gate.
 
 ### 4. Develop and sketch the five
 
@@ -187,16 +197,17 @@ Each development also writes **key frames**: what is on screen at fixed times (t
 of each animation and every minute mark). For each one it gives what is lit, what is text
 or symbol and roughly how much of the frame that takes, and where the eye goes.
 
-Then **sketch the stills.** For each path, one agent writes throwaway scripts for two or
-three of its key frames, starting with its load-bearing picture, in
-`plans/NAME.work/sketches/`. Each is rendered as one frame with the render command in
+Then **sketch the stills.** For each path, one agent writes throwaway scripts for three of
+its key frames, in `plans/NAME.work/sketches/`: its load-bearing picture, the frame with
+the most written math, and one more of the agent's choice. Each is rendered as one frame with the render command in
 `CLAUDE.md` (`--frame` at the chosen time, `--preset preview`). A rough still is enough:
 no checks beyond rendering, nothing reused in the build. Where phasor cannot draw it yet,
-sketch the closest thing and note what is missing; that never counts against the path.
+sketch the closest thing and note what is missing; a picture phasor cannot draw yet never
+counts against the path. Symbols crowding a frame are not excused that way.
 
 The Picture gate is judged again, now **on the stills**, by a fresh judge who looks at
 them beside the key-frame list. Prose that reads well does not pass a still that looks
-crowded.
+crowded. A path that fails on its stills is fixed (and its stills redrawn) or dropped.
 
 ### 5. Ask the person which route
 
@@ -230,7 +241,9 @@ The Teacher owns *what* the viewer learns, and in what order.
   answering; cases that change one thing each, the last a surprise; and the opening picture
   again at the end, now understood.
 - **The math** is listed as what must be understood, each item with a proposed way of
-  carrying it (enacted, spoken, placed). The Teacher does not decide what is written.
+  carrying it (enacted, spoken, placed). A derivation with a picture for each step is the
+  best thing a stretch can hold; do not cut one to keep the screen bare. The Teacher does
+  not decide what is written.
 
 ### 8. Cinematographer: how it is carried and seen
 
@@ -241,8 +254,10 @@ the Teacher's list says must be understood. It decides how each piece is carried
 - **The carriage.** For each math item: enact it if the picture can; otherwise speak it;
   place it only for the three reasons in "How math is carried".
 - **The frame veto.** If a written line makes a key frame worse (crowded, symbols taking the
-  eye from the subject), the line becomes spoken or enacted. It is never forced onto the
-  frame, and never dropped from what is taught.
+  eye from the subject), try the layout first: the ledger column, a smaller size, other
+  timing. If that does not fix it, the line becomes enacted, or spoken. A ledger result, a
+  callback or the line a stretch rests on may move or shrink but stays written. Nothing
+  is dropped from what is taught.
 - **The stage, colour, motion and big moves:** `CASEBOOK.md` §3. Watched segments get their
   hold and the music forward.
 - **Verbs come last.** Only now, read phasor's verbs and camera moves in `kit/docs/API.md`
@@ -250,7 +265,7 @@ the Teacher's list says must be understood. It decides how each piece is carried
   list again for a verb that would show something nobody imagined. Every verb reveals
   something or keeps the picture alive; one that does neither is cut. Mark where each lands.
   A motion no verb can make stays as imagined and goes under "Wanted additions".
-- Update the key frames to match.
+- Update the key frames to match, and redraw the stills of any key frame you changed.
 
 ### 9. Sound
 
@@ -273,8 +288,8 @@ Three fresh agents that wrote none of the plan work in parallel. Each reads `CAS
   writes every word, symbol, unit, property, identity and construction each animation uses,
   with where it was introduced or "not yet", plus every move with no reason and every
   switch between two versions of a thing with no bridge, in `order.md`.
-- **Frames.** It reads the key frames and renders any not yet sketched that look doubtful.
-  At each one it writes what is lit, how much of the frame is symbols, and where the eye
+- **Frames.** It renders every key frame that has written math on it, and any other that
+  looks doubtful, and looks at the stills. At each one it writes what is lit, how much of the frame is symbols, and where the eye
   goes, and it marks every frame where symbols take the eye from the subject. It checks the
   enacted, spoken and placed count, and that each placed line names its reason. It writes
   `frames.md`.
@@ -283,24 +298,29 @@ Fix everything they find before the Editor reads the plan.
 
 ### 11. Editor
 
-A fresh agent reads the plan as the viewer from step 1, with `EXEMPLAR.md` beside it, and
-answers each question. Fix what fails.
+A fresh agent reads the plan as the viewer from step 1, with `EXEMPLAR.md` and the stills
+beside it, and answers each question. Fix what fails.
 
 1. Do the first ten seconds make me want the answer, and does every stretch stay on that
    question?
-2. Do I reach point B, and could I then say each spine sentence and write each key result?
-   Which animation taught each one?
+2. Do I reach point B, and is it a destination worth a whole video? Could I then say each
+   spine sentence and write each key result? Which animation taught each one?
 3. For each load-bearing picture: is it as true, as load-bearing and as watched as the A1
    opening? What is missing?
 4. With the voice off, do I see the evidence? With the picture off, do I get the reason?
+   Is the voice only describing what the animation shows? Replace it with the reason.
 5. Is any math placed that the picture could have enacted, or written that could have been
    said? Is any explanation written as text?
 6. Did I meet everything before it was used, and was I told why at each move?
 7. Is anything padded, or cut short before it finished its work? Is any introduction or
    bridge missing?
-8. Did all three checks pass, with every unverified claim marked?
-9. Was any picture weakened to fit phasor? Restore it under "Wanted additions".
-10. Does anything go against a line of `TASTE.md`?
+8. In the stills: is any animation small, or sharing the frame with anything but its own
+   math? Does anything break the spell? Does each colour keep its meaning?
+9. Is any verb there only as decoration? If the plan uses a weave, do its two ideas truly
+   live in one object, or were they stapled together?
+10. Did all three checks pass, with every unverified claim marked?
+11. Was any picture weakened to fit phasor? Restore it under "Wanted additions".
+12. Does anything go against a line of `TASTE.md`?
 
 If the path itself is weak, go back to step 3. Do not patch it.
 
@@ -342,6 +362,8 @@ The stills: `plans/NAME.work/sketches/`.
 - **Math:** each item, how it is carried (enacted: by which change in the picture; spoken;
   placed: for which of the three reasons), and the words it lands on
 - **Key frames:** at fixed times, what is lit, what is symbol, where the eye goes
+- **Showcase:** yes if it is a watched segment of its own (a load-bearing picture given a
+  long hold); otherwise no
 - **Watched stretch:** if any, how long, and the one thing to watch
 - **Say after:** why it is so, and what it means for the spine
 - **Sound:** ...

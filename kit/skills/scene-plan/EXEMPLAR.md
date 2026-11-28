@@ -12,8 +12,9 @@ becomes a mirror and the room behind it holds its own clap. The mirror rooms til
 into a crystal of rooms, each holding a copy of the clap, farther away and fainter the
 farther out it sits. The viewer is given room to watch it, with the music forward.
 
-(Described from the person's account. When the plan's text is in `plans/`, put its
-opening here word for word and keep the description beside it.)
+(Described from the person's account. This file is replaced on every kit update, so the
+plan's own text lives in `plans/`: if a reverb A1 plan is there, read its opening, word
+for word, beside this description. Where they differ, the plan's text is right.)
 
 ## Why it worked
 
@@ -25,7 +26,8 @@ this one has all four.
 1. **It is load-bearing.** It establishes the concept the rest of the video stands on.
    Each mirror room is one echo, so what reaches the listener is a sum of delayed, scaled
    copies of the clap: h(t) = Σ a_k δ(t − τ_k). Scaled copies that add is linearity. A
-   later clap makes the same crystal later, which is time invariance. Convolution, the room
+   later clap makes the same crystal later, which is time invariance. (How the picture
+   carries linearity and time invariance is our reading of it, not the person's words.) Convolution, the room
    as a matrix, its eigenvectors and the FFT are all built on that. Without the opening,
    every later step would rest on an assertion.
 2. **The picture is the derivation.** The method of images *is* the unfolding. The sum is

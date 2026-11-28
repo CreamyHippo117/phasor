@@ -95,6 +95,9 @@ From "A Room Is a Matrix" (2026-09-30), the reviews of 2026-11-27 and 2026-11-28
   new one, so the sameness is seen.
 - **Colour ties symbol to object.** A term takes the colour of the thing it names, for the
   whole video.
+- **Density.** About one written equation every one or two minutes was a fair density for
+  a viewer of introductory ODEs and linear algebra (2026-11-27). The consult sets it; the
+  frame check, not the count, decides whether a frame carries too much.
 
 ## 3. The stage
 
@@ -105,7 +108,8 @@ From "A Room Is a Matrix" (2026-09-30), the reviews of 2026-11-27 and 2026-11-28
   colour encodes no quantity, use two or three hues, each with a meaning that holds for the
   whole video. Choose the palette from the feel.
 - **Motion.** Draw things on rather than switching them on; how a thing appears shows how it
-  is made. Slow is the default. During a hold something is always changing a little. One
+  is made. Slow is the default. During a hold something is always changing a little. With
+  the voice, each motion belongs to a word; without it, motion follows the music. One
   animation becomes the next: an object carries over, morphs, or the camera travels
   through.
 - **The big moves**, how an animation renews itself while keeping the stage:
@@ -119,7 +123,8 @@ From "A Room Is a Matrix" (2026-09-30), the reviews of 2026-11-27 and 2026-11-28
     out in the next animation.
 
   Each one shows something the viewer could not see before it began, starts and ends at
-  rest, and ends on a composed frame that holds.
+  rest, ends on a composed frame that holds, and brings into view only things already
+  alive.
 - **Equation places.** Where written math is kept, it has one place for the whole video:
   a band for the line being built, a column at one edge for the ledger, both clear of the
   picture's subject.

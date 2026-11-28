@@ -47,8 +47,9 @@ These come from the plan and are not yours to trade away for convenience:
   - *Enacted*: the picture performs the step and the written terms come out of the objects
     as they act (each mirror room adds its term to the sum as it appears). Build the
     picture change first and hang each term on it. If phasor cannot make the term come out
-    of the object, write it in at the object as the change happens, and put it under "can
-    do nearly".
+    of the object, write it in at the object, timed to the change, and put it under "can
+    do nearly". A term written anywhere else, or at another moment, is no longer enacted:
+    say so in the report.
   - *Spoken*: it is said in the narration and never written. Do not add it to the screen,
     however natural it looks.
   - *Placed*: written beside the picture, for the reason the plan gives.
