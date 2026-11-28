@@ -35,3 +35,7 @@ examples. Add a dated line whenever they say something about taste.
   two minutes of reverb A1, the clap and the room unfolding into its crystal, were
   breathtaking). Keep them, with room to be watched, and then bring the math: the
   breathtaking picture is what the math explains, not a replacement for it.
+- 2026-11-28: introduce before use. A new term arrives as the thing, in plain words and in
+  the picture, and only then gets its name ("a single sharp strike ... mathematicians call
+  it an impulse"). When an idea stands on ground the viewer lacks, build a bridge from what
+  they know first (the FFT for a viewer of ODEs and linear algebra: roots of unity first).

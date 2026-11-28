@@ -53,7 +53,10 @@ codes it afterwards.
   source does not state is new content and is not yours to add.
 - **Narration from notes.** If the source is notes, not finished narration, you may draft
   the *say* lines from it, with no claim the notes do not make. The person records their
-  own voice anyway.
+  own voice anyway. Draft them to scene-plan's "Introduce before use": the thing in plain
+  words and in the picture first, then its name.
+- **Pictures that introduce.** Make sure that a term the source names is on screen as a
+  thing before the word lands (the sharp strike drawn before "impulse").
 - Holds, predictions as pauses before a reveal, verbs, camera moves, transitions and sound
   cues.
 
@@ -62,6 +65,11 @@ codes it afterwards.
 - Adding a topic, case or derivation. Cutting a beat, merging beats or reordering them. If
   a beat looks weak or the story would be clearer in another order, say so and why, then
   plan it as given.
+- A term or step used before the viewer has met it. If the person's own words name a
+  thing before showing it, suggest the plain naming. If the story needs a bridge the
+  source lacks (an FFT for a viewer who has never met the roots of unity), propose the
+  bridge, what it starts from and where it would go, and say which beat the viewer will
+  be lost at without it.
 - A false claim in the source. Never fix it quietly. Give the correction and ask. If the
   person does not answer, plan it with the correction and say clearly that you did.
 
@@ -290,9 +298,12 @@ answers each question below. Fix whatever fails.
    later steps need it?
 7. Was any picture weakened to fit phasor? Restore it and list it under "Wanted additions".
 8. Is any verb there only as decoration? Cut it.
-9. Held beside the references (the reverb A1 opening, the 2swap clips), where does it fall
+9. Is anything used before it is introduced? Fix it in the pictures and in narration you
+    drafted; for the person's own words and for a missing bridge, add it to "Notes for
+    you".
+10. Held beside the references (the reverb A1 opening, the 2swap clips), where does it fall
    short?
-10. Does anything go against a line of `TASTE.md`? Fix it, or say which line and why the
+11. Does anything go against a line of `TASTE.md`? Fix it, or say which line and why the
     plan keeps it.
 
 If the world itself fails, go back to step 4. Do not patch it.
@@ -311,9 +322,11 @@ builds it unchanged. Change these parts:
 - **Runners-up** become the worlds not chosen, one line each, and why.
 - Add **Narration edits**: each change to the person's words, and why. Write "none" if
   there were none.
-- Add **Notes for you**: suggestions about the content (a reorder, a weak beat, a missing
-  prediction, a false claim and its correction). Say for each one whether the plan applies
-  it. Only corrected false claims are applied.
+- Keep scene-plan's **Introductions** table, filled from the source and the pictures.
+- Add **Notes for you**: suggestions about the content (a term used before it is
+  introduced, a missing bridge, a reorder, a weak beat, a missing prediction, a false
+  claim and its correction). Say for each one whether the plan applies it. Only corrected
+  false claims are applied.
 
 Add each wanted addition to `WISHLIST.md` as its own line. Keep `breakdown.md`,
 `treatments/`, `sketches/` and `shots/`. In your reply, give the world in a few sentences, the list of

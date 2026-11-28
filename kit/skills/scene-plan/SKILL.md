@@ -13,7 +13,7 @@ best taught, and how is that made beautiful? The first decides; beauty serves it
 result is a plan the person approves; `/scene-builder` codes it afterwards.
 
 `TASTE.md` is the person's taste and outranks everything here. Read it first. The house
-rules below are a summary of it as of 2026-11-27; where they differ, `TASTE.md` is right.
+rules below are a summary of it as of 2026-11-28; where they differ, `TASTE.md` is right.
 
 ## House rules
 
@@ -49,6 +49,20 @@ rules below are a summary of it as of 2026-11-27; where they differ, `TASTE.md` 
 - **Open with a question** or a picture the viewer wants explained; never a title or a
   definition. **Let the viewer predict** before each reveal.
 - **Usually not concrete before abstract.** Ask which route the person wants (step 4).
+- **Introduce before use.** Nothing is leaned on before the viewer has met it: no term,
+  symbol, idea or step that the viewer from step 1 does not already know.
+  - *The thing first, then its name.* A new term arrives as the thing itself, in plain
+    words and in the picture, and only then gets its name. Write "strike the room once, as
+    short and sharp as you can, and listen. A strike like that is what mathematicians call
+    an impulse", not "the impulse response is ...". The name is a label for something the
+    viewer already holds.
+  - *A bridge from what they know.* When an idea stands on ground the viewer lacks, build
+    that ground first, starting from something they do know. For a viewer who knows ODEs
+    and linear algebra, the FFT comes after the roots of unity: e^(iωt) from their ODE
+    course, sampled N times around one turn, lands on the N points of the circle; the
+    powers of one of them fill the DFT matrix, F_jk = ω^(jk); and only then comes the trick
+    that splits it in half. A bridge is a short stretch of the video with its own picture,
+    not a footnote, and it counts as serving the spine sentence it makes reachable.
 - **No hard cuts.** One animation becomes the next.
 - **Stay true, and check.** Every number, demo and derivation is checked before the plan is
   handed back (step 9). A simplification may leave things out; it may not say something
@@ -290,6 +304,11 @@ Now make the chosen path teach as well as it can:
 - **Plan the returns**: cases that run through the same animation, each changing one thing
   and teaching something no earlier case did. The last should surprise.
 - **Place the predictions**: points where the picture holds before answering.
+- **Introduce before use** (see the house rules). List each new term with where it first
+  appears and the plain words and picture that come before its name. List each bridge
+  with what it starts from (the course or result the viewer knows) and what it makes
+  reachable. Walk the plan in order and check that every term, symbol and step is either
+  known to the viewer or introduced earlier.
 - **Earn every symbol.** A word or equation appears only after the viewer has seen the
   thing it names.
 - **End on the picture, changed**: the opening picture again, now understood.
@@ -410,10 +429,13 @@ A fresh agent reads the plan as the viewer from step 1 and answers each; fix wha
 10. Does anything break the spell?
 11. Does each color still mean what it meant at the start?
 12. Did the claims check pass, and is every unverified claim marked?
-13. Held next to the references below, where does this fall short?
-14. Was any idea weakened to fit phasor? Restore it and list it under "Wanted additions".
-15. Is any verb there only as decoration? Cut it.
-16. If the plan uses a weave, do the two ideas truly live in one object, or were they
+13. Is anything used before it is introduced: a term said before the thing it names, or
+    a step that stands on something I never met? Add the plain naming first, or the
+    bridge from what I know.
+14. Held next to the references below, where does this fall short?
+15. Was any idea weakened to fit phasor? Restore it and list it under "Wanted additions".
+16. Is any verb there only as decoration? Cut it.
+17. If the plan uses a weave, do the two ideas truly live in one object, or were they
     stapled together?
 
 If the Editor finds the path itself weak, go back to the map; do not patch.
@@ -460,6 +482,9 @@ music bed.
 ## Claims
 Each number, demo and derivation: checked (how), or unverified (what test, and what to say
 if it fails).
+
+## Introductions
+| Term or idea | First in animation | Plain words and picture before the name | Bridge from (what the viewer knows) |
 
 ## Left out
 What was simplified away.
