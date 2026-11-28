@@ -49,29 +49,18 @@ rules below are a summary of it as of 2026-11-28; where they differ, `TASTE.md` 
 - **Open with a question** or a picture the viewer wants explained; never a title or a
   definition. **Let the viewer predict** before each reveal.
 - **Usually not concrete before abstract.** Ask which route the person wants (step 4).
-- **Introduce before use.** Nothing is leaned on before the viewer has met it: no term,
-  symbol, idea or step that the viewer from step 1 does not already know.
-  - *The thing first, then its name.* A new term arrives as the thing itself, in plain
-    words and in the picture, and only then gets its name. Write "strike the room once, as
-    short and sharp as you can, and listen. A strike like that is what mathematicians call
-    an impulse", not "the impulse response is ...". The name is a label for something the
-    viewer already holds.
-  - *A bridge from what they know.* When an idea stands on ground the viewer lacks, build
-    that ground first, starting from something they do know. For a viewer who knows ODEs
-    and linear algebra, the FFT comes after the roots of unity: e^(iωt) from their ODE
-    course, sampled N times around one turn, lands on the N points of the circle; the
-    powers of one of them fill the DFT matrix, F_jk = ω^(jk); and only then comes the trick
-    that splits it in half. A bridge is a short stretch of the video with its own picture,
-    not a footnote, and it counts as serving the spine sentence it makes reachable.
-  - *Every agent keeps them.* A bridge or a plain naming is never padding, a detour or a
-    break in the thread. No judge, attacker or editor cuts one to save time, to keep the
-    stage or to make a path look tighter. Each counts what it teaches. They cut one only
-    when the viewer from step 1 already knows its ground, and then they say so.
-  - *On the stage.* Build a bridge on the central picture where you can (draw the roots of
-    unity on the same plane the video already lives in). Where it needs its own picture,
-    that picture grows out of the stage and hands back to it without a cut, like any other
-    animation.
 - **No hard cuts.** One animation becomes the next.
+- **Nothing is used before it is introduced.** The viewer knows exactly the courses named in
+  step 1, at the level named, and nothing more: "introductory ODEs and linear algebra" means
+  a student who has just finished those courses, not a mathematician. Every term, symbol,
+  unit, property and picture appears first with what it is, in words the viewer already
+  has, and only later is used. A result shown before its idea exists (a spectrum before
+  frequency, X(ω) before the transform is defined) is a hole, however well it is drawn. See
+  "Introduce, then use".
+- **Every move has a reason.** When the math makes a choice (make it complex, wrap into a
+  circle, sample it, take a limit), the voice says why in one sentence before the move,
+  and the reason is one the viewer could have thought of. A step with no reason given
+  reads as a trick, and a trick teaches nothing.
 - **Stay true, and check.** Every number, demo and derivation is checked before the plan is
   handed back (step 9). A simplification may leave things out; it may not say something
   false.
@@ -84,6 +73,14 @@ rules below are a summary of it as of 2026-11-28; where they differ, `TASTE.md` 
 
 The person's rules (2026-11-27, from their own plan "A Room Is a Matrix"):
 
+- **The voice explains; the screen carries the math.** The explanation is spoken
+  narration, and the equations and numbers on screen go with it: each one appears as the
+  voice reaches it, and the voice says what it means while it is being built. Math with
+  explanation is the point, not math with text. No sentences of explanation on screen,
+  no captions, no bullet points, no definitions written out in words: what would be a
+  sentence of text is said instead. An equation that appears with nothing said about it is
+  "shoved on screen", and so is one that the voice explains only afterwards, once the
+  viewer has stopped reading it.
 - **Visual, then words, then symbols.** An idea arrives as a picture or a sound first, is
   named in words, and only then gets its symbol. Each term of an equation is assembled from
   the object it names: a spike becomes δ, a diagonal becomes h[k], a slider becomes H(ω).
@@ -103,6 +100,78 @@ The person's rules (2026-11-27, from their own plan "A Room Is a Matrix"):
 - **The inventory.** Every plan lists each equation on screen, the visual that earns it,
   and any callback beside it. About one every one or two minutes is a fair density for a
   viewer at that level; the consult (step 1) sets it.
+
+## Introduce, then use
+
+The person's rules (2026-11-27, from a review of an LTI → convolution → FFT plan whose math
+"just gets shoved at us without explanation"):
+
+- **The concept order.** Every plan has a table of each concept it uses (word, symbol,
+  unit, property, operation, picture), with the animation that introduces it and the first
+  animation that uses it. Introduced must come first. If a later animation needs something,
+  either introduce it earlier or move the use later. Do not make the viewer wait for it.
+- **Move a result to where its idea lives.** If an animation wants to show something whose
+  idea arrives later, cut it there and bring it back once the idea exists, where it now
+  answers a question. (The review's case: a sinc spectrum justified a narrow clap in
+  animation 3, but frequency arrived in animation 7. The fix is to drop it from 3 and bring
+  it back in 8 as "why 10 µs was enough".)
+- **State the line that does the work.** When a whole stretch rests on one identity, it is
+  written on screen as the voice says it, not assumed. (The case: working with complex
+  tones rests on Euler's formula and on a real tone being two arrows turning opposite
+  ways, cos ωt = (e^(iωt) + e^(−iωt))/2. That one line gives the reason for going complex and
+  explains the negative frequencies that appear later.)
+- **Define before using, and use the smallest form that does the job.** A transform, an
+  operator or a matrix is defined, from a picture, before any formula uses it. Prefer the
+  version the video can define completely over a more general one it would have to assume:
+  once the discrete tones exist, x = (1/N) Σ X_k e_k is enough, and the continuous integral
+  with its 1/2π, which was never defined, stays out. Never move between two versions
+  (continuous ω and discrete ω_k) without showing the bridge between them.
+- **Every construction gets its reason.** A wrap, a substitution, a change of basis, a
+  padding: one sentence says why, before it happens. (The case: the circulant matrix came
+  with no reason, so it read as a trick. The fix is one sentence: treat a block of N samples
+  as one turn of a loop, so whatever runs off the end comes back at the start. That is also
+  exactly the spill the next animation shows, so the reason sets up a return.)
+- **Name a property where it first appears.** A property used as a label later (causal,
+  linear, stable, periodic) is named where the viewer first sees it in the picture, in one
+  line. (The case: "zero above ↔ causal" in animation 6, with causality never named. The fix
+  is one line in animation 4: echoes only come after the clap, so h(t) = 0 for t < 0.)
+- **Show what can be shown, briefly.** A geometric or physical fact the video relies on is
+  shown in miniature, not asserted, when about ten seconds can show it. (The case: "a mirror
+  image of the source" needs one wall, with the bounced path folded flat into a straight
+  line. That is the big unfolding of the opening, in miniature.)
+- **Say what is left out.** When the video crosses a gap it will not fill (continuous to
+  sampled, a convergence question), one sentence states the step and that the rest stays out
+  of the video. (The case: "h[k] is h sampled every 1/48 000 s; sampling theory stays out of
+  this video", where the plan had switched from h(t) to h[k] without a word.)
+- **The thing first, then its name.** A new term arrives as the thing itself, in plain
+  words and in the picture, and the name comes after, as a label for something the viewer
+  already holds: "strike the room once, as short and sharp as you can, and listen. A strike
+  like that is what mathematicians call an impulse", not "the impulse response is ...".
+- **Build a bridge from what they know.** When an idea stands on ground the viewer lacks,
+  build that ground first, starting from something on their list. For a viewer who knows
+  ODEs and linear algebra, the FFT comes after the roots of unity: e^(iωt) from their ODE
+  course, sampled N times around one turn, lands on N points of the circle; the powers of
+  one of them fill the DFT matrix, F_jk = ω^(jk); and only then comes the trick that splits
+  it in half. A bridge is a short stretch with its own picture, and it counts as serving the
+  spine sentence it makes reachable. Build it on the central picture where it can go (the
+  roots of unity on the same plane the video already lives in). Where it needs its own
+  picture, that picture grows out of the stage and hands back to it, without a cut.
+- **Small terms get one spoken phrase.** Units, abbreviations and everyday physics (dB,
+  SPL, why loudness falls as 1/distance) each get a phrase the first time they are used:
+  "decibels, a log scale where every 20 dB is ten times the pressure"; "sound pressure
+  level, loudness measured against the quietest sound we hear"; "the same sound spreads over
+  a sphere, so its pressure falls as 1/distance".
+
+The cost of an introduction should match the size of the idea: a phrase for a unit, a line
+for a property or an identity, about ten seconds of picture for a geometric fact, a whole
+animation for a central idea. A plan that has no room for its introductions has too many
+ideas. Cut an idea before cutting the introduction of one it keeps.
+
+**Every agent keeps the introductions.** An introduction or a bridge is never padding, a
+detour or a break in the thread. No judge, attacker, cinematographer or editor cuts or
+shortens one to save time, to keep the stage or to make a path look tighter; each counts
+what it teaches. One is cut only when the viewer's list already holds its ground, and the
+agent that cuts it says so.
 
 The references are the YouTube channel 2swap for the look and the pacing of a picture, and
 the person's own plans for the explanation; see "The references" at the end.
@@ -125,7 +194,11 @@ starting the next and without rereading the earlier ones until the merge.
 Ask in one message, each with your suggested answer; skip what the idea already answers:
 
 1. **Viewer**: who is this for, and what do they already know (which courses, which
-   equations they have met)?
+   equations they have met)? Write down what that viewer knows as a short list (e.g.
+   "introductory ODEs: e^(rt), the integrating factor, characteristic equations;
+   introductory linear algebra: matrices, eigenvectors, change of basis"). Anything
+   not on the list must be introduced in the video. Read the level literally: an
+   introductory course is the first course, not a graduate one.
 2. **Math on screen**: how much: a few named results, or derivations line by line?
 3. **Feel**: calm, eerie, playful or grand? (Length follows from the spine; ask only for a
    ceiling, if the person has one.)
@@ -181,8 +254,8 @@ as, and which bridges a viewer at this level needs, each starting from something
 know).
 
 **Round one.** Spawn the whole cast in one turn so they run in parallel and cannot see each
-other. A brainstormer knows only its brief, so each brief carries: the idea, the viewer,
-the feel, its lens and question, the house rules above, and these instructions:
+other. A brainstormer knows only its brief, so each brief carries: the idea, the viewer
+and their list of what they know, the feel, its lens and question, the house rules above, and these instructions:
 
 - Fill a mind map with these branches: opening questions, destinations (what could the
   viewer understand or feel at the end that they did not at the start), central pictures,
@@ -262,13 +335,16 @@ Brainstormers never judge; use fresh agents. Five tests, the first counting doub
   picture still show the evidence?
 - **Cohesiveness**: is it one picture and one thread from A to B, each beat growing out of
   the last? A bridge that grows out of the thread and hands back to it is part of the
-  thread, not a break in it. A path that needs a bridge and has none loses here: the
-  viewer falls off the thread at that step.
+  thread. A path that needs a bridge and has none loses here: the viewer falls off the
+  thread at that step.
 - **Immersion**: does the viewer stay inside it, with nothing that breaks the spell (a
   hard cut, a crowded frame, a wall of symbols, a change of look)?
 
 1. **20 to 5.** Five judges, one per test, plus a simulated viewer at the level from step
-   1, each score every path and give one line on its weakest point. Keep the five best
+   1, each score every path and give one line on its weakest point. The simulated viewer
+   knows only the list from step 1 and names every idea a path uses but never introduces;
+   a path that needs many such ideas, with no room to introduce them, scores low on
+   content. Keep the five best
    that are still unlike one another.
 2. **Develop the five.** One agent per path writes it out animation by animation, with the
    spine sentence each animation proves and its equation inventory. Weaknesses hidden in a
@@ -317,13 +393,12 @@ Now make the chosen path teach as well as it can:
 - **Plan the returns**: cases that run through the same animation, each changing one thing
   and teaching something no earlier case did. The last should surprise.
 - **Place the predictions**: points where the picture holds before answering.
-- **Introduce before use** (see the house rules). List each new term with where it first
-  appears and the plain words and picture that come before its name. List each bridge
-  with what it starts from (the course or result the viewer knows) and what it makes
-  reachable. Walk the plan in order and check that every term, symbol and step is either
-  known to the viewer or introduced earlier.
 - **Earn every symbol.** A word or equation appears only after the viewer has seen the
   thing it names.
+- **Introduce, then use.** Follow "Introduce, then use" and write the concept order table
+  as you go: for each animation, what it introduces (with the phrase, line or picture that
+  does it) and what it uses. Give each mathematical move its one-sentence reason in
+  "Say before". Where a later idea is needed early, move the use, not the idea.
 - **End on the picture, changed**: the opening picture again, now understood.
 - **Stay true.** A simplification may leave things out; it may not say something false.
   Note what was left out.
@@ -376,8 +451,10 @@ Give them a place that holds for the whole video: a band (top or bottom) for the
 being built, and a column at one edge for the ledger, both clear of the picture's subject.
 Build each one term by term out of the object it names (the term leaves the picture and
 slides into the line), in the colour of that object. Write numbers beside symbols. Keep a
-finished result readable until it shrinks into the ledger. Text that is neither an
-equation nor a number is a large plain label, used sparingly.
+finished result readable until it shrinks into the ledger. Words on screen are only names
+on the picture (a label on an object, a word inside an equation such as "echo"), never a
+sentence that explains: the explanation is the voice's job. Each equation's arrival is
+timed to the narration's words about it.
 
 **Verbs.** Only now, with the path chosen and drawn in imagination, read phasor's verbs
 and camera moves in `kit/docs/API.md` (the list grows; read it each time, do not work from
@@ -409,7 +486,7 @@ accent belongs where a verb lands.
   for the same kind of event.
 - **Silence**: a short quiet before the payoff.
 
-### 9. Claims check
+### 9. Claims and order check
 
 A fresh agent, which wrote none of the plan, checks every claim it makes: each number,
 each equation in the inventory, each derivation, each demo ("these two clicks sound the
@@ -423,6 +500,16 @@ A false claim is fixed, never softened into vagueness. A claim that needs a list
 or a simulation nobody has run stays in the plan marked as such, with what to say if it
 fails.
 
+**Order check.** In parallel, another fresh agent plays the viewer from step 1, knowing
+only their list, and reads the plan from the first animation to the last. At each
+animation it writes down every word, symbol, unit, property, identity and construction
+the animation uses, and for each one where the plan introduced it, or "not yet". It also
+marks every move given no reason ("why complex?", "why a circle?"), every switch between
+two versions of a thing with no bridge (continuous to discrete, h(t) to h[k]), and every
+fact asserted that ten seconds of picture could have shown. It writes
+`plans/NAME.work/order.md`. Each "not yet" and each missing reason is fixed by the rules in
+"Introduce, then use" before the Editor reads the plan.
+
 ### 10. Editor
 
 A fresh agent reads the plan as the viewer from step 1 and answers each; fix what fails:
@@ -434,20 +521,22 @@ A fresh agent reads the plan as the viewer from step 1 and answers each; fix wha
 4. With the voice off, do I still see the evidence? With the picture off, do I still get
    the reason? A scene that passes only one is half a scene.
 5. Is the voice only describing what the animation shows? Replace it with the reason.
+   Is any explanation written on screen as text rather than said? Is any equation shown
+   without the voice explaining it as it is built?
 6. Does every animation prove a spine sentence (a showcase segment counts when the math
    right after it explains what it showed, and a bridge counts for the sentence it makes
    reachable)? Cut any that fills time; restore any cut to save it, and restore any
-   bridge or plain naming that was cut. Is any stretch padded: still running after I have understood it?
+   introduction or bridge that was cut. Is any stretch padded: still running after I have understood it?
 7. Is any animation taken off the stage before it has finished its work?
 8. Is any animation small, or sharing the frame with anything but its own math?
 9. Is every equation earned by a visual, built one at a time, readable, and kept (in the
    ledger) while later steps need it? Is any step a jump I could not follow?
-10. Does anything break the spell?
-11. Does each color still mean what it meant at the start?
-12. Did the claims check pass, and is every unverified claim marked?
-13. Is anything used before it is introduced: a term said before the thing it names, or
-    a step that stands on something I never met? Add the plain naming first, or the
-    bridge from what I know.
+10. Knowing only what my list says, did I meet every word, symbol, unit and property
+    before it was used? Was I told why at each choice the math made, or did a step feel
+    like a trick? Did the order check pass?
+11. Does anything break the spell?
+12. Does each color still mean what it meant at the start?
+13. Did the claims check pass, and is every unverified claim marked?
 14. Held next to the references below, where does this fall short?
 15. Was any idea weakened to fit phasor? Restore it and list it under "Wanted additions".
 16. Is any verb there only as decoration? Cut it.
@@ -466,7 +555,7 @@ Write `plans/NAME.md` in this shape, then show it to the person and stop. Do not
 
 **Point A:** the opening question
 **Point B:** what the viewer understands or feels at the end
-**Viewer:** ...   **Math on screen:** ...   **Feel:** ...   **Length:** ... (from the spine)
+**Viewer:** ... (what they already know, as a list)   **Math on screen:** ...   **Feel:** ...   **Length:** ... (from the spine)
 
 ## The spine
 The two to four sentences the video makes obvious, each with the animations that prove it.
@@ -484,9 +573,13 @@ music bed.
 - **Proves:** which spine sentence; **takeaway:** the sentence or equation the viewer keeps
 - **While it holds:** how it changes, in order (iterations, cases, parameters, big moves),
   with the verb for each motion and where it lands
-- **Say before:** what to watch for, and why it matters
-- **On screen:** each equation and number, the visual that earns it, the word it lands on,
-  and when it goes to the ledger
+- **Introduces:** each new word, symbol, unit or property, and the phrase, line or picture
+  that introduces it
+- **Say before:** what to watch for, why it matters, and the reason for any move the math
+  makes
+- **On screen:** each equation and number, the visual that earns it, the words of the
+  narration it is built under (what the voice says about each term as it lands), and when
+  it goes to the ledger. No explanatory text: only math, numbers and names
 - **Silent stretch:** if any: how long, and the one thing to watch
 - **Say after:** the explanation: why it is so, and what it means for the spine
 - **Sound:** ...
@@ -495,12 +588,15 @@ music bed.
 ## Equation inventory
 | Animation | On screen | Visual that earns it | Callback beside it |
 
+## Concept order
+| Concept | Introduced in (how) | First used in |
+
+Every row's "introduced" comes before its "first used", or the concept is on the viewer's
+list. The order check (step 9) passed.
+
 ## Claims
 Each number, demo and derivation: checked (how), or unverified (what test, and what to say
 if it fails).
-
-## Introductions
-| Term or idea | First in animation | Plain words and picture before the name | Bridge from (what the viewer knows) |
 
 ## Left out
 What was simplified away.

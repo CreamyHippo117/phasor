@@ -10,9 +10,9 @@ The plan: $ARGUMENTS
 
 The thinking is already done. `/scene-plan` (or `/scene-shots`, from the person's own
 story) chose what to show, in what order, how long each animation holds and where the
-voice is silent, and the person approved it. Your job
-is to code that plan as well as phasor can, not to improve, shorten or re-plan it. If you
-think the plan is wrong somewhere, build it as written and say so in the report.
+voice is silent, and the person approved it. Your job is to code that plan as well as
+phasor can, not to improve, shorten or re-plan it. If you think the plan is wrong
+somewhere, build it as written and say so in the report.
 
 The plan is either a file (`plans/NAME.md`) or pasted text. If pasted, save it to
 `plans/NAME.md` first so the scene and its plan stay together. If what you were given is
@@ -38,6 +38,10 @@ These come from the plan and are not yours to trade away for convenience:
   moves, in its order.
 - **No hard cuts**: each animation becomes the next the way the plan says.
 - **What color encodes**, and the same meaning for a hue throughout.
+- **The concept order.** Every introduction the plan lists (the phrase, the line, the short
+  picture) is built where the plan puts it, and nothing appears on screen before the
+  animation that introduces it. Never add a term, symbol or result the plan does not
+  introduce; if the build seems to need one, say so and send it back to the plan.
 - **The math, as the plan builds it.** Every equation and number in the plan's inventory,
   on the word the plan lands it on, in the place the plan's look gives it. In particular:
   - *Term by term.* An `Equation` whose `parts` are the terms, each part in the colour of
@@ -61,7 +65,9 @@ These come from the plan and are not yours to trade away for convenience:
     `Counter` or `sweep`'s readout, linked to the parameter, never typed in by hand.
   - *Matrices.* `linalg.Matrix` (its entries can follow a parameter); mathtext has no
     `pmatrix` or `cases`.
-  - Only the text the plan names: no extra labels or captions.
+  - Only the text the plan names: no extra labels or captions, and never a sentence of
+    explanation on screen. The explanation is the narration; the math goes with it, each
+    equation written in on the words that explain it.
 
 ## The steps
 

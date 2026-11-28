@@ -53,7 +53,7 @@ codes it afterwards.
   source does not state is new content and is not yours to add.
 - **Narration from notes.** If the source is notes, not finished narration, you may draft
   the *say* lines from it, with no claim the notes do not make. The person records their
-  own voice anyway. Draft them to scene-plan's "Introduce before use": the thing in plain
+  own voice anyway. Draft them to scene-plan's "Introduce, then use": the thing in plain
   words and in the picture first, then its name.
 - **Pictures that introduce.** Make sure that a term the source names is on screen as a
   thing before the word lands (the sharp strike drawn before "impulse").
@@ -77,8 +77,9 @@ codes it afterwards.
 
 `TASTE.md` is the person's taste and outranks everything here. Read it first. Then read
 these parts of `.claude/skills/scene-plan/SKILL.md`, which this skill shares rather than
-repeats: **House rules**, **Math on screen**, step **7. Cinematographer**, step **8.
-Sound**, step **9. Claims check** and **The references**.
+repeats: **House rules**, **Math on screen**, **Introduce, then use**, step **7.
+Cinematographer**, step **8. Sound**, step **9. Claims and order check** and **The
+references**.
 
 - **The visual rules apply in full.** These are: one animation owns the stage, midnight
   black, no hard cuts, hue is structure, draw things on, the big moves, math on screen and
@@ -278,14 +279,18 @@ Follow scene-plan step 7's **Verbs** and step 8 **Sound**. Read `kit/docs/API.md
 after the shots exist. Give each motion its verb and mark where it lands. A motion no verb
 can make stays in the plan as imagined and goes under "Wanted additions".
 
-### 8. Claims check
+### 8. Claims and order check
 
-Follow scene-plan step 9, with a fresh agent that wrote none of the plan. Add one more
-check: **the pictures make claims too.** A picture lies when it does something like this:
-echoes drawn evenly spaced when they are not; an exact lattice of mirror rooms when the
-room is not a box; every copy drawn equally loud, when amplitude falls with distance and
-with each bounce; a wave drawn faster than the sound it stands for. The agent checks what
-each shot *shows* as hard as what it says. A false claim that comes from the source goes
+Follow scene-plan step 9, claims and order both, with fresh agents that wrote none of the
+plan. The order check reads the source's approved bridges as part of the story; a "not
+yet" in the person's own words goes under "Notes for you", and one in pictures or
+narration you drafted is fixed.
+
+Add one more check to the claims: **the pictures make claims too.** A picture lies when it
+does something like this: echoes drawn evenly spaced when they are not; an exact lattice
+of mirror rooms when the room is not a box; every copy drawn equally loud, when amplitude
+falls with distance and with each bounce; a wave drawn faster than the sound it stands
+for. The agent checks what each shot *shows* as hard as what it says. A false claim that comes from the source goes
 under "Notes for you" with its correction (see "Not yours").
 
 ### 9. Editor
@@ -332,7 +337,7 @@ builds it unchanged. Change these parts:
 - **Runners-up** become the worlds not chosen, one line each, and why.
 - Add **Narration edits**: each change to the person's words, and why. Write "none" if
   there were none.
-- Keep scene-plan's **Introductions** table, filled from the source and the pictures.
+- Keep scene-plan's **Concept order** table, filled from the source and the pictures.
 - Add **Notes for you**: suggestions about the content (a term used before it is
   introduced, a missing bridge, a reorder, a weak beat, a missing prediction, a false
   claim and its correction). Say for each one whether the plan applies it. Only corrected
