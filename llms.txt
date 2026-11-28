@@ -46,6 +46,7 @@
 - `aliasing`: flash, frequencies, amplitudes, phases, signal, fs, start, duration, reconstruct, reveal, spectrum, wheel, wheel_samples, fmax, pos, extent
 - `arrow`: flash, start, end
 - `axes`: flash, dims, x_range, y_range, z_range, pos, scale, tick, labels
+- `band`: flash, values, positions, axis, extent, log, pos, scale, mode, value_range, edge_fade
 - `callout`: flash, target, shape, pad, progress
 - `cayley_graph`: flash, group, generators, pos, r, draw
 - `cayley_table`: flash, group, pos, cell, reveal, subgroup, cosets
@@ -59,7 +60,7 @@
 - `dot`: flash, pos, r
 - `eigen_lines`: flash, matrix, pos, length
 - `epicycles`: flash, points, terms, phase, trace
-- `equation`: flash, parts, colors, pos, write, drift, keys, from_parts, from_colors, from_keys, from_pos, from_id, morph, arc
+- `equation`: flash, parts, colors, pos, write, drift, keys, from_parts, from_colors, from_keys, from_pos, from_id, from_size, morph, arc, lift_from, lift_feature, lift
 - `face`: flash, points, fill
 - `filtered_signal`: flash, kind, order, cutoff, cutoff2, fs, radius, zeros, poles, gain, pos, extent, frequencies, amplitudes, duration, progress
 - `filtered_spectrum`: flash, kind, order, cutoff, cutoff2, fs, radius, zeros, poles, gain, pos, extent, frequencies, amplitudes, window, samples, fade, envelope
@@ -82,6 +83,7 @@
 - `listener`: flash, pos, r
 - `loop_integral`: flash, p, q, measure, center, radius, pos, progress, arrows
 - `matrix`: flash, matrix, pos, digits
+- `mode_sum`: flash, size, source, listener, notes, max_notes, smoothing, t_range, samples, compare, pos, extent
 - `network`: flash, path, edges, nodes, generator, branching, depth, rows, cols, n, p, k, cube_dim, symmetric, layout, dims, iterations, root, seed, pos, size, color_by, grow, node_size, hue, exposure, cross_edges
 - `parametric_curve`: flash, fx, fy, fz, t_range, samples, pos, scale, progress, color_by, hue, to_fx, to_fy, to_fz, blend
 - `parametric_surface`: flash, fx, fy, fz, u_range, v_range, res, pos, scale, color_by, color_expr, with_map, domain_pos, domain_size, morph, to_fx, to_fy, to_fz, blend
@@ -91,6 +93,7 @@
 - `pde_profile`: flash, kind, time, pos, extent, length, n, diffusivity, speed, modes, potential, dt, exact, ymax, boundary, method
 - `pde_slice`: flash, smooth, isolines, hue_cycles, hue, fade, ambient, contrast, time, pos, side, cube, n, diffusivity, mode, axis, at, scale
 - `pde_surface`: flash, kind, time, pos, size, n, diffusivity, speed, mode, feed, kill, seed, scale, height, hue_cycles, hue, contrast, lines
+- `periodize`: flash, f, period, copies, cell, fold, spectrum, harmonics, show_copies, show_pieces, show_g, x_label, xi_label, labels, pos, extent
 - `permutation`: flash, perm, pos, spacing, progress
 - `phase_portrait`: flash, f, g, constants, pos, extent, seeds, n_seeds, t_end, steps, progress, backward, flow, flow_spacing, nullclines, hue_cycles, seed
 - `phased_array`: flash, frequency, speed, time, mode, blend, amplitudes, onsets, pos, size, gain, markers, hue_cycles, hue, isolines, fade, ambient, contrast, center, count, spacing, layout, axis, steer, ray
@@ -103,7 +106,7 @@
 - `riemann_sum`: flash, function, a, b, n, rule, pos
 - `riemann_surface`: flash, kind, pos, radius, height, scale, rings, segments
 - `room`: flash, size, origin, material, absorption
-- `room3d`: flash, size, origin, path, scale, material, absorption, walls, edge_angle
+- `room3d`: flash, size, origin, path, scale, material, absorption, walls, edge_angle, paint, paint_to, paint_blend, mode, paint_range, paint_opacity, paint_faces
 - `sound_rays`: flash, room, source, time, speed, hue_step, count, bounces, trail, seed
 - `source`: flash, pos, r
 - `spectrogram`: flash, smooth, isolines, hue_cycles, hue, fade, ambient, contrast, f0, f1, signal, wav, duration, fs, nwin, hop, window, fmax, playhead, pos, size
