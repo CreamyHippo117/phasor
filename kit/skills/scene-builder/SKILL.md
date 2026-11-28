@@ -1,6 +1,6 @@
 ---
 name: scene-builder
-description: Build a phasor scene from a plan made by /scene-plan - code each animation of the plan as faithfully as phasor allows, check it, look at it, render a preview. Use when the person pastes a plan or points at one ("build this", "code this plan", "/scene-builder plans/NAME.md", a pasted block with Point A / Point B / Animations), or says a plan is approved. If there is no plan yet, run /scene-plan first.
+description: Build a phasor scene from a plan made by /scene-plan or /scene-shots - code each animation of the plan as faithfully as phasor allows, check it, look at it, render a preview. Use when the person pastes a plan or points at one ("build this", "code this plan", "/scene-builder plans/NAME.md", a pasted block with Point A / Point B / Animations), or says a plan is approved. If there is no plan yet, run /scene-plan first.
 argument-hint: "<plans/NAME.md, or the plan pasted in>"
 ---
 
@@ -8,15 +8,16 @@ argument-hint: "<plans/NAME.md, or the plan pasted in>"
 
 The plan: $ARGUMENTS
 
-The thinking is already done. `/scene-plan` chose what to show, in what order, how long
-each animation holds and where the voice is silent, and the person approved it. Your job
-is to code that plan as well as phasor can, not to improve, shorten or re-plan it. If you
-think the plan is wrong somewhere, build it as written and say so in the report.
+The thinking is already done. `/scene-plan` (or `/scene-shots`, from the person's own
+story) chose what to show, in what order, how long each animation holds and where the
+voice is silent, and the person approved it. Your job is to code that plan as well as
+phasor can, not to improve, shorten or re-plan it. If you think the plan is wrong
+somewhere, build it as written and say so in the report.
 
 The plan is either a file (`plans/NAME.md`) or pasted text. If pasted, save it to
 `plans/NAME.md` first so the scene and its plan stay together. If what you were given is
 a bare idea and not a plan (no path, no list of animations), stop and tell the person to
-run `/scene-plan` on it.
+run `/scene-plan` on it (or `/scene-shots`, if it is a script or outline of what to say).
 
 `CLAUDE.md` in this folder has the commands and the rules; `TASTE.md` has the person's
 taste, and it outranks everything else here.
@@ -30,7 +31,9 @@ These come from the plan and are not yours to trade away for convenience:
 - **The holds and the silences, and no more.** If the plan holds an animation for ninety
   seconds with a forty-second silent stretch, the scene does too. Do not pad: never add a
   replay, another case or a longer hold to fill time. A segment the plan marks as a
-  showcase keeps its full length; it is the picture the math after it explains.
+  showcase keeps its full length; it is the picture the math after it explains. A bridge
+  (the stretch that builds ground the viewer lacks, like the roots of unity before the
+  FFT) and the plain words before a new name are not padding either: build them in full.
 - **How it changes while it holds**: the plan's iterations, cases, parameters and big
   moves, in its order.
 - **No hard cuts**: each animation becomes the next the way the plan says.

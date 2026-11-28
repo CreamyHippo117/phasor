@@ -47,3 +47,8 @@ examples. Add a dated line whenever they say something about taste.
   explanations. The voice explains, the screen carries the equations and numbers, each
   built as the voice talks about it. No explanatory sentences, captions or bullet points
   on screen.
+- 2026-11-28: a new term arrives as the thing, in plain words and in the picture, and only
+  then gets its name ("a single sharp strike ... mathematicians call it an impulse"). When
+  an idea stands on ground the viewer lacks, build a bridge from what they know first (the
+  FFT for a viewer of ODEs and linear algebra: the roots of unity first). Bridges are never
+  cut as padding.

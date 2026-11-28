@@ -2,7 +2,8 @@
 
 It holds only what an AI needs to write scenes: instructions (``CLAUDE.md``, loaded at the
 start of every session), the AI docs, the example scenes sorted by kind and tier
-(``kit/examples.toml``), the ``/scene-plan`` and ``/scene-builder`` commands, the person's
+(``kit/examples.toml``), the ``/scene-plan``, ``/scene-shots`` and ``/scene-builder``
+commands, the person's
 ``TASTE.md`` and the phasor
 tools (``.mcp.json``). One source in the repository (``kit/``, ``docs/ai/``,
 ``examples/``, ``skills/``); installing copies it, so the kit never drifts from the code it
@@ -30,6 +31,7 @@ PERSON_FILES = ("TASTE.md", "WISHLIST.md")
 SKILLS = {
     "scene-builder": ("kit", "skills", "scene-builder"),
     "scene-plan": ("kit", "skills", "scene-plan"),
+    "scene-shots": ("kit", "skills", "scene-shots"),
     "phasor": ("skills", "phasor"),
 }
 RETIRED_SKILLS = ("scene",)  # renamed scene-builder; removed from an older kit folder

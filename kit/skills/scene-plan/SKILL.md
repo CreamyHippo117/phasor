@@ -1,6 +1,6 @@
 ---
 name: scene-plan
-description: Plan a teaching video, beautiful and full of real mathematics, before any code is written - brainstorm very widely with many subagents, prune to one path, and hand back a plan (the question, the central picture, the spine, an animation list with what to say and the equations on screen). Use whenever the person gives a topic or idea to teach or express ("a video about Lorenz attractors", "something on group theory", "how would you show X beautifully", "plan a scene/video on ...", "/scene-plan ..."), or asks how to make an idea beautiful, intuitive or well taught, even if they do not say "plan". Run it before /scene-builder, which codes the plan.
+description: Plan a teaching video, beautiful and full of real mathematics, before any code is written - brainstorm very widely with many subagents, prune to one path, and hand back a plan (the question, the central picture, the spine, an animation list with what to say and the equations on screen). Use whenever the person gives a topic or idea to teach or express ("a video about Lorenz attractors", "something on group theory", "how would you show X beautifully", "plan a scene/video on ...", "/scene-plan ..."), or asks how to make an idea beautiful, intuitive or well taught, even if they do not say "plan". Run it before /scene-builder, which codes the plan. If the person already knows what the video says (a script, an outline, notes) and wants only the pictures planned, use /scene-shots instead.
 argument-hint: "<the idea or topic, in a sentence or a paragraph>"
 ---
 
@@ -13,7 +13,7 @@ best taught, and how is that made beautiful? The first decides; beauty serves it
 result is a plan the person approves; `/scene-builder` codes it afterwards.
 
 `TASTE.md` is the person's taste and outranks everything here. Read it first. The house
-rules below are a summary of it as of 2026-11-27; where they differ, `TASTE.md` is right.
+rules below are a summary of it as of 2026-11-28; where they differ, `TASTE.md` is right.
 
 ## House rules
 
@@ -143,6 +143,19 @@ The person's rules (2026-11-27, from a review of an LTI → convolution → FFT 
   sampled, a convergence question), one sentence states the step and that the rest stays out
   of the video. (The case: "h[k] is h sampled every 1/48 000 s; sampling theory stays out of
   this video", where the plan had switched from h(t) to h[k] without a word.)
+- **The thing first, then its name.** A new term arrives as the thing itself, in plain
+  words and in the picture, and the name comes after, as a label for something the viewer
+  already holds: "strike the room once, as short and sharp as you can, and listen. A strike
+  like that is what mathematicians call an impulse", not "the impulse response is ...".
+- **Build a bridge from what they know.** When an idea stands on ground the viewer lacks,
+  build that ground first, starting from something on their list. For a viewer who knows
+  ODEs and linear algebra, the FFT comes after the roots of unity: e^(iωt) from their ODE
+  course, sampled N times around one turn, lands on N points of the circle; the powers of
+  one of them fill the DFT matrix, F_jk = ω^(jk); and only then comes the trick that splits
+  it in half. A bridge is a short stretch with its own picture, and it counts as serving the
+  spine sentence it makes reachable. Build it on the central picture where it can go (the
+  roots of unity on the same plane the video already lives in). Where it needs its own
+  picture, that picture grows out of the stage and hands back to it, without a cut.
 - **Small terms get one spoken phrase.** Units, abbreviations and everyday physics (dB,
   SPL, why loudness falls as 1/distance) each get a phrase the first time they are used:
   "decibels, a log scale where every 20 dB is ten times the pressure"; "sound pressure
@@ -153,6 +166,12 @@ The cost of an introduction should match the size of the idea: a phrase for a un
 for a property or an identity, about ten seconds of picture for a geometric fact, a whole
 animation for a central idea. A plan that has no room for its introductions has too many
 ideas. Cut an idea before cutting the introduction of one it keeps.
+
+**Every agent keeps the introductions.** An introduction or a bridge is never padding, a
+detour or a break in the thread. No judge, attacker, cinematographer or editor cuts or
+shortens one to save time, to keep the stage or to make a path look tighter; each counts
+what it teaches. One is cut only when the viewer's list already holds its ground, and the
+agent that cuts it says so.
 
 The references are the YouTube channel 2swap for the look and the pacing of a picture, and
 the person's own plans for the explanation; see "The references" at the end.
@@ -230,8 +249,9 @@ becomes the next; here it works from imagination and has not read phasor's verbs
 come in step 7), musician (what can be heard), phasor expert (what phasor already draws
 beautifully; reads `kit/docs/API.md` and `kit/examples/INDEX.md`), 2swap student (what
 would 2swap do with this), textbook writer (which equations, derivations and worked numbers
-carry this idea, and which results the viewer already knows that it is secretly the same
-as).
+carry this idea, which results the viewer already knows that it is secretly the same
+as, and which bridges a viewer at this level needs, each starting from something they
+know).
 
 **Round one.** Spawn the whole cast in one turn so they run in parallel and cannot see each
 other. A brainstormer knows only its brief, so each brief carries: the idea, the viewer
@@ -308,12 +328,15 @@ Brainstormers never judge; use fresh agents. Five tests, the first counting doub
   not at the start? The judge writes the list as sentences and equations the viewer could
   reproduce, and counts only reasons, mechanisms and results ("delay is multiplication by
   e^(-sτ), so one echo makes notches every 1/τ"), never impressions ("a room is like a
-  crystal"). A short list fails the path however beautiful it is.
+  crystal"). A short list fails the path however beautiful it is. What a bridge teaches
+  counts in the list like anything else.
 - **Beauty**: would a still from it be worth looking at with the sound off?
 - **Intuition**: does the viewer see why, not only that? With the voice off, does the
   picture still show the evidence?
 - **Cohesiveness**: is it one picture and one thread from A to B, each beat growing out of
-  the last?
+  the last? A bridge that grows out of the thread and hands back to it is part of the
+  thread. A path that needs a bridge and has none loses here: the viewer falls off the
+  thread at that step.
 - **Immersion**: does the viewer stay inside it, with nothing that breaks the spell (a
   hard cut, a crowded frame, a wall of symbols, a change of look)?
 
@@ -342,7 +365,8 @@ choose.
   paths that teach about as much, one good on every test beats one strong on some and weak
   on others. Parts of losing paths may be grafted on only if cohesiveness survives.
 - **Attack the winner.** One agent argues as hard as it can that the winner is the wrong
-  choice and proposes a better one. If it is right, go back to "20 to 5".
+  choice and proposes a better one. "It spends time on a bridge" is not an attack; "it
+  needs a bridge it does not have" is. If it is right, go back to "20 to 5".
 
 ### 6. Teacher
 
@@ -390,7 +414,9 @@ test or hide its math, the teaching wins.
 **Stage.** Midnight black. One animation, full frame: the mathematics reaches the edges,
 not a small figure in the middle of a slide. It keeps the stage; do not cut away and come
 back. Variation comes from inside it. Full, bright color is welcome when the mathematics
-is that full (a domain coloring, a tiling).
+is that full (a domain coloring, a tiling). A bridge the Teacher placed stays in: draw it
+on this stage where it can go, and where it needs its own picture, let that picture grow
+out of the stage and hand back to it. Never drop or shorten a bridge for the look.
 
 **Color.** Hue is structure: assign color by something mathematical (phase, position in a
 lattice, which tile, time along a path), and then the whole wheel is welcome. Where color
@@ -498,8 +524,9 @@ A fresh agent reads the plan as the viewer from step 1 and answers each; fix wha
    Is any explanation written on screen as text rather than said? Is any equation shown
    without the voice explaining it as it is built?
 6. Does every animation prove a spine sentence (a showcase segment counts when the math
-   right after it explains what it showed)? Cut any that fills time; restore any cut
-   to save it. Is any stretch padded: still running after I have understood it?
+   right after it explains what it showed, and a bridge counts for the sentence it makes
+   reachable)? Cut any that fills time; restore any cut to save it, and restore any
+   introduction or bridge that was cut. Is any stretch padded: still running after I have understood it?
 7. Is any animation taken off the stage before it has finished its work?
 8. Is any animation small, or sharing the frame with anything but its own math?
 9. Is every equation earned by a visual, built one at a time, readable, and kept (in the
