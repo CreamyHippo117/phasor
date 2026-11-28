@@ -16,6 +16,7 @@ from phasor.core.color import phase_lut
 from phasor.render import gpu
 from phasor.render.cpu import threads as cpu_threads
 from phasor.render.gpu import ComplexFunction, Tile
+from phasor.render.gpu.kernels import wall
 from phasor.render.gpu.kernels.heat import Recipe
 from phasor.render.gpu.registry import active_backend
 
@@ -50,6 +51,17 @@ def _cases(w: int, h: int) -> dict[str, dict[str, Any]]:
             "lines": 12,
         },
         "escape": {"center": (-0.6, 0.0), "height": 2.6, "max_iter": 256},
+        # a room's wall painted by a mode formula (Room3D paint), as the room-modes example does
+        "wall_field": {
+            "function": wall.parse("(cos(pi*l*x/Lx)*cos(pi*m*y/Ly)*cos(pi*n*z/Lz))^2"),
+            "origin": (0.0, 0.0, 0.0),
+            "right": (1.0, 0.0, 0.0),
+            "up": (0.0, 1.0, 0.0),
+            "center": (2.5, 2.0),
+            "height": 4.0,
+            "mode": (2.0, 1.0, 1.0),
+            "size": (5.0, 4.0, 3.0),
+        },
         "palette": {"field": field, "lut": phase_lut()},
         "fractal_glow": {"field": field, "lut": phase_lut(), "radius": 3.0},
         "bright": {"image": image, "threshold": 1.0},

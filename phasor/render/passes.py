@@ -262,11 +262,11 @@ class _Collector:
                       "colors": colors})
         )  # fmt: skip
 
-    def field(self, corner, right, up, *, pixels, opacity=1.0, glow=1.0) -> None:
+    def field(self, corner, right, up, *, pixels, opacity=1.0, glow=1.0, clamp=False) -> None:
         self.commands.append(
             ("field", {"corner": np.asarray(corner, dtype=np.float64), "right": np.asarray(right),
                        "up": np.asarray(up), "pixels": pixels, "opacity": opacity,
-                       "glow": float(glow)})
+                       "glow": float(glow), "clamp": bool(clamp)})
         )  # fmt: skip
 
     def surface(self, positions, indices, *, normals, colors, uv=None, material="solid",
@@ -573,8 +573,10 @@ class GLRenderer:
         rl, ul = float(np.linalg.norm(r)), float(np.linalg.norm(u))
         center = ((s0 + s1) / 2 * rl, (t0 + t1) / 2 * ul)
         height = (t1 - t0) * ul
+        # an object may draw several quads (the walls of a room): where each is is in the key
+        place = tuple(np.round(np.r_[p0, r, u], 9).tolist())
         key = (obj.type, obj.params, tuple(sorted(obj.roles.items())), pw, ph,
-               round(center[0], 12), round(center[1], 12), round(height, 15))  # fmt: skip
+               round(center[0], 12), round(center[1], 12), round(height, 15), place)  # fmt: skip
         if key not in self._fields:
             pixels = np.asarray(c["pixels"](pw, ph, center, height), dtype=np.float32)
             if pixels.shape != (ph, pw, 4):
@@ -587,7 +589,7 @@ class GLRenderer:
         self._fields.move_to_end(key)
         if self._bridge is None:
             self._bridge = CopyBridge(self.ctx)
-        tex = self._bridge.upload(self._fields[key])
+        tex = self._bridge.upload(self._fields[key], clamp=bool(c.get("clamp", False)))
         q = [p0 + s * r + t * u for s, t in ((s0, t0), (s1, t0), (s0, t1), (s1, t1))]
         uv = [(0, 0), (1, 0), (0, 1), (1, 1)]  # the bridge stores rows bottom-up: v = 0 is low
         order_ = (0, 1, 2, 1, 3, 2)

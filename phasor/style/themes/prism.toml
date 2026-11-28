@@ -12,6 +12,7 @@ secondary = "#5cc8e8"  # prism: cyan (psi in the reference)
 muted = "#4a5672"
 highlight = "#f5a35c"  # prism: amber (gamma_n in the reference)
 danger = "#f27a9a"
+accent = "#a98bf0"  # prism: soft violet, a third meaning beside amber and cyan
 
 [stroke]
 hairline = 0.002

@@ -5,6 +5,7 @@
     s.add(calc.RiemannSum(id="area", function="x**2", a=0, b=3, n=expr("2 + 2 * floor(t)")))
     s.add(calc.Taylor(id="approx", function="sin(x)", center=0, order=5))
     s.add(calc.VectorField(id="flow", p="-y", q="x"))
+    s.add(calc.Periodize(id="poisson", f="exp(-(x-1.3)^2/9.68)", period=10, fold=expr("t / 4")))
 
 The graph lives in the plane with x along the world x axis and y = f(x) up; ``pos`` moves the
 origin. Numerics are in ``calc_math``.
@@ -12,6 +13,7 @@ origin. Numerics are in ``calc_math``.
 
 from __future__ import annotations
 
+import functools
 import math
 from typing import Any, ClassVar, Literal
 
@@ -22,7 +24,8 @@ from phasor.core.objects import Bounds, DrawContext, ObjectBase, ParamsBase, Pas
 from phasor.core.state import SceneState
 from phasor.core.values import Vec3
 from phasor.domains import calc_math as cm
-from phasor.domains.strokes import polyline, with_alpha
+from phasor.domains.fourier import _ydir
+from phasor.domains.strokes import disc_batch, polyline, segments, with_alpha
 
 _FN_CACHE: dict[str, cm.RealFunction] = {}
 
@@ -670,3 +673,285 @@ class LoopIntegral(ObjectBase):
             tip = b + np.array([*d, 0.0]) * (v / top) * p.radius * 0.45
             role = "positive" if v > 0 else "negative"
             arrow(ctx, cam, b, tip, w * 0.8, with_alpha(me.style[role], p.opacity))
+
+
+# ---------------------------------------------------------------- Periodize (Poisson summation)
+
+
+@functools.lru_cache(maxsize=16)
+def _poisson(source: str, period: float, copies: tuple[int, int], cell: float, k: int):
+    """What the semantics and the spectrum panel need, once per (function, period, copies, cell,
+    harmonics): k, the coefficients c_k of g, fhat(k/P)/P, and the |fhat| curve for the plot."""
+    f = _fn(source)
+    ks = np.arange(-k, k + 1)
+    ck = cm.fourier_coefficients(f, period, copies, cell, ks)
+    fk = cm.fourier_transform(f, period, copies, cell, ks / period) / period
+    xi = np.linspace(-(k + 0.6) / period, (k + 0.6) / period, 25 * (2 * k + 2) + 1)
+    curve = np.abs(cm.fourier_transform(f, period, copies, cell, xi))
+    for a in (ks, ck, fk, xi, curve):
+        a.flags.writeable = False
+    return ks, ck, fk, xi, curve
+
+
+def _pairs(z) -> list[list[float]]:
+    return [[round(float(c.real), 9), round(float(c.imag), 9)] for c in z]
+
+
+@register
+class Periodize(ObjectBase):
+    """Poisson summation in one picture. Top: one bump f, its copies every ``period`` (faint),
+    their sum g (bright) and the pieces of f, cut at the edges of the cell, each slid into the
+    cell where they add up to g: ``fold`` 0 -> 1 slides them back out until they draw f exactly.
+    Below (``spectrum``): |fhat| with a stem at every k/P; a stem is |c_k| * P, the size of the
+    k-th Fourier coefficient of g. The semantics give c_k (by a sum over the cell) and
+    fhat(k/P)/P (by an integral of f over the line) side by side: they are equal.
+
+    ``copies=(lo, hi)`` are the shifts j in range(lo, hi) (the end is left out), so (-2, 3) is
+    five copies; the pieces cover those cells (the ``window``). The figure fits ``extent``
+    (width, height) around ``pos`` in the plane z = pos[2], or on the overlay layer."""
+
+    type: ClassVar[str] = "periodize"
+    Style: ClassVar = {
+        "copy": ("emphasis", "muted"),
+        "piece": ("emphasis", "primary"),
+        "piece2": ("emphasis", "secondary"),
+        "color": ("emphasis", "highlight"),  # g, and the spectrum's curve
+        "guide": ("emphasis", "muted"),
+        "text": ("emphasis", "muted"),
+        "size": ("text", "annotation"),
+        "stroke": ("stroke", "regular"),
+        "glow": ("glow", "none"),
+    }
+
+    class Params(ParamsBase):
+        f: str = "exp(-(x-1.3)^2/9.68)"
+        period: float = Field(10.0, gt=0)
+        copies: tuple[int, int] = (-2, 3)
+        cell: float = 0.0  # the cell is [cell, cell + period]
+        fold: float = Field(1.0, ge=0, le=1)  # 0: pieces inside the cell (sum g); 1: they are f
+        spectrum: bool = True
+        harmonics: int = Field(4, ge=0, le=12)  # stems at k/P for k = -harmonics..harmonics
+        show_copies: bool = True
+        show_pieces: bool = True
+        show_g: bool = True
+        x_label: str = "x"
+        xi_label: str = "k / P"
+        labels: bool = True
+        pos: Vec3 = (0.0, 0.0, 0.0)  # the figure's centre
+        extent: tuple[float, float] = (12.0, 7.0)
+
+        @field_validator("f")
+        @classmethod
+        def _f(cls, v):
+            return _check_function(v)
+
+        @field_validator("copies")
+        @classmethod
+        def _copies(cls, v):
+            if not 1 <= v[1] - v[0] <= 15:
+                raise ValueError("copies=(lo, hi) takes between 1 and 15 shifts")
+            return v
+
+    # -- layout. A panel is (u0, u1, v0, v1): shares of the extent, v up from the bottom.
+    @staticmethod
+    def _panels(p):
+        if p.spectrum:
+            return (0.07, 0.97, 0.5, 0.96), (0.07, 0.97, 0.1, 0.34)
+        return (0.07, 0.97, 0.12, 0.96), None
+
+    @staticmethod
+    def _plane(me, state):
+        """``at(u, v)``: shares of the extent (v up on screen) -> world points."""
+        p = me.params
+        sign = _ydir(me, state)
+        x0, y0, z = p.pos[0] - p.extent[0] / 2, p.pos[1], p.pos[2]
+
+        def at(u, v):
+            u, v = np.broadcast_arrays(
+                np.asarray(u, dtype=np.float64), np.asarray(v, dtype=np.float64)
+            )
+            return np.stack([x0 + u * p.extent[0], y0 + sign * (v - 0.5) * p.extent[1],
+                             np.full(u.shape, z)], axis=-1)  # fmt: skip
+
+        return at
+
+    @staticmethod
+    def _view(p):
+        """The spatial panel's data window: ((x0, x1), (y0, y1))."""
+        f = _fn(p.f.strip())
+        a, b = cm.periodize_window(p.period, p.copies, p.cell)
+        xs = np.linspace(a, b, 600)
+        g, y = cm.periodic_sum(f, p.period, p.copies, xs), np.nan_to_num(f(xs))
+        top = max(float(g.max()), float(y.max()), 1e-9)
+        return (a, b), (min(float(g.min()), float(y.min()), 0.0) * 1.15, top * 1.15)
+
+    def _data_to_uv(self, p):
+        """(x, y) data -> (u, v) shares, for the spatial panel."""
+        pan, _ = self._panels(p)
+        (a, b), (ylo, yhi) = self._view(p)
+
+        def uv(x, y):
+            x, y = np.asarray(x, dtype=np.float64), np.asarray(y, dtype=np.float64)
+            return (pan[0] + (x - a) / (b - a) * (pan[1] - pan[0]),
+                    pan[2] + (y - ylo) / (yhi - ylo) * (pan[3] - pan[2]))  # fmt: skip
+
+        return uv
+
+    def _spectrum_to_uv(self, p):
+        """(xi, |fhat|) data -> (u, v) shares, for the spectrum panel."""
+        _, spec = self._panels(p)
+        _, _, _, xi, curve = _poisson(p.f.strip(), p.period, p.copies, p.cell, p.harmonics)
+        top = max(float(curve.max()), 1e-12)
+
+        def uv(x, y):
+            x, y = np.asarray(x, dtype=np.float64), np.asarray(y, dtype=np.float64)
+            return (spec[0] + (x - xi[0]) / (xi[-1] - xi[0]) * (spec[1] - spec[0]),
+                    spec[2] + y / top * (spec[3] - spec[2]))  # fmt: skip
+
+        return uv
+
+    def world_bounds(self, state: SceneState) -> Bounds:
+        p = self.me(state).params
+        x, y, z = p.pos
+        return Bounds((x - p.extent[0] / 2, y - p.extent[1] / 2, z),
+                      (x + p.extent[0] / 2, y + p.extent[1] / 2, z))  # fmt: skip
+
+    def features(self, state: SceneState) -> dict[str, np.ndarray]:
+        me = self.me(state)
+        p = me.params
+        at = self._plane(me, state)
+        uv = self._data_to_uv(p)
+        mid = p.cell + p.period / 2
+        gmid = cm.periodic_sum(_fn(p.f.strip()), p.period, p.copies, np.array([mid]))
+        out = {
+            "cell": at(*uv([p.cell, p.cell + p.period], [0.0, 0.0])),
+            "g_mid": at(*uv([mid], gmid)),
+        }
+        if p.spectrum:
+            ks, _, fk, _, _ = _poisson(p.f.strip(), p.period, p.copies, p.cell, p.harmonics)
+            out["stems"] = at(*self._spectrum_to_uv(p)(ks / p.period, np.abs(fk) * p.period))
+        return out
+
+    def semantics(self, state: SceneState) -> dict[str, Any]:
+        p = self.me(state).params
+        f = _fn(p.f.strip())
+        ks, ck, fk, _, _ = _poisson(p.f.strip(), p.period, p.copies, p.cell, p.harmonics)
+        a, b = cm.periodize_window(p.period, p.copies, p.cell)
+        xs = p.cell + np.arange(400) * p.period / 400
+        g = cm.periodic_sum(f, p.period, p.copies, xs)
+        pieces = cm.piece_range(p.copies)
+        slid = sum(np.nan_to_num(f(xs + m * p.period)) for m in pieces)  # the pieces at fold = 0
+        series = np.real(np.exp(2j * np.pi * np.outer(xs, ks) / p.period) @ ck)
+        return {
+            "kind": "periodize",
+            "function": p.f,
+            "period": p.period,
+            "copies": list(p.copies),
+            "pieces": len(pieces),
+            "window": [a, b],
+            "fold": round(p.fold, 6),
+            "k": [int(k) for k in ks],
+            "c_k": _pairs(ck),
+            "fhat_over_P": _pairs(fk),
+            "max_mismatch": float(np.max(np.abs(ck - fk))),  # c_k against fhat(k/P)/P
+            "folded_sum_error": float(np.max(np.abs(slid - g))),  # pieces slid in, against g
+            "series_error": float(np.max(np.abs(series - g))),  # g against its harmonics
+            "tail": round(cm.tail_mass(f, p.period, p.copies, p.cell), 9),
+            "spectrum": p.spectrum,
+        }
+
+    def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
+        me = self.me(state)
+        p = me.params
+        cam = state.camera_for(me)
+        unit = float(cam.units_per_height(np.asarray(p.pos, dtype=np.float64)))
+        w = me.style["stroke"] * unit
+        glow = me.style["glow"]
+        at = self._plane(me, state)
+        sg = _ydir(me, state)
+        f = _fn(p.f.strip())
+        (a, b), (ylo, yhi) = self._view(p)
+        text = with_alpha(me.style["text"], p.opacity)
+        size = me.style["size"] * unit
+        faint = with_alpha(me.style["guide"], p.opacity * 0.5)
+        tick = size * 0.35
+
+        def off(dx, dy):  # an offset on screen: dy up
+            return np.array([dx, dy * sg, 0.0])
+
+        def label(s, q, anchor="center"):
+            if p.labels:
+                ctx.text(s, q, size, color=text, anchor=anchor, glow=1.0)
+
+        def axes(to_world, x_ticks, y_ticks, x_end, y_end):
+            """The two axes through the data origin of a panel, with ticks and number labels."""
+            polyline(ctx, cam, to_world(x_end[0], 0.0), w * 0.6, color=faint)
+            polyline(ctx, cam, to_world(y_end[0], y_end[1]), w * 0.6, color=faint)
+            for x, name in x_ticks:
+                q = to_world(x, 0.0)
+                polyline(ctx, cam, [q - off(0, tick), q + off(0, tick)], w * 0.5, color=faint)
+                if name:
+                    label(name, q + off(0, -1.6 * size))
+            for y in y_ticks:
+                q = to_world(y_end[0][0], y)
+                polyline(ctx, cam, [q - off(tick, 0), q], w * 0.5, color=faint)
+                label(f"{y:g}", q - off(1.2 * size, 0), "right")
+
+        # --- the spatial panel
+        uv = self._data_to_uv(p)
+
+        def px(x, y):
+            return at(*uv(x, y))
+
+        ctx.triangles(
+            px([p.cell, p.cell + p.period, p.cell + p.period, p.cell], [ylo, ylo, yhi, yhi]),
+            np.array([[0, 1, 2], [0, 2, 3]]),
+            color=with_alpha(me.style["guide"], p.opacity * 0.12),
+        )  # the cell, shaded
+        edges = np.arange(a, b + p.period / 2, p.period)
+        axes(px, [(float(x), f"{x:g}") for x in edges], cm.nice_ticks(max(ylo, 0.0), yhi, 3),
+             ([a, b], 0.0), ([a, a], [ylo, yhi]))  # fmt: skip
+        label(p.x_label, px(b, 0.0) + off(0, 1.2 * size), "right")
+
+        xs = np.linspace(a, b, 500)
+        if p.show_copies:
+            for j in cm.copy_range(p.copies):
+                ys = np.nan_to_num(f(xs - j * p.period))
+                polyline(ctx, cam, px(xs, ys), w * 0.7,
+                         color=with_alpha(me.style["copy"], p.opacity * 0.7))  # fmt: skip
+        if p.show_g:
+            g = cm.periodic_sum(f, p.period, p.copies, xs)
+            polyline(ctx, cam, px(xs, g), w * 1.5,
+                     color=with_alpha(me.style["color"], p.opacity), glow=glow)  # fmt: skip
+        if p.show_pieces:
+            for i, m in enumerate(cm.piece_range(p.copies)):
+                x, y = cm.fold_piece(f, p.period, m, p.cell, p.fold)
+                col = me.style["piece" if i % 2 == 0 else "piece2"]
+                polyline(ctx, cam, px(x, y), w * 1.2, color=with_alpha(col, p.opacity), glow=glow)
+        if p.labels and p.show_g:
+            ctx.text("g", px(p.cell + p.period / 2, yhi) + off(0, 0.9 * size), size,
+                     color=with_alpha(me.style["color"], p.opacity), glow=1.0)  # fmt: skip
+
+        if not p.spectrum:
+            return
+        # --- the spectrum panel: |fhat| and a stem at every k/P
+        ks, _, fk, xi, curve = _poisson(p.f.strip(), p.period, p.copies, p.cell, p.harmonics)
+        suv = self._spectrum_to_uv(p)
+
+        def sx(x, y):
+            return at(*suv(x, y))
+
+        step = max(1, math.ceil((2 * p.harmonics + 1) / 9))
+        top = float(curve.max())
+        axes(sx, [(float(k / p.period), f"{k / p.period:g}" if k % step == 0 else "") for k in ks],
+             [], ([xi[0], xi[-1]], 0.0), ([xi[0], xi[0]], [0.0, top]))  # fmt: skip
+        label(p.xi_label, sx(xi[-1], 0.0) + off(0, 1.2 * size), "right")
+        label("|f^|", sx(xi[0], top) - off(1.0 * size, 0), "right")
+        col = with_alpha(me.style["color"], p.opacity)
+        polyline(ctx, cam, sx(xi, curve), w * 1.3, color=col, glow=glow)
+        stem = with_alpha(me.style["piece"], p.opacity)
+        heads = sx(ks / p.period, np.abs(fk) * p.period)
+        feet = sx(ks / p.period, np.zeros(len(ks)))
+        segments(ctx, cam, np.stack([feet, heads], axis=1), me.style["stroke"] * 0.9,
+                 color=stem, glow=glow)  # fmt: skip
+        disc_batch(ctx, cam, heads, unit * 0.007, colors=stem, glow=glow)

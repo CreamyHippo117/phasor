@@ -55,7 +55,7 @@ class Recorder:
     def triangles(self, positions, indices=None, *, color, glow=1.0, colors=None) -> None:
         self._add("triangles", positions)
 
-    def field(self, corner, right, up, *, pixels, opacity=1.0, glow=1.0) -> None:
+    def field(self, corner, right, up, *, pixels, opacity=1.0, glow=1.0, clamp=False) -> None:
         # Only the quad: ``pixels`` is the expensive part and says nothing about where it is.
         c, r, u = (np.asarray(v, dtype=np.float64) for v in (corner, right, up))
         self._add("field", [c, c + r, c + u, c + r + u])

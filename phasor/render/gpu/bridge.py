@@ -45,7 +45,9 @@ class CopyBridge:
         self.ctx = ctx
         self._texture: moderngl.Texture | None = None
 
-    def upload(self, array: Any) -> moderngl.Texture:
+    def upload(self, array: Any, clamp: bool = False) -> moderngl.Texture:
+        """``clamp`` keeps the linear filter from blending the opposite edge's row into a
+        quad's outermost half texel (the default wrap does); off, nothing changes."""
         if array.ndim != 3 or array.shape[2] != 4:
             raise ValueError(f"expected an (h, w, 4) RGBA frame, got shape {tuple(array.shape)}")
         host = np.ascontiguousarray(to_host(array)[::-1], dtype=np.float16)
@@ -54,6 +56,7 @@ class CopyBridge:
             if self._texture is not None:
                 self._texture.release()
             self._texture = self.ctx.texture((w, h), 4, dtype="f2")
+        self._texture.repeat_x = self._texture.repeat_y = not clamp
         self._texture.write(host.tobytes())
         return self._texture
 

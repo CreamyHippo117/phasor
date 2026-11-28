@@ -124,6 +124,163 @@ class Axes(ObjectBase):
                 ctx.text(p.labels[i], b + d * size * 0.9, size, color=col)
 
 
+# ---------------------------------------------------------------- Band
+
+
+def _numbers(v):
+    """A list or array of numbers as the tuple the parameter keeps."""
+    return tuple(float(x) for x in np.asarray(v, dtype=np.float64).ravel()) if v is not None else v
+
+
+@register
+class Band(ObjectBase):
+    """A continuous shading strip along a plot axis: its colour follows a 1D array, smooth
+    between the samples, no steps (the modal overlap beside a response ridge, a density along
+    a frequency axis). ``values[i]`` belongs at ``positions[i]`` on the axis (``log``: the
+    axis is log10 of the position, so frequency in Hz runs up a log axis). A position ``p``
+    sits at ``pos[axis] + scale * u(p)`` in the world, where ``u`` is ``log10`` or the
+    identity; the strip spans ``extent`` across the other axis, from ``pos``. Moving ``pos``
+    or changing ``scale`` slides or stretches the band with whatever it sits beside, and costs
+    nothing: the pixels are made from the array at draw time. ``mode="fade"`` (default) fades
+    the ``color`` role in from the background as the value rises across ``value_range``
+    (default: the array's range); ``mode="colormap"`` reads the ``colormap`` role. A backdrop:
+    labels may sit on it."""
+
+    type: ClassVar[str] = "band"
+    Style: ClassVar = {"color": ("emphasis", "primary"), "colormap": ("colormap", "sequential"),
+                       "glow": ("glow", "none")}  # fmt: skip
+
+    class Params(ParamsBase):
+        values: tuple[float, ...]
+        positions: tuple[float, ...] = ()  # increasing; empty: 0, 1, ... n-1
+        axis: Literal["x", "y"] = "y"  # the axis the positions run along
+        extent: tuple[float, float] = (0.0, 0.4)  # across the other axis, from ``pos``
+        log: bool = False
+        pos: Vec3 = (0.0, 0.0, 0.0)  # the offset: where position u = 0 (axis) and across 0 sit
+        scale: float = Field(1.0, gt=0)  # world units per axis unit (per decade with ``log``)
+        mode: Literal["fade", "colormap"] = "fade"
+        value_range: tuple[float, float] = (0.0, 0.0)  # (vmin, vmax); (0, 0): the array's range
+        edge_fade: float = Field(0.0, ge=0, le=0.5)  # across: melt into the background
+
+        @field_validator("values", "positions", mode="before")
+        @classmethod
+        def _arrays(cls, v):
+            return _numbers(v)
+
+        @model_validator(mode="after")
+        def _check(self):
+            n = len(self.values)
+            if n < 2 or not np.all(np.isfinite(self.values)):
+                raise ValueError("values: at least two finite numbers")
+            if self.positions:
+                x = np.asarray(self.positions)
+                if len(x) != n or not np.all(np.isfinite(x)) or np.any(np.diff(x) <= 0):
+                    raise ValueError("positions: as many as values, finite and increasing")
+                if self.log and x[0] <= 0:
+                    raise ValueError("positions must be above 0 on a log axis")
+            elif self.log:
+                raise ValueError("a log band needs its positions")
+            if self.extent[1] <= self.extent[0]:
+                raise ValueError("extent must be (low, high) with low < high")
+            lo, hi = self.value_range
+            if (lo, hi) != (0.0, 0.0) and hi <= lo:
+                raise ValueError("value_range must be (vmin, vmax) with vmin < vmax")
+            return self
+
+    @staticmethod
+    def _along(p) -> np.ndarray:
+        """Each sample's place on the axis, in axis units (log10 of the position with ``log``)."""
+        x = np.asarray(p.positions) if p.positions else np.arange(len(p.values), dtype=np.float64)
+        return np.log10(x) if p.log else x
+
+    def _rect(self, p):
+        """(corner, right, up, along-axis start in world, length along, width across)."""
+        u = self._along(p)
+        a = 0 if p.axis == "x" else 1
+        o = 1 - a
+        start = p.pos[a] + p.scale * u[0]
+        length = p.scale * (u[-1] - u[0])
+        width = p.extent[1] - p.extent[0]
+        corner = np.array(p.pos, dtype=np.float64)
+        corner[a] = start
+        corner[o] = p.pos[o] + p.extent[0]
+        right, up = np.zeros(3), np.zeros(3)
+        along, across = (right, up) if p.axis == "x" else (up, right)
+        along[a] = length
+        across[o] = width
+        return corner, right, up, length, width
+
+    def world_bounds(self, state: SceneState) -> Bounds:
+        c, r, u, _, _ = self._rect(self.me(state).params)
+        return Bounds.of_points([c, c + r + u])
+
+    def features(self, state: SceneState) -> dict[str, np.ndarray]:
+        c, r, u, _, _ = self._rect(self.me(state).params)
+        p = self.me(state).params
+        along, across = (r, u) if p.axis == "x" else (u, r)
+        return {"start": c + across / 2, "end": c + across / 2 + along, "center": c + (r + u) / 2}
+
+    def _range(self, p) -> tuple[float, float]:
+        lo, hi = p.value_range
+        if (lo, hi) == (0.0, 0.0):
+            lo, hi = min(p.values), max(p.values)
+        return lo, (hi if hi > lo else lo + 1.0)
+
+    def semantics(self, state: SceneState) -> dict[str, Any]:
+        p = self.me(state).params
+        lo, hi = self._range(p)
+        x = p.positions or tuple(range(len(p.values)))
+        return {"kind": "band", "backdrop": True, "axis": p.axis, "log": p.log, "mode": p.mode,
+                "samples": len(p.values), "positions": [x[0], x[-1]],
+                "values": [float(min(p.values)), float(max(p.values))],
+                "range": [lo, hi], "start_value": p.values[0], "end_value": p.values[-1],
+                "offset": list(p.pos), "scale": p.scale}  # fmt: skip
+
+    def draw(self, ctx: DrawContext, state: SceneState, pass_: Pass) -> None:
+        me = self.me(state)
+        p = me.params
+        corner, right, up, _, width = self._rect(p)
+        lo, hi = self._range(p)
+        u = self._along(p)
+        v = np.asarray(p.values, dtype=np.float64)
+        horizontal = p.axis == "x"
+        glow = float(me.style["glow"])
+        bg = np.asarray(state.background, dtype=np.float64)[:3]
+        tint = np.asarray(me.style["color"], dtype=np.float64)[:3]
+        lut = ramp(me.style["colormap"])[:, :3]
+        lut_x = np.linspace(0.0, 1.0, len(lut))
+        fade = p.edge_fade
+
+        def pixels(pw: int, ph: int, center: tuple[float, float], height: float) -> np.ndarray:
+            half_w = height * pw / ph / 2
+            xs = center[0] + (np.arange(pw) + 0.5) / pw * 2 * half_w - half_w
+            ys = center[1] + (0.5 - (np.arange(ph) + 0.5) / ph) * height  # row 0 = top
+            qa, qc = (xs, ys) if horizontal else (ys, xs)  # along and across the quad
+            level = np.clip((np.interp(u[0] + qa / p.scale, u, v) - lo) / (hi - lo), 0, 1)
+            if fade > 0:
+                edge = np.clip(np.minimum(qc, width - qc) / (fade * width), 0, 1)
+                edge = edge * edge * (3 - 2 * edge)
+            else:
+                edge = np.ones_like(qc)
+            if horizontal:  # level over columns, edge over rows
+                lv, ed = level[None, :], edge[:, None]
+            else:
+                lv, ed = level[:, None], edge[None, :]
+            if p.mode == "colormap":
+                full = np.stack([np.interp(lv, lut_x, lut[:, k]) for k in range(3)], axis=-1)
+                weight = ed
+            else:
+                full = np.broadcast_to(tint, (*lv.shape, 3))
+                weight = lv * ed
+            rgb = bg + (full - bg) * weight[..., None]
+            out = np.empty((*rgb.shape[:2], 4), dtype=np.float32)
+            out[..., :3] = rgb
+            out[..., 3] = (lv * ed) if glow > 1 else 1.0
+            return out
+
+        ctx.field(corner, right, up, pixels=pixels, opacity=p.opacity, glow=glow, clamp=True)
+
+
 # ---------------------------------------------------------------- ParametricCurve
 
 

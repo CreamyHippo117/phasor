@@ -242,6 +242,11 @@ kind = "fourier_linalg"
 tier = "technique"
 teaches = "A spectrogram of a formula in the prism look, with a glowing playhead sweeping it"
 
+[examples.mode_sum]
+kind = "physics"
+tier = "technique"
+teaches = "One room's impulse response summed over echoes and over notes, with a live note count"
+
 [examples.directivity]
 kind = "physics"
 tier = "technique"
@@ -271,3 +276,23 @@ teaches = "The logistic map's bifurcation diagram as a glowing point cloud: a sw
 kind = "physics"
 tier = "technique"
 teaches = "Wave fields on the GPU: two sources interfering, then a phased array steering its beam"
+
+[examples.band]
+kind = "basics"
+tier = "technique"
+teaches = "A smooth gradient strip along a log-frequency axis that slides with the ridge it shades"
+
+[examples.lift_term]
+kind = "motion"
+tier = "technique"
+teaches = "A term of an overlay equation flying out of a 3D object, tracked through an orbiting camera"
+
+[examples.periodize]
+kind = "fourier_linalg"
+tier = "technique"
+teaches = "Poisson summation: copies of a bump summed into a periodic function, the pieces folding back, and its Fourier coefficients on the spectrum's stems"
+
+[examples.room_modes_paint]
+kind = "physics"
+tier = "technique"
+teaches = "A room's standing-wave pressure painted on its walls, an axial note gliding into an oblique one"

@@ -48,7 +48,7 @@ Every type also has `opacity` (0-1; below 0.5 it stops hiding things behind it),
 `z_index` (higher draws on top among objects at the same depth). Every object takes
 `layer="overlay"` to live in screen space: units are frame heights, origin top-left, y down.
 
-Roles: emphasis `primary secondary muted highlight danger`; stroke `hairline regular bold`;
+Roles: emphasis `primary secondary muted highlight danger accent`; stroke `hairline regular bold`;
 text `title label annotation math`; glow `none soft strong`; colormap `phase sequential`;
 surface `solid glass wire emissive` (3D materials; glass is see-through and hides nothing).
 
@@ -353,7 +353,8 @@ any format `soundfile` reads (WAV, FLAC, OGG, MP3) and live in the scene's folde
 | `focus_pull(id, margin=0.15)` | move the camera onto an object (the zoom by factors: `log:` easing) |
 | `morph(path, value)` | change any parameter smoothly (a whole-number one, such as `terms`, in whole steps; a camera's `height` or `distance` by factors, so a 600x dive is even) |
 | `settle(path, value)` | move like a released spring (overshoot, then rest) |
-| `transform(a, b)` | equation `a` becomes `b`: parts that appear in both glide over (and change color); the rest fade |
+| `transform(a, b)` | equation `a` becomes `b`: parts that appear in both glide over (and change color, and size: a title becoming an annotation shrinks as it goes); the rest fade |
+| `lift_term(obj, eq, part)` | a term of equation `eq` (index, or a name from its `keys`) leaves `obj` and glides into the line, from where the object is on the screen (see "A term from an object") |
 | `become(a, b)` | curve `a` turns into the shape of curve `b` (a circle into a square), then `b` takes its place |
 | `write(*ids)` | write text or an equation in, left to right (`write` 0 to 1) |
 | `travel(*ids)` | send `Tracer`s along their curves, trailing light (`progress` 0 to 1) |
@@ -460,6 +461,49 @@ mid = tr.engine.inspect(1.5, id="step2")["objects"][0]["semantic"]
 assert (mid["matched"], mid["changed"], mid["carried_over"]) == (3, 1, 1)
 assert len(tr.engine.inspect(9.0, id="plane")["objects"][0]["semantic"]["zeros"]) == 3
 ```
+
+## A term from an object
+
+Each term of an equation is built from the object it names, so it should leave that object
+and slide into the line. `lift_term(object_id, eq_id, part)` does it, also when the equation
+is on the overlay (screen space) and the object is in 3D under an orbiting camera. The term
+starts at the object's centre *on the screen at each moment* (the middle of the box its
+bounds cover, as the inspector's `center` reports it, through the baked camera) and glides
+to its place with the theme's `[motion.transform]` timing. Before that the part is not
+shown, but its place in the line stays reserved. Terms lifted at the same moment fly
+together; otherwise lifts of one equation may not overlap, and the order you write them in
+does not matter. Mid-flight the equation's `semantic["lifting"]` lists each part with its
+`progress`, `start` (layer units; frame heights on the overlay), `start_norm` and `now`.
+`lift_feature` (a feature name of the object) starts it from that point instead.
+
+```python
+from phasor import Equation, Scene, geo
+
+lt = Scene("lift", passes=None)
+lt.use_camera("orbit")
+lt.add(
+    geo.ParametricSurface(
+        id="ball",
+        fx="sin(u)*cos(v)",
+        fy="sin(u)*sin(v)",
+        fz="cos(u)",
+        u_range=(0, 3.1416),
+        v_range=(0, 6.2832),
+        res=(8, 16),
+    )
+)
+lt.add(Equation(id="n", layer="overlay", pos=(0.9, 0.9), parts=("$N=$", "$V$"),
+                keys=("lhs", "ball")))  # fmt: skip
+lt.marker("go", 1.0)
+lt.at("go").lift_term("ball", "n", "ball")
+mid = lt.engine.inspect(1.6, id="n")["objects"][0]["semantic"]["lifting"][0]
+ball = lt.engine.inspect(1.6, id="ball")["objects"][0]["center"]["norm"]
+assert all(abs(a - b) < 2e-3 for a, b in zip(mid["start_norm"], ball))  # on the object
+assert 0 < mid["progress"] < 1
+assert "lifting" not in lt.engine.inspect(4.0, id="n")["objects"][0]["semantic"]  # landed
+```
+
+See `examples/lift_term.py`.
 
 ## Animate by hand
 
@@ -1033,7 +1077,15 @@ negative radius draws nothing, so `343 * (t - 0.5)` starts at 0.5 s), `ImageSour
 reflections first up to `max_points`, drawn as steady lights by `strokes.flash_points`; to
 make them flash as a sphere of time sweeps them use `sweep.SweepLattice`), `ImpulseResponse(layer="overlay", pos=, extent=)` (arrival spikes; `reveal` and `show_rt60`
 animate; semantics give `rt60`, `rt60_theory_eyring` and `rt60_reliable`), `PressureSlice(time=)`
-(a slice of the real wave-equation field). Materials and absorption: `ac_math.MATERIALS`.
+(a slice of the real wave-equation field), `ModeSum(layer="overlay", pos=, extent=, notes=, max_notes=, smoothing=, t_range=)`
+(one seat's impulse response of a rigid-walled box summed over its modes, lowest frequency first, cyan,
+against the same sum over image sources, amber, `compare=False` hides the amber; both smoothed by a
+Gaussian `smoothing` seconds wide so they converge. `notes` morphs continuously and a trace is
+drawn for every whole number on the way; show the count with `Counter(value=expr("ms.notes"), digits=0)`.
+`max_notes` is the most it can reach (all partial sums are made once, then any count is a lookup:
+about 2 s for 200 000 modes at 800 samples). Semantics give `notes`, `max_rel_diff` (the biggest gap
+as a share of the image trace's peak), `converged` (below 1e-6) and `truncation_bound`; raise
+`max_notes` until that is small). Materials and absorption: `ac_math.MATERIALS`.
 
 ```python
 import numpy as np
@@ -1060,6 +1112,30 @@ room.add(
 )
 ir = room.engine.inspect(0.0, id="ir")["objects"][0]["semantic"]
 assert abs(ir["first_arrival_ms"] - 4.0311 / 343 * 1000) < 1e-3 and ir["arrivals"] > 1000
+
+modes = Scene("modes", passes=None)
+modes.add(
+    ac.ModeSum(
+        id="ms",
+        size=(3, 2.5, 2),
+        source=(0.7, 0.9, 0.5),
+        listener=(2.2, 1.6, 1.3),
+        smoothing=1e-3,
+        max_notes=6000,
+        notes=10,
+        layer="overlay",
+        pos=(0.1, 0.9, 0),
+    )
+)
+modes.marker("go", 1.0)
+modes.at("go").morph("ms.notes", 6000.0)  # a trace for every whole number on the way
+
+
+def gap(t):
+    return modes.engine.inspect(t, id="ms")["objects"][0]["semantic"]["max_rel_diff"]
+
+
+assert gap(0.0) > 0.1 and gap(5.0) < 1e-6
 ```
 
 **`ac.Directivity`** draws normalized pressure magnitude as a polar curve. Choose
@@ -1280,6 +1356,33 @@ assert (
 )  # more pieces, smaller error
 ```
 
+**Poisson summation in one object.** `calc.Periodize(f="exp(-(x-1.3)^2/9.68)", period=10,
+copies=(-2, 3), cell=0, fold=expr("t / 4"), harmonics=4, spectrum=True, extent=(13, 7))`: the
+bump f, its copies every `period` (faint), their sum g (bright) and the pieces of f cut at the
+cell edges and slid into the cell (`fold=0`: they add up to g; `fold=1`: they draw f exactly);
+below, |fhat| with a stem at every k/P (`spectrum=True`), with axes, ticks and labels. `copies=(lo,
+hi)` is `range(lo, hi)`, so `(-2, 3)` is five copies. `^` is a power in function text. The
+semantics give `c_k` (the coefficients of g, summed over the cell) and `fhat_over_P` (fhat(k/P)/P,
+integrated over the line), as `[re, im]` pairs for `k = -harmonics..harmonics`, and `max_mismatch`
+between them: they are equal (Poisson summation). Also `tail` (the share of f the finite copies
+leave out), `folded_sum_error` and `series_error`. It draws in the plane z = `pos[2]` of a 3D
+scene or with `layer="overlay"` (`extent` in frame heights). Numerics: `calc_math` (`periodic_sum`,
+`fold_piece`, `fourier_coefficients`, `fourier_transform`).
+
+```python
+from phasor import Scene, calc, expr
+
+poisson = Scene("poisson", passes=None)
+poisson.add(
+    calc.Periodize(
+        id="p", f="exp(-(x-1.3)^2/9.68)", period=10.0, copies=(-2, 3), fold=expr("t / 4")
+    )
+)
+info = poisson.engine.inspect(4.0, id="p")["objects"][0]["semantic"]
+assert info["max_mismatch"] < 1e-12 and info["fold"] == 1.0  # c_k == fhat(k/P) / P
+assert abs(complex(*info["c_k"][4]) - 0.5515) < 1e-3  # k = 0 (the list runs from -4): the mean of g
+```
+
 **More of each module.** `pde.Profile(kind="heat", boundary="neumann", method="spectral")`:
 insulated ends (drawn as walls; held ends are drawn as pins) and a spectral solver that is
 exact per mode at any step. `pde.Modes(modes=(1, 0, 0.5), count=7, time=...)`: separation of
@@ -1406,6 +1509,17 @@ camera.
   diagonals of flat walls stay hidden) and faint glass walls (`walls`, 0 for lines only;
   `preset="outline"`). A file that is not there is lint `missing_file` and draws nothing.
   Semantics: volume, surface area, walls, Sabine and Eyring RT60.
+- `ac.Room3D(paint="(cos(pi*l*x/Lx)*cos(pi*m*y/Ly)*cos(pi*n*z/Lz))^2", mode=(1, 0, 0))`: a
+  number painted on the walls of a shoebox, worked out for every pixel by a kernel
+  (`wall_field`, a NumPy fallback without a card) and smooth at any zoom. The formula is in
+  `x`, `y`, `z` (meters from the room's corner), `l`, `m`, `n` (`mode`: animate it to change
+  note, no flicker) and `Lx`, `Ly`, `Lz` (the size); `^` is a power; functions `sin cos tan
+  exp log sqrt sinh cosh tanh abs`. The value is colored from the `colormap` and the light
+  weighted by it (`paint_range` is the value that is full light, `paint_opacity` the
+  opacity). `paint_to` and `paint_blend` (0-1) change one formula into another along a
+  straight line. `paint_faces="far"` (default) paints the inside of the walls behind the
+  room, seen through the glass; `"all"` paints all six. Semantics: `paint.mean`, the mean
+  value on each wall (`x_min` ... `z_max`). Shoebox only (not with `path=`).
 - `ac.SoundRays(room="room", source=, time=expr("t - 1"), speed=0.01, count=1200,
   bounces=6, trail=1.5)`: rays leaving the source evenly in every direction, reflecting off
   the walls (angle in = angle out). `time` is scene seconds since the sound left, `speed`
@@ -1437,6 +1551,19 @@ room.add(ac.Wavefront3D(id="front", **clap))
 rays = room.engine.inspect(3.0, id="rays")["objects"][0]["semantic"]
 assert abs(rays["distance"] - 6.86) < 1e-6 and rays["reflections_so_far"] > 1
 assert room.engine.inspect(0.0, id="room")["objects"][0]["semantic"]["volume"] == 120.0
+```
+
+```python
+from phasor import Scene, ac
+
+hall = Scene("modes", look="prism", passes=None)
+hall.use_camera("orbit", target=(2.5, 2, 1.5), distance=12)
+note = "(cos(pi*l*x/Lx) * cos(pi*m*y/Ly) * cos(pi*n*z/Lz))^2"
+hall.add(ac.Room3D(id="room", size=(5, 4, 3), paint=note, mode=(1, 0, 0)))
+hall.at(0.0).to("room.mode", (1, 1, 1), duration=4.0)  # the axial note glides to the oblique
+mean = lambda t: hall.engine.inspect(t, id="room")["objects"][0]["semantic"]["paint"]["mean"]
+assert mean(0.0)["x_min"] == 1.0 and mean(0.0)["y_min"] == 0.5  # the end walls carry it all
+assert set(mean(4.0).values()) == {0.25}  # the oblique note: patchy on every wall
 ```
 
 **Echoes are mirror rooms: the `unfold` verb** (`examples/mirror_rooms.py`). A ray that
@@ -1695,6 +1822,39 @@ around them: the `orbit` verb, or drag in the editor. Formulas are text in `t` (
 
 - `geo.Axes(dims=3, x_range=(-3, 3, 1), z_range=..., labels=("x", "y", "z"))`: axes with ticks
   (ranges are (min, max, tick step); `scale` is world units per unit).
+- `geo.Band(values=, positions=, axis="y", extent=(0, 0.4), log=False, scale=1, pos=(0, 0, 0),
+  mode="fade", value_range=(0, 0), edge_fade=0)`: a continuous shading strip along a plot axis,
+  its colour following a 1D array, smooth between the samples (the modal overlap beside a
+  response ridge). `values[i]` sits at `positions[i]` (a list or NumPy array; default 0, 1, ...);
+  a position `p` is at `pos[axis] + scale * u(p)` where `u` is `log10` with `log=True`, else the
+  identity, so `scale` is world units per unit (per decade) and `extent` is the strip's span
+  across the other axis, from `pos`. Sliding the band with its ridge is moving `pos` (a track
+  or `expr`, no rebuild; the pixels come from the array at draw time). `mode="fade"` fades the
+  `color` role in from the background as the value rises across `value_range` (default: the
+  array's range); `mode="colormap"` reads the `colormap` role; `edge_fade` melts the long
+  sides into the background. A backdrop: labels may sit on it. Semantics: axis, log, samples,
+  positions, values, range, offset, scale. Example: `examples/band.py`.
+
+  ```python
+  import numpy as np
+  from phasor import Scene, geo
+
+  f = np.geomspace(30.0, 1000.0, 100)
+  s = Scene("band_doc")
+  s.add(
+      geo.Band(
+          id="overlap",
+          values=80 * (f / 1000) ** 3,
+          positions=f,
+          log=True,
+          extent=(1.5, 2.3),
+          scale=2.4,
+          pos=(0, -4.8, 0),
+          style={"color": "highlight"},
+      )
+  )
+  assert s.engine.inspect(0.0, id="overlap")["objects"][0]["semantic"]["kind"] == "band"
+  ```
 - `geo.ParametricCurve(fx="cos(t)", fy="sin(t)", fz="0.2*t", t_range=(0, 37.7),
   color_by="t")`: a curve; `color_by` is `none`, `t`, `speed`, `x`, `y` or `z` (through the
   `colormap`); `progress` traces it. Semantics: length, closed, color range.

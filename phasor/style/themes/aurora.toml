@@ -9,6 +9,7 @@ secondary = "#5fd6c2"
 muted = "#4f6b66"
 highlight = "#ff8fb1"
 danger = "#ff6b6b"
+accent = "#b69cff"
 
 [stroke]
 hairline = 0.002
