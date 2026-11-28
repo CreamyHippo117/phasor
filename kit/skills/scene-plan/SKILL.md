@@ -63,6 +63,14 @@ rules below are a summary of it as of 2026-11-28; where they differ, `TASTE.md` 
     powers of one of them fill the DFT matrix, F_jk = ω^(jk); and only then comes the trick
     that splits it in half. A bridge is a short stretch of the video with its own picture,
     not a footnote, and it counts as serving the spine sentence it makes reachable.
+  - *Every agent keeps them.* A bridge or a plain naming is never padding, a detour or a
+    break in the thread. No judge, attacker or editor cuts one to save time, to keep the
+    stage or to make a path look tighter. Each counts what it teaches. They cut one only
+    when the viewer from step 1 already knows its ground, and then they say so.
+  - *On the stage.* Build a bridge on the central picture where you can (draw the roots of
+    unity on the same plane the video already lives in). Where it needs its own picture,
+    that picture grows out of the stage and hands back to it without a cut, like any other
+    animation.
 - **No hard cuts.** One animation becomes the next.
 - **Stay true, and check.** Every number, demo and derivation is checked before the plan is
   handed back (step 9). A simplification may leave things out; it may not say something
@@ -168,8 +176,9 @@ becomes the next; here it works from imagination and has not read phasor's verbs
 come in step 7), musician (what can be heard), phasor expert (what phasor already draws
 beautifully; reads `kit/docs/API.md` and `kit/examples/INDEX.md`), 2swap student (what
 would 2swap do with this), textbook writer (which equations, derivations and worked numbers
-carry this idea, and which results the viewer already knows that it is secretly the same
-as).
+carry this idea, which results the viewer already knows that it is secretly the same
+as, and which bridges a viewer at this level needs, each starting from something they
+know).
 
 **Round one.** Spawn the whole cast in one turn so they run in parallel and cannot see each
 other. A brainstormer knows only its brief, so each brief carries: the idea, the viewer,
@@ -246,12 +255,15 @@ Brainstormers never judge; use fresh agents. Five tests, the first counting doub
   not at the start? The judge writes the list as sentences and equations the viewer could
   reproduce, and counts only reasons, mechanisms and results ("delay is multiplication by
   e^(-sτ), so one echo makes notches every 1/τ"), never impressions ("a room is like a
-  crystal"). A short list fails the path however beautiful it is.
+  crystal"). A short list fails the path however beautiful it is. What a bridge teaches
+  counts in the list like anything else.
 - **Beauty**: would a still from it be worth looking at with the sound off?
 - **Intuition**: does the viewer see why, not only that? With the voice off, does the
   picture still show the evidence?
 - **Cohesiveness**: is it one picture and one thread from A to B, each beat growing out of
-  the last?
+  the last? A bridge that grows out of the thread and hands back to it is part of the
+  thread, not a break in it. A path that needs a bridge and has none loses here: the
+  viewer falls off the thread at that step.
 - **Immersion**: does the viewer stay inside it, with nothing that breaks the spell (a
   hard cut, a crowded frame, a wall of symbols, a change of look)?
 
@@ -277,7 +289,8 @@ choose.
   paths that teach about as much, one good on every test beats one strong on some and weak
   on others. Parts of losing paths may be grafted on only if cohesiveness survives.
 - **Attack the winner.** One agent argues as hard as it can that the winner is the wrong
-  choice and proposes a better one. If it is right, go back to "20 to 5".
+  choice and proposes a better one. "It spends time on a bridge" is not an attack; "it
+  needs a bridge it does not have" is. If it is right, go back to "20 to 5".
 
 ### 6. Teacher
 
@@ -326,7 +339,9 @@ test or hide its math, the teaching wins.
 **Stage.** Midnight black. One animation, full frame: the mathematics reaches the edges,
 not a small figure in the middle of a slide. It keeps the stage; do not cut away and come
 back. Variation comes from inside it. Full, bright color is welcome when the mathematics
-is that full (a domain coloring, a tiling).
+is that full (a domain coloring, a tiling). A bridge the Teacher placed stays in: draw it
+on this stage where it can go, and where it needs its own picture, let that picture grow
+out of the stage and hand back to it. Never drop or shorten a bridge for the look.
 
 **Color.** Hue is structure: assign color by something mathematical (phase, position in a
 lattice, which tile, time along a path), and then the whole wheel is welcome. Where color
@@ -420,8 +435,9 @@ A fresh agent reads the plan as the viewer from step 1 and answers each; fix wha
    the reason? A scene that passes only one is half a scene.
 5. Is the voice only describing what the animation shows? Replace it with the reason.
 6. Does every animation prove a spine sentence (a showcase segment counts when the math
-   right after it explains what it showed)? Cut any that fills time; restore any cut
-   to save it. Is any stretch padded: still running after I have understood it?
+   right after it explains what it showed, and a bridge counts for the sentence it makes
+   reachable)? Cut any that fills time; restore any cut to save it, and restore any
+   bridge or plain naming that was cut. Is any stretch padded: still running after I have understood it?
 7. Is any animation taken off the stage before it has finished its work?
 8. Is any animation small, or sharing the frame with anything but its own math?
 9. Is every equation earned by a visual, built one at a time, readable, and kept (in the

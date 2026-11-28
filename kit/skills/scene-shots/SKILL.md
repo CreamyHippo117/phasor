@@ -128,6 +128,10 @@ claim or one moment each. Write `breakdown.md` with one entry per beat:
 - **Showcase**: *named* if the source asks for it, *proposed* if the beat is a moment
   breathtaking in itself, otherwise no.
 - **Carries over**: what this beat takes from the last one (an object, a picture, a colour).
+- **Leans on**: each term, idea or step this beat uses, marked *known* (the viewer has it),
+  *introduced* (an earlier beat gives it) or *gap* (nothing does). Mark a gap as *named
+  early* when the source names it before showing it, or *needs a bridge* when the viewer
+  lacks its ground.
 
 For the example above, the first beats might read:
 
@@ -153,6 +157,10 @@ answers:
 3. **Math on screen**: only what you named, or also your claims written as equations?
 4. **Feel**: calm, eerie, playful or grand?
 5. **Words**: is the source narration to keep, or notes to draft narration from?
+6. **Gaps**: each gap the breakdown found, with your proposed fix: plain words before the
+   name, or a bridge (what it starts from, and where it would go). Ask whether to add each
+   one. If they say yes, the bridge becomes beats of the source, marked *bridge, added with
+   your OK* in `plans/NAME.source.md`, and every agent after this treats it as the source.
 
 If the person does not answer, use your suggestions and say so in the plan.
 
@@ -286,7 +294,9 @@ A fresh agent reads the plan as the viewer from step 3, with the source beside i
 answers each question below. Fix whatever fails.
 
 1. **Faithful**: is every beat of the source on screen, in order? Is nothing added that
-   teaches something the source does not? Are the person's words intact, or each edit
+   teaches something the source does not, except bridges the person approved? (An
+   approved bridge is part of the source: keep it in full and never count it as an
+   addition.) Are the person's words intact, or each edit
    listed?
 2. With the voice off, is each beat's evidence seen?
 3. Would a still from each shot be worth looking at with the sound off? Which shot makes
