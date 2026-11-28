@@ -28,10 +28,10 @@ These come from the plan and are not yours to trade away for convenience:
 
 - **One animation owns the stage**: full frame on midnight black, alone. Not a small
   figure in an empty frame, and nothing else sharing the frame.
-- **The holds and the silences, and no more.** If the plan holds an animation for ninety
-  seconds with a forty-second silent stretch, the scene does too. Do not pad: never add a
-  replay, another case or a longer hold to fill time. A segment the plan marks as a
-  showcase keeps its full length; it is the picture the math after it explains. A bridge
+- **The holds and the watched stretches, and no more.** If the plan holds an animation for
+  ninety seconds with a forty-second watched stretch, the scene does too. Do not pad: never
+  add a replay, another case or a longer hold to fill time. A segment the plan marks as a
+  showcase, or as load-bearing, keeps its full length; later animations stand on it. A bridge
   (the stretch that builds ground the viewer lacks, like the roots of unity before the
   FFT) and the plain words before a new name are not padding either: build them in full.
 - **How it changes while it holds**: the plan's iterations, cases, parameters and big
@@ -42,8 +42,19 @@ These come from the plan and are not yours to trade away for convenience:
   picture) is built where the plan puts it, and nothing appears on screen before the
   animation that introduces it. Never add a term, symbol or result the plan does not
   introduce; if the build seems to need one, say so and send it back to the plan.
-- **The math, as the plan builds it.** Every equation and number in the plan's inventory,
-  on the word the plan lands it on, in the place the plan's look gives it. In particular:
+- **The math, carried the way the plan says.** The plan's math inventory says how each
+  piece is carried, and that is not yours to change:
+  - *Enacted*: the picture performs the step and the written terms come out of the objects
+    as they act (each mirror room adds its term to the sum as it appears). Build the
+    picture change first and hang each term on it. If phasor cannot make the term come out
+    of the object, write it in at the object as the change happens, and put it under "can
+    do nearly".
+  - *Spoken*: it is said in the narration and never written. Do not add it to the screen,
+    however natural it looks.
+  - *Placed*: written beside the picture, for the reason the plan gives.
+
+  Every written equation and number lands on the word the plan gives it, in the place the
+  plan's look gives it. In particular:
   - *Term by term.* An `Equation` whose `parts` are the terms, each part in the colour of
     the object it names (`colors=`), written in with `write` as the word lands. A term the
     plan slides out of an object starts at that object: a one-part `Equation` of that term
@@ -96,8 +107,8 @@ These come from the plan and are not yours to trade away for convenience:
    marker of the word that names it.
 5. **Check:** lint with `--aesthetic` and `--strict`. Fix every error. Fix each warning,
    unless it warns about something the plan asks for on purpose (a frame filled edge to
-   edge, the whole color wheel where hue is structure, the planned equations and ledger
-   on screen together); then leave it and name it in the report. Check each number on
+   edge, the whole color wheel where hue is structure, the planned written math and
+   ledger on screen together); then leave it and name it in the report. Check each number on
    screen against the plan's claims list, and with `inspect` that each value the scene
    computes is the one the plan states.
 6. **Look:** make the storyboard with `--marks` and look at the picture. For the
@@ -106,9 +117,15 @@ These come from the plan and are not yours to trade away for convenience:
    - Does it hold as long as the plan says, and is something always changing a little?
    - Picture test: from the frames alone, does the viewer see the evidence the plan says
      this animation shows?
-   - The math: is each equation readable at preview size, clear of the picture's subject,
-     on screen before the narration leans on it, and in the colour of what it names? Is
-     the one being built the only one growing? Does the ledger show every result so far?
+   - Key frames: at each time the plan lists, does the frame match what it says is lit,
+     what is symbol and where the eye goes? Where symbols take more of the frame than the
+     plan says, or take the eye from the subject, fix the layout; if that cannot fix it,
+     say so in the report rather than move the math.
+   - The math: is each enacted term coming out of the picture change it belongs to? Is
+     each written equation readable at preview size, clear of the picture's subject, on
+     screen before the narration leans on it, and in the colour of what it names? Is the
+     one being built the only one growing? Does the ledger show every result so far? Is
+     nothing written that the plan carries as spoken?
    - Does it become the next animation without a cut?
    - Is every color doing what the plan says it encodes?
 

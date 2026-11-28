@@ -61,7 +61,8 @@ def test_the_kit_installs_what_an_ai_needs(installed):
     for f in ("CLAUDE.md", "TASTE.md", "WISHLIST.md", ".mcp.json", ".phasor-kit.json",
               "kit/examples/INDEX.md", "kit/docs/API.md", "kit/docs/PATTERNS.md",
               "kit/docs/PITFALLS.md", ".claude/skills/scene-builder/SKILL.md",
-              ".claude/skills/scene-plan/SKILL.md", ".claude/skills/scene-shots/SKILL.md",
+              ".claude/skills/scene-plan/SKILL.md", ".claude/skills/scene-plan/EXEMPLAR.md",
+              ".claude/skills/scene-plan/CASEBOOK.md", ".claude/skills/scene-shots/SKILL.md",
               ".claude/skills/phasor/SKILL.md"):  # fmt: skip
         assert (d / f).is_file(), f
     assert (d / "scenes").is_dir() and (d / "out").is_dir()
@@ -85,6 +86,8 @@ def test_reinstalling_keeps_what_is_yours(tmp_path):
     (tmp_path / "TASTE.md").write_text("- slower, always\n", encoding="utf-8")
     (tmp_path / "scenes" / "mine.py").write_text("# my scene\n", encoding="utf-8")
     (tmp_path / "kit" / "stale.md").write_text("old\n", encoding="utf-8")
+    stale = tmp_path / ".claude" / "skills" / "scene-plan" / "DROPPED.md"  # no longer shipped
+    stale.write_text("old\n", encoding="utf-8")
     old_skill = tmp_path / ".claude" / "skills" / "scene"  # renamed scene-builder
     old_skill.mkdir()
     (old_skill / "SKILL.md").write_text("old\n", encoding="utf-8")
@@ -97,6 +100,7 @@ def test_reinstalling_keeps_what_is_yours(tmp_path):
     assert (tmp_path / "scenes" / "mine.py").exists()
     assert not (tmp_path / "kit" / "stale.md").exists()  # the kit's own folder is replaced
     assert not old_skill.exists()
+    assert not stale.exists()  # a skill folder is the kit's: replaced whole
     servers = json.loads((tmp_path / ".mcp.json").read_text(encoding="utf-8"))["mcpServers"]
     assert set(servers) == {"phasor", "other"}
 
@@ -116,6 +120,8 @@ def _commands_in(text: str) -> list[list[str]]:
 
 @pytest.mark.parametrize("source", ["kit/CLAUDE.md", "kit/skills/scene-builder/SKILL.md",
                                     "kit/skills/scene-plan/SKILL.md",
+                                    "kit/skills/scene-plan/EXEMPLAR.md",
+                                    "kit/skills/scene-plan/CASEBOOK.md",
                                     "kit/skills/scene-shots/SKILL.md",
                                     "skills/phasor/SKILL.md"])  # fmt: skip
 def test_every_command_the_kit_names_exists_with_its_options(source):

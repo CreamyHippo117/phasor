@@ -72,5 +72,8 @@ A scene is not finished until lint is clean and you have looked at its storyboar
 ## Taste
 
 When the person says what they like or dislike ("too fast", "I like the glow look", "never
-put titles at the top"), add one dated line to `TASTE.md` and say you did. Read it before
-every scene; it outranks the examples.
+put titles at the top"), add one dated entry to `TASTE.md` and say you did. It is a
+**Keep** (something that worked and must survive later changes) or a **Change** (something
+that failed and what to do instead), with the case it came from. Never delete an entry or
+write that one "replaces" another: a Change narrows an earlier Keep and both stay. Read
+`TASTE.md` before every scene; it outranks the examples.
