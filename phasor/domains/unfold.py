@@ -70,9 +70,9 @@ class _Moved:
         self._ctx.triangles(self._p(positions), indices, color=self._c(color), glow=glow,
                             colors=colors)  # fmt: skip
 
-    def field(self, corner, right, up, *, pixels, opacity=1.0, glow=1.0) -> None:
+    def field(self, corner, right, up, *, pixels, opacity=1.0, glow=1.0, clamp=False) -> None:
         self._ctx.field(self._p(corner), self._v(right), self._v(up), pixels=pixels,
-                        opacity=opacity * self._op, glow=glow)  # fmt: skip
+                        opacity=opacity * self._op, glow=glow, clamp=clamp)  # fmt: skip
 
     def surface(self, positions, indices, *, normals, colors, uv=None, material="solid",
                 opacity=1.0, glow=1.0) -> None:  # fmt: skip

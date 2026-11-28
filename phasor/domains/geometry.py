@@ -278,7 +278,7 @@ class Band(ObjectBase):
             out[..., 3] = (lv * ed) if glow > 1 else 1.0
             return out
 
-        ctx.field(corner, right, up, pixels=pixels, opacity=p.opacity, glow=glow)
+        ctx.field(corner, right, up, pixels=pixels, opacity=p.opacity, glow=glow, clamp=True)
 
 
 # ---------------------------------------------------------------- ParametricCurve

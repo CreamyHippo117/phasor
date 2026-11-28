@@ -38,7 +38,7 @@ def _quad(e, t=0.0):
     seen = {}
 
     class Ctx:
-        def field(self, corner, right, up, *, pixels, opacity=1.0, glow=1.0):
+        def field(self, corner, right, up, *, pixels, opacity=1.0, glow=1.0, clamp=False):
             seen.update(corner=corner, right=right, up=up, pixels=pixels, glow=glow)
 
     state.objects[0].impl.draw(Ctx(), state, "color")

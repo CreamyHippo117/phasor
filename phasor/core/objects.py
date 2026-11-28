@@ -101,6 +101,7 @@ class DrawContext(Protocol):
         pixels: Callable[[int, int, tuple[float, float], float], np.ndarray],
         opacity: float = 1.0,
         glow: float = 1.0,
+        clamp: bool = False,  # stop the texture filter blending the opposite edge into the rim
     ) -> None:
         """A quad whose color is computed per pixel (domain coloring, fractals). It is one
         object in the id and solo passes. For the color pass the renderer calls
